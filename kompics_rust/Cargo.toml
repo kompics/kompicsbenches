@@ -1,0 +1,19 @@
+[package]
+name = "kompics_rust_benchmarks"
+version = "0.1.0"
+authors = ["Lars Kroll <lkroll@kth.se>"]
+
+[dependencies]
+kompics = { path = "../../kompics-rust/core/" }
+protobuf        = "2"
+futures         = "0.1"
+futures-cpupool = "0.1"
+grpc 			= "0.5"
+tls-api 		= "0.1"
+synchronoise 	= "0.4"
+slog 			= {version = "2.2", features = ["max_level_debug", "release_max_level_warn"]}
+time 			= "0.1"
+tokio-core 		= "0.1"
+
+[build-dependencies]
+protoc-rust-grpc = "0.5.0"
