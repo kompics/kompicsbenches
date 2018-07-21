@@ -9,7 +9,7 @@ import java.io.{PrintWriter, OutputStream, File, FileWriter}
 import $file.build
 import build.{relps, relp, binp, format}
 
-case class Runner(label: String, env: Path, exec: Path, args: Seq[Shellable]) {
+case class Runner(symbol: String, label: String, env: Path, exec: Path, args: Seq[Shellable]) {
 	def run(logFolder: Path): Process = {
 		val command = (exec.toString +: args.flatMap(_.s)).toList.asJava;
 		val pb = new ProcessBuilder(command);
@@ -27,24 +27,40 @@ val runnerAddr = "127.0.0.1:45678";
 
 val javaBin = binp('java);
 
-val experimentRunner = Runner("Experiment Runner", relp("runner"), javaBin, Seq("-jar", "target/scala-2.12/Benchmark Suite Runner-assembly-0.1.0-SNAPSHOT.jar"));
+def getExperimentRunner(prefix: String, results: Path) = Runner(
+	"RUN",
+	"Experiment Runner", 
+	relp("runner"), 
+	javaBin, 
+	Seq("-jar", 
+		"target/scala-2.12/Benchmark Suite Runner-assembly-0.1.0-SNAPSHOT.jar",
+		"--server", runnerAddr,
+		"--prefix", prefix,
+		"--output-folder", results.toString
+	)
+);
 
 val runners: List[Runner] = List(
-	Runner("Akka", relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", runnerAddr)),
-	Runner("Kompics Rust", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq(runnerAddr))
+	Runner("AKKA", "Akka", relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", runnerAddr)),
+	Runner("KRUST","Kompics Rust", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq(runnerAddr))
 );
 
 val logs = pwd / 'logs;
+val results = pwd / 'results;
 
 @main
 def main(): Unit = {
 	val totalStart = System.currentTimeMillis();
-	val logdir = logs / s"run-${totalStart}";
+	val runId = s"run-${totalStart}";
+	val logdir = logs / runId;
 	mkdir! logdir;
+	val resultsdir = results / runId;
+	mkdir! resultsdir;
 	val nRunners = runners.size;
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
 		try {
+			val experimentRunner = getExperimentRunner(r.symbol, resultsdir);
 			println(s"Starting run [${i+1}/$nRunners]: ${r.label}");
 			val start = System.currentTimeMillis();
 			val runner = r.run(logdir);

@@ -17,7 +17,8 @@ libraryDependencies ++= Seq(
     "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
     "com.lkroll.common" %% "common-data-tools" % "1.+",
     "ch.qos.logback" % "logback-classic" % "1.2.3",
-    "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0"
+    "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0",
+    "org.rogach" %% "scallop" % "3.1.2"
 )
 
 PB.targets in Compile := Seq(

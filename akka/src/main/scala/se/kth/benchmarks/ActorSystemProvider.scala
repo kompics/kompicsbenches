@@ -5,11 +5,14 @@ import com.typesafe.config.{ Config, ConfigFactory }
 import scala.util.Properties._
 
 object ActorSystemProvider {
-  private val corePoolSize = getNumWorkers("actors.corePoolSize", 4);
-  private val maxPoolSize = getNumWorkers("actors.maxPoolSize", corePoolSize);
-  private val priorityMailboxType = getStringProp("actors.mailboxType", "akka.dispatch.SingleConsumerOnlyUnboundedMailbox");
+  private val corePoolSizeDefault = getNumWorkers("actors.corePoolSize", 4);
+  private val maxPoolSizeDefault = getNumWorkers("actors.maxPoolSize", corePoolSizeDefault);
+  private val priorityMailboxTypeDefault = getStringProp("actors.mailboxType", "akka.dispatch.SingleConsumerOnlyUnboundedMailbox");
 
-  private val customConfigStr = s"""
+  private def customConfig(
+    corePoolSize:        Int    = corePoolSizeDefault,
+    maxPoolSize:         Int    = maxPoolSizeDefault,
+    priorityMailboxType: String = priorityMailboxTypeDefault) = s"""
     akka {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
@@ -35,8 +38,8 @@ object ActorSystemProvider {
       }
     }""";
 
-  private lazy val customConf = ConfigFactory.parseString(customConfigStr);
-  lazy val config = ConfigFactory.load(customConf);
+  private lazy val defaultConf = ConfigFactory.parseString(customConfig());
+  lazy val config = ConfigFactory.load(defaultConf);
 
   private def getNumWorkers(propertyName: String, minNumThreads: Int): Int = {
     val rt: Runtime = java.lang.Runtime.getRuntime
@@ -64,5 +67,10 @@ object ActorSystemProvider {
 
   def newActorSystem(name: String): ActorSystem = {
     ActorSystem(name, config)
+  }
+  def newActorSystem(name: String, threads: Int): ActorSystem = {
+    val confStr = ConfigFactory.parseString(customConfig(corePoolSize = threads, maxPoolSize = threads));
+    val conf = ConfigFactory.load(confStr);
+    ActorSystem(name, conf)
   }
 }

@@ -10,4 +10,8 @@ class Statistics(results: Seq[Double]) {
   lazy val sampleStandardDeviation = Math.sqrt(sampleVariance);
   lazy val standardErrorOfTheMean = sampleStandardDeviation / Math.sqrt(sampleSize);
   lazy val relativeErrorOfTheMean = standardErrorOfTheMean / sampleMean;
+  lazy val symmetricConfidenceInterval95: (Double, Double) = {
+    val cidist = 1.96 * standardErrorOfTheMean;
+    (sampleMean - cidist, sampleMean + cidist)
+  }
 }

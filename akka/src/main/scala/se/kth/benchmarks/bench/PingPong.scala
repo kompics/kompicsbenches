@@ -18,7 +18,7 @@ class PingPong extends Benchmark {
 
   override def setup(c: Conf): Unit = {
     this.num = c.numberOfMessages;
-    system = ActorSystemProvider.newActorSystem("pingpong");
+    system = ActorSystemProvider.newActorSystem(name = "pingpong", threads = 2);
   }
   override def prepareIteration(): Unit = {
     assert(system != null);
