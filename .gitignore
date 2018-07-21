@@ -66,3 +66,8 @@ bin/
 .classpath
 .idea
 etarget/
+
+# Proto Build Products
+kompics_rust/src/kompics_benchmark/benchmarks.rs
+kompics_rust/src/kompics_benchmark/messages.rs
+kompics_rust/src/kompics_benchmark/benchmarks_grpc.rs
