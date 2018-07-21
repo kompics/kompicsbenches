@@ -12,9 +12,21 @@ case class Builder(label: String, env: Path, exec: Path, args: Seq[Shellable], c
 def relps(s: String): String = relp(s).toString;
 def relp(s: String): Path = (pwd / RelPath(s));
 
+def binp(s: Symbol): Path = {
+	val path = sys.env("PATH");
+	val paths = path.split(":");
+	paths.foreach { p =>
+		val bin = Path(p) / s;
+		if (exists! bin) {
+			return bin
+		}
+	}
+	throw new RuntimeException(s"No binary found for $s in path:\n$path");
+}
+
 //val sbt = root / 'usr / 'local / 'bin / 'sbt;
-val sbt = root / 'usr / 'bin / 'sbt;
-val cargo = root / 'home / 'sario / ".cargo" / 'bin / 'cargo;
+val sbt = binp('sbt); //root / 'usr / 'bin / 'sbt;
+val cargo = binp('cargo); //root / 'home / 'sario / ".cargo" / 'bin / 'cargo;
 
 val builders: List[Builder] = List(
 	Builder("Experiment Runner", relp("runner"), sbt, Seq("assembly"), Seq("clean")),

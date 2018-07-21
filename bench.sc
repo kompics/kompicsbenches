@@ -7,7 +7,7 @@ import scala.collection.JavaConverters._
 import java.lang.{Process, ProcessBuilder}
 import java.io.{PrintWriter, OutputStream, File, FileWriter}
 import $file.build
-import build.{relps, relp, format}
+import build.{relps, relp, binp, format}
 
 case class Runner(label: String, env: Path, exec: Path, args: Seq[Shellable]) {
 	def run(logFolder: Path): Process = {
@@ -25,7 +25,7 @@ case class Runner(label: String, env: Path, exec: Path, args: Seq[Shellable]) {
 
 val runnerAddr = "127.0.0.1:45678";
 
-val javaBin = root / 'usr / 'bin / 'java;
+val javaBin = binp('java);
 
 val experimentRunner = Runner("Experiment Runner", relp("runner"), javaBin, Seq("-jar", "target/scala-2.12/Benchmark Suite Runner-assembly-0.1.0-SNAPSHOT.jar"));
 

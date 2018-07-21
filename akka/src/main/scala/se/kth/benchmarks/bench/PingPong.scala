@@ -1,6 +1,6 @@
 package se.kth.benchmarks.bench
 
-import se.kth.benchmarks.Benchmark
+import se.kth.benchmarks.{ Benchmark, ActorSystemProvider }
 import kompics.benchmarks.benchmarks.PingPongRequest
 import akka.actor.{ ActorSystem, Actor, ActorRef, Props, PoisonPill }
 import scala.concurrent.Await
@@ -18,7 +18,7 @@ class PingPong extends Benchmark {
 
   override def setup(c: Conf): Unit = {
     this.num = c.numberOfMessages;
-    system = ActorSystem("pingpong");
+    system = ActorSystemProvider.newActorSystem("pingpong");
   }
   override def prepareIteration(): Unit = {
     assert(system != null);
