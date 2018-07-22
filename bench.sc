@@ -42,7 +42,8 @@ def getExperimentRunner(prefix: String, results: Path) = Runner(
 
 val runners: List[Runner] = List(
 	Runner("AKKA", "Akka", relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", runnerAddr)),
-	Runner("KRUST","Kompics Rust", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq(runnerAddr))
+	Runner("KRUSTAC","Kompics Rust Actor", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", runnerAddr)),
+	Runner("KRUSTCO","Kompics Rust Component", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", runnerAddr))
 );
 
 val logs = pwd / 'logs;

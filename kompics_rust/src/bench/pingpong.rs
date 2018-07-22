@@ -55,8 +55,6 @@ pub mod actor_pingpong {
                         let pinger =
                             system.create(|| Pinger::with(num, latch.clone(), ponger.actor_ref()));
 
-                        system.start(&ponger);
-                        system.start(&pinger);
                         let ponger_f = system.start_notify(&ponger);
                         let pinger_f = system.start_notify(&pinger);
 
@@ -200,7 +198,7 @@ pub mod actor_pingpong {
     }
 }
 
-mod component_pingpong {
+pub mod component_pingpong {
     use super::*;
 
     struct PingPongPort;
@@ -208,5 +206,172 @@ mod component_pingpong {
     impl Port for PingPongPort {
         type Indication = Pong;
         type Request = Ping;
+    }
+
+    pub struct PingPong {
+        num: Option<u64>,
+        system: Option<KompicsSystem>,
+        pinger: Option<Arc<Component<Pinger>>>,
+        ponger: Option<Arc<Component<Ponger>>>,
+        latch: Option<Arc<CountdownEvent>>,
+    }
+
+    impl PingPong {
+        pub fn new() -> PingPong {
+            PingPong {
+                num: None,
+                system: None,
+                pinger: None,
+                ponger: None,
+                latch: None,
+            }
+        }
+    }
+
+    impl Benchmark for PingPong {
+        type Conf = benchmarks::PingPongRequest;
+
+        fn setup(&mut self, c: &Self::Conf) -> () {
+            self.num = Some(c.number_of_messages);
+            let mut conf = KompicsConfig::new();
+            conf.label("pingpong".to_string());
+            conf.threads(2);
+            let system = KompicsSystem::new(conf);
+            self.system = Some(system);
+        }
+
+        fn prepare_iteration(&mut self) -> () {
+            match self.num {
+                Some(num) => match self.system {
+                    Some(ref system) => {
+                        let ponger = system.create(Ponger::new);
+                        let latch = Arc::new(CountdownEvent::new(1));
+                        let pinger = system.create(|| Pinger::with(num, latch.clone()));
+
+                        on_dual_definition(&pinger, &ponger, |pinger_def, ponger_def| {
+                            biconnect(&mut ponger_def.ppp, &mut pinger_def.ppp);
+                        });
+
+                        let ponger_f = system.start_notify(&ponger);
+
+                        ponger_f
+                            .await_timeout(Duration::from_millis(1000))
+                            .expect("Ponger never started!");
+
+                        self.ponger = Some(ponger);
+                        self.pinger = Some(pinger);
+                        self.latch = Some(latch);
+                    }
+                    None => unimplemented!(),
+                },
+                None => unimplemented!(),
+            }
+        }
+
+        fn run_iteration(&mut self) -> () {
+            match self.system {
+                Some(ref system) => match self.pinger {
+                    Some(ref pinger) => {
+                        let latch = self.latch.take().unwrap();
+
+                        system.start(pinger);
+
+                        latch.wait();
+                    }
+                    None => unimplemented!(),
+                },
+                None => unimplemented!(),
+            }
+        }
+
+        fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
+            let system = self.system.take().unwrap();
+            let pinger = self.pinger.take().unwrap();
+            let f = system.kill_notify(pinger);
+
+            f.await_timeout(Duration::from_millis(1000))
+                .expect("Pinger never died!");
+
+            let ponger = self.ponger.take().unwrap();
+            let f = system.kill_notify(ponger);
+
+            f.await_timeout(Duration::from_millis(1000))
+                .expect("Ponger never died!");
+
+            if last_iteration {
+                system
+                    .shutdown()
+                    .expect("Kompics didn't shut down properly");
+                self.num = None;
+            } else {
+                self.system = Some(system);
+            }
+        }
+    }
+
+    #[derive(ComponentDefinition, Actor)]
+    struct Pinger {
+        ctx: ComponentContext<Pinger>,
+        ppp: RequiredPort<PingPongPort, Pinger>,
+        latch: Arc<CountdownEvent>,
+        count_down: u64,
+    }
+
+    impl Pinger {
+        fn with(count: u64, latch: Arc<CountdownEvent>) -> Pinger {
+            Pinger {
+                ctx: ComponentContext::new(),
+                ppp: RequiredPort::new(),
+                latch,
+                count_down: count,
+            }
+        }
+    }
+
+    impl Provide<ControlPort> for Pinger {
+        fn handle(&mut self, event: ControlEvent) -> () {
+            match event {
+                ControlEvent::Start => self.ppp.trigger(Ping),
+                _ => (), // ignore
+            }
+        }
+    }
+
+    impl Require<PingPongPort> for Pinger {
+        fn handle(&mut self, _event: Pong) -> () {
+            if self.count_down > 0 {
+                self.count_down -= 1;
+                self.ppp.trigger(Ping);
+            } else {
+                let _ = self.latch.decrement();
+            }
+        }
+    }
+
+    #[derive(ComponentDefinition, Actor)]
+    struct Ponger {
+        ctx: ComponentContext<Ponger>,
+        ppp: ProvidedPort<PingPongPort, Ponger>,
+    }
+
+    impl Ponger {
+        fn new() -> Ponger {
+            Ponger {
+                ctx: ComponentContext::new(),
+                ppp: ProvidedPort::new(),
+            }
+        }
+    }
+
+    impl Provide<ControlPort> for Ponger {
+        fn handle(&mut self, _event: ControlEvent) -> () {
+            // ignore
+        }
+    }
+
+    impl Provide<PingPongPort> for Ponger {
+        fn handle(&mut self, _event: Ping) -> () {
+            self.ppp.trigger(Pong);
+        }
     }
 }

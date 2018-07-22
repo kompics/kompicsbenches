@@ -87,6 +87,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.pingPong(request)
     },
     space = 1l.mio to 10l.mio by 1l.mio);
+  //space = 10l.k to 100l.k by 10l.k);
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
 }
