@@ -29,8 +29,10 @@ val sbt = binp('sbt); //root / 'usr / 'bin / 'sbt;
 val cargo = binp('cargo); //root / 'home / 'sario / ".cargo" / 'bin / 'cargo;
 
 val builders: List[Builder] = List(
+	Builder("Shared Library Scala", relp("shared_scala"), sbt, Seq("publishLocal"), Seq("clean")),
 	Builder("Experiment Runner", relp("runner"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Akka", relp("akka"), sbt, Seq("assembly"), Seq("clean")),
+	Builder("Kompics Scala", relp("kompics_scala"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Kompics Rust", relp("kompics_rust"), cargo, Seq("build", "--release"), Seq("clean"))
 );
 

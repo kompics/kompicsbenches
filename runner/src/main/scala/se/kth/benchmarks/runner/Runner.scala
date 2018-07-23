@@ -1,35 +1,44 @@
-package se.kth.benchmarks
+package se.kth.benchmarks.runner
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import scala.concurrent.{ Future, ExecutionContext, Await }
 import scala.concurrent.duration.Duration
 import scala.util.{ Try, Success, Failure }
+import se.kth.benchmarks.Statistics;
+
 import com.lkroll.common.macros.Macros
-import com.typesafe.scalalogging.LazyLogging
+import com.typesafe.scalalogging.{ LazyLogging, StrictLogging }
 import java.io.{ File, PrintWriter, FileWriter }
 
-class Runner(prefix: String, outputFolder: File, stub: Runner.Stub) extends LazyLogging {
+class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
   import TestResultMessage.SealedValue;
 
-  val (summarySink: DataSink, fullSink: DataSink) = {
-    if (!outputFolder.exists()) {
-      outputFolder.mkdirs();
+  val prefix = conf.prefix();
+
+  val sinks: List[DataSink] = {
+    if (conf.console()) {
+      List(new ConsoleSink(prefix))
+    } else {
+      val outputFolder = conf.outputFolder();
+      if (!outputFolder.exists()) {
+        outputFolder.mkdirs();
+      }
+      val outputPath = outputFolder.toPath();
+      val summaryPath = outputPath.resolve("summary");
+      val fullPath = outputPath.resolve("raw");
+      val summaryFolder = summaryPath.toFile();
+      if (!summaryFolder.exists()) {
+        summaryFolder.mkdirs();
+      }
+      val summary = new SummarySink(prefix, summaryFolder);
+      val fullFolder = fullPath.toFile();
+      if (!fullFolder.exists()) {
+        fullFolder.mkdirs();
+      }
+      val full = new FullSink(prefix, fullFolder)
+      List(summary, full)
     }
-    val outputPath = outputFolder.toPath();
-    val summaryPath = outputPath.resolve("summary");
-    val fullPath = outputPath.resolve("raw");
-    val summaryFolder = summaryPath.toFile();
-    if (!summaryFolder.exists()) {
-      summaryFolder.mkdirs();
-    }
-    val summary = new SummarySink(prefix, summaryFolder);
-    val fullFolder = fullPath.toFile();
-    if (!fullFolder.exists()) {
-      fullFolder.mkdirs();
-    }
-    val full = new FullSink(prefix, fullFolder)
-    (summary, full)
   }
 
   def runAll(): Unit = {
@@ -49,8 +58,7 @@ class Runner(prefix: String, outputFolder: File, stub: Runner.Stub) extends Lazy
             case SealedValue.NotImplemented(_) => logger.info(s"Benchmark ${b.name} is not implemented.")
             case SealedValue.Success(TestSuccess(nRuns, data)) => {
               logger.info(s"Benchmark ${b.name} finished successfully with ${nRuns} runs.");
-              summarySink.sink(b.symbol, p, data);
-              fullSink.sink(b.symbol, p, data);
+              sinks.foreach(_.sink(b.symbol, p, data));
             }
           }
           logger.info(s"Benchmark ${b.name} finished successfully.");
@@ -142,5 +150,12 @@ class FullSink(prefix: String, rootFolder: File) extends DataSink with LazyLoggi
       logger.error(s"Could not log results for run ${prefix}-${bench} (file could not be created)!");
       logger.info(s"Result were ${data.mkString(",")}");
     }
+  }
+}
+
+class ConsoleSink(prefix: String) extends DataSink with StrictLogging {
+  override def sink(bench: String, params: ParameterDescription, data: Seq[Double]): Unit = {
+    val stats = new Statistics(data);
+    logger.info(s"Stats:${stats.render("ms")}");
   }
 }

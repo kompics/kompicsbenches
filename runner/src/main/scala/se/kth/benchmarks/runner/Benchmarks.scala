@@ -1,4 +1,4 @@
-package se.kth.benchmarks
+package se.kth.benchmarks.runner
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._

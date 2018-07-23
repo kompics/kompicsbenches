@@ -6,18 +6,20 @@ import scala.concurrent.{ ExecutionContext, Future }
 import scala.concurrent.duration._
 import scala.util.{ Try, Success, Failure }
 import io.grpc.{ Server, ServerBuilder }
+
 import java.util.logging.Logger
 import java.util.concurrent.Executors
 
-class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext) { self =>
+class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext, runner: BenchmarkRunnerGrpc.BenchmarkRunner) { self =>
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
-  implicit val futurePool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
   private[this] var server: Server = null;
 
   private[benchmarks] def start(): Unit = {
     server = ServerBuilder.forPort(port).addService(
-      BenchmarkRunnerGrpc.bindService(new BenchmarkRunner, serverPool)).build.start;
+      BenchmarkRunnerGrpc.bindService(runner, serverPool)).
+      build.start;
+
     BenchmarkRunnerServer.logger.info("Server started, listening on " + port)
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC server since JVM is shutting down")
@@ -38,22 +40,18 @@ class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext) { sel
     }
   }
 
-  private class BenchmarkRunner extends BenchmarkRunnerGrpc.BenchmarkRunner {
-    override def pingPong(request: PingPongRequest): Future[TestResultMessage] = {
-      Future {
-        val ppb = new bench.PingPong;
-        val res = BenchmarkRunner.run(ppb)(request);
-        val msg = BenchmarkRunner.resultToTestResult(res);
-        msg
-      }
-    }
-
-  }
-
 }
 
 object BenchmarkRunnerServer {
-  private[benchmarks] val logger = Logger.getLogger(classOf[BenchmarkRunnerServer].getName)
+  private[benchmarks] val logger = Logger.getLogger(classOf[BenchmarkRunnerServer].getName);
+
+  val DEFAULT_PORT = 45678;
+
+  def runWith(args: Array[String], runner: BenchmarkRunnerGrpc.BenchmarkRunner): Unit = {
+    val server = new BenchmarkRunnerServer(DEFAULT_PORT, ExecutionContext.global, runner);
+    server.start();
+    server.blockUntilShutdown();
+  }
 }
 
 object BenchmarkRunner {
@@ -117,18 +115,7 @@ object BenchmarkRunner {
     }
   }
 
-  def rse(l: List[Double]): Double = {
-    val sampleSize = l.size.toDouble;
-    val sampleMean = l.sum / sampleSize;
-    val sampleVariance = l.foldLeft(0.0) { (acc, sample) =>
-      val err = sample - sampleMean;
-      acc + (err * err)
-    } / (sampleSize - 1.0);
-    val ssd = Math.sqrt(sampleVariance);
-    val sem = ssd / Math.sqrt(sampleSize);
-    val rem = sem / sampleMean;
-    rem
-  }
+  def rse(l: List[Double]): Double = new Statistics(l).relativeErrorOfTheMean;
 }
 
 class BenchmarkException(message: String) extends Exception(message) {

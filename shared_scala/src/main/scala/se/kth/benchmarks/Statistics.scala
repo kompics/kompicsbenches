@@ -14,4 +14,7 @@ class Statistics(results: Seq[Double]) {
     val cidist = 1.96 * standardErrorOfTheMean;
     (sampleMean - cidist, sampleMean + cidist)
   }
+  def render(unit: String): String = {
+    s"#${sampleSize} with mean of ${sampleMean}${unit} and error of ${standardErrorOfTheMean}${unit} (${relativeErrorOfTheMean * 100.0}%)"
+  }
 }

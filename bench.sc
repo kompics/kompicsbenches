@@ -33,7 +33,7 @@ def getExperimentRunner(prefix: String, results: Path) = Runner(
 	relp("runner"), 
 	javaBin, 
 	Seq("-jar", 
-		"target/scala-2.12/Benchmark Suite Runner-assembly-0.1.0-SNAPSHOT.jar",
+		"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
 		"--server", runnerAddr,
 		"--prefix", prefix,
 		"--output-folder", results.toString
@@ -41,7 +41,8 @@ def getExperimentRunner(prefix: String, results: Path) = Runner(
 );
 
 val runners: List[Runner] = List(
-	Runner("AKKA", "Akka", relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", runnerAddr)),
+	Runner("AKKA", "Akka", relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", runnerAddr)),
+	Runner("KOMPSC", "Kompics Scala", relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", runnerAddr)),
 	Runner("KRUSTAC","Kompics Rust Actor", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", runnerAddr)),
 	Runner("KRUSTCO","Kompics Rust Component", relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", runnerAddr))
 );
