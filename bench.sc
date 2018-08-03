@@ -186,11 +186,21 @@ private def endSeparator(label: String, log: File): Unit = {
 	}
 }
 
-private def readNodes(p: Path): List[String] = {
+case class NodeEntry(ip: String, benchDir: String)
+
+private def readNodes(p: Path): List[NodeEntry] = {
 	if (exists! p) {
 		println(s"Reading nodes from '${p}'");
 		val nodesS = read! p;
-		nodesS.split("\n").filter(_.startsWith("#")).toList
+		val nodeLines = nodesS.split("\n").filterNot(_.contains("#")).toList;
+		nodeLines.map { l => 
+			val ls = l.split("""\s\|\s""");
+			println(s"Got ${ls.mkString}");
+			assert(ls.size == 2);
+			val node = ls(0).trim;
+			val path = ls(1).trim;
+			NodeEntry(node, path)
+		}
 	} else {
 		Console.err.println(s"Could not find nodes config file '${p}'");
 		System.exit(1);
@@ -200,11 +210,11 @@ private def readNodes(p: Path): List[String] = {
 
 val login = HostConfigProvider.fromLogin(PublicKeyLogin("lkroll", "/Users/lkroll/.ssh/id_rsa"));
 
-private def startClient(node: String, bench: String, master: String): Try[Int] = {
+private def startClient(node: NodeEntry, bench: String, master: String): Try[Int] = {
 	println(s"Connecting to ${node}...");
-	val connRes = SSH(node, login) { client =>
+	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"bench.sc client --name $bench --master $master");
+			r <- client.exec(s"cd ${node.benchDir}; bench.sc client --name $bench --master $master");
 			pid <- Try(r.stdOutAsString().toInt)
 		} yield pid
 	};
@@ -212,9 +222,9 @@ private def startClient(node: String, bench: String, master: String): Try[Int] =
 	connRes
 }
 
-private def stopClient(node: String, pid: Int): Try[Unit] = {
+private def stopClient(node: NodeEntry, pid: Int): Try[Unit] = {
 	println(s"Connecting to ${node}...");
-	val connRes = SSH(node, login) { client =>
+	val connRes = SSH(node.ip, login) { client =>
 		for {
 			r <- client.exec(s"kill -5 $pid")
 		} yield ()
