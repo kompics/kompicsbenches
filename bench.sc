@@ -3,53 +3,17 @@
 import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 import scala.concurrent.duration._
-import scala.collection.JavaConverters._
+//import scala.collection.JavaConverters._
 import scala.util.{Try, Success, Failure}
-import java.lang.{Process, ProcessBuilder}
+//import java.lang.{Process, ProcessBuilder}
 import java.io.{PrintWriter, OutputStream, File, FileWriter}
-import $file.build
-import build.{relps, relp, binp, format}
+import $file.build, build.{relps, relp, binp, format}
+import $file.benchmarks, benchmarks._
 import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, HostConfigProvider, PublicKeyLogin}
 //import $ivy.`ch.qos.logback:logback-classic:1.1.7`
 
-type AddressArg = String;
-type LocalRunner = (AddressArg) => Runner;
-type RemoteRunner = (AddressArg, AddressArg) => Runner;
-type ClientRunner = (AddressArg, AddressArg, AddressArg) => Runner;
-
-case class BenchmarkImpl(symbol: String, label: String, local: LocalRunner, remote: RemoteRunner, client: ClientRunner) {
-	def localRunner(benchRunnerAddr: AddressArg): BenchmarkRunner = 
-		BenchmarkRunner(info, local(benchRunnerAddr));
-	def remoteRunner(benchRunnerAddr: AddressArg, benchMasterAddr: AddressArg): BenchmarkRunner = 
-		BenchmarkRunner(info, remote(benchRunnerAddr, benchMasterAddr));
-	def clientRunner(benchRunnerAddr: AddressArg, benchMasterAddr: AddressArg, benchClientAddr: AddressArg): BenchmarkRunner = 
-		BenchmarkRunner(info, client(benchRunnerAddr, benchMasterAddr, benchClientAddr));
-	def info: BenchmarkInfo = BenchmarkInfo(symbol, label);
-}
-
-case class BenchmarkInfo(symbol: String, label: String)
-
-case class Runner(env: Path, exec: Path, args: Seq[Shellable])
-
-case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
-	def symbol: String = bench.symbol;
-	def label: String = bench.label;
-	def run(logFolder: Path): Process = {
-		val command = (runner.exec.toString +: runner.args.flatMap(_.s)).toList.asJava;
-		val pb = new ProcessBuilder(command);
-		pb.directory(runner.env.toIO);
-		pb.redirectError(ProcessBuilder.Redirect.appendTo(errorLog(logFolder)));
-		pb.redirectOutput(ProcessBuilder.Redirect.appendTo(outputLog(logFolder)));
-		pb.start();
-	}
-	lazy val fileLabel: String = bench.label.toLowerCase().replaceAll(" ", "_");
-	def outputLog(logFolder: Path) = (logFolder / s"${fileLabel}.out").toIO;
-	def errorLog(logFolder: Path) = (logFolder / s"${fileLabel}.error").toIO;
-}
-
 val runnerAddr = "127.0.0.1:45678";
-
-val javaBin = binp('java);
+val masterAddr = "127.0.0.1:45679";
 
 def getExperimentRunner(prefix: String, results: Path) = BenchmarkRunner(
 	bench = BenchmarkInfo(
@@ -66,49 +30,22 @@ def getExperimentRunner(prefix: String, results: Path) = BenchmarkRunner(
 	)
 );
 
-val implementations: Map[String, BenchmarkImpl] = Map(
-	"AKKA" -> BenchmarkImpl(
-		symbol="AKKA", 
-		label="Akka", 
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr)),
-		client = (benchRunnerAddr, benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, benchClientAddr))
-	),
-	"KOMPSC" -> BenchmarkImpl(
-		symbol="KOMPSC", 
-		label="Kompics Scala", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr)),
-		client = (benchRunnerAddr, benchMasterAddr, benchClientAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, benchClientAddr))
-	),
-	"KRUSTAC" -> BenchmarkImpl(
-		symbol="KRUSTAC", 
-		label="Kompics Rust Actor", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr)),
-		client = (benchRunnerAddr, benchMasterAddr, benchClientAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr, benchClientAddr))
-	),
-	"KRUSTCO" -> BenchmarkImpl(
-		symbol="KRUSTCO", 
-		label="Kompics Rust Component", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr)),
-		client = (benchRunnerAddr, benchMasterAddr, benchClientAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr, benchClientAddr))
-	),
-);
-
 val logs = pwd / 'logs;
 val results = pwd / 'results;
 val defaultNodesFile = pwd / "nodes.conf";
 
 @doc("Run a specific benchmark client.")
 @main
-def client(name: String, master: AddressArg): Unit = {
+def client(name: String, master: AddressArg, runId: String, publicIf: String): Unit = {
 	implementations.get(name) match {
-		case Some(i) => {
-			println(s"Found Benchmark ${i.label} for ${name}. Master is at $master");
-			Thread.sleep(100000);
-			println("Finished waiting.");
+		case Some(impl) => {
+			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
+			val logdir = logs / runId;
+			mkdir! logdir;
+			val client = impl.clientRunner(master, s"${publicIf}:45678");
+			client.run(logdir);
+			client.waitFor();
+			Console.err.println("Client shut down!");
 		}
 		case None => {
 			Console.err.println(s"No Benchmark Implementation found for '${name}'"); 
@@ -119,17 +56,41 @@ def client(name: String, master: AddressArg): Unit = {
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
-	val pids = nodes.map(node => (node -> startClient(node, "AKKA", "192.168.251.1:45678")));
-	println(s"Got pids: $pids");
-	pids.foreach {
-		case (node, Success(pid)) => {
-			val r = stopClient(node, pid);
-			println(s"Tried to stop client $node: $r");
+	val masters = implementations.values.filter(_.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val totalStart = System.currentTimeMillis();
+	val runId = s"run-${totalStart}";
+	val logdir = logs / runId;
+	mkdir! logdir;
+	val resultsdir = results / runId;
+	mkdir! resultsdir;
+	val nRunners = runners.size;
+	var errors = 0;
+	masters.zipWithIndex.foreach { case (master, i) =>
+		val experimentRunner = getExperimentRunner(r.symbol, resultsdir);
+		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
+		val start = System.currentTimeMillis();
+		val r = remoteExperiment(experimentRunner, master, runId, logdir, nodes);
+		val end = System.currentTimeMillis();
+		val time = FiniteDuration(end-start, MILLISECONDS);
+		r match {
+			case Success(_) => println(s"Finished ${master.label} in ${format(time)}");
+			case Failure(e) => {
+				errors += 1;
+				println(s"Runner did not finish successfully: ${master.label} (${format(time)})");
+				Console.err.println(e);
+				e.printStackTrace(Console.err);
+			}
 		}
-		case(node, Failure(_)) => Console.err.println(s"Could not stop client $node due to missing pid")
+		endSeparator(r.label, experimentRunner.errorLog(logdir));
+		endSeparator(r.label, experimentRunner.outputLog(logdir));
 	}
+	val totalEnd = System.currentTimeMillis();
+	val totalTime = FiniteDuration(totalEnd-totalStart, MILLISECONDS);
+	println("========");
+	println(s"Finished all runners in ${format(totalTime)}");
+	println(s"There were $errors errors. Logs can be found in ${logdir}");
 }
 
 @doc("Run local benchmarks only.")
@@ -186,6 +147,27 @@ private def endSeparator(label: String, log: File): Unit = {
 	}
 }
 
+private def remoteExperiment(experimentRunner: BenchmarkRunner, master: BenchmarkRunner, runId: String, logDir: Path, nodes: List[NodeEntry]): Try[Unit] = {
+	Try {
+		val runner = master.run(logdir);
+		val pids = nodes.map { node => 
+			val pid = startClient(node, master.symbol, runId, masterAddr);
+			(node -> pid)
+		};
+		println(s"Got pids: $pids");
+		val experimenter = experimentRunner.run(logdir);
+		experimenter.waitFor();
+		runner.destroy();
+		pids.foreach {
+			case (node, Success(pid)) => {
+				val r = stopClient(node, pid);
+				println(s"Tried to stop client $node: $r");
+			}
+			case(node, Failure(_)) => Console.err.println(s"Could not stop client $node due to missing pid")
+		}
+	}
+}
+
 case class NodeEntry(ip: String, benchDir: String)
 
 private def readNodes(p: Path): List[NodeEntry] = {
@@ -210,12 +192,12 @@ private def readNodes(p: Path): List[NodeEntry] = {
 
 val login = HostConfigProvider.fromLogin(PublicKeyLogin("lkroll", "/Users/lkroll/.ssh/id_rsa"));
 
-private def startClient(node: NodeEntry, bench: String, master: String): Try[Int] = {
+private def startClient(node: NodeEntry, bench: String, runId: String, master: String): Try[Int] = {
 	println(s"Connecting to ${node}...");
 	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"cd ${node.benchDir}; bench.sc client --name $bench --master $master");
-			pid <- Try(r.stdOutAsString().toInt)
+			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --run-id $runID --public-if ${node.ip}");
+			pid <- Try(r.stdOutAsString().trim.toInt)
 		} yield pid
 	};
 	println(s"Connection: $connRes");
