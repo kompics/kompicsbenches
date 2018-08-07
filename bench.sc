@@ -15,7 +15,7 @@ import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, Hos
 val runnerAddr = "127.0.0.1:45678";
 val masterAddr = "127.0.0.1:45679";
 
-def getExperimentRunner(prefix: String, results: Path) = BenchmarkRunner(
+def getExperimentRunner(prefix: String, results: Path): BenchmarkRunner = BenchmarkRunner(
 	bench = BenchmarkInfo(
 		"RUN",
 		"Experiment Runner"), 
@@ -42,8 +42,8 @@ def client(name: String, master: AddressArg, runId: String, publicIf: String): U
 			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
 			val logdir = logs / runId;
 			mkdir! logdir;
-			val client = impl.clientRunner(master, s"${publicIf}:45678");
-			client.run(logdir);
+			val clientRunner = impl.clientRunner(master, s"${publicIf}:45678");
+			val client = clientRunner.run(logdir);
 			client.waitFor();
 			Console.err.println("Client shut down!");
 		}
@@ -58,17 +58,17 @@ def client(name: String, master: AddressArg, runId: String, publicIf: String): U
 @main
 def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = implementations.values.filter(_.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
-	val nRunners = runners.size;
+	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(r.symbol, resultsdir);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = remoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -83,8 +83,8 @@ def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 				e.printStackTrace(Console.err);
 			}
 		}
-		endSeparator(r.label, experimentRunner.errorLog(logdir));
-		endSeparator(r.label, experimentRunner.outputLog(logdir));
+		endSeparator(master.label, experimentRunner.errorLog(logdir));
+		endSeparator(master.label, experimentRunner.outputLog(logdir));
 	}
 	val totalEnd = System.currentTimeMillis();
 	val totalTime = FiniteDuration(totalEnd-totalStart, MILLISECONDS);
@@ -149,13 +149,13 @@ private def endSeparator(label: String, log: File): Unit = {
 
 private def remoteExperiment(experimentRunner: BenchmarkRunner, master: BenchmarkRunner, runId: String, logDir: Path, nodes: List[NodeEntry]): Try[Unit] = {
 	Try {
-		val runner = master.run(logdir);
+		val runner = master.run(logDir);
 		val pids = nodes.map { node => 
 			val pid = startClient(node, master.symbol, runId, masterAddr);
 			(node -> pid)
 		};
 		println(s"Got pids: $pids");
-		val experimenter = experimentRunner.run(logdir);
+		val experimenter = experimentRunner.run(logDir);
 		experimenter.waitFor();
 		runner.destroy();
 		pids.foreach {
@@ -196,7 +196,7 @@ private def startClient(node: NodeEntry, bench: String, runId: String, master: S
 	println(s"Connecting to ${node}...");
 	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --run-id $runID --public-if ${node.ip}");
+			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --run-id $runId --public-if ${node.ip}");
 			pid <- Try(r.stdOutAsString().trim.toInt)
 		} yield pid
 	};
