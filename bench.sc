@@ -36,7 +36,9 @@ val defaultNodesFile = pwd / "nodes.conf";
 
 @doc("Run a specific benchmark client.")
 @main
-def client(name: String, master: AddressArg, runId: String, publicIf: String): Unit = {
+def client(name: String, master: AddressArg, `run-id`: String, `public-if`: String): Unit = {
+	val runId = `run-id`;
+	val publicIf = `public-if`;
 	implementations.get(name) match {
 		case Some(impl) => {
 			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
