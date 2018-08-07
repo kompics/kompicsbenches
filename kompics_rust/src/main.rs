@@ -56,7 +56,7 @@ fn main() {
         let bench_runner_addr: String = args[2].clone();
         let master_addr: String = args[3].clone();
         let num_clients: usize = args[4].parse().expect("Could not convert arg to unsigned integer number of clients.");
-        println!("Running in client mode with runner={}, master={}, #clients={}", bench_runner_addr, master_addr, num_clients);
+        println!("Running in master mode with runner={}, master={}, #clients={}", bench_runner_addr, master_addr, num_clients);
     } else {
         panic!("Too many args={} provided!", args.len());
     }

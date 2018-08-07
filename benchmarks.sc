@@ -33,7 +33,14 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 		pb.directory(runner.env.toIO);
 		pb.redirectError(ProcessBuilder.Redirect.appendTo(errorLog(logFolder)));
 		pb.redirectOutput(ProcessBuilder.Redirect.appendTo(outputLog(logFolder)));
-		pb.start();
+		val childProcess = pb.start();
+		val closeChildThread = new Thread() {
+		    override def run(): Unit = {
+		        childProcess.destroy();
+		    }
+		};
+		Runtime.getRuntime().addShutdownHook(closeChildThread); 
+		childProcess
 	}
 	lazy val fileLabel: String = bench.label.toLowerCase().replaceAll(" ", "_");
 	def outputLog(logFolder: Path) = (logFolder / s"${fileLabel}.out").toIO;
