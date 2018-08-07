@@ -36,9 +36,9 @@ val defaultNodesFile = pwd / "nodes.conf";
 
 @doc("Run a specific benchmark client.")
 @main
-def client(name: String, master: AddressArg, `run-id`: String, `public-if`: String): Unit = {
-	val runId = `run-id`;
-	val publicIf = `public-if`;
+def client(name: String, master: AddressArg, runid: String, publicif: String): Unit = {
+	val runId = runid;
+	val publicIf = publicif;
 	implementations.get(name) match {
 		case Some(impl) => {
 			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
@@ -198,7 +198,7 @@ private def startClient(node: NodeEntry, bench: String, runId: String, master: S
 	println(s"Connecting to ${node}...");
 	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --run-id $runId --public-if ${node.ip}");
+			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --runid $runId --publicif ${node.ip}");
 			pid <- Try(r.stdOutAsString().trim.toInt)
 		} yield pid
 	};
