@@ -12,7 +12,6 @@ import com.typesafe.scalalogging.{ LazyLogging, StrictLogging }
 import java.io.{ File, PrintWriter, FileWriter }
 
 class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
-  import TestResultMessage.SealedValue;
 
   val prefix = conf.prefix();
 
@@ -52,11 +51,11 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
       val result = Await.ready(f, Duration.Inf).value.get;
       result match {
         case Success(r) => {
-          r.sealedValue match {
-            case SealedValue.Empty             => logger.warn(s"Benchmark ${b.name} invocation was empty.")
-            case SealedValue.Failure(msg)      => logger.warn(s"Benchmark ${b.name} invocation failed: ${msg.reason}")
-            case SealedValue.NotImplemented(_) => logger.info(s"Benchmark ${b.name} is not implemented.")
-            case SealedValue.Success(TestSuccess(nRuns, data)) => {
+          r match {
+            case TestResult.Empty             => logger.warn(s"Benchmark ${b.name} invocation was empty.")
+            case TestFailure(reason)      => logger.warn(s"Benchmark ${b.name} invocation failed: ${reason}")
+            case NotImplemented() => logger.info(s"Benchmark ${b.name} is not implemented.")
+            case TestSuccess(nRuns, data) => {
               logger.info(s"Benchmark ${b.name} finished successfully with ${nRuns} runs.");
               sinks.foreach(_.sink(b.symbol, p, data));
             }

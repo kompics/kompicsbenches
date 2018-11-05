@@ -11,7 +11,7 @@ resolvers += "Kompics Releases" at "http://kompics.sics.se/maven/repository/"
 resolvers += "Kompics Snapshots" at "http://kompics.sics.se/maven/snapshotrepository/"
 
 libraryDependencies ++= Seq(
-	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0",
+	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
 	"ch.qos.logback" % "logback-classic" % "1.2.3",
     "se.sics.kompics" %% "kompics-scala" % "1.0.0"
 )

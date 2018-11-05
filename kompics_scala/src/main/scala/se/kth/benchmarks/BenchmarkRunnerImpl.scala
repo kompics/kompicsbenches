@@ -11,7 +11,7 @@ import java.util.concurrent.Executors
 class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   implicit val futurePool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
-  override def pingPong(request: PingPongRequest): Future[TestResultMessage] = {
+  override def pingPong(request: PingPongRequest): Future[TestResult] = {
     Future {
       val ppb = new bench.PingPong;
       val res = BenchmarkRunner.run(ppb)(request);

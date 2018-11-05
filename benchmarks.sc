@@ -64,18 +64,18 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
 	),
-	"KRUSTAC" -> BenchmarkImpl(
+	"KOMPACTAC" -> BenchmarkImpl(
 		symbol="KRUSTAC", 
-		label="Kompics Rust Actor", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("actor", benchMasterAddr, benchClientAddr))
+		label="Kompact Actor", 
+		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchMasterAddr, benchClientAddr))
 	),
-	"KRUSTCO" -> BenchmarkImpl(
+	"KOMPACTCO" -> BenchmarkImpl(
 		symbol="KRUSTCO", 
-		label="Kompics Rust Component", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics_rust"), relp("kompics_rust/target/release/kompics_rust_benchmarks"), Seq("component", benchMasterAddr, benchClientAddr))
+		label="Kompact Component", 
+		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchMasterAddr, benchClientAddr))
 	),
 );

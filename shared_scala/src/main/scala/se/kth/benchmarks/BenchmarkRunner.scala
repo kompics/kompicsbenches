@@ -103,14 +103,14 @@ object BenchmarkRunner {
     diffMillis
   }
 
-  def resultToTestResult(r: Try[List[Double]]): TestResultMessage = {
+  def resultToTestResult(r: Try[List[Double]]): TestResult = {
     r match {
-      case Success(l) => TestSuccess(l.length, l).asMessage
+      case Success(l) => TestSuccess(l.length, l)
       case Failure(f) => {
         BenchmarkRunnerServer.logger.warning(s"Test Failure: ${f.getMessage}");
         f.printStackTrace();
         val msg = s"${f.getClass.getName}: ${f.getMessage}";
-        TestFailure(msg).asMessage
+        TestFailure(msg)
       }
     }
   }

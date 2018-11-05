@@ -1,6 +1,6 @@
 use super::*;
 
-use kompics::*;
+use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 

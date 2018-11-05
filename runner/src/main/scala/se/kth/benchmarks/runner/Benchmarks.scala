@@ -9,7 +9,7 @@ import com.lkroll.common.macros.Macros
 case class BenchmarkRun[Params](
   name:   String,
   symbol: String,
-  invoke: (Runner.Stub, Params) => Future[TestResultMessage]);
+  invoke: (Runner.Stub, Params) => Future[TestResult]);
 
 trait ParameterDescription {
   def toCSV: String;
@@ -51,21 +51,21 @@ case class ParametersSparse1D[T: ParameterDescriptor](params: Seq[T]) extends Pa
 trait Benchmark {
   def name: String;
   def symbol: String;
-  def withStub(stub: Runner.Stub)(f: (Future[TestResultMessage], ParameterDescription) => Unit): Unit;
+  def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription) => Unit): Unit;
 }
 object Benchmark {
   def apply[Params](b: BenchmarkRun[Params], space: ParameterSpace[Params]): Benchmark = BenchmarkWithSpace(b, space);
   def apply[Params](
     name:   String,
     symbol: String,
-    invoke: (Runner.Stub, Params) => Future[TestResultMessage],
+    invoke: (Runner.Stub, Params) => Future[TestResult],
     space:  ParameterSpace[Params]): Benchmark = BenchmarkWithSpace(BenchmarkRun(name, symbol, invoke), space);
 }
 case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params], space: ParameterSpace[Params]) extends Benchmark {
   override def name: String = b.name;
   override def symbol: String = b.symbol;
   def run = b.invoke;
-  override def withStub(stub: Runner.Stub)(f: (Future[TestResultMessage], ParameterDescription) => Unit): Unit = {
+  override def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription) => Unit): Unit = {
     space.foreach(p => f(run(stub, p), space.describe(p)))
   }
 }
@@ -86,8 +86,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       val request = PingPongRequest(numberOfMessages = n);
       stub.pingPong(request)
     },
-    space = 1l.mio to 10l.mio by 1l.mio);
-  //space = 10l.k to 100l.k by 10l.k);
+    //space = 1l.mio to 10l.mio by 1l.mio);
+  space = 10l.k to 100l.k by 10l.k);
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
 }
