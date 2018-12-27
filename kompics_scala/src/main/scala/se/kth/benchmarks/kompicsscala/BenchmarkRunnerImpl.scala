@@ -1,5 +1,6 @@
-package se.kth.benchmarks
+package se.kth.benchmarks.kompicsscala
 
+import se.kth.benchmarks.BenchmarkRunner
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import scala.concurrent.{ ExecutionContext, Future }
@@ -13,10 +14,13 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
 
   override def pingPong(request: PingPongRequest): Future[TestResult] = {
     Future {
-      val ppb = new bench.PingPong;
-      val res = BenchmarkRunner.run(ppb)(request);
+      val res = BenchmarkRunner.run(bench.PingPong)(request);
       val msg = BenchmarkRunner.resultToTestResult(res);
       msg
     }
+  }
+
+  override def netPingPong(request: PingPongRequest): Future[TestResult] = {
+    Future.successful(NotImplemented()) // TODO implement
   }
 }

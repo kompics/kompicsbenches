@@ -180,9 +180,10 @@ impl ::protobuf::reflect::ProtobufValue for PingPongRequest {
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x10benchmarks.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\"\
     ?\n\x0fPingPongRequest\x12,\n\x12number_of_messages\x18\x01\x20\x01(\x04\
-    R\x10numberOfMessages2d\n\x0fBenchmarkRunner\x12Q\n\x08PingPong\x12#.kom\
-    pics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\"\
-    \0b\x06proto3\
+    R\x10numberOfMessages2\xb6\x01\n\x0fBenchmarkRunner\x12O\n\x08PingPong\
+    \x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.Test\
+    Result\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
+    \x1e.kompics.benchmarks.TestResultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

@@ -13,7 +13,10 @@ PB.protoSources in Compile := Seq(baseDirectory.value / "../proto/")
 libraryDependencies ++= Seq(
 	//"com.thesamet.scalapb" %% "compilerplugin" % "0.7.4",
     "io.grpc" % "grpc-netty" % scalapb.compiler.Version.grpcJavaVersion,
-    "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
+    "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+    "com.typesafe.akka" %% "akka-actor" % "2.5.14",
+    "com.typesafe.akka" %% "akka-remote" % "2.5.14",
+    "com.typesafe.scala-logging" %% "scala-logging" % "3.+"
 )
 
 PB.targets in Compile := Seq(

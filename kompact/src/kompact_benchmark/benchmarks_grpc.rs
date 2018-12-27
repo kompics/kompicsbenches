@@ -23,6 +23,8 @@
 
 pub trait BenchmarkRunner {
     fn ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
+
+    fn net_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 }
 
 // client
@@ -30,6 +32,7 @@ pub trait BenchmarkRunner {
 pub struct BenchmarkRunnerClient {
     grpc_client: ::grpc::Client,
     method_PingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
+    method_NetPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
 }
 
 impl BenchmarkRunnerClient {
@@ -38,6 +41,12 @@ impl BenchmarkRunnerClient {
             grpc_client: grpc_client,
             method_PingPong: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
                 name: "/kompics.benchmarks.BenchmarkRunner/PingPong".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
+            method_NetPingPong: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/NetPingPong".to_string(),
                 streaming: ::grpc::rt::GrpcStreaming::Unary,
                 req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
                 resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
@@ -61,6 +70,10 @@ impl BenchmarkRunner for BenchmarkRunnerClient {
     fn ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
         self.grpc_client.call_unary(o, p, self.method_PingPong.clone())
     }
+
+    fn net_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
+        self.grpc_client.call_unary(o, p, self.method_NetPingPong.clone())
+    }
 }
 
 // server
@@ -83,6 +96,18 @@ impl BenchmarkRunnerServer {
                     {
                         let handler_copy = handler_arc.clone();
                         ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.ping_pong(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/NetPingPong".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.net_ping_pong(o, p))
                     },
                 ),
             ],

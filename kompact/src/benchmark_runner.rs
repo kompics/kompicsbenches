@@ -24,6 +24,13 @@ where
     f
 }
 
+fn not_implemented() -> messages::TestResult {
+    let ni = messages::NotImplemented::new();
+    let mut rm = messages::TestResult::new();
+    rm.set_not_implemented(ni);
+    rm
+}
+
 pub struct BenchmarkRunnerActorImpl;
 
 impl BenchmarkRunnerActorImpl {
@@ -46,6 +53,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
             benchmark::run(&mut b, &p).into()
         });
         grpc::SingleResponse::no_metadata(f)
+    }
+
+    fn net_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::PingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
     }
 }
 
@@ -71,5 +86,13 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
             benchmark::run(&mut b, &p).into()
         });
         grpc::SingleResponse::no_metadata(f)
+    }
+
+    fn net_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::PingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
     }
 }

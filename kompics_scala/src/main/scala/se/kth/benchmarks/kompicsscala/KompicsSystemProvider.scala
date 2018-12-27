@@ -1,5 +1,6 @@
-package se.kth.benchmarks
+package se.kth.benchmarks.kompicsscala
 
+import se.kth.benchmarks.BenchmarkException
 import se.sics.kompics.{ Start, Started, Kill, Killed, Kompics, KompicsEvent, Component, Init => JInit, PortType, Channel }
 import se.sics.kompics.sl._
 import scala.concurrent.{ Future, Promise, Await }

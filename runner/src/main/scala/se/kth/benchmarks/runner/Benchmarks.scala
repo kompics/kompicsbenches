@@ -87,7 +87,17 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.pingPong(request)
     },
     //space = 1l.mio to 10l.mio by 1l.mio);
-  space = 10l.k to 100l.k by 10l.k);
+    space = 10l.k to 100l.k by 10l.k);
+
+  val netpingpong = Benchmark(
+    name = "Net Ping Pong",
+    symbol = "NETPINGPONG",
+    invoke = (stub, n: Long) => {
+      val request = PingPongRequest(numberOfMessages = n);
+      stub.pingPong(request)
+    },
+    //space = 1l.mio to 10l.mio by 1l.mio);
+    space = 1l.k to 10l.k by 1l.k);
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
 }

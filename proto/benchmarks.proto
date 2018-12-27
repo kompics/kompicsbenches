@@ -4,7 +4,8 @@ package kompics.benchmarks;
 import "messages.proto";
 
 service BenchmarkRunner {
-	rpc PingPong (PingPongRequest) returns (TestResult) {}
+	rpc PingPong (PingPongRequest) returns (TestResult);
+	rpc NetPingPong (PingPongRequest) returns (TestResult);
 }
 
 message PingPongRequest {
