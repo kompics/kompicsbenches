@@ -77,7 +77,7 @@ class BenchmarkClient(
   private[this] var server: Server = null;
 
   private[benchmarks] def start(): Unit = {
-    server = ServerBuilder.forPort(-1).addService(
+    server = ServerBuilder.forPort(0).addService(
       BenchmarkClientGrpc.bindService(ClientService, serverPool))
       .build
       .start;

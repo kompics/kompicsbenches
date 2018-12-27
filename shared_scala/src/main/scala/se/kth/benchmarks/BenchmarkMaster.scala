@@ -8,9 +8,12 @@ import scala.concurrent.duration._
 import scala.util.{ Try, Success, Failure }
 import io.grpc.{ Server, ServerBuilder, ManagedChannelBuilder }
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentLinkedQueue
 import com.typesafe.scalalogging.StrictLogging
 
 case class ClientEntry(address: String, port: Int, stub: BenchmarkClientGrpc.BenchmarkClient)
+
+case class BenchRequest(f: () => Future[TestResult])
 
 class BenchmarkMaster(
   val runnerPort: Int,
@@ -25,10 +28,12 @@ class BenchmarkMaster(
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
   private var clients = List.empty[ClientEntry];
-  private var resultPromiseO: Option[Promise[TestResult]] = None;
+  //private var resultPromiseO: Option[Promise[TestResult]] = None;
 
   // Atomic
   private val state: State = State.init();
+
+  private val benchQueue = new ConcurrentLinkedQueue[BenchRequest]();
 
   private object MasterService extends BenchmarkMasterGrpc.BenchmarkMaster {
 
@@ -44,17 +49,39 @@ class BenchmarkMaster(
 
   private def goReady(): Unit = {
     state cas (State.INIT -> State.READY);
-    // TODO deal with outstanding benchmark requests
+    def emptyQ(): Unit = {
+      val br = benchQueue.poll();
+      if (br != null) {
+        val f = br.f();
+        f.onComplete(_ => emptyQ())
+      }
+    };
+    emptyQ();
   }
 
   private object RunnerService extends BenchmarkRunnerGrpc.BenchmarkRunner {
-    def pingPong(request: PingPongRequest): Future[TestResult] = {
+    def pingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
       val b = benchmarks.pingpong;
       runBenchmark(b, request)
-    }
-    def netPingPong(request: PingPongRequest): Future[TestResult] = {
+    };
+    def netPingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
       val b = benchmarks.netpingpong;
       runBenchmark(b, request)
+    };
+
+    private def queueIfNotReady(f: => Future[TestResult]): Future[TestResult] = {
+      if (state() == State.READY) {
+        f
+      } else {
+        val ff = f _;
+        val p = Promise[TestResult]();
+        val func = () => {
+          p.completeWith(ff());
+          p.future
+        };
+        benchQueue.offer(BenchRequest(func));
+        p.future
+      }
     }
   }
 
@@ -121,7 +148,7 @@ class BenchmarkMaster(
       case Success(masterConf) => {
         state cas (State.READY -> State.SETUP);
         val rp = Promise.apply[TestResult];
-        resultPromiseO = Some(rp);
+        //resultPromiseO = Some(rp);
 
         logger.info(s"Starting distributed test ${b.getClass.getCanonicalName}");
 
