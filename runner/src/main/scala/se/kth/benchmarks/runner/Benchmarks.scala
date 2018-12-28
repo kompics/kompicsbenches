@@ -94,7 +94,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     symbol = "NETPINGPONG",
     invoke = (stub, n: Long) => {
       val request = PingPongRequest(numberOfMessages = n);
-      stub.pingPong(request)
+      stub.netPingPong(request)
     },
     //space = 1l.mio to 10l.mio by 1l.mio);
     space = 1l.k to 10l.k by 1l.k);

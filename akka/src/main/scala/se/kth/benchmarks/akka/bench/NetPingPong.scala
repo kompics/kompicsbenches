@@ -63,6 +63,7 @@ object NetPingPong extends DistributedBenchmark {
       system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1);
       ponger = system.actorOf(Props(new Ponger), "ponger");
       val path = ActorSystemProvider.actorPathForRef(ponger, system);
+      println(s"Ponger Path is $path");
       ClientRef(path)
     }
     override def prepareIteration(): Unit = {

@@ -36,7 +36,7 @@ class BenchmarkClient(
       logger.debug(s"Trying to set up $benchClassName.");
       val res = Try {
         val benchC = classLoader.loadClass(benchClassName);
-        val bench = benchC.newInstance().asInstanceOf[DistributedBenchmark];
+        val bench = benchC.getField("MODULE$").get(benchC).asInstanceOf[DistributedBenchmark];
         val activeBench = new ActiveBench(bench);
         state cas (StateType.Ready -> StateType.Running(activeBench));
         val r = activeBench.setup(request);
