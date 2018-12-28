@@ -159,16 +159,20 @@ class BenchmarkMaster(
           val clientSetup = SetupConfig(b.getClass.getCanonicalName, clientConfS);
           val clientDataRLF = Future.sequence(clients.map(_.stub.setup(clientSetup)));
           val clientDataLF = clientDataRLF.flatMap(l => {
+            logger.debug(s"Got ${l.length} setup responses.");
             val lf = l.map(sr => {
               val t = Try {
                 assert(sr.success, sr.data);
-                b.strToClientData(sr.data);
+                val cd = b.strToClientData(sr.data);
+                logger.debug(s"Setup response ${sr.data} deserialised to $cd");
+                cd
               } flatten;
               tryToFuture(t)
             });
             Future.sequence(lf)
           });
           def iteration(clientDataL: List[b.ClientData], nRuns: Int, results: List[Double]): Future[IterationData] = {
+            logger.debug(s"Starting iteration $nRuns");
             if ((nRuns < MAX_RUNS) && (rse(results) > RSE_TARGET)) {
               master.prepareIteration(clientDataL);
               val r = BenchmarkRunner.measure(master.runIteration);
@@ -187,10 +191,12 @@ class BenchmarkMaster(
           };
           clientDataLF.map { clientDataL =>
             state cas (State.SETUP -> State.RUN);
+            logger.debug(s"Going to RUN state and starting first iteration.");
             // run until RSE target is met
             def loop(id: IterationData): Unit = {
               if (id.done) {
                 val tr = resultToTestResult(Success(id.results));
+                logger.debug(s"Finished run.");
                 rp.success(tr)
               } else {
                 val f = iteration(clientDataL, id.nRuns, id.results);

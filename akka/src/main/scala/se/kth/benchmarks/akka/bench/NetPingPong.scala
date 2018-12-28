@@ -29,9 +29,11 @@ object NetPingPong extends DistributedBenchmark {
       ()
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
-      val pongerPath = d.head.actorPath
+      val pongerPath = d.head.actorPath;
+      println(s"Resolving path ${pongerPath}");
       val pongerF = system.actorSelection(pongerPath).resolveOne(5 seconds);
       val ponger = Await.result(pongerF, 5 seconds);
+      println(s"Resolved path to $ponger");
       latch = new CountDownLatch(1);
       pinger = system.actorOf(Props(new Pinger(latch, num, ponger)), "pinger");
     }
@@ -40,6 +42,7 @@ object NetPingPong extends DistributedBenchmark {
       latch.await();
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      println("Cleaning up pinger side");
       if (latch != null) {
         latch = null;
       }
@@ -68,8 +71,10 @@ object NetPingPong extends DistributedBenchmark {
     }
     override def prepareIteration(): Unit = {
       // nothing
+      println("Preparing ponger iteration");
     }
     override def cleanupIteration(lastIteration: Boolean): Unit = {
+      println("Cleaning up ponger side");
       if (lastIteration) {
         val f = system.terminate();
         Await.ready(f, 5.second);
