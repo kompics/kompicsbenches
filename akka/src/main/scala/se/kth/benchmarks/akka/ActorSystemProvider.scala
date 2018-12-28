@@ -137,6 +137,6 @@ object ActorSystemProvider {
 
   def actorPathForRef(ref: ActorRef, system: ActorSystem): String = {
     val addr = ExternalAddress(system).addressForAkka;
-    s"akka.tcp://${addr}/${ref.path}"
+    ref.path.toStringWithAddress(addr)
   }
 }
