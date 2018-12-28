@@ -172,21 +172,31 @@ class BenchmarkMaster(
             Future.sequence(lf)
           });
           def iteration(clientDataL: List[b.ClientData], nRuns: Int, results: List[Double]): Future[IterationData] = {
-            logger.debug(s"Starting iteration $nRuns");
-            if ((nRuns < MAX_RUNS) && (rse(results) > RSE_TARGET)) {
+            val t = Try {
+              logger.debug(s"Preparing iteration $nRuns");
               master.prepareIteration(clientDataL);
+              logger.debug(s"Starting iteration $nRuns");
               val r = BenchmarkRunner.measure(master.runIteration);
-              master.cleanupIteration(false, r);
-              val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(false))));
-              f.map(_ => IterationData(nRuns + 1, r :: results, false))
-            } else {
-              state cas (State.RUN -> State.CLEANUP);
-              master.cleanupIteration(true, results.head);
-              val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
-              f.map(_ => {
-                state cas (State.CLEANUP -> State.FINISHED);
-                IterationData(nRuns, results, true)
-              })
+              logger.debug(s"Finished iteration $nRuns");
+              val incRuns = nRuns + 1;
+              val newResults = r :: results;
+              if ((incRuns < MIN_RUNS) || (incRuns < MAX_RUNS) && (rse(newResults) > RSE_TARGET)) {
+                master.cleanupIteration(false, r);
+                val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(false))));
+                f.map(_ => IterationData(incRuns, newResults, false))
+              } else {
+                state cas (State.RUN -> State.CLEANUP);
+                master.cleanupIteration(true, r);
+                val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
+                f.map(_ => {
+                  state cas (State.CLEANUP -> State.FINISHED);
+                  IterationData(incRuns, newResults, true)
+                })
+              }
+            };
+            t match {
+              case Success(f)  => f
+              case Failure(ex) => Future.failed(ex)
             }
           };
           clientDataLF.map { clientDataL =>
