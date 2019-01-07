@@ -46,8 +46,9 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
   def runOne(b: Benchmark): Unit = {
     logger.info(s"Running ${b.name}");
-    b.withStub(stub) { (f, p) =>
-      logger.info(s"Awaiting run result...");
+    val numRuns = b.requiredRuns;
+    b.withStub(stub) { (f, p, i) =>
+      logger.info(s"Awaiting run result [$i/$numRuns]...");
       val result = Await.ready(f, Duration.Inf).value.get;
       result match {
         case Success(r) => {
@@ -56,14 +57,14 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
             case TestFailure(reason)      => logger.warn(s"Benchmark ${b.name} invocation failed: ${reason}")
             case NotImplemented() => logger.info(s"Benchmark ${b.name} is not implemented.")
             case TestSuccess(nRuns, data) => {
-              logger.info(s"Benchmark ${b.name} finished successfully with ${nRuns} runs.");
+              logger.info(s"Benchmark ${b.name} run [$i/$numRuns] finished successfully with ${nRuns} runs.");
               sinks.foreach(_.sink(b.symbol, p, data));
             }
           }
-          logger.info(s"Benchmark ${b.name} finished successfully.");
+          logger.info(s"Benchmark ${b.name} run [$i/$numRuns] finished.");
         }
         case Failure(e) => {
-          logger.warn(s"Benchmark ${b.name} invocation failed.", e);
+          logger.warn(s"Benchmark ${b.name} run [$i/$numRuns] invocation failed.", e);
         }
       }
     }

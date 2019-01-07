@@ -38,9 +38,13 @@ class BenchmarkMaster(
   private object MasterService extends BenchmarkMasterGrpc.BenchmarkMaster {
 
     override def checkIn(request: ClientInfo): Future[CheckinResponse] = {
+      logger.info(s"Got Check-In from ${request.address}:${request.port}");
       clients ::= clientInfoToEntry(request);
       if (clients.size == waitFor) {
+        logger.info(s"Got all ${clients.size} Check-Ins: Ready!");
         goReady();
+      } else {
+        logger.debug(s"Got ${clients.size}/${waitFor} Check-Ins.");
       }
       Future.successful(CheckinResponse())
     }

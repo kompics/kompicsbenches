@@ -15,7 +15,7 @@ class BenchmarkClient(
   val masterAddress: String,
   val masterPort:    Int) extends StrictLogging { self =>
 
-  import BenchmarkClient.{ State, StateType, ActiveBench };
+  import BenchmarkClient.{ State, StateType, ActiveBench, MAX_ATTEMPTS };
 
   implicit val benchmarkPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
@@ -75,8 +75,10 @@ class BenchmarkClient(
   }
 
   private[this] var server: Server = null;
+  private[this] var checkInAttempts: Int = 0;
 
   private[benchmarks] def start(): Unit = {
+    checkInAttempts += 1;
     server = ServerBuilder.forPort(0).addService(
       BenchmarkClientGrpc.bindService(ClientService, serverPool))
       .build
@@ -98,7 +100,13 @@ class BenchmarkClient(
       }
       case Failure(ex) => {
         logger.error("Check-In failed!", ex);
-        System.exit(1);
+        if (checkInAttempts > MAX_ATTEMPTS) {
+          logger.warn("Giving up on Master and shutting down.");
+          System.exit(1);
+        } else {
+          logger.info("Retrying connection establishment.")
+          this.start();
+        }
       }
     }
   }
@@ -118,6 +126,9 @@ class BenchmarkClient(
 }
 
 object BenchmarkClient {
+
+  val MAX_ATTEMPTS: Int = 5;
+
   def run(address: String, masterAddress: String, masterPort: Int): Unit = {
     val inst = new BenchmarkClient(address, masterAddress, masterPort);
     inst.start();

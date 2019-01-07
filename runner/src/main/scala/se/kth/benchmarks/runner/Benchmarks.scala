@@ -39,19 +39,22 @@ object ParameterDescriptionImplicits extends ParameterDescriptionImplicits;
 
 trait ParameterSpace[Params] {
   def foreach(f: Params => Unit);
+  def size: Long;
   def describe(p: Params): ParameterDescription;
 }
 case class ParametersSparse1D[T: ParameterDescriptor](params: Seq[T]) extends ParameterSpace[T] {
   import ParameterDescriptionImplicits.ParameterDescriptorDescription;
 
   override def foreach(f: T => Unit) = params.foreach(f);
+  override def size: Long = params.size;
   override def describe(p: T): ParameterDescription = p;
 }
 
 trait Benchmark {
   def name: String;
   def symbol: String;
-  def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription) => Unit): Unit;
+  def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit;
+  def requiredRuns: Long;
 }
 object Benchmark {
   def apply[Params](b: BenchmarkRun[Params], space: ParameterSpace[Params]): Benchmark = BenchmarkWithSpace(b, space);
@@ -65,9 +68,14 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params], space: ParameterS
   override def name: String = b.name;
   override def symbol: String = b.symbol;
   def run = b.invoke;
-  override def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription) => Unit): Unit = {
-    space.foreach(p => f(run(stub, p), space.describe(p)))
+  override def withStub(stub: Runner.Stub)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit = {
+    var index = 0l;
+    space.foreach{ p =>
+      index += 1l;
+      f(run(stub, p), space.describe(p), index)
+    }
   }
+  override def requiredRuns: Long = space.size;
 }
 
 object Benchmarks extends ParameterDescriptionImplicits {
@@ -96,8 +104,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       val request = PingPongRequest(numberOfMessages = n);
       stub.netPingPong(request)
     },
-    //space = 1l.mio to 10l.mio by 1l.mio);
-    space = 1l.k to 10l.k by 1l.k);
+    //space = 1l.k to 10l.k by 1l.k,
+    space = 100l to 1l.k by 100l);
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
 }
