@@ -38,13 +38,17 @@ class BenchmarkMaster(
   private object MasterService extends BenchmarkMasterGrpc.BenchmarkMaster {
 
     override def checkIn(request: ClientInfo): Future[CheckinResponse] = {
-      logger.info(s"Got Check-In from ${request.address}:${request.port}");
-      clients ::= clientInfoToEntry(request);
-      if (clients.size == waitFor) {
-        logger.info(s"Got all ${clients.size} Check-Ins: Ready!");
-        goReady();
+      if (state() == State.INIT) {
+        logger.info(s"Got Check-In from ${request.address}:${request.port}");
+        clients ::= clientInfoToEntry(request);
+        if (clients.size == waitFor) {
+          logger.info(s"Got all ${clients.size} Check-Ins: Ready!");
+          goReady();
+        } else {
+          logger.debug(s"Got ${clients.size}/${waitFor} Check-Ins.");
+        }
       } else {
-        logger.debug(s"Got ${clients.size}/${waitFor} Check-Ins.");
+        logger.warn(s"Ignoring late Check-In: $request");
       }
       Future.successful(CheckinResponse())
     }
@@ -74,13 +78,18 @@ class BenchmarkMaster(
     };
 
     private def queueIfNotReady(f: => Future[TestResult]): Future[TestResult] = {
-      if (state() == State.READY) {
+      val handledF = () => try {
         f
+      } catch {
+        case _: scala.NotImplementedError => Future.successful(NotImplemented())
+        case e: Throwable                 => Future.failed(e)
+      };
+      if (state() == State.READY) {
+        handledF()
       } else {
-        val ff = f _;
         val p = Promise[TestResult]();
         val func = () => {
-          p.completeWith(ff());
+          p.completeWith(handledF());
           p.future
         };
         benchQueue.offer(BenchRequest(func));

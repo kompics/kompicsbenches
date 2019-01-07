@@ -20,18 +20,15 @@ class BenchmarkClient(
   implicit val benchmarkPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
-  private val master = {
-    val channel = ManagedChannelBuilder.forAddress(masterAddress, masterPort).usePlaintext().build;
-    val stub = BenchmarkMasterGrpc.stub(channel);
-    stub
-  };
-
   lazy val classLoader = this.getClass.getClassLoader;
 
   private val state: State = State.init();
 
   private object ClientService extends BenchmarkClientGrpc.BenchmarkClient {
     override def setup(request: SetupConfig): Future[SetupResponse] = {
+      if (state() == StateType.CheckingIn) {
+        state := StateType.Ready; // Clearly Check-In succeeded, even if the RPC was faulty
+      }
       val benchClassName = request.label;
       logger.debug(s"Trying to set up $benchClassName.");
       val res = Try {
@@ -91,7 +88,16 @@ class BenchmarkClient(
       self.stop()
       System.err.println("*** server shut down")
     }
-    // perform check in
+    checkin();
+  }
+
+  private[benchmarks] def checkin(): Unit = {
+    val port = server.getPort;
+    val master = {
+      val channel = ManagedChannelBuilder.forAddress(masterAddress, masterPort).usePlaintext().build;
+      val stub = BenchmarkMasterGrpc.stub(channel);
+      stub
+    };
     val f = master.checkIn(ClientInfo(address, port));
     f.onComplete {
       case Success(_) => {
@@ -104,8 +110,9 @@ class BenchmarkClient(
           logger.warn("Giving up on Master and shutting down.");
           System.exit(1);
         } else {
-          logger.info("Retrying connection establishment.")
-          this.start();
+          logger.info("Retrying connection establishment.");
+          Thread.sleep(500);
+          this.checkin();
         }
       }
     }
