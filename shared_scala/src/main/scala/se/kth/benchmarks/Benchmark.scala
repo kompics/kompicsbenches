@@ -45,7 +45,7 @@ trait DistributedBenchmark {
   def clientDataToString(d: ClientData): String;
 }
 
-case class BenchmarkEntry[C, B <: Benchmark](b: B)(implicit ev: C =:= B#Conf)
+//case class BenchmarkEntry[C, B <: Benchmark](b: B)(implicit ev: C =:= B#Conf)
 
 trait BenchmarkFactory {
   import kompics.benchmarks.benchmarks._;

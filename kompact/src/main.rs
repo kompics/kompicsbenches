@@ -1,31 +1,17 @@
-extern crate futures;
-extern crate futures_cpupool;
-extern crate grpc;
-extern crate kompact;
-extern crate protobuf;
-extern crate synchronoise;
-extern crate tls_api;
-extern crate tokio_core;
 #[macro_use]
 extern crate slog;
-extern crate time;
+#[macro_use]
+extern crate benchmark_suite_shared;
 
-use futures::future;
-use futures::future::Future;
-use kompact_benchmark::benchmarks;
-use kompact_benchmark::benchmarks_grpc;
-use kompact_benchmark::messages;
+use benchmark_suite_shared::BenchmarkMain;
+use grpc;
 use std::env;
-use std::thread;
-//use tokio_core::reactor::Core;
 
 mod bench;
-mod benchmark;
 mod benchmark_runner;
-mod kompact_benchmark;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
     let mode: BenchMode = args
         .get(1)
         .map(|s| {
@@ -34,75 +20,30 @@ fn main() {
                 BenchMode::ACTOR
             } else if lows == "component" {
                 BenchMode::COMPONENT
+            } else if lows == "mixed" {
+                BenchMode::MIXED
             } else {
                 panic!("Unkown bench mode {}", lows);
             }
         })
         .expect("No bench mode was provided!");
-    let (server, deploy_mode) = if args.len() <= 3 {
-        // local mode
-        let bench_runner_addr: String = args
-            .get(2)
-            .map(|s| s.clone())
-            .unwrap_or("127.0.0.1:45678".to_string());
 
-        let mut serverb = grpc::ServerBuilder::new_plain();
-        serverb
-            .http
-            .set_addr(bench_runner_addr.clone())
-            .expect(&format!("Could not use address: {}.", bench_runner_addr));
-        match mode {
-            BenchMode::ACTOR => {
-                serverb.add_service(benchmarks_grpc::BenchmarkRunnerServer::new_service_def(
-                    benchmark_runner::BenchmarkRunnerActorImpl::new(),
-                ))
-            }
-            BenchMode::COMPONENT => {
-                serverb.add_service(benchmarks_grpc::BenchmarkRunnerServer::new_service_def(
-                    benchmark_runner::BenchmarkRunnerComponentImpl::new(),
-                ))
-            }
+    args.remove(1);
+    match mode {
+        BenchMode::ACTOR => {
+            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerActorImpl::new(), bench::actor());
         }
-
-        let server = serverb.build().expect("server");
-        (server, "local")
-    } else if args.len() == 4 {
-        // client mode
-        let master_addr: String = args[2].clone();
-        let client_addr: String = args[3].clone();
-        println!(
-            "Running in client mode with master={}, client={}",
-            master_addr, client_addr
-        );
-        unimplemented!();
-    } else if args.len() == 5 {
-        // master mode
-        let bench_runner_addr: String = args[2].clone();
-        let master_addr: String = args[3].clone();
-        let num_clients: usize = args[4]
-            .parse()
-            .expect("Could not convert arg to unsigned integer number of clients.");
-        println!(
-            "Running in master mode with runner={}, master={}, #clients={}",
-            bench_runner_addr, master_addr, num_clients
-        );
-        unimplemented!()
-    } else {
-        panic!("Too many args={} provided!", args.len());
-    };
-
-    println!(
-        "Running in {} mode with runner={}",
-        deploy_mode,
-        server.local_addr()
-    );
-
-    loop {
-        thread::park();
+        BenchMode::COMPONENT => {
+            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerComponentImpl::new(), bench::component());
+        }
+        BenchMode::MIXED => {
+            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerComponentImpl::new(), bench::mixed());
+        }
     }
 }
 
 enum BenchMode {
     ACTOR,
     COMPONENT,
+    MIXED,
 }

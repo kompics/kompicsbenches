@@ -1,0 +1,18 @@
+[package]
+name = "benchmark_suite_shared"
+version = "1.0.0"
+authors = ["Lars Kroll <lkroll@kth.se>"]
+edition = "2018"
+
+[dependencies]
+futures         = "0.1"
+protobuf        = "2"
+grpc 			= "0.5"
+tls-api 		= "0.1"
+slog 			= "2.4"
+slog-term 		= "2.4"
+time 			= "0.1"
+crossbeam		= "0.6"
+
+[build-dependencies]
+protoc-rust-grpc = "0.5.0"

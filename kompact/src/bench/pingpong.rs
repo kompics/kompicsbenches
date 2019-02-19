@@ -1,5 +1,6 @@
 use super::*;
 
+use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
@@ -14,7 +15,26 @@ struct Pong;
 pub mod actor_pingpong {
     use super::*;
 
-    pub struct PingPong {
+
+    #[derive(Default)]
+    pub struct PingPong;
+
+    impl Benchmark for PingPong {
+        type Conf = PingPongRequest;
+        type Instance = PingPongI;
+
+        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+            downcast_msg!(msg; PingPongRequest)
+        }
+
+        fn new_instance() -> Self::Instance {
+            PingPongI::new()
+        }
+
+        const LABEL: &'static str = "PingPong";
+    }
+
+    pub struct PingPongI {
         num: Option<u64>,
         system: Option<KompicsSystem>,
         pinger: Option<Arc<Component<Pinger>>>,
@@ -22,9 +42,9 @@ pub mod actor_pingpong {
         latch: Option<Arc<CountdownEvent>>,
     }
 
-    impl PingPong {
-        pub fn new() -> PingPong {
-            PingPong {
+    impl PingPongI {
+        fn new() -> PingPongI {
+            PingPongI {
                 num: None,
                 system: None,
                 pinger: None,
@@ -34,8 +54,8 @@ pub mod actor_pingpong {
         }
     }
 
-    impl Benchmark for PingPong {
-        type Conf = benchmarks::PingPongRequest;
+    impl BenchmarkInstance for PingPongI {
+        type Conf = PingPongRequest;
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.num = Some(c.number_of_messages);
@@ -208,7 +228,25 @@ pub mod component_pingpong {
         type Request = Ping;
     }
 
-    pub struct PingPong {
+    #[derive(Default)]
+    pub struct PingPong;
+
+    impl Benchmark for PingPong {
+        type Conf = PingPongRequest;
+        type Instance = PingPongI;
+
+        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+            downcast_msg!(msg; PingPongRequest)
+        }
+
+        fn new_instance() -> Self::Instance {
+            PingPongI::new()
+        }
+
+        const LABEL: &'static str = "PingPong";
+    }
+
+    pub struct PingPongI {
         num: Option<u64>,
         system: Option<KompicsSystem>,
         pinger: Option<Arc<Component<Pinger>>>,
@@ -216,9 +254,9 @@ pub mod component_pingpong {
         latch: Option<Arc<CountdownEvent>>,
     }
 
-    impl PingPong {
-        pub fn new() -> PingPong {
-            PingPong {
+    impl PingPongI {
+        fn new() -> PingPongI {
+            PingPongI {
                 num: None,
                 system: None,
                 pinger: None,
@@ -228,8 +266,8 @@ pub mod component_pingpong {
         }
     }
 
-    impl Benchmark for PingPong {
-        type Conf = benchmarks::PingPongRequest;
+    impl BenchmarkInstance for PingPongI {
+        type Conf = PingPongRequest;
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.num = Some(c.number_of_messages);
