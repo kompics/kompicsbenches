@@ -15,7 +15,6 @@ struct Pong;
 pub mod actor_pingpong {
     use super::*;
 
-
     #[derive(Default)]
     pub struct PingPong;
 
@@ -36,7 +35,7 @@ pub mod actor_pingpong {
 
     pub struct PingPongI {
         num: Option<u64>,
-        system: Option<KompicsSystem>,
+        system: Option<KompactSystem>,
         pinger: Option<Arc<Component<Pinger>>>,
         ponger: Option<Arc<Component<Ponger>>>,
         latch: Option<Arc<CountdownEvent>>,
@@ -59,10 +58,8 @@ pub mod actor_pingpong {
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.num = Some(c.number_of_messages);
-            let mut conf = KompicsConfig::new();
-            conf.label("pingpong".to_string());
-            conf.threads(2);
-            let system = KompicsSystem::new(conf);
+            let system =
+                crate::kompact_system_provider::global().new_system_with_threads("pingpong", 2);
             self.system = Some(system);
         }
 
@@ -248,7 +245,7 @@ pub mod component_pingpong {
 
     pub struct PingPongI {
         num: Option<u64>,
-        system: Option<KompicsSystem>,
+        system: Option<KompactSystem>,
         pinger: Option<Arc<Component<Pinger>>>,
         ponger: Option<Arc<Component<Ponger>>>,
         latch: Option<Arc<CountdownEvent>>,
@@ -271,10 +268,8 @@ pub mod component_pingpong {
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.num = Some(c.number_of_messages);
-            let mut conf = KompicsConfig::new();
-            conf.label("pingpong".to_string());
-            conf.threads(2);
-            let system = KompicsSystem::new(conf);
+            let system =
+                crate::kompact_system_provider::global().new_system_with_threads("pingpong", 2);
             self.system = Some(system);
         }
 

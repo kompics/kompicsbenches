@@ -12,9 +12,9 @@ use crate::{
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
+#[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
-    boxed::FnBox,
     panic::UnwindSafe,
     sync::{Arc, Mutex},
     thread,
@@ -423,6 +423,28 @@ impl RunnerHandler {
         }
         future.map_err(|e| grpc::Error::Canceled(e))
     }
+
+    fn enqueue_if_implemented<B, F>(
+        &self,
+        res: Result<B, NotImplementedError>,
+        f: F,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    where
+        F: FnOnce(B) -> BenchInvocation,
+    {
+        match res {
+            Ok(b) => {
+                let br = f(b);
+                let f = self.enqeue(br);
+                grpc::SingleResponse::no_metadata(f)
+            },
+            Err(e) => {
+                let mut msg = messages::TestResult::new();
+                msg.set_not_implemented(messages::NotImplemented::new());
+                grpc::SingleResponse::completed(msg)
+            },
+        }
+    }
 }
 
 impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
@@ -433,10 +455,8 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
     ) -> grpc::SingleResponse<messages::TestResult>
     {
         info!(self.logger, "Got ping-pong req: {}", p.get_number_of_messages());
-        let b = self.benchmarks.pingpong();
-        let br = BenchInvocation::new(b.into(), p);
-        let f = self.enqeue(br);
-        grpc::SingleResponse::no_metadata(f)
+        let b_res = self.benchmarks.pingpong();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 
     fn net_ping_pong(
@@ -446,10 +466,8 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
     ) -> grpc::SingleResponse<messages::TestResult>
     {
         info!(self.logger, "Got net-ping-pong req: {}", p.get_number_of_messages());
-        let b = self.benchmarks.netpingpong();
-        let br = BenchInvocation::new(b.into(), p);
-        let f = self.enqeue(br);
-        grpc::SingleResponse::no_metadata(f)
+        let b_res = self.benchmarks.netpingpong();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 }
 

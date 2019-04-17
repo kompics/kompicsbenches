@@ -1,14 +1,15 @@
 #[macro_use]
-extern crate slog;
-#[macro_use]
 extern crate benchmark_suite_shared;
 
 use benchmark_suite_shared::BenchmarkMain;
 use grpc;
+#[allow(unused_imports)]
+use slog::{crit, debug, error, info, warn};
 use std::env;
 
 mod bench;
 mod benchmark_runner;
+pub mod kompact_system_provider;
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();
@@ -31,13 +32,28 @@ fn main() {
     args.remove(1);
     match mode {
         BenchMode::ACTOR => {
-            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerActorImpl::new(), bench::actor());
+            BenchmarkMain::run_with(
+                args,
+                benchmark_runner::BenchmarkRunnerActorImpl::new(),
+                bench::actor(),
+                kompact_system_provider::set_global_public_if,
+            );
         }
         BenchMode::COMPONENT => {
-            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerComponentImpl::new(), bench::component());
+            BenchmarkMain::run_with(
+                args,
+                benchmark_runner::BenchmarkRunnerComponentImpl::new(),
+                bench::component(),
+                kompact_system_provider::set_global_public_if,
+            );
         }
         BenchMode::MIXED => {
-            BenchmarkMain::run_with(args, benchmark_runner::BenchmarkRunnerComponentImpl::new(), bench::mixed());
+            BenchmarkMain::run_with(
+                args,
+                benchmark_runner::BenchmarkRunnerComponentImpl::new(),
+                bench::mixed(),
+                kompact_system_provider::set_global_public_if,
+            );
         }
     }
 }

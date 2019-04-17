@@ -320,11 +320,34 @@ impl From<Box<AbstractDistributedBenchmark>> for AbstractBench {
     fn from(item: Box<AbstractDistributedBenchmark>) -> Self { AbstractBench::Distributed(item) }
 }
 
-pub trait BenchmarkFactory: Send + Sync {
-    fn by_label(&self, label: &str) -> Option<AbstractBench>;
+pub trait ResultInto<O, E> {
+    fn map_into(self) -> Result<O, E>;
+}
 
-    fn pingpong(&self) -> Box<AbstractBenchmark>;
-    fn netpingpong(&self) -> Box<AbstractDistributedBenchmark>;
+impl<I, O, E> ResultInto<O, E> for Result<I, E>
+where O: From<I>
+{
+    fn map_into(self) -> Result<O, E> { self.map(|i| i.into()) }
+}
+
+// impl From<Result<Box<AbstractBenchmark>, NotImplementedError>> for Result<AbstractBench, NotImplementedError> {
+//     fn from(item: Result<Box<AbstractBenchmark>, NotImplementedError>) -> Self {
+//         item.map(|i| i.into())
+//     }
+// }
+
+#[derive(Debug)]
+pub enum NotImplementedError {
+    FutureWork,
+    NotImplementable,
+    NotFound,
+}
+
+pub trait BenchmarkFactory: Send + Sync {
+    fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError>;
+
+    fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
+    fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 #[macro_export]
@@ -360,6 +383,7 @@ pub enum BenchmarkError {
     InvalidMessage(String),
     RPCError(grpc::Error),
     InvalidTest(String),
+    NotImplemented(NotImplementedError),
 }
 
 impl From<grpc::Error> for BenchmarkError {
@@ -534,23 +558,27 @@ pub(crate) mod tests {
     }
 
     impl BenchmarkFactory for TestFactory {
-        fn by_label(&self, label: &str) -> Option<AbstractBench> {
+        fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
             match label {
-                Test2B::LABEL => Some(self.pingpong().into()),
-                Test3B::LABEL => Some(self.netpingpong().into()),
-                _ => None,
+                Test2B::LABEL => self.pingpong().map_into(),
+                Test3B::LABEL => self.netpingpong().map_into(),
+                _ => Err(NotImplementedError::NotFound),
             }
         }
 
-        fn pingpong(&self) -> Box<AbstractBenchmark> { Test2B {}.into() }
+        fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+            Ok(Test2B {}.into())
+        }
 
-        fn netpingpong(&self) -> Box<AbstractDistributedBenchmark> { Test3B {}.into() }
+        fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(Test3B {}.into())
+        }
     }
 
     #[test]
     fn instantiate_abstract_local_benchmark() -> () {
         let factory = TestFactory {};
-        let b = factory.pingpong();
+        let b = factory.pingpong().unwrap();
         let mut bi = b.new_instance();
         let msg = PingPongRequest::new();
         bi.setup(Box::new(msg)).unwrap();
@@ -562,7 +590,7 @@ pub(crate) mod tests {
     #[test]
     fn instantiate_abstract_distributed_benchmark() -> () {
         let factory = TestFactory {};
-        let b = factory.netpingpong();
+        let b = factory.netpingpong().unwrap();
         let mut bm = b.new_master();
         let msg = PingPongRequest::new();
         let cconf = bm.setup(Box::new(msg)).unwrap();

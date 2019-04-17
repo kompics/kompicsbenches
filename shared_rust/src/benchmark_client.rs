@@ -4,10 +4,11 @@ use crate::{
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
+#[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
     fmt,
-    net::Ipv4Addr,
+    net::IpAddr,
     process,
     sync::{Arc, Mutex},
     thread,
@@ -17,9 +18,9 @@ use std::{
 const MAX_ATTEMPTS: usize = 5;
 
 pub fn run(
-    service_address: Ipv4Addr,
+    service_address: IpAddr,
     service_port: u16,
-    master_address: Ipv4Addr,
+    master_address: IpAddr,
     master_port: u16,
     benchmarks: Box<BenchmarkFactory>,
 ) -> ()
@@ -84,9 +85,9 @@ struct BenchmarkClient {
     logger:           Logger,
     state:            StateHolder,
     benchmarks:       Box<BenchmarkFactory>,
-    service_address:  Ipv4Addr,
+    service_address:  IpAddr,
     service_port:     u16,
-    master_address:   Ipv4Addr,
+    master_address:   IpAddr,
     master_port:      u16,
     checkin_attempts: usize,
     command_queue:    cbchannel::Receiver<ClientCommand>,
@@ -96,9 +97,9 @@ impl BenchmarkClient {
     fn new(
         logger: Logger,
         benchmarks: Box<BenchmarkFactory>,
-        service_address: Ipv4Addr,
+        service_address: IpAddr,
         service_port: u16,
-        master_address: Ipv4Addr,
+        master_address: IpAddr,
         master_port: u16,
         command_queue: cbchannel::Receiver<ClientCommand>,
     ) -> BenchmarkClient
@@ -120,7 +121,7 @@ impl BenchmarkClient {
 
     fn start(&mut self) -> () {
         info!(self.logger, "Starting...");
-        while (self.state.matches(State::CheckingIn)) {
+        while self.state.matches(State::CheckingIn) {
             let f = self.checkin();
             match f.wait() {
                 Ok(_resp) => {
@@ -129,7 +130,7 @@ impl BenchmarkClient {
                 },
                 Err(e) => {
                     warn!(self.logger, "Could not connect to master: {:?}", e);
-                    if (self.checkin_attempts < MAX_ATTEMPTS) {
+                    if self.checkin_attempts < MAX_ATTEMPTS {
                         info!(self.logger, "Retrying connection...");
                         thread::sleep(Duration::from_millis(500));
                     } else {
@@ -149,8 +150,9 @@ impl BenchmarkClient {
                         }
                         let test_label = sc.take_label();
                         let b_res = self.benchmarks.by_label(&test_label);
-                        let client_data_res: Result<String, BenchmarkError> =
-                            b_res.ok_or(BenchmarkError::Panic).and_then(|b| match b {
+                        let client_data_res: Result<String, BenchmarkError> = b_res
+                            .map_err(|e| BenchmarkError::NotImplemented(e))
+                            .and_then(|b| match b {
                                 AbstractBench::Local(_lb) => Err(BenchmarkError::InvalidTest(
                                     format!("Test {} is local!", test_label),
                                 )),

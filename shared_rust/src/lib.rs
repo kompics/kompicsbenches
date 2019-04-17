@@ -1,4 +1,4 @@
-#![feature(fnbox)]
+#![feature(unsized_locals)]
 #![feature(impl_trait_in_bindings)]
 pub mod benchmark;
 pub mod benchmark_client;
@@ -8,15 +8,22 @@ pub mod kompics_benchmarks;
 
 pub use self::benchmark::*;
 use self::kompics_benchmarks::*;
-use std::{net::SocketAddrV4, thread};
+use std::{
+    net::{IpAddr, SocketAddr},
+    thread,
+};
 
 pub struct BenchmarkMain;
 impl BenchmarkMain {
-    pub fn run_with<H: benchmarks_grpc::BenchmarkRunner + 'static + Sync + Send + 'static>(
+    pub fn run_with<H, F>(
         args: Vec<String>,
         runner: H,
         benchmarks: Box<BenchmarkFactory>,
+        set_public_if: F,
     ) -> ()
+    where
+        H: benchmarks_grpc::BenchmarkRunner + 'static + Sync + Send + 'static,
+        F: FnOnce(IpAddr),
     {
         if args.len() <= 2 {
             // local mode
@@ -43,23 +50,24 @@ impl BenchmarkMain {
             }
         } else if args.len() == 3 {
             // client mode
-            let master_addr: SocketAddrV4 =
+            let master_addr: SocketAddr =
                 args[1].parse().expect("Could not convert arg to socket address!");
-            let client_addr: SocketAddrV4 =
+            let client_addr: SocketAddr =
                 args[2].parse().expect("Could not convert arg to socket address!");
             println!("Running in client mode with master={}, client={}", master_addr, client_addr);
+            set_public_if(client_addr.ip());
             benchmark_client::run(
-                *client_addr.ip(),
+                client_addr.ip(),
                 client_addr.port(),
-                *master_addr.ip(),
+                master_addr.ip(),
                 master_addr.port(),
                 benchmarks,
             );
         } else if args.len() == 4 {
             // master mode
-            let bench_runner_addr: SocketAddrV4 =
+            let bench_runner_addr: SocketAddr =
                 args[1].parse().expect("Could not convert arg to socket address!");
-            let master_addr: SocketAddrV4 =
+            let master_addr: SocketAddr =
                 args[2].parse().expect("Could not convert arg to socket address!");
             let num_clients: usize = args[3]
                 .parse()
