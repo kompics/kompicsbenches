@@ -63,6 +63,7 @@ impl BenchmarkMain {
                 master_addr.port(),
                 benchmarks,
             );
+            unreachable!("This should not return!");
         } else if args.len() == 4 {
             // master mode
             let bench_runner_addr: SocketAddr =
@@ -82,6 +83,7 @@ impl BenchmarkMain {
                 num_clients,
                 benchmarks,
             );
+            unreachable!("This should not return!");
         } else {
             panic!("Too many args={} provided!", args.len());
         };

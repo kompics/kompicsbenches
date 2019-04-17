@@ -12,7 +12,7 @@ futures         = "0.1"
 futures-cpupool = "0.1"
 grpc 			= "0.5"
 synchronoise 	= "0.4"
-slog 			= {version = "2.2", features = ["max_level_debug", "release_max_level_warn"]}
+slog 			= {version = "2.4", features = ["max_level_trace", "release_max_level_debug"]}
 time 			= "0.1"
 tokio-core 		= "0.1"
 num_cpus 		= "1"

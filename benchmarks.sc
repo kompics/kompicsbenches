@@ -65,21 +65,21 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTAC" -> BenchmarkImpl(
-		symbol="KRUSTAC", 
+		symbol="KOMPACTAC", 
 		label="Kompact Actor", 
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTCO" -> BenchmarkImpl(
-		symbol="KRUSTCO", 
+		symbol="KOMPACTCO", 
 		label="Kompact Component", 
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTMIX" -> BenchmarkImpl(
-		symbol="KRUSTMIX", 
+		symbol="KOMPACTMIX", 
 		label="Kompact Mixed", 
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchRunnerAddr, benchMasterAddr, numClients)),

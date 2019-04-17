@@ -9,7 +9,7 @@ futures         = "0.1"
 protobuf        = "2"
 grpc 			= "0.5"
 tls-api 		= "0.1"
-slog 			= "2.4"
+slog 			= {version = "2.4", features = ["max_level_trace", "release_max_level_debug"]}
 slog-term 		= "2.4"
 time 			= "0.1"
 crossbeam		= "0.6"

@@ -216,7 +216,7 @@ impl BenchmarkClient {
         &mut self,
     ) -> impl Future<Item = distributed::CheckinResponse, Error = ::grpc::Error> + '_ {
         self.checkin_attempts += 1;
-        info!(self.logger, "Checking in (attempt #{})...", self.checkin_attempts);
+        info!(self.logger, "Check-In connection attempt #{}...", self.checkin_attempts);
         let addr_string = format!("{}", self.master_address);
         let stub_res = distributed_grpc::BenchmarkMasterClient::new_plain(
             &addr_string,
@@ -226,6 +226,7 @@ impl BenchmarkClient {
         let stub_f = future::result(stub_res);
         //.expect(&format!("Could not connect to master {:?}:{:?}", self.master_address, self.master_port));
         stub_f.and_then(move |stub| {
+            info!(self.logger, "Connected to Master, checking in...");
             let mut ci = distributed::ClientInfo::new();
             ci.set_address(addr_string);
             ci.set_port(self.service_port as u32);
