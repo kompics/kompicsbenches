@@ -93,6 +93,7 @@ impl BenchmarkMain {
                 "Running in master mode with runner={}, master={}, #clients={}",
                 bench_runner_addr, master_addr, num_clients
             );
+            set_public_if(master_addr.ip());
             benchmark_master::run(
                 bench_runner_addr.port(),
                 master_addr.port(),
