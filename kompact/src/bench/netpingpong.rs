@@ -88,18 +88,31 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         ()
     }
     fn prepare_iteration(&mut self, d: Vec<Self::ClientData>) -> () {
-        let ponger_ref = d[0].clone();
-        println!("Resolved path to ponger: {}", &ponger_ref);
+        let ponger_ref = match self.ponger {
+            Some(ref p) => p.clone(),
+            None => {
+                let ponger_ref = d[0].clone();
+                println!("Resolved path to ponger: {}", &ponger_ref);
+                self.ponger = Some(ponger_ref.clone());
+                ponger_ref
+            }
+        };
         match self.num {
             Some(num) => match self.system {
                 Some(ref system) => {
                     let latch = Arc::new(CountdownEvent::new(1));
-                    let pinger = system.create(|| Pinger::with(num, latch.clone(), ponger_ref));
+                    let (pinger, unique_reg_f) =
+                        system.create_and_register(|| Pinger::with(num, latch.clone(), ponger_ref));
+
+                    unique_reg_f
+                        .wait_timeout(Duration::from_millis(1000))
+                        .expect("Ponger never registered!")
+                        .expect("Ponger failed to register!");
 
                     let pinger_f = system.start_notify(&pinger);
 
                     pinger_f
-                        .await_timeout(Duration::from_millis(1000))
+                        .wait_timeout(Duration::from_millis(1000))
                         .expect("Pinger never started!");
 
                     self.pinger = Some(pinger);
@@ -118,6 +131,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
                     let pinger_ref = pinger.actor_ref();
                     pinger_ref.tell(Box::new(Start), system);
                     latch.wait();
+                    self.pinger = Some(pinger);
                 } else {
                     unimplemented!()
                 }
@@ -131,7 +145,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         let pinger = self.pinger.take().unwrap();
         let f = system.kill_notify(pinger);
 
-        f.await_timeout(Duration::from_millis(1000))
+        f.wait_timeout(Duration::from_millis(1000))
             .expect("Pinger never died!");
 
         if last_iteration {
@@ -164,26 +178,30 @@ impl DistributedBenchmarkClient for PingPongClient {
     type ClientData = ActorPath;
 
     fn setup(&mut self, _c: Self::ClientConf) -> Self::ClientData {
+        println!("Setting up ponger.");
+
         let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
         let (ponger, unique_reg_f) = system.create_and_register(|| Ponger::new());
         let named_reg_f = system.register_by_alias(&ponger, "ponger");
         unique_reg_f
-            .await_timeout(Duration::from_millis(1000))
+            .wait_timeout(Duration::from_millis(1000))
             .expect("Ponger never registered!")
             .expect("Ponger failed to register!");
         named_reg_f
-            .await_timeout(Duration::from_millis(1000))
+            .wait_timeout(Duration::from_millis(1000))
             .expect("Ponger never registered!")
             .expect("Ponger failed to register!");
         let start_f = system.start_notify(&ponger);
         start_f
-            .await_timeout(Duration::from_millis(1000))
+            .wait_timeout(Duration::from_millis(1000))
             .expect("Ponger never started!");
 
         let named_path = ActorPath::Named(NamedPath::with_system(
             system.system_path(),
             vec!["ponger".into()],
         ));
+
+        println!("Got path for ponger: {}", named_path);
 
         self.system = Some(system);
         self.ponger = Some(ponger);
@@ -204,7 +222,7 @@ impl DistributedBenchmarkClient for PingPongClient {
             let stop_f = system.kill_notify(ponger);
 
             stop_f
-                .await_timeout(Duration::from_millis(1000))
+                .wait_timeout(Duration::from_millis(1000))
                 .expect("Ponger never died!");
 
             system
@@ -327,10 +345,13 @@ impl Actor for Pinger {
             let r: Result<PongMsg, SerError> = PingPongSer::deserialise(buf);
             match r {
                 Ok(_pong) => {
-                    //info!(self.ctx.log(), "Got msg Pong({})", pong.i);
+                    // TODO remove for test
+                    info!(self.ctx.log(), "Got msg Pong from {}", sender);
                     self.count_down -= 1;
                     if self.count_down > 0 {
                         self.ponger.tell((PingMsg, PING_PONG_SER), self);
+                    } else {
+                        let _ = self.latch.decrement();
                     }
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising PongMsg: {:?}", e),
@@ -376,7 +397,8 @@ impl Actor for Ponger {
             let r: Result<PingMsg, SerError> = PingPongSer::deserialise(buf);
             match r {
                 Ok(_ping) => {
-                    //info!(self.ctx.log(), "Got msg Ping({})", ping.i);
+                    // TODO remove for test
+                    info!(self.ctx.log(), "Got msg Ping from {}", sender);
                     sender.tell((PongMsg, PING_PONG_SER), self);
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising PingMsg: {:?}", e),

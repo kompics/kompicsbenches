@@ -7,6 +7,7 @@ import scala.concurrent.duration._
 import scala.util.{Try, Success, Failure}
 //import java.lang.{Process, ProcessBuilder}
 import java.io.{PrintWriter, OutputStream, File, FileWriter}
+import java.nio.file.Files
 import $file.build, build.{relps, relp, binp, format}
 import $file.benchmarks, benchmarks._
 import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, HostConfigProvider, PublicKeyLogin}
@@ -36,7 +37,7 @@ val defaultNodesFile = pwd / "nodes.conf";
 
 @doc("Run a specific benchmark client.")
 @main
-def client(name: String, master: AddressArg, runid: String, publicif: String): Unit = {
+def client(name: String, master: AddressArg, runid: String, publicif: String, clientPort: Int = 45678): Unit = {
 	val runId = runid;
 	val publicIf = publicif;
 	implementations.get(name) match {
@@ -44,8 +45,14 @@ def client(name: String, master: AddressArg, runid: String, publicif: String): U
 			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
 			val logdir = logs / runId;
 			mkdir! logdir;
-			val clientRunner = impl.clientRunner(master, s"${publicIf}:45678");
+			val clientRunner = impl.clientRunner(master, s"${publicIf}:${clientPort}");
 			val client = clientRunner.run(logdir);
+			Runtime.getRuntime().addShutdownHook(new Thread() { 
+		      override def run(): Unit = { 
+		        println("Got termination signal. Killing client."); 
+		        client.destroy();
+		      } 
+		    }); 
 			client.waitFor();
 			Console.err.println("Client shut down!");
 		}
@@ -94,6 +101,57 @@ def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 	println(s"Finished all runners in ${format(totalTime)}");
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
 }
+
+@doc("Run benchmarks using a cluster of nodes.")
+@main
+def fakeRemote(withClients: Int = 1, test: String = ""): Unit = {
+	val remoteDir = tmp.dir();
+	val nodes = (0 until withClients).map(45700 + _).map { p => 
+		val ip = "127.0.0.1";
+		val addr = s"${ip}:${p}";
+		val dirName = s"${ip}-port-${p}";
+		val dir = remoteDir / dirName;
+		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
+		cp(pwd, dir);
+		println("done.");
+		NodeEntry(ip, p, dir.toString)
+	} toList;
+	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val totalStart = System.currentTimeMillis();
+	val runId = s"run-${totalStart}";
+	val logdir = logs / runId;
+	mkdir! logdir;
+	val resultsdir = results / runId;
+	mkdir! resultsdir;
+	val nRunners = masters.size;
+	var errors = 0;
+	masters.zipWithIndex.foreach { case (master, i) =>
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir);
+		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
+		val start = System.currentTimeMillis();
+		val r = fakeRemoteExperiment(experimentRunner, master, runId, logdir, nodes);
+		val end = System.currentTimeMillis();
+		val time = FiniteDuration(end-start, MILLISECONDS);
+		r match {
+			case Success(_) => println(s"Finished ${master.label} in ${format(time)}");
+			case Failure(e) => {
+				errors += 1;
+				println(s"Runner did not finish successfully: ${master.label} (${format(time)})");
+				Console.err.println(e);
+				e.printStackTrace(Console.err);
+			}
+		}
+		endSeparator(master.label, experimentRunner.errorLog(logdir));
+		endSeparator(master.label, experimentRunner.outputLog(logdir));
+	}
+	val totalEnd = System.currentTimeMillis();
+	val totalTime = FiniteDuration(totalEnd-totalStart, MILLISECONDS);
+	println("========");
+	println(s"Finished all runners in ${format(totalTime)}");
+	println(s"There were $errors errors. Logs can be found in ${logdir}");
+	println(s"Run the following command to cleanup when remote logs are no longer required:\n	rm -rf $remoteDir");
+}
+
 
 @doc("Run local benchmarks only.")
 @main
@@ -170,7 +228,28 @@ private def remoteExperiment(experimentRunner: BenchmarkRunner, master: Benchmar
 	}
 }
 
-case class NodeEntry(ip: String, benchDir: String)
+private def fakeRemoteExperiment(experimentRunner: BenchmarkRunner, master: BenchmarkRunner, runId: String, logDir: Path, nodes: List[NodeEntry]): Try[Unit] = {
+	Try {
+		val runner = master.run(logDir);
+		val pids = nodes.map { node => 
+			val pid = startFakeClient(node, master.symbol, runId, masterAddr);
+			(node -> pid)
+		};
+		println(s"Got pids: $pids");
+		val experimenter = experimentRunner.run(logDir);
+		experimenter.waitFor();
+		runner.destroy();
+		pids.foreach {
+			case (node, Success(pid)) => {
+				val r = stopFakeClient(node, pid);
+				println(s"Tried to stop client $node: $r");
+			}
+			case(node, Failure(_)) => Console.err.println(s"Could not stop client $node due to missing pid")
+		}
+	}
+}
+
+case class NodeEntry(ip: String, port: Int, benchDir: String)
 
 private def readNodes(p: Path): List[NodeEntry] = {
 	if (exists! p) {
@@ -183,7 +262,7 @@ private def readNodes(p: Path): List[NodeEntry] = {
 			assert(ls.size == 2);
 			val node = ls(0).trim;
 			val path = ls(1).trim;
-			NodeEntry(node, path)
+			NodeEntry(node, 45678, path)
 		}
 	} else {
 		Console.err.println(s"Could not find nodes config file '${p}'");
@@ -198,7 +277,7 @@ private def startClient(node: NodeEntry, bench: String, runId: String, master: S
 	println(s"Connecting to ${node}...");
 	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --runid $runId --publicif ${node.ip}");
+			r <- client.exec(s"source ~/.profile; cd ${node.benchDir}; ./client.sh --name $bench --master $master --runid $runId --publicif ${node.ip} --clientPort ${node.port}");
 			pid <- Try(r.stdOutAsString().trim.toInt)
 		} yield pid
 	};
@@ -210,9 +289,29 @@ private def stopClient(node: NodeEntry, pid: Int): Try[Unit] = {
 	println(s"Connecting to ${node}...");
 	val connRes = SSH(node.ip, login) { client =>
 		for {
-			r <- client.exec(s"kill -5 $pid")
+			r <- client.exec(s"kill -15 $pid")
 		} yield ()
 	};
 	println(s"Connection: $connRes");
 	connRes
+}
+
+private def startFakeClient(node: NodeEntry, bench: String, runId: String, master: String): Try[Int] = {
+	println(s"Starting ${node}...");
+	Try {
+		val wd = Path(node.benchDir);
+		val res = %%.apply(root/'bin/'bash, "-c", s"./client.sh --name $bench --master $master --runid $runId --publicif ${node.ip} --clientPort ${node.port}")(wd);
+		val connRes = res.out.string;
+		println(s"Result: $connRes");
+		connRes.trim.toInt
+	}
+}
+
+private def stopFakeClient(node: NodeEntry, pid: Int): Try[Unit] = {
+	println(s"Killing ${node}...");
+	Try {
+		val res = %%.apply(root/'bin/'bash, "-c",s"kill -15 $pid");
+		val connRes = res.out.string;
+		println(s"Connection: $connRes");
+	}
 }

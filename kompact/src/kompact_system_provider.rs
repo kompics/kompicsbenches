@@ -1,4 +1,4 @@
-use super::*;
+//use super::*;
 
 use kompact::prelude::*;
 use kompact::*;
@@ -48,7 +48,7 @@ impl KompactSystemProvider {
         let mut conf = KompactConfig::new();
         conf.label(s);
         conf.threads(threads);
-        let system = KompactSystem::new(conf);
+        let system = KompactSystem::new(conf).expect("KompactSystem");
         system
     }
 
@@ -58,11 +58,8 @@ impl KompactSystemProvider {
         let mut conf = KompactConfig::new();
         conf.label(s);
         conf.threads(threads);
-        conf.system_components(DeadletterBox::new, move || {
-            let net_config = NetworkConfig::new(addr);
-            NetworkDispatcher::with_config(net_config)
-        });
-        let system = KompactSystem::new(conf);
+        conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
+        let system = KompactSystem::new(conf).expect("KompactSystem");
         system
     }
 

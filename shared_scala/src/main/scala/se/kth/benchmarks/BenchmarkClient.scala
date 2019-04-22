@@ -69,6 +69,16 @@ class BenchmarkClient(
       }
     }
 
+    override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
+      logger.info(s"Got shutdown request with force=${request.force}");
+      if (request.force) {
+        Util.forceShutdown();
+      }
+      state := StateType.Stopped;
+      Util.shutdownLater(stop);
+      Future.successful(ShutdownAck())
+    }
+
   }
 
   private[this] var server: Server = null;
@@ -168,9 +178,10 @@ object BenchmarkClient {
 
   sealed trait StateType;
   object StateType {
-    object CheckingIn extends StateType;
-    object Ready extends StateType;
+    case object CheckingIn extends StateType;
+    case object Ready extends StateType;
     case class Running(ab: ActiveBench) extends StateType;
+    case object Stopped extends StateType;
   }
 
   class State {

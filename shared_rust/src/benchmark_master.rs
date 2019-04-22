@@ -12,6 +12,7 @@ use crate::{
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
+use grpc::ClientStubExt;
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
@@ -26,13 +27,9 @@ pub fn run(
     master_port: u16,
     wait_for: usize,
     benchmarks: Box<BenchmarkFactory>,
+    logger: Logger,
 ) -> ()
 {
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-
-    info!(logger, "The root logger works!");
-
     let (check_in_sender, check_in_receiver) = cbchannel::unbounded();
     let (bench_sender, bench_receiver) = cbchannel::unbounded();
     let mut inst = BenchmarkMaster::new(
@@ -45,7 +42,7 @@ pub fn run(
     );
 
     // MASTER HANDLER
-    let mut master_handler = MasterHandler::new(
+    let master_handler = MasterHandler::new(
         logger.new(o!("master-port" => master_port, "ty" => "MasterHandler")),
         inst.state(),
         check_in_sender,
@@ -57,12 +54,15 @@ pub fn run(
         .set_addr(master_address.clone())
         .expect(&format!("Could not use address: {}.", master_address));
     serverb.add_service(distributed_grpc::BenchmarkMasterServer::new_service_def(master_handler));
+    let master_server = serverb.build().expect("master server");
+    info!(logger, "MasterServer running on {}", master_server.local_addr());
 
     // RUNNER HANDLER
-    let mut runner_handler = RunnerHandler::new(
+    let runner_handler = RunnerHandler::new(
         logger.new(o!("runner-port" => runner_port, "ty" => "RunnerHandler")),
         benchmarks,
         bench_sender,
+        inst.state(),
     );
     let runner_address = format!("0.0.0.0:{}", runner_port);
     let mut serverb = grpc::ServerBuilder::new_plain();
@@ -71,6 +71,8 @@ pub fn run(
         .set_addr(runner_address.clone())
         .expect(&format!("Could not use address: {}.", runner_address));
     serverb.add_service(benchmarks_grpc::BenchmarkRunnerServer::new_service_def(runner_handler));
+    let runner_server = serverb.build().expect("runner server");
+    info!(logger, "RunnerServer running on {}", runner_server.local_addr());
 
     inst.start();
 }
@@ -109,13 +111,21 @@ impl ClientEntry {
     {
         self.stub.setup(::grpc::RequestOptions::default(), msg).drop_metadata()
     }
+
+    pub(crate) fn shutdown(
+        &self,
+        msg: messages::ShutdownRequest,
+    ) -> impl Future<Item = messages::ShutdownAck, Error = grpc::Error>
+    {
+        self.stub.shutdown(::grpc::RequestOptions::default(), msg).drop_metadata()
+    }
 }
 
 //type BenchClosure = Box<FnBox() -> Future<Item = messages::TestResult, Error = grpc::Error> + Send>;
 
-struct BenchRequest {
-    invocation: BenchInvocation,
-    promise:    oneshot::Sender<messages::TestResult>,
+enum BenchRequest {
+    Invoke { invocation: BenchInvocation, promise: oneshot::Sender<messages::TestResult> },
+    Shutdown(bool),
 }
 impl BenchRequest {
     fn new(
@@ -123,7 +133,7 @@ impl BenchRequest {
         promise: oneshot::Sender<messages::TestResult>,
     ) -> BenchRequest
     {
-        BenchRequest { invocation, promise }
+        BenchRequest::Invoke { invocation, promise }
     }
 }
 
@@ -199,13 +209,42 @@ impl BenchmarkMaster {
         loop {
             match self.state.get() {
                 State::READY => {
+                    debug!(self.logger, "Awaiting benchmark request");
                     let bench = self.bench_queue.recv().expect("Queue to RunnerHandler broke!");
-                    self.bench_request_handler(bench);
+                    match bench {
+                        BenchRequest::Invoke { promise, invocation } => {
+                            self.bench_request_handler(promise, invocation)
+                        },
+                        BenchRequest::Shutdown(force) => {
+                            let mut sreq = messages::ShutdownRequest::new();
+                            sreq.set_force(force);
+                            info!(
+                                self.logger,
+                                "Sending shutdown to {} children.",
+                                self.clients.len()
+                            );
+                            let f_list = self.clients.drain(..).map(move |c| {
+                                c.shutdown(sreq.clone()).map(|res| (res, c)) // prevent the client from being deallocated early
+                            });
+                            let shutdown_f = future::join_all(f_list);
+                            info!(self.logger, "Waiting for children to shut down.");
+                            shutdown_f.wait().map(|_| ()).unwrap_or_else(|e| {
+                                warn!(
+                                    self.logger,
+                                    "Some children may not have shut down properly: {:?}", e
+                                );
+                            });
+                            self.state.assign(State::STOPPED);
+                        },
+                    }
                 },
                 State::STOPPED => {
+                    info!(self.logger, "Master stopped!");
+                    thread::sleep(Duration::from_millis(500)); // give it a bit of grace time
                     return;
                 },
-                _ => {
+                s => {
+                    debug!(self.logger, "Master waiting in state={:?}", s);
                     thread::sleep(Duration::from_millis(500));
                 },
             }
@@ -246,10 +285,14 @@ impl BenchmarkMaster {
         ClientEntry::new(ci.take_address(), port, stub)
     }
 
-    fn bench_request_handler(&mut self, req: BenchRequest) -> () {
-        let promise = req.promise;
-        let msg = req.invocation.msg;
-        let (res, label) = match req.invocation.benchmark {
+    fn bench_request_handler(
+        &mut self,
+        promise: oneshot::Sender<messages::TestResult>,
+        invocation: BenchInvocation,
+    ) -> ()
+    {
+        let msg = invocation.msg;
+        let (res, label) = match invocation.benchmark {
             AbstractBench::Local(b) => {
                 let label = b.label();
                 let f = self.run_local_benchmark(b, msg);
@@ -263,9 +306,11 @@ impl BenchmarkMaster {
         };
         let blogger = self.logger.new(o!("benchmark" => label));
         match res {
-            Ok(tr) => promise.send(tr).expect("Receiver was closed?!?"),
+            Ok(tr) => {
+                promise.send(tr).expect("Receiver was closed?!?");
+            },
             Err(e) => {
-                error!(blogger, "Benchmark Future failed horribly! {}", e);
+                error!(blogger, "Benchmark Future failed horribly! {:?}", e);
                 drop(promise); // this will cancel the future
             },
         }
@@ -275,7 +320,7 @@ impl BenchmarkMaster {
         &mut self,
         b: Box<AbstractBenchmark>,
         msg: Box<::protobuf::Message + UnwindSafe>,
-    ) -> impl Future<Item = messages::TestResult, Error = grpc::Error>
+    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
     {
         self.state.cas(State::READY, State::RUN).expect("Wasn't ready to run!");
         let blogger = self.logger.new(o!("benchmark" => b.label()));
@@ -293,36 +338,47 @@ impl BenchmarkMaster {
         &mut self,
         b: Box<AbstractDistributedBenchmark>,
         msg: Box<::protobuf::Message + UnwindSafe>,
-    ) -> impl Future<Item = messages::TestResult, Error = grpc::Error>
+    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
     {
         let blogger = self.logger.new(o!("benchmark" => b.label()));
         let state_copy = self.state.clone();
+        let state_copy2 = self.state.clone();
         let clients_copy1 = self.clients.clone();
-        let clients_copy2 = self.clients.clone();
+        //let clients_copy2 = self.clients.clone();
         let bench_label = b.label();
         self.state.cas(State::READY, State::SETUP).expect("Wasn't ready to setup!");
         info!(blogger, "Starting distributed test {}", bench_label);
 
-        let master_f = future::ok(b.new_master());
+        let master_f: future::FutureResult<Box<AbstractBenchmarkMaster>, BenchmarkError> =
+            future::ok(b.new_master());
         let master_cconf_f = master_f.and_then(|mut master| {
             future::result(master.setup(msg)).map(|client_conf| (master, client_conf))
         });
+        let data_logger = blogger.clone();
         let client_data_f = master_cconf_f.and_then(move |(master, client_conf)| {
             let mut client_setup = distributed::SetupConfig::new();
             client_setup.set_label(bench_label.into());
             client_setup.set_data(client_conf.into());
             let f_list = clients_copy1.into_iter().map(move |c| {
-                c.setup(client_setup.clone()).map(|sr| {
-                    let cdh: ClientDataHolder = sr.data.into();
-                    cdh
+                c.setup(client_setup.clone()).map_err(|e| e.into()).and_then(|sr| {
+                    let res = if sr.success {
+                        let cdh: ClientDataHolder = sr.data.into();
+                        Ok((c, cdh))
+                    } else {
+                        Err(BenchmarkError::InvalidTest(sr.data))
+                    };
+                    future::result(res)
                 })
             });
-            future::join_all(f_list).map_err(|e| e.into()).map(|client_data| (master, client_data))
-        });
+            info!(data_logger, "Awaiting client data.");
+            future::join_all(f_list).map(|client_data| (master, client_data))
+        });     
         let iter_logger = blogger.clone();
         let result_f = client_data_f.and_then(move |(master, client_data_l)| {
+            debug!(iter_logger, "Collected all client data.");
+            state_copy.cas(State::SETUP, State::RUN).expect("Running without setup?!?");
             let blogger = iter_logger; // just lazy to rename all uses
-            let iteration = DistributedIteration::new(clients_copy2, master, client_data_l);
+            let iteration = DistributedIteration::new(master, client_data_l);
             future::loop_fn(iteration, move |mut it| {
                 let n_runs = it.n_runs();
                 debug!(blogger, "Preparing iteration {}", n_runs);
@@ -353,7 +409,13 @@ impl BenchmarkMaster {
                 itlf.map_err(|e| e.into())
             })
         });
-        result_f.inspect(move |_| debug!(blogger, "Finished run.")).map_err(|e| e.into())
+        result_f
+            .then(move |res: Result<messages::TestResult, BenchmarkError>| {
+                info!(blogger, "Completed distributed test.");
+                state_copy2.assign(State::READY);
+                res
+            })
+            .map_err(|e| e.into())
     }
 }
 
@@ -395,6 +457,7 @@ struct RunnerHandler {
     logger:      Logger,
     benchmarks:  Box<BenchmarkFactory>,
     bench_queue: cbchannel::Sender<BenchRequest>,
+    state:       StateHolder,
 }
 
 impl RunnerHandler {
@@ -402,9 +465,10 @@ impl RunnerHandler {
         logger: Logger,
         benchmarks: Box<BenchmarkFactory>,
         bench_queue: cbchannel::Sender<BenchRequest>,
+        state: StateHolder,
     ) -> RunnerHandler
     {
-        RunnerHandler { logger, benchmarks, bench_queue }
+        RunnerHandler { logger, benchmarks, bench_queue, state }
     }
 
     fn enqeue(
@@ -439,6 +503,7 @@ impl RunnerHandler {
                 grpc::SingleResponse::no_metadata(f)
             },
             Err(e) => {
+                warn!(self.logger, "Test finished with error: {:?}", e);
                 let mut msg = messages::TestResult::new();
                 msg.set_not_implemented(messages::NotImplemented::new());
                 grpc::SingleResponse::completed(msg)
@@ -448,6 +513,36 @@ impl RunnerHandler {
 }
 
 impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
+    fn ready(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: messages::ReadyRequest,
+    ) -> grpc::SingleResponse<messages::ReadyResponse>
+    {
+        info!(self.logger, "Got ready? req.");
+        let mut msg = messages::ReadyResponse::new();
+        if self.state.get() == State::READY {
+            msg.set_status(true);
+        } else {
+            msg.set_status(false);
+        }
+        grpc::SingleResponse::completed(msg)
+    }
+
+    fn shutdown(
+        &self,
+        _o: ::grpc::RequestOptions,
+        p: messages::ShutdownRequest,
+    ) -> ::grpc::SingleResponse<messages::ShutdownAck>
+    {
+        info!(self.logger, "Got shutdown request: {:?}", p);
+        self.bench_queue.send(BenchRequest::Shutdown(p.force)).expect("Command channel broke!"); // make sure children get shut down
+        if p.force {
+            crate::force_shutdown();
+        }
+        grpc::SingleResponse::completed(messages::ShutdownAck::new())
+    }
+
     fn ping_pong(
         &self,
         _o: grpc::RequestOptions,

@@ -4,6 +4,9 @@ package kompics.benchmarks;
 import "messages.proto";
 
 service BenchmarkRunner {
+	rpc Ready (ReadyRequest) returns (ReadyResponse);
+	rpc Shutdown (ShutdownRequest) returns (ShutdownAck);
+
 	rpc PingPong (PingPongRequest) returns (TestResult);
 	rpc NetPingPong (PingPongRequest) returns (TestResult);
 }

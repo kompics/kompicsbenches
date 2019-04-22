@@ -7,13 +7,12 @@ version in ThisBuild := "0.1.0-SNAPSHOT"
 scalaVersion in ThisBuild := "2.12.6"
 
 resolvers += Resolver.mavenLocal
-resolvers += "Kompics Releases" at "http://kompics.sics.se/maven/repository/"
-resolvers += "Kompics Snapshots" at "http://kompics.sics.se/maven/snapshotrepository/"
+resolvers += Resolver.jcenterRepo
 
 libraryDependencies ++= Seq(
 	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
 	"ch.qos.logback" % "logback-classic" % "1.2.3",
-    "se.sics.kompics" %% "kompics-scala" % "1.0.0"
+    "se.sics.kompics" %% "kompics-scala" % "1.0.1"
 )
 
 assemblyMergeStrategy in assembly := {

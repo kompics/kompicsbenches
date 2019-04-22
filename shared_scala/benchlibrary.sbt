@@ -16,7 +16,9 @@ libraryDependencies ++= Seq(
     "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
     "com.typesafe.akka" %% "akka-actor" % "2.5.14",
     "com.typesafe.akka" %% "akka-remote" % "2.5.14",
-    "com.typesafe.scala-logging" %% "scala-logging" % "3.+"
+    "com.typesafe.scala-logging" %% "scala-logging" % "3.+",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+    "ch.qos.logback" % "logback-classic" % "1.2.3" % "test",
 )
 
 PB.targets in Compile := Seq(

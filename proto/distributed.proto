@@ -1,6 +1,7 @@
 syntax = "proto3";
 package kompics.benchmarks;
 
+import "messages.proto";
 
 service BenchmarkMaster {
 	rpc CheckIn (ClientInfo) returns (CheckinResponse);
@@ -9,6 +10,8 @@ service BenchmarkMaster {
 service BenchmarkClient {
 	rpc Setup (SetupConfig) returns (SetupResponse);
 	rpc Cleanup (CleanupInfo) returns (CleanupResponse);
+
+	rpc Shutdown (ShutdownRequest) returns (ShutdownAck);
 }
 
 message ClientInfo {

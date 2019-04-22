@@ -22,6 +22,10 @@
 // interface
 
 pub trait BenchmarkRunner {
+    fn ready(&self, o: ::grpc::RequestOptions, p: super::messages::ReadyRequest) -> ::grpc::SingleResponse<super::messages::ReadyResponse>;
+
+    fn shutdown(&self, o: ::grpc::RequestOptions, p: super::messages::ShutdownRequest) -> ::grpc::SingleResponse<super::messages::ShutdownAck>;
+
     fn ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 
     fn net_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
@@ -30,15 +34,29 @@ pub trait BenchmarkRunner {
 // client
 
 pub struct BenchmarkRunnerClient {
-    grpc_client: ::grpc::Client,
+    grpc_client: ::std::sync::Arc<::grpc::Client>,
+    method_Ready: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::messages::ReadyRequest, super::messages::ReadyResponse>>,
+    method_Shutdown: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::messages::ShutdownRequest, super::messages::ShutdownAck>>,
     method_PingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
     method_NetPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
 }
 
-impl BenchmarkRunnerClient {
-    pub fn with_client(grpc_client: ::grpc::Client) -> Self {
+impl ::grpc::ClientStub for BenchmarkRunnerClient {
+    fn with_client(grpc_client: ::std::sync::Arc<::grpc::Client>) -> Self {
         BenchmarkRunnerClient {
             grpc_client: grpc_client,
+            method_Ready: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/Ready".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
+            method_Shutdown: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/Shutdown".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
             method_PingPong: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
                 name: "/kompics.benchmarks.BenchmarkRunner/PingPong".to_string(),
                 streaming: ::grpc::rt::GrpcStreaming::Unary,
@@ -53,20 +71,17 @@ impl BenchmarkRunnerClient {
             }),
         }
     }
-
-    pub fn new_plain(host: &str, port: u16, conf: ::grpc::ClientConf) -> ::grpc::Result<Self> {
-        ::grpc::Client::new_plain(host, port, conf).map(|c| {
-            BenchmarkRunnerClient::with_client(c)
-        })
-    }
-    pub fn new_tls<C : ::tls_api::TlsConnector>(host: &str, port: u16, conf: ::grpc::ClientConf) -> ::grpc::Result<Self> {
-        ::grpc::Client::new_tls::<C>(host, port, conf).map(|c| {
-            BenchmarkRunnerClient::with_client(c)
-        })
-    }
 }
 
 impl BenchmarkRunner for BenchmarkRunnerClient {
+    fn ready(&self, o: ::grpc::RequestOptions, p: super::messages::ReadyRequest) -> ::grpc::SingleResponse<super::messages::ReadyResponse> {
+        self.grpc_client.call_unary(o, p, self.method_Ready.clone())
+    }
+
+    fn shutdown(&self, o: ::grpc::RequestOptions, p: super::messages::ShutdownRequest) -> ::grpc::SingleResponse<super::messages::ShutdownAck> {
+        self.grpc_client.call_unary(o, p, self.method_Shutdown.clone())
+    }
+
     fn ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
         self.grpc_client.call_unary(o, p, self.method_PingPong.clone())
     }
@@ -86,6 +101,30 @@ impl BenchmarkRunnerServer {
         let handler_arc = ::std::sync::Arc::new(handler);
         ::grpc::rt::ServerServiceDefinition::new("/kompics.benchmarks.BenchmarkRunner",
             vec![
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/Ready".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.ready(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/Shutdown".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.shutdown(o, p))
+                    },
+                ),
                 ::grpc::rt::ServerMethod::new(
                     ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
                         name: "/kompics.benchmarks.BenchmarkRunner/PingPong".to_string(),

@@ -48,7 +48,7 @@ trait DistributedBenchmark {
 //case class BenchmarkEntry[C, B <: Benchmark](b: B)(implicit ev: C =:= B#Conf)
 
 trait BenchmarkFactory {
-  import kompics.benchmarks.benchmarks._;
+  //import kompics.benchmarks.benchmarks._;
 
   def pingpong(): Benchmark;
   def netpingpong(): DistributedBenchmark;

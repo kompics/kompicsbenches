@@ -13,4 +13,24 @@ object Util {
       GrpcAddress(sarr(0), port)
     }
   }
+
+  def forceShutdown(): Unit = {
+    val thread = new Thread {
+      override def run {
+        Thread.sleep(500);
+        System.exit(0);
+      }
+    };
+    thread.start();
+  }
+
+  def shutdownLater(shutdownCallback: () => Unit): Unit = {
+    val thread = new Thread {
+      override def run {
+        Thread.sleep(500);
+        shutdownCallback();
+      }
+    };
+    thread.start();
+  }
 }

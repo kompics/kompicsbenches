@@ -19,3 +19,19 @@ message TestFailure {
 message NotImplemented {
 	// empty
 }
+
+message ReadyRequest {
+	// empty
+}
+
+message ReadyResponse {
+	bool status = 1;
+}
+
+message ShutdownRequest {
+  bool force = 1;
+}
+
+message ShutdownAck {
+  // empty
+}

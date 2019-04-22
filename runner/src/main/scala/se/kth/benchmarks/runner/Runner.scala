@@ -3,13 +3,21 @@ package se.kth.benchmarks.runner
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import scala.concurrent.{ Future, ExecutionContext, Await }
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 import scala.util.{ Try, Success, Failure }
 import se.kth.benchmarks.Statistics;
 
 import com.lkroll.common.macros.Macros
 import com.typesafe.scalalogging.{ LazyLogging, StrictLogging }
 import java.io.{ File, PrintWriter, FileWriter }
+
+object Runner {
+
+  type Stub = BenchmarkRunnerGrpc.BenchmarkRunnerStub;
+
+  val WAIT: Duration = 500.milliseconds;
+  val MAX_RETRIES: Int = 20;
+}
 
 class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
@@ -41,7 +49,39 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
   }
 
   def runAll(): Unit = {
-    Benchmarks.benchmarks.foreach(runOne)
+    val ready = awaitReady();
+    if (ready) {
+      Benchmarks.benchmarks.foreach(runOne);
+    }
+  }
+
+  def awaitReady(): Boolean = {
+    var attempts = 0;
+    val req = ReadyRequest();
+    while (attempts < Runner.MAX_RETRIES) {
+      attempts += 1;
+      logger.info(s"Starting connection attempt #${attempts}.");
+      val readyF = stub.ready(req);
+      val result = Await.ready(readyF, Duration.Inf).value.get;
+      result match {
+        case Success(resp) => {
+          logger.info(s"Connection attempt #${attempts} succeeded.");
+          if (resp.status) {
+            logger.info(s"Client is ready. Beginning benchmarks.");
+            return true;
+          } else {
+            logger.info(s"Client is not ready, yet.");
+          }
+        }
+        case Failure(e) => {
+          logger.warn(s"Connection attempt #${attempts} failed.", e)
+        }
+      }
+      logger.debug("Sleeping before retry.");
+      Thread.sleep(Runner.WAIT.toMillis);
+    }
+    logger.error(s"Client was not ready within ${Runner.MAX_RETRIES} attempts. Aborting run.");
+    return false;
   }
 
   def runOne(b: Benchmark): Unit = {
@@ -53,9 +93,9 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
       result match {
         case Success(r) => {
           r match {
-            case TestResult.Empty             => logger.warn(s"Benchmark ${b.name} invocation was empty.")
-            case TestFailure(reason)      => logger.warn(s"Benchmark ${b.name} invocation failed: ${reason}")
-            case NotImplemented() => logger.info(s"Benchmark ${b.name} is not implemented.")
+            case TestResult.Empty    => logger.warn(s"Benchmark ${b.name} invocation was empty.")
+            case TestFailure(reason) => logger.warn(s"Benchmark ${b.name} invocation failed: ${reason}")
+            case NotImplemented()    => logger.info(s"Benchmark ${b.name} is not implemented.")
             case TestSuccess(nRuns, data) => {
               logger.info(s"Benchmark ${b.name} run [$i/$numRuns] finished successfully with ${nRuns} runs.");
               sinks.foreach(_.sink(b.symbol, p, data));
@@ -71,8 +111,10 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
   }
 }
 
-object Runner {
-  type Stub = BenchmarkRunnerGrpc.BenchmarkRunnerStub;
+sealed trait RunResult;
+object RunResult {
+  case object Done extends RunResult;
+  case object Retry extends RunResult;
 }
 
 trait DataSink {

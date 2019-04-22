@@ -12,6 +12,13 @@ import java.util.concurrent.Executors
 class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   implicit val futurePool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
+  override def ready(request: ReadyRequest): Future[ReadyResponse] = {
+    Future.successful(ReadyResponse(true))
+  }
+  override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
+    ???
+  }
+
   override def pingPong(request: PingPongRequest): Future[TestResult] = {
     Future {
       val res = BenchmarkRunner.run(bench.PingPong)(request);
@@ -21,6 +28,6 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   }
 
   override def netPingPong(request: PingPongRequest): Future[TestResult] = {
-    Future.successful(NotImplemented()) // TODO implement
+    Future.successful(NotImplemented())
   }
 }

@@ -1,4 +1,5 @@
 #!/bin/bash
 #nohup ./bench.sc client "$@" &> /dev/null &
-nohup ./bench.sc client "$@" &> nohup.out &
+str="'$*'"
+nohup ./bench.sc client "$@" &> nohup-"$str".out &
 echo $!

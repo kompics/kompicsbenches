@@ -63,3 +63,15 @@ enum BenchMode {
     COMPONENT,
     MIXED,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use benchmark_suite_shared::test_utils::test_implementation;
+
+    #[test]
+    fn test_mixed() {
+        let benchmarks = Box::new(bench::MixedFactory {});
+        test_implementation(benchmarks);
+    }
+}

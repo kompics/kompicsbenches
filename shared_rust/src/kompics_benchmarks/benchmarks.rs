@@ -186,10 +186,13 @@ impl ::protobuf::reflect::ProtobufValue for PingPongRequest {
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x10benchmarks.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\"\
     ?\n\x0fPingPongRequest\x12,\n\x12number_of_messages\x18\x01\x20\x01(\x04\
-    R\x10numberOfMessages2\xb6\x01\n\x0fBenchmarkRunner\x12O\n\x08PingPong\
-    \x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.Test\
-    Result\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
-    \x1e.kompics.benchmarks.TestResultb\x06proto3\
+    R\x10numberOfMessages2\xd6\x02\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\
+    \x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.benchmarks.ReadyRespon\
+    se\x12P\n\x08Shutdown\x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.ko\
+    mpics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.\
+    PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingP\
+    ong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.T\
+    estResultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

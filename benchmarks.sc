@@ -30,6 +30,8 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 	def run(logFolder: Path): Process = {
 		val command = (runner.exec.toString +: runner.args.flatMap(_.s)).toList.asJava;
 		val pb = new ProcessBuilder(command);
+		val env = pb.environment();
+		env.put("RUST_BACKTRACE", "1"); // TODO remove this for non-testing!
 		pb.directory(runner.env.toIO);
 		pb.redirectError(ProcessBuilder.Redirect.appendTo(errorLog(logFolder)));
 		pb.redirectOutput(ProcessBuilder.Redirect.appendTo(outputLog(logFolder)));

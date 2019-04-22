@@ -1,9 +1,10 @@
 use crate::{
     benchmark::*,
-    kompics_benchmarks::{benchmarks, benchmarks_grpc, distributed, distributed_grpc},
+    kompics_benchmarks::{benchmarks, benchmarks_grpc, distributed, distributed_grpc, messages},
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
+use grpc::ClientStubExt;
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
@@ -23,13 +24,9 @@ pub fn run(
     master_address: IpAddr,
     master_port: u16,
     benchmarks: Box<BenchmarkFactory>,
+    logger: Logger,
 ) -> ()
 {
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let logger = Logger::root(slog_term::FullFormat::new(plain).build().fuse(), o!());
-
-    info!(logger, "The root logger works!");
-
     let (command_sender, command_receiver) = cbchannel::unbounded();
     let mut inst = BenchmarkClient::new(
         logger.new(
@@ -43,7 +40,7 @@ pub fn run(
         command_receiver,
     );
 
-    // MASTER HANDLER
+    // Client HANDLER
     let client_handler = ClientHandler::new(
         logger.new(o!("service-address" => format!("{}",service_address), "service-port" => service_port, "ty" => "ClientHandler")),
         command_sender,
@@ -55,6 +52,8 @@ pub fn run(
         .set_addr(client_address.clone())
         .expect(&format!("Could not use address: {}.", client_address));
     serverb.add_service(distributed_grpc::BenchmarkClientServer::new_service_def(client_handler));
+    let client_server = serverb.build().expect("client server");
+    info!(logger, "ClientServer running on {}", client_server.local_addr());
 
     inst.start();
 }
@@ -62,6 +61,7 @@ pub fn run(
 enum ClientCommand {
     Setup(distributed::SetupConfig, oneshot::Sender<distributed::SetupResponse>),
     Cleanup(distributed::CleanupInfo, oneshot::Sender<distributed::CleanupResponse>),
+    Shutdown,
 }
 impl ClientCommand {
     fn from_setup(
@@ -124,9 +124,10 @@ impl BenchmarkClient {
         while self.state.matches(State::CheckingIn) {
             let f = self.checkin();
             match f.wait() {
-                Ok(_resp) => {
+                Ok((_resp, stub)) => {
                     info!(self.logger, "Connected to master!");
                     self.state.cas(State::CheckingIn, State::Ready).expect("Was already ready?!?");
+                    drop(stub);
                 },
                 Err(e) => {
                     warn!(self.logger, "Could not connect to master: {:?}", e);
@@ -141,6 +142,9 @@ impl BenchmarkClient {
             }
         }
         loop {
+            if self.state.matches(State::Stopped) {
+                return;
+            }
             let cmd = self.command_queue.recv().expect("Queue to ClientService broke!");
             self.state.with_state(|state| {
                 match cmd {
@@ -207,6 +211,11 @@ impl BenchmarkClient {
                         },
                         _ => panic!("Invalid state for Cleanup message!"),
                     },
+                    ClientCommand::Shutdown => {
+                        info!(self.logger, "Shutting down...");
+                        *state = State::Stopped;
+                        thread::sleep(Duration::from_millis(500)); // give it some time to send the response
+                    },
                 }
             })
         }
@@ -214,12 +223,15 @@ impl BenchmarkClient {
 
     fn checkin(
         &mut self,
-    ) -> impl Future<Item = distributed::CheckinResponse, Error = ::grpc::Error> + '_ {
+    ) -> impl Future<
+        Item = (distributed::CheckinResponse, distributed_grpc::BenchmarkMasterClient),
+        Error = ::grpc::Error,
+    > + '_ {
         self.checkin_attempts += 1;
         info!(self.logger, "Check-In connection attempt #{}...", self.checkin_attempts);
-        let addr_string = format!("{}", self.master_address);
+        let master_addr_string = format!("{}", self.master_address);
         let stub_res = distributed_grpc::BenchmarkMasterClient::new_plain(
-            &addr_string,
+            &master_addr_string,
             self.master_port,
             Default::default(),
         );
@@ -228,14 +240,16 @@ impl BenchmarkClient {
         stub_f.and_then(move |stub| {
             info!(self.logger, "Connected to Master, checking in...");
             let mut ci = distributed::ClientInfo::new();
-            ci.set_address(addr_string);
+            let service_addr_string = format!("{}", self.service_address);
+            ci.set_address(service_addr_string);
             ci.set_port(self.service_port as u32);
-            distributed_grpc::BenchmarkMaster::check_in(
+            let res = distributed_grpc::BenchmarkMaster::check_in(
                 &stub,
                 ::grpc::RequestOptions::default(),
                 ci,
             )
-            .drop_metadata()
+            .drop_metadata();
+            res.map(|r| (r, stub))
         })
     }
 }
@@ -254,7 +268,7 @@ impl ClientHandler {
 impl distributed_grpc::BenchmarkClient for ClientHandler {
     fn setup(
         &self,
-        o: ::grpc::RequestOptions,
+        _o: ::grpc::RequestOptions,
         p: distributed::SetupConfig,
     ) -> ::grpc::SingleResponse<distributed::SetupResponse>
     {
@@ -265,13 +279,28 @@ impl distributed_grpc::BenchmarkClient for ClientHandler {
 
     fn cleanup(
         &self,
-        o: ::grpc::RequestOptions,
+        _o: ::grpc::RequestOptions,
         p: distributed::CleanupInfo,
     ) -> ::grpc::SingleResponse<distributed::CleanupResponse>
     {
         let (cmd, f) = ClientCommand::from_cleanup(p);
         self.command_queue.send(cmd).expect("Command channel broke!");
         grpc::SingleResponse::no_metadata(f.map_err(|c| c.into()))
+    }
+
+    fn shutdown(
+        &self,
+        _o: ::grpc::RequestOptions,
+        p: messages::ShutdownRequest,
+    ) -> ::grpc::SingleResponse<messages::ShutdownAck>
+    {
+        info!(self.logger, "Got shutdown request: {:?}", p);
+        if p.force {
+            crate::force_shutdown();
+        } else {
+            self.command_queue.send(ClientCommand::Shutdown).expect("Command channel broke!");
+        }
+        grpc::SingleResponse::completed(messages::ShutdownAck::new())
     }
 }
 
@@ -310,10 +339,6 @@ impl StateHolder {
         let mut state = self.0.lock().unwrap();
         f(&mut state)
     }
-    // fn get(&self) -> State {
-    //     let state = self.0.lock().unwrap();
-    //     *state
-    // }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -321,6 +346,7 @@ enum State {
     CheckingIn,
     Ready,
     Running(ActiveBench),
+    Stopped,
 }
 
 #[derive(Debug, Clone)]

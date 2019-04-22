@@ -4,17 +4,17 @@ use crate::{
     kompics_benchmarks::{distributed, messages},
 };
 use futures::future::{self, Future};
-use slog::{crit, debug, error, info, o, warn, Drain, Logger};
+//use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use time;
 
-pub fn run_async<F>(f: F) -> impl Future<Item = messages::TestResult, Error = grpc::Error>
+pub fn run_async<F>(f: F) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
 where F: FnOnce() -> messages::TestResult + std::panic::UnwindSafe {
     let lf = future::lazy(|| {
         let r = f();
         future::ok::<messages::TestResult, ()>(r)
     });
     let fcu = lf.catch_unwind();
-    let fe = fcu.map_err(|_| grpc::Error::Panic("Benchmark panicked!".to_string()));
+    let fe = fcu.map_err(|_| BenchmarkError::Panic);
     let f = fe.map(|r: Result<_, _>| match r {
         Ok(tm) => tm,
         Err(_) => {
@@ -154,21 +154,19 @@ impl<'a> Stats for &'a Vec<f64> {
 }
 
 pub(crate) struct DistributedIteration {
-    clients:       Vec<ClientEntry>,
     master:        Box<AbstractBenchmarkMaster>,
-    client_data_l: Vec<ClientDataHolder>,
+    client_data_l: Vec<(ClientEntry, ClientDataHolder)>,
     n_runs:        usize,
     results:       Vec<f64>,
 }
 
 impl DistributedIteration {
     pub(crate) fn new(
-        clients: Vec<ClientEntry>,
         master: Box<AbstractBenchmarkMaster>,
-        client_data_l: Vec<ClientDataHolder>,
+        client_data_l: Vec<(ClientEntry, ClientDataHolder)>,
     ) -> DistributedIteration
     {
-        DistributedIteration { clients, master, client_data_l, n_runs: 0, results: Vec::new() }
+        DistributedIteration { master, client_data_l, n_runs: 0, results: Vec::new() }
     }
 
     pub(crate) fn n_runs(&self) -> usize { self.n_runs }
@@ -176,7 +174,9 @@ impl DistributedIteration {
     pub(crate) fn results(self) -> Vec<f64> { self.results }
 
     pub fn prepare(mut self) -> Self {
-        self.master.prepare_iteration(self.client_data_l.clone()).expect("prepare failed!");
+        self.master
+            .prepare_iteration(self.client_data_l.iter().map(|(_, d)| d.clone()).collect())
+            .expect("prepare failed!");
         self
     }
 
@@ -188,7 +188,7 @@ impl DistributedIteration {
     }
 
     pub fn cleanup(mut self) -> impl Future<Item = (Self, bool), Error = grpc::Error> {
-        let clients = self.clients.clone();
+        let clients: Vec<_> = self.client_data_l.iter().map(|(c, _)| c.clone()).collect();
         let is_final: bool = if (self.n_runs < MIN_RUNS)
             || (self.n_runs < MAX_RUNS) && (rse(&self.results) > RSE_TARGET)
         {

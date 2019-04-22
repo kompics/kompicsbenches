@@ -76,10 +76,10 @@ pub mod actor_pingpong {
                         let pinger_f = system.start_notify(&pinger);
 
                         ponger_f
-                            .await_timeout(Duration::from_millis(1000))
+                            .wait_timeout(Duration::from_millis(1000))
                             .expect("Ponger never started!");
                         pinger_f
-                            .await_timeout(Duration::from_millis(1000))
+                            .wait_timeout(Duration::from_millis(1000))
                             .expect("Pinger never started!");
 
                         self.ponger = Some(ponger);
@@ -113,13 +113,13 @@ pub mod actor_pingpong {
             let pinger = self.pinger.take().unwrap();
             let f = system.kill_notify(pinger);
 
-            f.await_timeout(Duration::from_millis(1000))
+            f.wait_timeout(Duration::from_millis(1000))
                 .expect("Pinger never died!");
 
             let ponger = self.ponger.take().unwrap();
             let f = system.kill_notify(ponger);
 
-            f.await_timeout(Duration::from_millis(1000))
+            f.wait_timeout(Duration::from_millis(1000))
                 .expect("Ponger never died!");
 
             if last_iteration {
@@ -283,12 +283,12 @@ pub mod component_pingpong {
 
                         on_dual_definition(&pinger, &ponger, |pinger_def, ponger_def| {
                             biconnect(&mut ponger_def.ppp, &mut pinger_def.ppp);
-                        });
+                        }).expect("Could not connect components!");
 
                         let ponger_f = system.start_notify(&ponger);
 
                         ponger_f
-                            .await_timeout(Duration::from_millis(1000))
+                            .wait_timeout(Duration::from_millis(1000))
                             .expect("Ponger never started!");
 
                         self.ponger = Some(ponger);
@@ -322,13 +322,13 @@ pub mod component_pingpong {
             let pinger = self.pinger.take().unwrap();
             let f = system.kill_notify(pinger);
 
-            f.await_timeout(Duration::from_millis(1000))
+            f.wait_timeout(Duration::from_millis(1000))
                 .expect("Pinger never died!");
 
             let ponger = self.ponger.take().unwrap();
             let f = system.kill_notify(ponger);
 
-            f.await_timeout(Duration::from_millis(1000))
+            f.wait_timeout(Duration::from_millis(1000))
                 .expect("Ponger never died!");
 
             if last_iteration {

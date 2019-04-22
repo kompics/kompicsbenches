@@ -1055,19 +1055,20 @@ impl ::protobuf::reflect::ProtobufValue for CleanupResponse {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\x11distributed.proto\x12\x12kompics.benchmarks\":\n\nClientInfo\x12\
-    \x18\n\x07address\x18\x01\x20\x01(\tR\x07address\x12\x12\n\x04port\x18\
-    \x02\x20\x01(\rR\x04port\"\x11\n\x0fCheckinResponse\"7\n\x0bSetupConfig\
-    \x12\x14\n\x05label\x18\x01\x20\x01(\tR\x05label\x12\x12\n\x04data\x18\
-    \x02\x20\x01(\tR\x04data\"=\n\rSetupResponse\x12\x18\n\x07success\x18\
-    \x01\x20\x01(\x08R\x07success\x12\x12\n\x04data\x18\x02\x20\x01(\tR\x04d\
-    ata\"#\n\x0bCleanupInfo\x12\x14\n\x05final\x18\x01\x20\x01(\x08R\x05fina\
-    l\"\x11\n\x0fCleanupResponse2a\n\x0fBenchmarkMaster\x12N\n\x07CheckIn\
-    \x12\x1e.kompics.benchmarks.ClientInfo\x1a#.kompics.benchmarks.CheckinRe\
-    sponse2\xaf\x01\n\x0fBenchmarkClient\x12K\n\x05Setup\x12\x1f.kompics.ben\
-    chmarks.SetupConfig\x1a!.kompics.benchmarks.SetupResponse\x12O\n\x07Clea\
-    nup\x12\x1f.kompics.benchmarks.CleanupInfo\x1a#.kompics.benchmarks.Clean\
-    upResponseb\x06proto3\
+    \n\x11distributed.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\
+    \":\n\nClientInfo\x12\x18\n\x07address\x18\x01\x20\x01(\tR\x07address\
+    \x12\x12\n\x04port\x18\x02\x20\x01(\rR\x04port\"\x11\n\x0fCheckinRespons\
+    e\"7\n\x0bSetupConfig\x12\x14\n\x05label\x18\x01\x20\x01(\tR\x05label\
+    \x12\x12\n\x04data\x18\x02\x20\x01(\tR\x04data\"=\n\rSetupResponse\x12\
+    \x18\n\x07success\x18\x01\x20\x01(\x08R\x07success\x12\x12\n\x04data\x18\
+    \x02\x20\x01(\tR\x04data\"#\n\x0bCleanupInfo\x12\x14\n\x05final\x18\x01\
+    \x20\x01(\x08R\x05final\"\x11\n\x0fCleanupResponse2a\n\x0fBenchmarkMaste\
+    r\x12N\n\x07CheckIn\x12\x1e.kompics.benchmarks.ClientInfo\x1a#.kompics.b\
+    enchmarks.CheckinResponse2\x81\x02\n\x0fBenchmarkClient\x12K\n\x05Setup\
+    \x12\x1f.kompics.benchmarks.SetupConfig\x1a!.kompics.benchmarks.SetupRes\
+    ponse\x12O\n\x07Cleanup\x12\x1f.kompics.benchmarks.CleanupInfo\x1a#.komp\
+    ics.benchmarks.CleanupResponse\x12P\n\x08Shutdown\x12#.kompics.benchmark\
+    s.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAckb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

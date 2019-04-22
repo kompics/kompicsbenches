@@ -68,14 +68,49 @@ class BenchmarkMaster(
   }
 
   private object RunnerService extends BenchmarkRunnerGrpc.BenchmarkRunner {
-    def pingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
+    override def ready(request: ReadyRequest): Future[ReadyResponse] = {
+      if (state() == State.READY) {
+        Future.successful(ReadyResponse(true))
+      } else {
+        Future.successful(ReadyResponse(false))
+      }
+    }
+
+    override def pingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
       val b = benchmarks.pingpong;
       runBenchmark(b, request)
     };
-    def netPingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
+    override def netPingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
       val b = benchmarks.netpingpong;
       runBenchmark(b, request)
     };
+
+    override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
+      logger.info(s"Got shutdown request with force=${request.force}");
+
+      logger.info(s"Forwarding shutdown request to ${clients.size} children.");
+      val shutdownF = Future.sequence(clients.map { client =>
+        client.stub.shutdown(request);
+      });
+
+      shutdownF.onComplete {
+        case Success(_) => {
+          logger.info(s"Shutting down.");
+          state := State.STOPPED;
+          stop();
+        }
+        case Failure(e) => {
+          logger.warn("Some clients may have failed to shut down.", e);
+          logger.info(s"Shutting down.");
+          state := State.STOPPED;
+          stop();
+        }
+      }
+      if (request.force) {
+        Util.forceShutdown();
+      }
+      Future.successful(ShutdownAck())
+    }
 
     private def queueIfNotReady(f: => Future[TestResult]): Future[TestResult] = {
       val handledF = () => try {
@@ -285,6 +320,7 @@ object BenchmarkMaster {
     val RUN = 3;
     val CLEANUP = 4;
     val FINISHED = 5;
+    val STOPPED = 6;
 
     def apply(v: Int): State = new State(v);
     def init(): State = apply(INIT);
