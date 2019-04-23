@@ -4,5 +4,5 @@ import se.kth.benchmarks._
 
 object Factory extends BenchmarkFactory {
   override def pingpong(): Benchmark = PingPong;
-  override def netpingpong(): DistributedBenchmark = ???; // TODO implement
+  override def netpingpong(): DistributedBenchmark = NetPingPong;
 }

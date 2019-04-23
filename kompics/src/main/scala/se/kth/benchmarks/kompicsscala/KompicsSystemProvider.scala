@@ -31,9 +31,8 @@ case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
 
 class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
-  init match {
-    case Init(p: Promise[KompicsSystem] @unchecked) => p.success(this)
-  }
+
+  private val Init(startPromise: Promise[KompicsSystem] @unchecked) = init;
 
   private val children = mutable.TreeMap.empty[UUID, Component];
   private val awaitingStarted = mutable.TreeMap.empty[UUID, Promise[Unit]];
@@ -42,6 +41,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   ctrl uponEvent {
     case _: Start => handle {
       log.info("KompicsSystem started.");
+      startPromise.success(this);
     }
     case s: Started => handle {
       val cid = s.component.id();

@@ -9,10 +9,14 @@ scalaVersion in ThisBuild := "2.12.6"
 resolvers += Resolver.mavenLocal
 resolvers += Resolver.jcenterRepo
 
+val kompicsV = "1.0.1";
+
 libraryDependencies ++= Seq(
 	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
 	"ch.qos.logback" % "logback-classic" % "1.2.3",
-    "se.sics.kompics" %% "kompics-scala" % "1.0.1"
+    "se.sics.kompics" %% "kompics-scala" % kompicsV,
+    "se.sics.kompics" % "kompics-component-netty-network" % kompicsV,
+    "se.sics.kompics" % "kompics-port-network" % kompicsV
 )
 
 assemblyMergeStrategy in assembly := {
