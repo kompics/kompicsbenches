@@ -13,14 +13,14 @@ import java.util.UUID
 
 object PingPong extends Benchmark {
   import scala.concurrent.ExecutionContext.Implicits.global;
-  
+
   override type Conf = PingPongRequest;
 
   override def msgToConf(msg: scalapb.GeneratedMessage): Try[Conf] = {
     Try(msg.asInstanceOf[PingPongRequest])
   };
   override def newInstance(): Instance = new PingPongI;
-  
+
   class PingPongI extends Instance {
     private var num = -1l;
     private var system: KompicsSystem = null;

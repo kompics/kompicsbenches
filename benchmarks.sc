@@ -59,12 +59,12 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
 	),
-	"KOMPSC" -> BenchmarkImpl(
-		symbol="KOMPSC", 
+	"KOMPICSSC" -> BenchmarkImpl(
+		symbol="KOMPICSSC", 
 		label="Kompics Scala", 
-		local = (benchRunnerAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics_scala"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
+		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTAC" -> BenchmarkImpl(
 		symbol="KOMPACTAC", 

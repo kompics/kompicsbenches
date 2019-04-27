@@ -32,8 +32,8 @@ val builders: List[Builder] = List(
 	Builder("Shared Library Scala", relp("shared_scala"), sbt, Seq("publishLocal"), Seq("clean")),
 	Builder("Experiment Runner", relp("runner"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Akka", relp("akka"), sbt, Seq("assembly"), Seq("clean")),
-	Builder("Kompics Scala", relp("kompics_scala"), sbt, Seq("assembly"), Seq("clean")),
-	Builder("Kompics Rust", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean"))
+	Builder("Kompics", relp("kompics"), sbt, Seq("assembly"), Seq("clean")),
+	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean"))
 );
 
 @main
