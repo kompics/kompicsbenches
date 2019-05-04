@@ -37,12 +37,16 @@ class BenchmarkClient(
         val activeBench = new ActiveBench(bench);
         state cas (StateType.Ready -> StateType.Running(activeBench));
         val r = activeBench.setup(request);
-        activeBench.prepare();
-        logger.info(s"$benchClassName is set up.");
+        if (r.isSuccess) {
+          activeBench.prepare();
+        }
         r
       } flatten;
       val resp = res match {
-        case Success(s) => SetupResponse(true, s);
+        case Success(s) => {
+          logger.info(s"$benchClassName is set up.");
+          SetupResponse(true, s);
+        }
         case Failure(ex) => {
           logger.error(s"Setup for test $benchClassName was not successful.", ex);
           SetupResponse(false, ex.getMessage);

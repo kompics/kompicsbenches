@@ -11,10 +11,12 @@ resolvers += Resolver.jcenterRepo
 resolvers += Resolver.bintrayRepo("kompics", "Maven")
 resolvers += Resolver.bintrayRepo("lkrollcom", "maven")
 
-val kompicsV = "1.0.1";
+val kompicsV = "1.1.0-SNAPSHOT";
 
 libraryDependencies ++= Seq(
-	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
+	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT" excludeAll(
+    ExclusionRule(organization = "io.netty")
+  ),
 	"ch.qos.logback" % "logback-classic" % "1.2.3",
     "se.sics.kompics" %% "kompics-scala" % kompicsV,
     "se.sics.kompics" % "kompics-core" % kompicsV,
@@ -22,6 +24,8 @@ libraryDependencies ++= Seq(
     "se.sics.kompics.basic" % "kompics-port-network" % kompicsV,
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
 )
+
+fork := true; // needed for UDT tests to clean up properly after themselves
 
 //test in assembly := {}
 
@@ -32,11 +36,11 @@ assemblyMergeStrategy in assembly := {
     oldStrategy(x)
 }
 
-assemblyShadeRules in assembly := Seq(
-  ShadeRule.rename("io.netty.**" -> "custom_netty.@1")
-  .inLibrary("io.netty" % "netty-all" % "5.0.0.Alpha3")
-  .inLibrary("se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV)
-  .inProject
-)
+// assemblyShadeRules in assembly := Seq(
+//   ShadeRule.rename("io.netty.**" -> "custom_netty.@1")
+//   .inLibrary("io.netty" % "netty-all" % "5.0.0.Alpha3")
+//   .inLibrary("se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV)
+//   .inProject
+// )
 
 //logLevel in assembly := Level.Debug

@@ -5,7 +5,7 @@ import se.sics.kompics.network.{ Address, Header, Msg, Transport }
 import se.sics.kompics.KompicsEvent
 import scala.util.{ Failure, Try, Success }
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
-import com.google.common.base.Optional
+import java.util.Optional
 import io.netty.buffer.ByteBuf
 
 object BenchNet {
@@ -53,7 +53,7 @@ object NetMessage {
 
 object BenchNetSerializer extends Serializer {
 
-  val NO_HINT: Optional[Object] = Optional.absent();
+  val NO_HINT: Optional[Object] = Optional.empty();
 
   private val NET_ADDRESS_FLAG: Byte = 1;
   private val NET_HEADER_FLAG: Byte = 2;

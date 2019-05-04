@@ -16,12 +16,12 @@ class DistributedTest extends FunSuite with Matchers {
   test("Network Ser/Deser") {
     import se.sics.kompics.network.netty.serialization.Serializers;
     import io.netty.buffer.{ Unpooled, ByteBuf };
-    import com.google.common.base.Optional;
+    import java.util.Optional;
 
     BenchNet.registerSerializers();
     NetPingPongSerializer.register();
 
-    val noHint: Optional[Object] = Optional.absent();
+    val noHint: Optional[Object] = Optional.empty();
 
     val addr = NetAddress.from("127.0.0.1", 12345).get;
     val addr2 = NetAddress.from("127.0.0.1", 45678).get; // larger port number that doesn't fit into a short
@@ -74,7 +74,7 @@ class DistributedTest extends FunSuite with Matchers {
   }
 
   // Ignore because this test only runs once correctly and then requires a JVM restart...some UDT weirdness with SBT -.-
-  ignore("Kompics Scala Network System") {
+  test("Kompics Scala Network System") {
 
     KompicsSystemProvider.setPublicIf("127.0.0.1");
 

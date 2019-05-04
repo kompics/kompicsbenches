@@ -12,7 +12,7 @@ import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
-import com.google.common.base.Optional
+import java.util.Optional
 import io.netty.buffer.ByteBuf
 
 object NetPingPong extends DistributedBenchmark {
@@ -136,7 +136,7 @@ object NetPingPong extends DistributedBenchmark {
       Serializers.register(Pong.getClass, "netpingpong");
     }
 
-    val NO_HINT: Optional[Object] = Optional.absent();
+    val NO_HINT: Optional[Object] = Optional.empty();
 
     private val PING_FLAG: Byte = 1;
     private val PONG_FLAG: Byte = 2;
