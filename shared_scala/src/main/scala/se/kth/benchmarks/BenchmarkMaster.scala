@@ -200,7 +200,7 @@ class BenchmarkMaster(
 
         logger.info(s"Starting distributed test ${b.getClass.getCanonicalName}");
 
-        Future {
+        val exF = Future {
           val master = b.newMaster();
           val clientConf = master.setup(masterConf);
           val clientConfS = b.clientConfToString(clientConf);
@@ -270,6 +270,10 @@ class BenchmarkMaster(
               case Failure(ex) => rp.failure(ex)
             };
           };
+        };
+        exF.flatten.failed.foreach { e =>
+          logger.error(s"runBenchmark failed!", e);
+          rp.failure(e);
         }
 
         val f = rp.future;

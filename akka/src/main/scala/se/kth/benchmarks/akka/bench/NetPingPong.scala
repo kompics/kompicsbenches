@@ -1,7 +1,8 @@
 package se.kth.benchmarks.akka.bench
 
 import akka.actor._
-import se.kth.benchmarks.akka.ActorSystemProvider
+import akka.serialization.Serializer
+import se.kth.benchmarks.akka.{ ActorSystemProvider, SerializerBindings }
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.PingPongRequest
 import scala.util.{ Try, Success, Failure }
@@ -17,6 +18,12 @@ object NetPingPong extends DistributedBenchmark {
   override type ClientConf = Unit;
   override type ClientData = ClientRef;
 
+  val serializers = SerializerBindings
+    .empty()
+    .addSerializer[PingPongSerializer](PingPongSerializer.NAME)
+    .addBinding[Ping.type](PingPongSerializer.NAME)
+    .addBinding[Pong.type](PingPongSerializer.NAME);
+
   class MasterImpl extends Master {
     private var num = -1l;
     private var system: ActorSystem = null;
@@ -25,7 +32,10 @@ object NetPingPong extends DistributedBenchmark {
 
     override def setup(c: MasterConf): ClientConf = {
       this.num = c.numberOfMessages;
-      system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1);
+      system = ActorSystemProvider.newRemoteActorSystem(
+        name = "pingpong",
+        threads = 1,
+        serialization = serializers);
       ()
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
@@ -63,7 +73,10 @@ object NetPingPong extends DistributedBenchmark {
     private var ponger: ActorRef = null;
 
     override def setup(c: ClientConf): ClientData = {
-      system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1);
+      system = ActorSystemProvider.newRemoteActorSystem(
+        name = "pingpong",
+        threads = 1,
+        serialization = serializers);
       ponger = system.actorOf(Props(new Ponger), "ponger");
       val path = ActorSystemProvider.actorPathForRef(ponger, system);
       println(s"Ponger Path is $path");
@@ -95,9 +108,41 @@ object NetPingPong extends DistributedBenchmark {
   override def clientConfToString(c: ClientConf): String = "";
   override def clientDataToString(d: ClientData): String = d.actorPath;
 
-  case object Start
-  case object Ping
-  case object Pong
+  case object Start;
+  case object Ping;
+  case object Pong;
+
+  object PingPongSerializer {
+
+    val NAME = "netpingpong";
+
+    private val PING_FLAG: Byte = 1;
+    private val PONG_FLAG: Byte = 2;
+  }
+
+  class PingPongSerializer extends Serializer {
+    import PingPongSerializer._;
+
+    override def identifier: Int = 101;
+    override def includeManifest: Boolean = false;
+    override def toBinary(o: AnyRef): Array[Byte] = {
+      o match {
+        case Ping => Array(PING_FLAG)
+        case Pong => Array(PONG_FLAG)
+      }
+    }
+
+    override def fromBinary(bytes: Array[Byte], manifest: Option[Class[_]]): AnyRef = {
+      if (bytes.length == 1) {
+        bytes(0) match {
+          case PING_FLAG => Ping
+          case PONG_FLAG => Pong
+        }
+      } else {
+        throw new java.io.NotSerializableException(s"Expected buffer of length 1, but got ${bytes.length}!");
+      }
+    }
+  }
 
   class Pinger(latch: CountDownLatch, count: Long, ponger: ActorRef) extends Actor {
     var countDown = count;

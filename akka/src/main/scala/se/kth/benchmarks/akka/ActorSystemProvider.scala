@@ -3,6 +3,54 @@ package se.kth.benchmarks.akka
 import akka.actor._
 import com.typesafe.config.{ Config, ConfigFactory }
 import scala.util.Properties._
+import scala.reflect.runtime.universe._
+import scala.reflect.ClassTag
+
+final case class SerializerName(name: String);
+final case class ClassRef(clazz: Class[_]) {
+  def fullName: String = clazz.getName; // canonical name gives wrong $
+}
+object ClassRef {
+  def from[C](implicit objTag: ClassTag[C]): ClassRef = {
+    ClassRef(objTag.runtimeClass)
+  }
+}
+final class SerializerBindings(
+  val serializers: Map[SerializerName, ClassRef],
+  val bindings:    Map[SerializerName, List[ClassRef]]) {
+
+  def addSerializer[Serializer](name: String)(implicit serTag: ClassTag[Serializer]): SerializerBindings = {
+    val serClazz = ClassRef(serTag.runtimeClass);
+    val newSerializers = serializers + (SerializerName(name) -> serClazz);
+    new SerializerBindings(newSerializers, bindings)
+  }
+
+  def addBinding[Serializee](name: String)(implicit objTag: ClassTag[Serializee]): SerializerBindings = {
+    val objClazz = ClassRef(objTag.runtimeClass);
+    val serName = SerializerName(name);
+    val newEntry = bindings.get(serName) match {
+      case Some(l) => objClazz :: l
+      case None    => List(objClazz)
+    };
+    val newBindings = bindings + (serName -> newEntry);
+    new SerializerBindings(serializers, newBindings)
+  }
+
+  //  private[akka] addDefaults(): SerializerBindings = {
+  //
+  //  }
+}
+object SerializerBindings {
+  def empty(): SerializerBindings = new SerializerBindings(Map.empty, Map.empty);
+  def withBinding[Serializer, Serializee](name: String)(implicit serTag: ClassTag[Serializer], objTag: ClassTag[Serializee]): SerializerBindings = {
+    val serClazz = ClassRef(serTag.runtimeClass);
+    val objClazz = ClassRef(objTag.runtimeClass);
+    val serName = SerializerName(name);
+    new SerializerBindings(
+      Map(serName -> serClazz),
+      Map(serName -> List(objClazz)))
+  }
+}
 
 object ActorSystemProvider {
   private val corePoolSizeDefault = getNumWorkers("actors.corePoolSize", 4);
@@ -43,11 +91,16 @@ object ActorSystemProvider {
     }""";
 
   private def remoteConfig(
-    corePoolSize:        Int    = corePoolSizeDefault,
-    maxPoolSize:         Int    = maxPoolSizeDefault,
-    priorityMailboxType: String = priorityMailboxTypeDefault,
+    corePoolSize:        Int                = corePoolSizeDefault,
+    maxPoolSize:         Int                = maxPoolSizeDefault,
+    priorityMailboxType: String             = priorityMailboxTypeDefault,
     hostname:            String,
-    port:                Int) = s"""
+    port:                Int,
+    customSerializers:   SerializerBindings) = {
+    val serializers = customSerializers.serializers.map(e => s"""          ${e._1.name} = "${e._2.fullName}" """).mkString("serializers {\n", "\n", "\n        }");
+    val bindings = customSerializers.bindings.toList.flatMap(e => e._2.map(c => (e._1, c))).map(e => s"""          "${e._2.fullName}" = ${e._1.name}""").mkString("serialization-bindings {\n", "\n", "\n        }");
+
+    val conf = s"""
     akka {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
@@ -70,7 +123,10 @@ object ActorSystemProvider {
         typed {
           timeout = 10000s
         }
-        provider = remote
+        provider = remote        
+        allow-java-serialization=off
+        ${serializers}
+        ${bindings}
       }
       remote {
         enabled-transports = ["akka.remote.netty.tcp"]
@@ -80,6 +136,9 @@ object ActorSystemProvider {
         }
       }
     }""";
+    println(conf);
+    conf
+  };
 
   private lazy val defaultConf = ConfigFactory.parseString(customConfig());
   lazy val config = ConfigFactory.load(defaultConf);
@@ -116,8 +175,13 @@ object ActorSystemProvider {
     val conf = ConfigFactory.load(confStr);
     ActorSystem(name, conf)
   }
-  def newRemoteActorSystem(name: String, threads: Int): ActorSystem = {
-    val confStr = ConfigFactory.parseString(remoteConfig(corePoolSize = threads, maxPoolSize = threads, hostname = getPublicIf, port = 0));
+  def newRemoteActorSystem(name: String, threads: Int, serialization: SerializerBindings): ActorSystem = {
+    val confStr = ConfigFactory.parseString(remoteConfig(
+      corePoolSize = threads,
+      maxPoolSize = threads,
+      hostname = getPublicIf,
+      port = 0,
+      customSerializers = serialization));
     val conf = ConfigFactory.load(confStr);
     ActorSystem(name, conf)
   }

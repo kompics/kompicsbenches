@@ -15,7 +15,10 @@ libraryDependencies ++= Seq(
     "com.typesafe.akka" %% "akka-actor" % akkaV,
     "com.typesafe.akka" %% "akka-remote" % akkaV,
     "ch.qos.logback" % "logback-classic" % "1.2.3",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
 )
+
+fork := true;
 
 assemblyMergeStrategy in assembly := {
   case "META-INF/io.netty.versions.properties" => MergeStrategy.first

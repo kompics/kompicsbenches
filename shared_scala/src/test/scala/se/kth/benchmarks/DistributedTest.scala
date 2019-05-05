@@ -11,82 +11,8 @@ import io.grpc.{ Server, ServerBuilder, ManagedChannelBuilder }
 
 class DistributedTest extends FunSuite with Matchers {
   test("Master-Client communication") {
-    val runnerPort = 45678;
-    val runnerAddrS = s"127.0.0.1:$runnerPort";
-    val masterPort = 45679;
-    val masterAddrS = s"127.0.0.1:$masterPort";
-    val clientPort = 45680;
-    val clientAddrS = s"127.0.0.1:$clientPort";
-
-    val numClients = 1;
-
-    val benchFactory = TestFactory;
-
-    val masterThread = new Thread("BenchmarkMaster") {
-      override def run(): Unit = {
-        println("Starting master");
-        val runnerAddr = Util.argToAddr(runnerAddrS).get;
-        val masterAddr = Util.argToAddr(masterAddrS).get;
-        BenchmarkMaster.run(numClients, masterAddr.port, runnerAddr.port, benchFactory);
-        println("Finished master");
-      }
-    };
-    masterThread.start();
-
-    val clientThread = new Thread("BenchmarkClient") {
-      override def run(): Unit = {
-        println("Starting client");
-        val masterAddr = Util.argToAddr(masterAddrS).get;
-        val clientAddr = Util.argToAddr(clientAddrS).get;
-        BenchmarkClient.run(clientAddr.addr, masterAddr.addr, masterAddr.port);
-        println("Finished client");
-      }
-    };
-    clientThread.start();
-
-    val runnerAddr = Util.argToAddr(runnerAddrS).get;
-    val benchStub = {
-      val channel = ManagedChannelBuilder.forAddress(runnerAddr.addr, runnerAddr.port).usePlaintext().build;
-      val stub = BenchmarkRunnerGrpc.stub(channel);
-      stub
-    };
-
-    var attempts = 0;
-    var ready = false;
-    while (!ready && attempts < 20) {
-      attempts += 1;
-      println(s"Checking if ready, attempt #${attempts}");
-      val readyF = benchStub.ready(ReadyRequest());
-      val res = Await.result(readyF, 500.milliseconds);
-      if (res.status) {
-        println("Was ready.");
-        ready = true
-      } else {
-        println("Wasn't ready, yet.");
-        Thread.sleep(500);
-      }
-    }
-    ready should be (true);
-
-    val ppr = PingPongRequest().withNumberOfMessages(100);
-    val pprResF = benchStub.pingPong(ppr);
-    val pprRes = Await.result(pprResF, 30.seconds);
-    pprRes shouldBe a[TestSuccess];
-
-    val npprResF = benchStub.netPingPong(ppr);
-    val npprRes = Await.result(npprResF, 30.seconds);
-    npprRes shouldBe a[TestSuccess];
-
-    println("Sending shutdown request to master");
-    val sreq = ShutdownRequest().withForce(false);
-    val shutdownResF = benchStub.shutdown(sreq);
-
-    println("Waiting for master to finish...");
-    masterThread.join();
-    println("Master is done.");
-    println("Waiting for client to finish...");
-    clientThread.join();
-    println("Client is done.");
+    val dtest = new se.kth.benchmarks.test.DistributedTest(TestFactory);
+    dtest.test();
   }
 }
 
@@ -101,7 +27,7 @@ object TestLocalBench extends Benchmark {
       println("Preparing iteration.");
     }
     override def runIteration(): Unit = {
-     val start = System.currentTimeMillis();
+      val start = System.currentTimeMillis();
       println("Running iteration.");
       // make sure results are of consistent length to avoid RSE target violations
       var end = System.currentTimeMillis();
