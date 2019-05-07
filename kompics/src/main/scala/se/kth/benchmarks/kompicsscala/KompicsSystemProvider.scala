@@ -1,7 +1,8 @@
 package se.kth.benchmarks.kompicsscala
 
 import se.kth.benchmarks.BenchmarkException
-import se.sics.kompics.{ Fault, FaultHandler, Component, Init => JInit, PortType, Channel }
+import se.sics.kompics.{ Fault, FaultHandler, Component, ComponentDefinition => JComponentDefinition, Init => JInit, PortType, Channel }
+import se.sics.kompics.config.Conversions
 import se.sics.kompics.sl._
 import se.sics.kompics.network.{ Transport, Network, NetworkControl, ListeningStatus }
 import se.sics.kompics.network.netty.{ NettyNetwork, NettyInit }
@@ -29,6 +30,8 @@ case class SetupFH(p: Promise[KompicsSystem]) extends FaultHandler {
 object KompicsSystemProvider {
 
   BenchNet.registerSerializers();
+  se.kth.benchmarks.kompicsjava.net.BenchNetSerializer.register();
+  Conversions.register(new se.kth.benchmarks.kompicsjava.net.NetAddressConverter());
 
   val SELF_ADDR_KEY = "self-address";
 
@@ -64,7 +67,7 @@ object KompicsSystemProvider {
   }
 }
 
-case class NewComponent[C <: ComponentDefinition](c: Class[C], init: JInit[C], p: Promise[UUID]) extends KompicsEvent;
+case class NewComponent[C <: JComponentDefinition](c: Class[C], init: JInit[C], p: Promise[UUID]) extends KompicsEvent;
 case class StartComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
@@ -208,7 +211,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   //    return Fault.ResolveAction.ESCALATE;
   //  }
 
-  def createNotify[C <: ComponentDefinition: ClassTag](init: JInit[C]): Future[UUID] = {
+  def createNotify[C <: JComponentDefinition: ClassTag](init: JInit[C]): Future[UUID] = {
     val ct = classTag[C].runtimeClass.asInstanceOf[Class[C]];
     val p = Promise[UUID];
     trigger (NewComponent(ct, init, p) -> onSelf);

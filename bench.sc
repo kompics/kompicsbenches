@@ -14,7 +14,8 @@ import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, Hos
 //import $ivy.`ch.qos.logback:logback-classic:1.1.7`
 
 val runnerAddr = "127.0.0.1:45678";
-val masterAddr = "192.168.0.106:45679";
+//val masterAddr = "192.168.0.106:45679";
+val masterAddr = "127.0.0.1:45679";
 
 def getExperimentRunner(prefix: String, results: Path): BenchmarkRunner = BenchmarkRunner(
 	bench = BenchmarkInfo(

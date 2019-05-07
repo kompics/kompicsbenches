@@ -1,8 +1,11 @@
-package se.kth.benchmarks.kompicsscala.bench
+package se.kth.benchmarks.kompicsjava.bench
 
 import org.scalatest._
 import scala.util.{ Success, Failure, Try }
-import se.kth.benchmarks.kompicsscala._
+import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, NetAddress => SNetAddress }
+import se.kth.benchmarks.kompicsjava._
+import se.kth.benchmarks.kompicsjava.bench.netpingpong._
+import se.kth.benchmarks.kompicsjava.net._;
 import java.util.concurrent.CountDownLatch
 import NetPingPong._
 import se.sics.kompics.sl._
@@ -18,15 +21,15 @@ class DistributedTest extends FunSuite with Matchers {
     import io.netty.buffer.{ Unpooled, ByteBuf };
     import java.util.Optional;
 
-    BenchNet.registerSerializers();
+    BenchNetSerializer.register();
     NetPingPongSerializer.register();
 
     val noHint: Optional[Object] = Optional.empty();
 
-    val addr = NetAddress.from("127.0.0.1", 12345).get;
-    val addr2 = NetAddress.from("127.0.0.1", 45678).get; // larger port number that doesn't fit into a short
-    val ping = NetMessage.viaTCP(addr, addr)(Ping);
-    val pong = NetMessage.viaTCP(addr, addr)(Pong);
+    val addr = NetAddress.from("127.0.0.1", 12345);
+    val addr2 = NetAddress.from("127.0.0.1", 45678); // larger port number that doesn't fit into a short
+    val ping = NetMessage.viaTCP(addr, addr, Ping.event);
+    val pong = NetMessage.viaTCP(addr, addr, Pong.event);
 
     val buf = Unpooled.directBuffer();
 
@@ -48,21 +51,21 @@ class DistributedTest extends FunSuite with Matchers {
 
     Serializers.toBinary(ping, buf);
     val pingDeserO = Serializers.fromBinary(buf, noHint);
-    pingDeserO shouldBe a[NetMessage[_]];
-    val pingDeser = pingDeserO.asInstanceOf[NetMessage[Ping.type]];
+    pingDeserO shouldBe a[NetMessage];
+    val pingDeser = pingDeserO.asInstanceOf[NetMessage];
     pingDeser should equal (ping);
 
     buf.clear();
 
     Serializers.toBinary(pong, buf);
     val pongDeserO = Serializers.fromBinary(buf, noHint);
-    pongDeserO shouldBe a[NetMessage[_]];
-    val pongDeser = pongDeserO.asInstanceOf[NetMessage[Pong.type]];
+    pongDeserO shouldBe a[NetMessage];
+    val pongDeser = pongDeserO.asInstanceOf[NetMessage];
     pongDeser should equal (pong);
   }
 
   test("Address Ser/Deser") {
-    val addr = NetAddress.from("127.0.0.1", 12345).get;
+    val addr = SNetAddress.from("127.0.0.1", 12345).get;
     println(s"Original Address: $addr");
     val ser = NetPingPong.clientDataToString(addr);
     println(s"Serialised Address: $ser");
@@ -73,8 +76,7 @@ class DistributedTest extends FunSuite with Matchers {
     deser should equal (addr);
   }
 
-  // Ignore because this test only runs once correctly and then requires a JVM restart...some UDT weirdness with SBT -.-
-  test("Kompics Scala Network System") {
+  test("Kompics Java Network System") {
 
     KompicsSystemProvider.setPublicIf("127.0.0.1");
 
@@ -83,13 +85,13 @@ class DistributedTest extends FunSuite with Matchers {
     val addr = system.networkAddress.get;
 
     val latch = new CountDownLatch(1);
-    val pingerIdF = system.createNotify[Pinger](Init(latch, 100l, addr));
+    val pingerIdF = system.createNotify[Pinger](new Pinger.Init(latch, 100l, addr.asJava));
     val pinger = Await.result(pingerIdF, 5.second);
     val pingerConnF = system.connectNetwork(pinger);
     Await.result(pingerConnF, 5.seconds);
     println(s"Pinger Path is $addr");
 
-    val pongerF = system.createNotify[Ponger](Init());
+    val pongerF = system.createNotify[Ponger](Init.none[Ponger]);
     val ponger = Await.result(pongerF, 5.seconds);
     val pongerConnF = system.connectNetwork(ponger);
     Await.result(pongerConnF, 5.seconds);

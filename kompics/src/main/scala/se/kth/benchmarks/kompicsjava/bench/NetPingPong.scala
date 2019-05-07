@@ -1,11 +1,11 @@
-package se.kth.benchmarks.kompicsscala.bench
+package se.kth.benchmarks.kompicsjava.bench
 
 import se.kth.benchmarks._
-import se.kth.benchmarks.kompicsscala._
+import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, KompicsSystem, NetAddress }
 import _root_.kompics.benchmarks.benchmarks.PingPongRequest
-import se.sics.kompics.sl._
-import se.sics.kompics.{ KompicsEvent, Start }
+import se.kth.benchmarks.kompicsjava.bench.netpingpong._;
 import se.sics.kompics.network.Network
+import se.sics.kompics.sl.Init
 import scala.util.{ Try, Success, Failure }
 import scala.concurrent.Await
 import scala.concurrent.duration._
@@ -38,7 +38,7 @@ object NetPingPong extends DistributedBenchmark {
       assert(system != null);
       val pongerAddr = d.head;
       latch = new CountDownLatch(1);
-      val pingerIdF = system.createNotify[Pinger](Init(latch, num, pongerAddr));
+      val pingerIdF = system.createNotify[Pinger](new Pinger.Init(latch, num, pongerAddr.asJava));
       pinger = Await.result(pingerIdF, 5.second);
       val connF = system.connectNetwork(pinger);
       Await.result(connF, 5.seconds);
@@ -78,7 +78,7 @@ object NetPingPong extends DistributedBenchmark {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       NetPingPongSerializer.register();
 
-      val pongerF = system.createNotify[Ponger](Init());
+      val pongerF = system.createNotify[Ponger](Init.none[Ponger]);
       ponger = Await.result(pongerF, 5.seconds);
       val connF = system.connectNetwork(ponger);
       Await.result(connF, 5.seconds);
@@ -123,90 +123,5 @@ object NetPingPong extends DistributedBenchmark {
   override def clientConfToString(c: ClientConf): String = "";
   override def clientDataToString(d: ClientData): String = {
     s"${d.isa.getHostString()}:${d.getPort()}"
-  }
-
-  case object Ping extends KompicsEvent;
-  case object Pong extends KompicsEvent;
-
-  object NetPingPongSerializer extends Serializer {
-
-    def register(): Unit = {
-      Serializers.register(this, "netpingpong");
-      Serializers.register(Ping.getClass, "netpingpong");
-      Serializers.register(Pong.getClass, "netpingpong");
-    }
-
-    val NO_HINT: Optional[Object] = Optional.empty();
-
-    private val PING_FLAG: Byte = 1;
-    private val PONG_FLAG: Byte = 2;
-
-    override def identifier(): Int = se.sics.benchmarks.kompics.SerializerIds.S_NETPP;
-
-    override def toBinary(o: Any, buf: ByteBuf): Unit = {
-      o match {
-        case Ping => buf.writeByte(PING_FLAG)
-        case Pong => buf.writeByte(PONG_FLAG)
-      }
-    }
-
-    override def fromBinary(buf: ByteBuf, hint: Optional[Object]): Object = {
-      val flag = buf.readByte();
-      flag match {
-        case PING_FLAG => Ping
-        case PONG_FLAG => Pong
-        case _ => {
-          Console.err.print(s"Got invalid ser flag: $flag");
-          null
-        }
-      }
-    }
-  }
-
-  class Pinger(init: Init[Pinger]) extends ComponentDefinition {
-
-    val net = requires[Network];
-
-    val Init(latch: CountDownLatch, count: Long, ponger: NetAddress) = init;
-
-    lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
-
-    var countDown = count;
-
-    ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-        trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
-      }
-    }
-    net uponEvent {
-      case context @ NetMessage(_, Pong) => handle {
-        if (countDown > 0) {
-          countDown -= 1;
-          trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
-        } else {
-          latch.countDown();
-        }
-      }
-    }
-  }
-
-  class Ponger(_init: Init[Ponger]) extends ComponentDefinition {
-
-    val net = requires[Network];
-
-    lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
-
-    ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-      }
-    }
-
-    net uponEvent {
-      case context @ NetMessage(_, Ping) => handle {
-        trigger(context.reply(selfAddr)(Pong) -> net);
-      }
-    }
   }
 }

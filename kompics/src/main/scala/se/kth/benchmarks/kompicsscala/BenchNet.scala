@@ -7,6 +7,7 @@ import scala.util.{ Failure, Try, Success }
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
 import java.util.Optional
 import io.netty.buffer.ByteBuf
+import se.kth.benchmarks.kompicsjava.net.{ NetAddress => JNetAddress }
 
 object BenchNet {
   def registerSerializers(): Unit = {
@@ -24,6 +25,8 @@ final case class NetAddress(isa: InetSocketAddress) extends Address {
   override def sameHostAs(other: Address): Boolean = {
     this.isa.equals(other.asSocket())
   }
+
+  def asJava: JNetAddress = new JNetAddress(isa);
 }
 object NetAddress {
   def from(ip: String, port: Int): Try[NetAddress] = Try {
@@ -59,7 +62,7 @@ object BenchNetSerializer extends Serializer {
   private val NET_HEADER_FLAG: Byte = 2;
   private val NET_MSG_FLAG: Byte = 3;
 
-  override def identifier(): Int = 100;
+  override def identifier(): Int = se.sics.benchmarks.kompics.SerializerIds.S_BENCH_NET;
 
   override def toBinary(o: Any, buf: ByteBuf): Unit = {
     o match {
