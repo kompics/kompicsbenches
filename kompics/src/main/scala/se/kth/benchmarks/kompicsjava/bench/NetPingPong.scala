@@ -17,8 +17,6 @@ import io.netty.buffer.ByteBuf
 
 object NetPingPong extends DistributedBenchmark {
 
-  case class ClientRef(actorPath: String)
-
   override type MasterConf = PingPongRequest;
   override type ClientConf = Unit;
   override type ClientData = NetAddress;
@@ -111,17 +109,8 @@ object NetPingPong extends DistributedBenchmark {
 
   override def newClient(): Client = new ClientImpl();
   override def strToClientConf(str: String): Try[ClientConf] = Success(());
-  override def strToClientData(str: String): Try[ClientData] = Try {
-    val split = str.split(":");
-    assert(split.length == 2);
-    val ipStr = split(0); //.replaceAll("""/""", "");
-    val portStr = split(1);
-    val port = portStr.toInt;
-    NetAddress.from(ipStr, port)
-  }.flatten;
+  override def strToClientData(str: String): Try[ClientData] = NetAddress.fromString(str);
 
   override def clientConfToString(c: ClientConf): String = "";
-  override def clientDataToString(d: ClientData): String = {
-    s"${d.isa.getHostString()}:${d.getPort()}"
-  }
+  override def clientDataToString(d: ClientData): String = d.asString;
 }

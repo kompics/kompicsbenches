@@ -2,8 +2,10 @@ use super::*;
 use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
+pub mod net_throughput_pingpong;
 pub mod netpingpong;
 pub mod pingpong;
+pub mod throughput_pingpong;
 
 pub fn component() -> Box<BenchmarkFactory> {
     Box::new(ComponentFactory {})
@@ -13,15 +15,27 @@ pub struct ComponentFactory;
 impl BenchmarkFactory for ComponentFactory {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
         match label {
-            pingpong::component_pingpong::PingPong::LABEL => self.pingpong().map_into(),
+            pingpong::component_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
+            throughput_pingpong::component_pingpong::PingPong::LABEL => {
+                self.throughput_ping_pong().map_into()
+            }
             _ => Err(NotImplementedError::NotFound),
         }
     }
 
-    fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::component_pingpong::PingPong {}.into())
     }
-    fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
+
+    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        Ok(throughput_pingpong::component_pingpong::PingPong {}.into())
+    }
+    fn net_throughput_ping_pong(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 }
@@ -34,17 +48,30 @@ pub struct ActorFactory;
 impl BenchmarkFactory for ActorFactory {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
         match label {
-            pingpong::actor_pingpong::PingPong::LABEL => self.pingpong().map_into(),
-            netpingpong::PingPong::LABEL => self.netpingpong().map_into(),
+            pingpong::actor_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
+            netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
+            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
+                self.throughput_ping_pong().map_into()
+            }
+            net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
 
-    fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::actor_pingpong::PingPong {}.into())
     }
-    fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(netpingpong::PingPong {}.into())
+    }
+
+    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        Ok(throughput_pingpong::actor_pingpong::PingPong {}.into())
+    }
+    fn net_throughput_ping_pong(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(net_throughput_pingpong::PingPong {}.into())
     }
 }
 pub fn mixed() -> Box<BenchmarkFactory> {
@@ -55,16 +82,29 @@ pub struct MixedFactory;
 impl BenchmarkFactory for MixedFactory {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
         match label {
-            pingpong::component_pingpong::PingPong::LABEL => self.pingpong().map_into(),
-            netpingpong::PingPong::LABEL => self.netpingpong().map_into(),
+            pingpong::component_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
+            netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
+            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
+                self.throughput_ping_pong().map_into()
+            }
+            net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
 
-    fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::component_pingpong::PingPong {}.into())
     }
-    fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(netpingpong::PingPong {}.into())
+    }
+
+    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        Ok(throughput_pingpong::component_pingpong::PingPong {}.into())
+    }
+    fn net_throughput_ping_pong(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(net_throughput_pingpong::PingPong {}.into())
     }
 }

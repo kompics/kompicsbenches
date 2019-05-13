@@ -15,6 +15,7 @@ libraryDependencies ++= Seq(
     "ch.qos.logback" % "logback-classic" % "1.2.3",
     "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0",
     "org.rogach" %% "scallop" % "3.1.2",
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test"
     //"com.thesamet.scalapb" %% "scalapb-runtime-grpc" % "0.8.2"
 )
 

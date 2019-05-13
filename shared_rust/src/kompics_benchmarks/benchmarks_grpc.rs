@@ -29,6 +29,10 @@ pub trait BenchmarkRunner {
     fn ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 
     fn net_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
+
+    fn throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
+
+    fn net_throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 }
 
 // client
@@ -39,6 +43,8 @@ pub struct BenchmarkRunnerClient {
     method_Shutdown: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::messages::ShutdownRequest, super::messages::ShutdownAck>>,
     method_PingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
     method_NetPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
+    method_ThroughputPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::ThroughputPingPongRequest, super::messages::TestResult>>,
+    method_NetThroughputPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::ThroughputPingPongRequest, super::messages::TestResult>>,
 }
 
 impl ::grpc::ClientStub for BenchmarkRunnerClient {
@@ -69,6 +75,18 @@ impl ::grpc::ClientStub for BenchmarkRunnerClient {
                 req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
                 resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
             }),
+            method_ThroughputPingPong: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/ThroughputPingPong".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
+            method_NetThroughputPingPong: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/NetThroughputPingPong".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
         }
     }
 }
@@ -88,6 +106,14 @@ impl BenchmarkRunner for BenchmarkRunnerClient {
 
     fn net_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::PingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
         self.grpc_client.call_unary(o, p, self.method_NetPingPong.clone())
+    }
+
+    fn throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
+        self.grpc_client.call_unary(o, p, self.method_ThroughputPingPong.clone())
+    }
+
+    fn net_throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
+        self.grpc_client.call_unary(o, p, self.method_NetThroughputPingPong.clone())
     }
 }
 
@@ -147,6 +173,30 @@ impl BenchmarkRunnerServer {
                     {
                         let handler_copy = handler_arc.clone();
                         ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.net_ping_pong(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/ThroughputPingPong".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.throughput_ping_pong(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/NetThroughputPingPong".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.net_throughput_ping_pong(o, p))
                     },
                 ),
             ],

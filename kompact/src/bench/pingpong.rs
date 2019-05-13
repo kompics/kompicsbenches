@@ -283,7 +283,8 @@ pub mod component_pingpong {
 
                         on_dual_definition(&pinger, &ponger, |pinger_def, ponger_def| {
                             biconnect(&mut ponger_def.ppp, &mut pinger_def.ppp);
-                        }).expect("Could not connect components!");
+                        })
+                        .expect("Could not connect components!");
 
                         let ponger_f = system.start_notify(&ponger);
 

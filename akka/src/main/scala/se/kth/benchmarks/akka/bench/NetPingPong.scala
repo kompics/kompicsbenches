@@ -2,7 +2,7 @@ package se.kth.benchmarks.akka.bench
 
 import akka.actor._
 import akka.serialization.Serializer
-import se.kth.benchmarks.akka.{ ActorSystemProvider, SerializerBindings }
+import se.kth.benchmarks.akka.{ ActorSystemProvider, SerializerBindings, SerializerIds }
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.PingPongRequest
 import scala.util.{ Try, Success, Failure }
@@ -123,7 +123,7 @@ object NetPingPong extends DistributedBenchmark {
   class PingPongSerializer extends Serializer {
     import PingPongSerializer._;
 
-    override def identifier: Int = 101;
+    override def identifier: Int = SerializerIds.NETPP;
     override def includeManifest: Boolean = false;
     override def toBinary(o: AnyRef): Array[Byte] = {
       o match {

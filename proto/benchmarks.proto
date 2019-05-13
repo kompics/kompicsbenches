@@ -9,8 +9,16 @@ service BenchmarkRunner {
 
 	rpc PingPong (PingPongRequest) returns (TestResult);
 	rpc NetPingPong (PingPongRequest) returns (TestResult);
+	rpc ThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
+	rpc NetThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 }
 
 message PingPongRequest {
 	uint64 number_of_messages = 1;
+}
+message ThroughputPingPongRequest {
+	uint64 messages_per_pair = 1;
+	uint64 pipeline_size = 2;
+	uint32 parallelism = 3;
+	bool static_only = 4;
 }

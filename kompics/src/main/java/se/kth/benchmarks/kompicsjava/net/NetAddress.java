@@ -57,4 +57,16 @@ public class NetAddress implements Address {
     public static NetAddress from(String ip, int port) {
         return new NetAddress(new InetSocketAddress(ip, port));
     }
+    
+    public String asString() {
+        return isa.getHostString()+':'+isa.getPort();
+    }
+    public static NetAddress fromString(String str) {
+        String[] split = str.split(":");
+        assert(split.length == 2);
+        String ipStr = split[0];
+        String portStr = split[1];
+        int port = Integer.parseInt(portStr);
+        return NetAddress.from(ipStr, port);
+    }
 }

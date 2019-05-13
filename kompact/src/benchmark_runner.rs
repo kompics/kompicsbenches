@@ -57,6 +57,31 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        println!("Got req: {:?}", p);
+        let f = run_async(move || {
+            let b = bench::throughput_pingpong::actor_pingpong::PingPong::default();
+            run(&b, &p).into()
+        })
+        .map_err(|e| {
+            println!("Converting benchmark error into grpc error: {:?}", e);
+            e.into()
+        });
+        grpc::SingleResponse::no_metadata(f)
+    }
+
+    fn net_throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 pub struct BenchmarkRunnerComponentImpl;
@@ -93,7 +118,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
         _o: grpc::RequestOptions,
         p: benchmarks::PingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
-        println!("Got ping_pong req: {}", p.number_of_messages);
+        println!("Got req: {:?}", p);
         let f = run_async(move || {
             let b = bench::pingpong::component_pingpong::PingPong::default();
             run(&b, &p).into()
@@ -109,6 +134,31 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
         &self,
         _o: grpc::RequestOptions,
         _p: benchmarks::PingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        println!("Got req: {:?}", p);
+        let f = run_async(move || {
+            let b = bench::throughput_pingpong::component_pingpong::PingPong::default();
+            run(&b, &p).into()
+        })
+        .map_err(|e| {
+            println!("Converting benchmark error into grpc error: {:?}", e);
+            e.into()
+        });
+        grpc::SingleResponse::no_metadata(f)
+    }
+
+    fn net_throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::ThroughputPingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

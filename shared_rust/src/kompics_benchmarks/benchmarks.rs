@@ -183,16 +183,290 @@ impl ::protobuf::reflect::ProtobufValue for PingPongRequest {
     }
 }
 
+#[derive(PartialEq,Clone,Default)]
+pub struct ThroughputPingPongRequest {
+    // message fields
+    pub messages_per_pair: u64,
+    pub pipeline_size: u64,
+    pub parallelism: u32,
+    pub static_only: bool,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a ThroughputPingPongRequest {
+    fn default() -> &'a ThroughputPingPongRequest {
+        <ThroughputPingPongRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl ThroughputPingPongRequest {
+    pub fn new() -> ThroughputPingPongRequest {
+        ::std::default::Default::default()
+    }
+
+    // uint64 messages_per_pair = 1;
+
+
+    pub fn get_messages_per_pair(&self) -> u64 {
+        self.messages_per_pair
+    }
+    pub fn clear_messages_per_pair(&mut self) {
+        self.messages_per_pair = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_messages_per_pair(&mut self, v: u64) {
+        self.messages_per_pair = v;
+    }
+
+    // uint64 pipeline_size = 2;
+
+
+    pub fn get_pipeline_size(&self) -> u64 {
+        self.pipeline_size
+    }
+    pub fn clear_pipeline_size(&mut self) {
+        self.pipeline_size = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_pipeline_size(&mut self, v: u64) {
+        self.pipeline_size = v;
+    }
+
+    // uint32 parallelism = 3;
+
+
+    pub fn get_parallelism(&self) -> u32 {
+        self.parallelism
+    }
+    pub fn clear_parallelism(&mut self) {
+        self.parallelism = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_parallelism(&mut self, v: u32) {
+        self.parallelism = v;
+    }
+
+    // bool static_only = 4;
+
+
+    pub fn get_static_only(&self) -> bool {
+        self.static_only
+    }
+    pub fn clear_static_only(&mut self) {
+        self.static_only = false;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_static_only(&mut self, v: bool) {
+        self.static_only = v;
+    }
+}
+
+impl ::protobuf::Message for ThroughputPingPongRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.messages_per_pair = tmp;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.pipeline_size = tmp;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.parallelism = tmp;
+                },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_bool()?;
+                    self.static_only = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.messages_per_pair != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.messages_per_pair, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.pipeline_size != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.pipeline_size, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.parallelism != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.parallelism, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.static_only != false {
+            my_size += 2;
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
+        if self.messages_per_pair != 0 {
+            os.write_uint64(1, self.messages_per_pair)?;
+        }
+        if self.pipeline_size != 0 {
+            os.write_uint64(2, self.pipeline_size)?;
+        }
+        if self.parallelism != 0 {
+            os.write_uint32(3, self.parallelism)?;
+        }
+        if self.static_only != false {
+            os.write_bool(4, self.static_only)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &::std::any::Any {
+        self as &::std::any::Any
+    }
+    fn as_any_mut(&mut self) -> &mut ::std::any::Any {
+        self as &mut ::std::any::Any
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<::std::any::Any> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> ThroughputPingPongRequest {
+        ThroughputPingPongRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "messages_per_pair",
+                    |m: &ThroughputPingPongRequest| { &m.messages_per_pair },
+                    |m: &mut ThroughputPingPongRequest| { &mut m.messages_per_pair },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "pipeline_size",
+                    |m: &ThroughputPingPongRequest| { &m.pipeline_size },
+                    |m: &mut ThroughputPingPongRequest| { &mut m.pipeline_size },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "parallelism",
+                    |m: &ThroughputPingPongRequest| { &m.parallelism },
+                    |m: &mut ThroughputPingPongRequest| { &mut m.parallelism },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeBool>(
+                    "static_only",
+                    |m: &ThroughputPingPongRequest| { &m.static_only },
+                    |m: &mut ThroughputPingPongRequest| { &mut m.static_only },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<ThroughputPingPongRequest>(
+                    "ThroughputPingPongRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static ThroughputPingPongRequest {
+        static mut instance: ::protobuf::lazy::Lazy<ThroughputPingPongRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ThroughputPingPongRequest,
+        };
+        unsafe {
+            instance.get(ThroughputPingPongRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for ThroughputPingPongRequest {
+    fn clear(&mut self) {
+        self.messages_per_pair = 0;
+        self.pipeline_size = 0;
+        self.parallelism = 0;
+        self.static_only = false;
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for ThroughputPingPongRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for ThroughputPingPongRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x10benchmarks.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\"\
     ?\n\x0fPingPongRequest\x12,\n\x12number_of_messages\x18\x01\x20\x01(\x04\
-    R\x10numberOfMessages2\xd6\x02\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\
-    \x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.benchmarks.ReadyRespon\
-    se\x12P\n\x08Shutdown\x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.ko\
-    mpics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.\
-    PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingP\
-    ong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.T\
-    estResultb\x06proto3\
+    R\x10numberOfMessages\"\xaf\x01\n\x19ThroughputPingPongRequest\x12*\n\
+    \x11messages_per_pair\x18\x01\x20\x01(\x04R\x0fmessagesPerPair\x12#\n\rp\
+    ipeline_size\x18\x02\x20\x01(\x04R\x0cpipelineSize\x12\x20\n\x0bparallel\
+    ism\x18\x03\x20\x01(\rR\x0bparallelism\x12\x1f\n\x0bstatic_only\x18\x04\
+    \x20\x01(\x08R\nstaticOnly2\xa3\x04\n\x0fBenchmarkRunner\x12L\n\x05Ready\
+    \x12\x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.benchmarks.ReadyRe\
+    sponse\x12P\n\x08Shutdown\x12#.kompics.benchmarks.ShutdownRequest\x1a\
+    \x1f.kompics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#.kompics.benc\
+    hmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12R\n\x0bN\
+    etPingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.bench\
+    marks.TestResult\x12c\n\x12ThroughputPingPong\x12-.kompics.benchmarks.Th\
+    roughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12f\n\x15\
+    NetThroughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\
+    \x1a\x1e.kompics.benchmarks.TestResultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

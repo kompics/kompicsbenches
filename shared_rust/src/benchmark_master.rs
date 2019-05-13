@@ -372,7 +372,7 @@ impl BenchmarkMaster {
             });
             info!(data_logger, "Awaiting client data.");
             future::join_all(f_list).map(|client_data| (master, client_data))
-        });     
+        });
         let iter_logger = blogger.clone();
         let result_f = client_data_f.and_then(move |(master, client_data_l)| {
             debug!(iter_logger, "Collected all client data.");
@@ -549,8 +549,8 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         p: benchmarks::PingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult>
     {
-        info!(self.logger, "Got ping-pong req: {}", p.get_number_of_messages());
-        let b_res = self.benchmarks.pingpong();
+        info!(self.logger, "Got req: {:?}", p);
+        let b_res = self.benchmarks.ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 
@@ -560,8 +560,30 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         p: benchmarks::PingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult>
     {
-        info!(self.logger, "Got net-ping-pong req: {}", p.get_number_of_messages());
-        let b_res = self.benchmarks.netpingpong();
+        info!(self.logger, "Got net req: {:?}", p);
+        let b_res = self.benchmarks.net_ping_pong();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got req: {:?}", p);
+        let b_res = self.benchmarks.throughput_ping_pong();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn net_throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got net req: {:?}", p);
+        let b_res = self.benchmarks.net_throughput_ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 }

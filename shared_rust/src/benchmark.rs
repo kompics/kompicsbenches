@@ -346,8 +346,12 @@ pub enum NotImplementedError {
 pub trait BenchmarkFactory: Send + Sync {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError>;
 
-    fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
-    fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
+    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
+    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
+    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
+    fn net_throughput_ping_pong(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 #[macro_export]
@@ -560,17 +564,27 @@ pub(crate) mod tests {
     impl BenchmarkFactory for TestFactory {
         fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
             match label {
-                Test2B::LABEL => self.pingpong().map_into(),
-                Test3B::LABEL => self.netpingpong().map_into(),
+                Test2B::LABEL => self.ping_pong().map_into(),
+                Test3B::LABEL => self.net_ping_pong().map_into(),
                 _ => Err(NotImplementedError::NotFound),
             }
         }
 
-        fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
             Ok(Test2B {}.into())
         }
 
-        fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(Test3B {}.into())
+        }
+
+        fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+            Ok(Test2B {}.into())
+        }
+
+        fn net_throughput_ping_pong(
+            &self,
+        ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())
         }
     }
@@ -578,7 +592,7 @@ pub(crate) mod tests {
     #[test]
     fn instantiate_abstract_local_benchmark() -> () {
         let factory = TestFactory {};
-        let b = factory.pingpong().unwrap();
+        let b = factory.ping_pong().unwrap();
         let mut bi = b.new_instance();
         let msg = PingPongRequest::new();
         bi.setup(Box::new(msg)).unwrap();
@@ -590,7 +604,7 @@ pub(crate) mod tests {
     #[test]
     fn instantiate_abstract_distributed_benchmark() -> () {
         let factory = TestFactory {};
-        let b = factory.netpingpong().unwrap();
+        let b = factory.net_ping_pong().unwrap();
         let mut bm = b.new_master();
         let msg = PingPongRequest::new();
         let cconf = bm.setup(Box::new(msg)).unwrap();

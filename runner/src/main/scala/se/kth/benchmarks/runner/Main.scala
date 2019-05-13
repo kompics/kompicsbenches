@@ -45,6 +45,10 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
 
   val console = opt[Boolean](descr = "Output to console instead of result folder");
 
+  val testing = opt[Boolean](
+    descr = "Run with testing parameter space instead of the larger benchmark parameter space.",
+    default = Some(false));
+
   requireOne(outputFolder, console);
 
   verify();

@@ -211,6 +211,48 @@ pub mod test_utils {
         let nppres = nppres_f.wait().expect("npp result");
         assert!(nppres.has_success(), "NetPingPong TestResult should have been a success!");
 
+        let mut tppr = benchmarks::ThroughputPingPongRequest::new();
+        tppr.set_messages_per_pair(100);
+        tppr.set_pipeline_size(10);
+        tppr.set_parallelism(2);
+        tppr.set_static_only(true);
+        let tppres_f = bench_stub
+            .throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
+            .drop_metadata();
+        let tppres = tppres_f.wait().expect("tpp result");
+        assert!(
+            tppres.has_success(),
+            "ThroughputPingPong (Static) TestResult should have been a success!"
+        );
+
+        let ntppres_f = bench_stub
+            .net_throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
+            .drop_metadata();
+        let ntppres = ntppres_f.wait().expect("ntpp result");
+        assert!(
+            ntppres.has_success(),
+            "NetThroughputPingPong (Static) TestResult should have been a success!"
+        );
+
+        tppr.set_static_only(false);
+        let tppres2_f = bench_stub
+            .throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
+            .drop_metadata();
+        let tppres2 = tppres2_f.wait().expect("tpp result");
+        assert!(
+            tppres2.has_success(),
+            "ThroughputPingPong (GC) TestResult should have been a success!"
+        );
+
+        let ntppres2_f = bench_stub
+            .net_throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
+            .drop_metadata();
+        let ntppres2 = ntppres2_f.wait().expect("ntpp result");
+        assert!(
+            ntppres2.has_success(),
+            "NetThroughputPingPong (GC) TestResult should have been a success!"
+        );
+
         info!(logger, "Sending shutdown request to master");
         let mut sreq = messages::ShutdownRequest::new();
         sreq.set_force(false);
@@ -271,9 +313,21 @@ mod tests {
         }
     }
 
-    struct TestDistributedBench;
+    struct TestDistributedBench {
+        //_data: std::marker::PhantomData<M>,
+    }
+    //impl<M> Send for TestDistributedBench<M> {}
+    //impl<M> Sync for TestDistributedBench<M> {}
     struct TestDistributedBenchMaster;
     struct TestDistributedBenchClient;
+
+    impl TestDistributedBench {
+        fn new() -> TestDistributedBench {
+            TestDistributedBench {
+                //_data: std::marker::PhantomData
+            }
+        }
+    }
 
     impl DistributedBenchmark for TestDistributedBench {
         type Client = TestDistributedBenchClient;
@@ -287,9 +341,11 @@ mod tests {
         fn new_master() -> Self::Master { TestDistributedBenchMaster {} }
 
         fn msg_to_master_conf(
-            msg: Box<::protobuf::Message>,
+            _msg: Box<::protobuf::Message>,
         ) -> Result<Self::MasterConf, BenchmarkError> {
-            downcast_msg!(msg; benchmarks::PingPongRequest; |_ppr| ())
+            //downcast_msg!(msg; benchmarks::PingPongRequest; |_ppr| ())
+            //downcast_msg!(msg; M; |_ppr| ())
+            Ok(())
         }
 
         fn new_client() -> Self::Client { TestDistributedBenchClient {} }
@@ -350,18 +406,28 @@ mod tests {
     impl BenchmarkFactory for TestFactory {
         fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
             match label {
-                TestLocalBench::LABEL => self.pingpong().map_into(),
-                TestDistributedBench::LABEL => self.netpingpong().map_into(),
+                TestLocalBench::LABEL => self.ping_pong().map_into(),
+                TestDistributedBench::LABEL => self.net_ping_pong().map_into(),
                 _ => Err(NotImplementedError::NotFound),
             }
         }
 
-        fn pingpong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
             Ok(TestLocalBench {}.into())
         }
 
-        fn netpingpong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-            Ok(TestDistributedBench {}.into())
+        fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(TestDistributedBench::new().into())
+        }
+
+        fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+            Ok(TestLocalBench {}.into())
+        }
+
+        fn net_throughput_ping_pong(
+            &self,
+        ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(TestDistributedBench::new().into())
         }
     }
 

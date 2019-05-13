@@ -98,6 +98,8 @@ object TestDistributedBench extends DistributedBenchmark {
 
 object TestFactory extends BenchmarkFactory {
 
-  override def pingpong(): Benchmark = TestLocalBench;
-  override def netpingpong(): DistributedBenchmark = TestDistributedBench;
+  override def pingPong(): Benchmark = TestLocalBench;
+  override def netPingPong(): DistributedBenchmark = TestDistributedBench;
+  override def throughputPingPong(): Benchmark = TestLocalBench;
+  override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
 }

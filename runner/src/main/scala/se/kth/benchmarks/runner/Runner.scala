@@ -22,6 +22,7 @@ object Runner {
 class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
   val prefix = conf.prefix();
+  val testing = conf.testing();
 
   val sinks: List[DataSink] = {
     if (conf.console()) {
@@ -87,7 +88,7 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
   def runOne(b: Benchmark): Unit = {
     logger.info(s"Running ${b.name}");
     val numRuns = b.requiredRuns;
-    b.withStub(stub) { (f, p, i) =>
+    b.withStub(stub, testing) { (f, p, i) =>
       logger.info(s"Awaiting run result [$i/$numRuns]...");
       val result = Await.ready(f, Duration.Inf).value.get;
       result match {
@@ -183,7 +184,7 @@ class FullSink(prefix: String, rootFolder: File) extends DataSink with LazyLoggi
   }
 
   override def sink(bench: String, params: ParameterDescription, data: Seq[Double]): Unit = {
-    val f = folder.resolve(s"${bench}-${params.toSuffix}.data").toFile;
+    val f = folder.resolve(s"${bench}-${params.toPath}.data").toFile;
     if (f.createNewFile()) {
       this.withWriter(f) { w =>
         data.foreach(w.println)

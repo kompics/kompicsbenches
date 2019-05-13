@@ -17,20 +17,38 @@ val runnerAddr = "127.0.0.1:45678";
 //val masterAddr = "192.168.0.106:45679";
 val masterAddr = "127.0.0.1:45679";
 
-def getExperimentRunner(prefix: String, results: Path): BenchmarkRunner = BenchmarkRunner(
-	bench = BenchmarkInfo(
-		"RUN",
-		"Experiment Runner"), 
-	runner = Runner(
-		relp("runner"), 
-		javaBin, 
-		Seq("-jar", 
-			"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
-			"--server", runnerAddr,
-			"--prefix", prefix,
-			"--output-folder", results.toString)
+def getExperimentRunner(prefix: String, results: Path, testing: Boolean): BenchmarkRunner = if (testing) {
+	BenchmarkRunner(
+		bench = BenchmarkInfo(
+			"RUN",
+			"Experiment Runner"), 
+		runner = Runner(
+			relp("runner"), 
+			javaBin, 
+			Seq("-jar", 
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"--server", runnerAddr,
+				"--prefix", prefix,
+				"--output-folder", results.toString,
+				"--testing") 
+		)
 	)
-);
+} else {
+	BenchmarkRunner(
+		bench = BenchmarkInfo(
+			"RUN",
+			"Experiment Runner"), 
+		runner = Runner(
+			relp("runner"), 
+			javaBin, 
+			Seq("-jar", 
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"--server", runnerAddr,
+				"--prefix", prefix,
+				"--output-folder", results.toString)
+		)
+	)
+};
 
 val logs = pwd / 'logs;
 val results = pwd / 'results;
@@ -66,7 +84,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false): Unit = {
 	val nodes = readNodes(withNodes);
 	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
@@ -78,7 +96,7 @@ def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = remoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -105,7 +123,7 @@ def remote(withNodes: Path = defaultNodesFile, test: String = ""): Unit = {
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, test: String = ""): Unit = {
+def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false): Unit = {
 	val remoteDir = tmp.dir();
 	val nodes = (0 until withClients).map(45700 + _).map { p => 
 		val ip = "127.0.0.1";
@@ -127,7 +145,7 @@ def fakeRemote(withClients: Int = 1, test: String = ""): Unit = {
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = fakeRemoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -168,7 +186,7 @@ def local(): Unit = {
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
 		try {
-			val experimentRunner = getExperimentRunner(r.symbol, resultsdir);
+			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, false);
 			println(s"Starting run [${i+1}/$nRunners]: ${r.label}");
 			val start = System.currentTimeMillis();
 			val runner = r.run(logdir);

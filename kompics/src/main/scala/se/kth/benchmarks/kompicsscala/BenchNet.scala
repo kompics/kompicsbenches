@@ -27,12 +27,23 @@ final case class NetAddress(isa: InetSocketAddress) extends Address {
   }
 
   def asJava: JNetAddress = new JNetAddress(isa);
+
+  def asString: String = s"${isa.getHostString()}:${getPort()}";
 }
 object NetAddress {
   def from(ip: String, port: Int): Try[NetAddress] = Try {
     val isa = new InetSocketAddress(ip, port);
     NetAddress(isa)
-  }
+  };
+
+  def fromString(str: String): Try[NetAddress] = Try {
+    val split = str.split(":");
+    assert(split.length == 2);
+    val ipStr = split(0); //.replaceAll("""/""", "");
+    val portStr = split(1);
+    val port = portStr.toInt;
+    NetAddress.from(ipStr, port)
+  }.flatten;
 }
 
 final case class NetHeader(src: NetAddress, dst: NetAddress, proto: Transport) extends Header[NetAddress] {

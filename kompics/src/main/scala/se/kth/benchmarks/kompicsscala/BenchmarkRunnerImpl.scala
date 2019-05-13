@@ -30,4 +30,16 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   override def netPingPong(request: PingPongRequest): Future[TestResult] = {
     Future.successful(NotImplemented())
   }
+
+  override def throughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
+    Future {
+      val res = BenchmarkRunner.run(bench.ThroughputPingPong)(request);
+      val msg = BenchmarkRunner.resultToTestResult(res);
+      msg
+    }
+  }
+
+  override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
+    Future.successful(NotImplemented())
+  }
 }

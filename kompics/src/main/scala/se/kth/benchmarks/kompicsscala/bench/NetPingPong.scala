@@ -191,7 +191,7 @@ object NetPingPong extends DistributedBenchmark {
     }
   }
 
-  class Ponger(_init: Init[Ponger]) extends ComponentDefinition {
+  class Ponger() extends ComponentDefinition {
 
     val net = requires[Network];
 

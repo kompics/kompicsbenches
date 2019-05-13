@@ -26,6 +26,10 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
 
     val numClients = 1;
 
+    /*
+     * Setup
+     */
+
     val masterThread = new Thread("BenchmarkMaster") {
       override def run(): Unit = {
         println("Starting master");
@@ -72,6 +76,9 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     }
     ready should be (true);
 
+    /*
+     * Ping Pong
+     */
     val ppr = PingPongRequest().withNumberOfMessages(100);
     val pprResF = benchStub.pingPong(ppr);
     val pprRes = Await.result(pprResF, 30.seconds);
@@ -81,6 +88,30 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val npprRes = Await.result(npprResF, 30.seconds);
     checkResult("NetPingPong", npprRes);
 
+    /*
+     * Throughput Ping Pong
+     */
+    val tppr = ThroughputPingPongRequest().withMessagesPerPair(100).withParallelism(2).withPipelineSize(20).withStaticOnly(true);
+    val tpprResF = benchStub.throughputPingPong(tppr);
+    val tpprRes = Await.result(tpprResF, 30.seconds);
+    checkResult("ThroughputPingPong (static)", tpprRes);
+
+    val tnpprResF = benchStub.netThroughputPingPong(tppr);
+    val tnpprRes = Await.result(tnpprResF, 30.seconds);
+    checkResult("NetThroughputPingPong (static)", tnpprRes);
+
+    val tppr2 = ThroughputPingPongRequest().withMessagesPerPair(100).withParallelism(2).withPipelineSize(20).withStaticOnly(false);
+    val tpprResF2 = benchStub.throughputPingPong(tppr2);
+    val tpprRes2 = Await.result(tpprResF2, 30.seconds);
+    checkResult("ThroughputPingPong (gc)", tpprRes2);
+
+    val tnpprResF2 = benchStub.netThroughputPingPong(tppr2);
+    val tnpprRes2 = Await.result(tnpprResF2, 30.seconds);
+    checkResult("NetThroughputPingPong (gc)", tnpprRes2);
+
+    /*
+     * Clean Up
+     */
     println("Sending shutdown request to master");
     val sreq = ShutdownRequest().withForce(false);
     val shutdownResF = benchStub.shutdown(sreq);

@@ -50,6 +50,8 @@ trait DistributedBenchmark {
 trait BenchmarkFactory {
   //import kompics.benchmarks.benchmarks._;
 
-  def pingpong(): Benchmark;
-  def netpingpong(): DistributedBenchmark;
+  def pingPong(): Benchmark;
+  def netPingPong(): DistributedBenchmark;
+  def throughputPingPong(): Benchmark;
+  def netThroughputPingPong(): DistributedBenchmark;
 }

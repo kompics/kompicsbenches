@@ -77,11 +77,19 @@ class BenchmarkMaster(
     }
 
     override def pingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.pingpong;
+      val b = benchmarks.pingPong;
       runBenchmark(b, request)
     };
     override def netPingPong(request: PingPongRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.netpingpong;
+      val b = benchmarks.netPingPong;
+      runBenchmark(b, request)
+    };
+    override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = queueIfNotReady {
+      val b = benchmarks.netThroughputPingPong;
+      runBenchmark(b, request)
+    };
+    override def throughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = queueIfNotReady {
+      val b = benchmarks.throughputPingPong;
       runBenchmark(b, request)
     };
 

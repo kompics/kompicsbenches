@@ -16,3 +16,6 @@ slog 			= {version = "2.4", features = ["max_level_trace", "release_max_level_in
 time 			= "0.1"
 tokio-core 		= "0.1"
 num_cpus 		= "1"
+
+[dev-dependencies]
+uuid = { version = "0.7", features = ["v4"] }

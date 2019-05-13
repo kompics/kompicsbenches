@@ -346,7 +346,7 @@ impl Actor for Pinger {
             match r {
                 Ok(_pong) => {
                     // TODO remove for test
-                    info!(self.ctx.log(), "Got msg Pong from {}", sender);
+                    //info!(self.ctx.log(), "Got msg Pong from {}", sender);
                     self.count_down -= 1;
                     if self.count_down > 0 {
                         self.ponger.tell((PingMsg, PING_PONG_SER), self);
@@ -398,7 +398,7 @@ impl Actor for Ponger {
             match r {
                 Ok(_ping) => {
                     // TODO remove for test
-                    info!(self.ctx.log(), "Got msg Ping from {}", sender);
+                    //info!(self.ctx.log(), "Got msg Ping from {}", sender);
                     sender.tell((PongMsg, PING_PONG_SER), self);
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising PingMsg: {:?}", e),

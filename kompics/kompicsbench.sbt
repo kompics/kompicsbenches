@@ -26,7 +26,7 @@ libraryDependencies ++= Seq(
 )
 
 fork := true; // needed for UDT tests to clean up properly after themselves
-
+parallelExecution in ThisBuild := false;
 //test in assembly := {}
 
 assemblyMergeStrategy in assembly := {
