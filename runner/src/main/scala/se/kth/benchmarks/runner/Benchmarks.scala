@@ -15,7 +15,7 @@ trait Benchmark {
   def name: String;
   def symbol: String;
   def withStub(stub: Runner.Stub, testing: Boolean)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit;
-  def requiredRuns: Long;
+  def requiredRuns(testing: Boolean): Long;
 }
 object Benchmark {
   def apply[Params](b: BenchmarkRun[Params], space: ParameterSpace[Params], testSpace: ParameterSpace[Params]): BenchmarkWithSpace[Params] = BenchmarkWithSpace(b, space, testSpace);
@@ -38,7 +38,7 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params], space: ParameterS
       f(run(stub, p), useSpace.describe(p), index)
     }
   }
-  override def requiredRuns: Long = space.size;
+  override def requiredRuns(testing: Boolean): Long = if (testing) testSpace.size else space.size;
 }
 
 object Benchmarks extends ParameterDescriptionImplicits {
@@ -76,7 +76,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = ParameterSpacePB.cross(
       1l.mio to 10l.mio by 3l.mio,
-      List(1, 50, 500),
+      List(10, 50, 500),
       1 to 32 by 1,
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
@@ -88,8 +88,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       },
     testSpace = ParameterSpacePB.cross(
       10l.k to 100l.k by 30l.k,
-      List(1, 50),
-      1 to 9 by 2,
+      List(10, 500),
+      List(1, 4, 8),
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(
@@ -107,7 +107,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = ParameterSpacePB.cross(
       1l.k to 10l.k by 3l.k,
-      List(1, 50, 1000, 5000),
+      List(10, 100, 1000, 10000),
       1 to 32 by 1,
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
@@ -119,8 +119,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
       },
     testSpace = ParameterSpacePB.cross(
       100l to 1l.k by 300l,
-      List(1, 1000),
-      1 to 9 by 2,
+      List(10, 100, 1000),
+      List(1, 4, 8),
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(

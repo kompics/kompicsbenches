@@ -40,30 +40,54 @@ object KompicsSystemProvider {
   def getPublicIf(): String = this.synchronized { publicIf };
 
   def newKompicsSystem(): KompicsSystem = {
-    val p = Promise[KompicsSystem];
-    Kompics.faultHandler = SetupFH(p);
-    Kompics.createAndStart(classOf[KompicsSystem], Init(p, None), Runtime.getRuntime.availableProcessors(), 50);
-    Await.result(p.future, Duration.Inf)
+    try {
+      val p = Promise[KompicsSystem];
+      Kompics.faultHandler = SetupFH(p);
+      Kompics.createAndStart(classOf[KompicsSystem], Init(p, None), Runtime.getRuntime.availableProcessors(), 50);
+      Await.result(p.future, Duration.Inf)
+    } catch {
+      case e: Throwable => {
+        e.printStackTrace(Console.err);
+        Kompics.forceShutdown(); // make sure this failure doesn't affect future tests
+        throw e;
+      }
+    }
   }
   def newKompicsSystem(threads: Int): KompicsSystem = {
-    val p = Promise[KompicsSystem];
-    Kompics.faultHandler = SetupFH(p);
-    Kompics.createAndStart(classOf[KompicsSystem], Init(p, None), threads, 50);
-    Await.result(p.future, Duration.Inf)
+    try {
+      val p = Promise[KompicsSystem];
+      Kompics.faultHandler = SetupFH(p);
+      Kompics.createAndStart(classOf[KompicsSystem], Init(p, None), threads, 50);
+      Await.result(p.future, Duration.Inf)
+    } catch {
+      case e: Throwable => {
+        e.printStackTrace(Console.err);
+        Kompics.forceShutdown(); // make sure this failure doesn't affect future tests
+        throw e;
+      }
+    }
   }
   def newRemoteKompicsSystem(threads: Int): KompicsSystem = {
-    val p = Promise[KompicsSystem];
-    val addr = NetAddress.from(getPublicIf(), 0).get;
-    println(s"Trying to bind on: $addr");
-    val c = Kompics.config.copy(false).asInstanceOf[se.sics.kompics.config.Config.Impl];
-    val cb = c.modify(UUID.randomUUID());
-    cb.setValue(SELF_ADDR_KEY, addr);
-    val cu = cb.finalise();
-    c.apply(cu, None);
-    Kompics.config = c;
-    Kompics.faultHandler = SetupFH(p);
-    Kompics.createAndStart(classOf[KompicsSystem], Init(p, Some(addr)), threads, 50);
-    Await.result(p.future, Duration.Inf)
+    try {
+      val p = Promise[KompicsSystem];
+      val addr = NetAddress.from(getPublicIf(), 0).get;
+      println(s"Trying to bind on: $addr");
+      val c = Kompics.config.copy(false).asInstanceOf[se.sics.kompics.config.Config.Impl];
+      val cb = c.modify(UUID.randomUUID());
+      cb.setValue(SELF_ADDR_KEY, addr);
+      val cu = cb.finalise();
+      c.apply(cu, None);
+      Kompics.config = c;
+      Kompics.faultHandler = SetupFH(p);
+      Kompics.createAndStart(classOf[KompicsSystem], Init(p, Some(addr)), threads, 50);
+      Await.result(p.future, Duration.Inf)
+    } catch {
+      case e: Throwable => {
+        e.printStackTrace(Console.err);
+        Kompics.forceShutdown(); // make sure this failure doesn't affect future tests
+        throw e;
+      }
+    }
   }
 }
 

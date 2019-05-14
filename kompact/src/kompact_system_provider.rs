@@ -45,9 +45,10 @@ impl KompactSystemProvider {
         threads: usize,
     ) -> KompactSystem {
         let s = name.into();
-        let mut conf = KompactConfig::new();
+        let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
+        conf.throughput(50);
         let system = KompactSystem::new(conf).expect("KompactSystem");
         system
     }
@@ -55,9 +56,10 @@ impl KompactSystemProvider {
     pub fn new_remote_system<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
-        let mut conf = KompactConfig::new();
+        let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
+        conf.throughput(50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
         let system = KompactSystem::new(conf).expect("KompactSystem");
         system

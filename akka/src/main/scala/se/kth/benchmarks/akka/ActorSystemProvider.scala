@@ -77,6 +77,7 @@ object ActorSystemProvider {
             parallelism-max = ${maxPoolSize}
             parallelism-factor = 1.0
           }
+          throughput = 50
         }
         default-mailbox {
           mailbox-type = "akka.dispatch.SingleConsumerOnlyUnboundedMailbox"
@@ -113,6 +114,7 @@ object ActorSystemProvider {
             parallelism-max = ${maxPoolSize}
             parallelism-factor = 1.0
           }
+          throughput = 50
         }
         default-mailbox {
           mailbox-type = "akka.dispatch.SingleConsumerOnlyUnboundedMailbox"

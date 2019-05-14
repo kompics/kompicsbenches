@@ -87,7 +87,7 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
   def runOne(b: Benchmark): Unit = {
     logger.info(s"Running ${b.name}");
-    val numRuns = b.requiredRuns;
+    val numRuns = b.requiredRuns(testing);
     b.withStub(stub, testing) { (f, p, i) =>
       logger.info(s"Awaiting run result [$i/$numRuns]...");
       val result = Await.ready(f, Duration.Inf).value.get;
