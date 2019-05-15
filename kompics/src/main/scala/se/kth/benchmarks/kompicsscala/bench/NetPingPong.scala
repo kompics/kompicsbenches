@@ -78,7 +78,7 @@ object NetPingPong extends DistributedBenchmark {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       NetPingPongSerializer.register();
 
-      val pongerF = system.createNotify[Ponger](Init());
+      val pongerF = system.createNotify[Ponger](Init.none[Ponger]);
       ponger = Await.result(pongerF, 5.seconds);
       val connF = system.connectNetwork(ponger);
       Await.result(connF, 5.seconds);
