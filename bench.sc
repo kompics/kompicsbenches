@@ -174,7 +174,7 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(): Unit = {
+def local(testing: Boolean = false): Unit = {
 	val runners = implementations.values.map(_.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
@@ -186,7 +186,7 @@ def local(): Unit = {
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
 		try {
-			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, false);
+			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, testing);
 			println(s"Starting run [${i+1}/$nRunners]: ${r.label}");
 			val start = System.currentTimeMillis();
 			val runner = r.run(logdir);

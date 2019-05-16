@@ -136,6 +136,29 @@ pub mod test_utils {
         let master_addr: SocketAddr = "127.0.0.1:45679".parse().expect("master address");
         let client_addr: SocketAddr = "127.0.0.1:45680".parse().expect("client address");
 
+        let mut implemented: Vec<String> = Vec::new();
+        let mut not_implemented: Vec<String> = Vec::new();
+
+        let mut check_result = |label: &str, tr: messages::TestResult| {
+            if tr.has_success() {
+                let s = tr.get_success();
+                assert_eq!(s.run_results.len(), s.number_of_runs as usize);
+                implemented.push(label.into());
+            } else if tr.has_failure() {
+                let f = tr.get_failure();
+                assert!(
+                    f.reason.contains("RSE"),
+                    "Tests are only allowed to fail because of RSE requirements!"
+                ); // since tests are short they may not meet RSE requirements
+                implemented.push(label.into());
+            } else if tr.has_not_implemented() {
+                warn!(logger, "Test {} was not implemented", label);
+                not_implemented.push(label.into());
+            } else {
+                panic!("Unexpected test result: {:?}", tr);
+            }
+        };
+
         let num_clients = 1;
 
         let benchmarks1 = benchmarks.clone();
@@ -204,12 +227,14 @@ pub mod test_utils {
         let ppres_f =
             bench_stub.ping_pong(grpc::RequestOptions::default(), ppr.clone()).drop_metadata();
         let ppres = ppres_f.wait().expect("pp result");
-        assert!(ppres.has_success(), "PingPong TestResult should have been a success!");
+        //assert!(ppres.has_success(), "PingPong TestResult should have been a success!");
+        check_result("PingPong", ppres);
 
         let nppres_f =
             bench_stub.net_ping_pong(grpc::RequestOptions::default(), ppr.clone()).drop_metadata();
         let nppres = nppres_f.wait().expect("npp result");
-        assert!(nppres.has_success(), "NetPingPong TestResult should have been a success!");
+        //assert!(nppres.has_success(), "NetPingPong TestResult should have been a success!");
+        check_result("NetPingPong", nppres);
 
         let mut tppr = benchmarks::ThroughputPingPongRequest::new();
         tppr.set_messages_per_pair(100);
@@ -220,38 +245,42 @@ pub mod test_utils {
             .throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
             .drop_metadata();
         let tppres = tppres_f.wait().expect("tpp result");
-        assert!(
-            tppres.has_success(),
-            "ThroughputPingPong (Static) TestResult should have been a success!"
-        );
+        // assert!(
+        //     tppres.has_success(),
+        //     "ThroughputPingPong (Static) TestResult should have been a success!"
+        // );
+        check_result("ThroughputPingPong (Static)", tppres);
 
         let ntppres_f = bench_stub
             .net_throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
             .drop_metadata();
         let ntppres = ntppres_f.wait().expect("ntpp result");
-        assert!(
-            ntppres.has_success(),
-            "NetThroughputPingPong (Static) TestResult should have been a success!"
-        );
+        // assert!(
+        //     ntppres.has_success(),
+        //     "NetThroughputPingPong (Static) TestResult should have been a success!"
+        // );
+        check_result("NetThroughputPingPong (Static)", ntppres);
 
         tppr.set_static_only(false);
         let tppres2_f = bench_stub
             .throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
             .drop_metadata();
         let tppres2 = tppres2_f.wait().expect("tpp result");
-        assert!(
-            tppres2.has_success(),
-            "ThroughputPingPong (GC) TestResult should have been a success!"
-        );
+        // assert!(
+        //     tppres2.has_success(),
+        //     "ThroughputPingPong (GC) TestResult should have been a success!"
+        // );
+        check_result("ThroughputPingPong (GC)", tppres2);
 
         let ntppres2_f = bench_stub
             .net_throughput_ping_pong(grpc::RequestOptions::default(), tppr.clone())
             .drop_metadata();
         let ntppres2 = ntppres2_f.wait().expect("ntpp result");
-        assert!(
-            ntppres2.has_success(),
-            "NetThroughputPingPong (GC) TestResult should have been a success!"
-        );
+        // assert!(
+        //     ntppres2.has_success(),
+        //     "NetThroughputPingPong (GC) TestResult should have been a success!"
+        // );
+        check_result("NetThroughputPingPong (GC)", ntppres2);
 
         info!(logger, "Sending shutdown request to master");
         let mut sreq = messages::ShutdownRequest::new();
@@ -269,6 +298,21 @@ pub mod test_utils {
         info!(logger, "Waiting for client to finish...");
         client_handle.join().expect("Client panicked!");
         info!(logger, "Client is done.");
+
+        info!(
+            logger,
+            "
+%%%%%%%%%%%%%
+%% SUMMARY %%
+%%%%%%%%%%%%%
+{} tests implemented: {:?}
+{} tests not implemented: {:?}
+",
+            implemented.len(),
+            implemented,
+            not_implemented.len(),
+            not_implemented
+        );
     }
 }
 

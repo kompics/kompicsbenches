@@ -33,7 +33,8 @@ val builders: List[Builder] = List(
 	Builder("Experiment Runner", relp("runner"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Akka", relp("akka"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Kompics", relp("kompics"), sbt, Seq("assembly"), Seq("clean")),
-	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean"))
+	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean")),
+	Builder("Actix", relp("actix"), cargo, Seq("build", "--release"), Seq("clean"))
 );
 
 @main

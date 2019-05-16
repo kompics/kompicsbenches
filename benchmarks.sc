@@ -94,4 +94,11 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchMasterAddr, benchClientAddr))
 	),
+	"ACTIX" -> BenchmarkImpl(
+		symbol="ACTIX", 
+		label="Actix", 
+		local = (benchRunnerAddr) => Runner(relp("actix"), relp("actix/target/release/actix_benchmarks"), Seq(benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("actix"), relp("actix/target/release/actix_benchmarks"), Seq(benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("actix"), relp("actix/target/release/actix_benchmarks"), Seq(benchMasterAddr, benchClientAddr))
+	),
 );

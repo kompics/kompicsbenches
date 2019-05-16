@@ -51,7 +51,7 @@ private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 		val means = entries.map(_._3);
 		(key -> ImplGroupedResult(implementations(key).label, params, means))
 	};
-	println(meanGrouped);
+	//println(meanGrouped);
 	val fileName = data.last.toString.replace(".data", "");
 	val benchO = Benchmarks.benchmarkLookup.get(fileName);
 	benchO match {
@@ -66,6 +66,7 @@ private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 			println(s"Could not get benchmark entry for symbol '${fileName}'! Skipping plot.");
 		}
 	}
+	println(s"Finished with '${data}'");
 }
 
 private def plotBenchPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
@@ -170,14 +171,16 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 	}
 }
 
+// From here: http://javaplot.panayotis.com/doc/com/panayotis/gnuplot/style/NamedPlotColor.html
 private val colourMap: Map[String, style.PlotColor] = Map(
 	"AKKA" -> style.NamedPlotColor.SKYBLUE,
 	"KOMPACTAC" -> style.NamedPlotColor.SEA_GREEN,
 	"KOMPACTCO" -> style.NamedPlotColor.SPRING_GREEN,
 	"KOMPACTMIX" -> style.NamedPlotColor.FOREST_GREEN,
 	"KOMPICSJ" -> style.NamedPlotColor.RED,
-	"KOMPICSSC" -> style.NamedPlotColor.DARK_RED
+	"KOMPICSSC" -> style.NamedPlotColor.DARK_RED,
+	"ACTIX" -> style.NamedPlotColor.DARK_BLUE
 );
 
 private val pointMap: Map[String, Int] = 
-	List("AKKA", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC").zipWithIndex.toMap.mapValues(_ + 1);
+	List("AKKA", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "ACTIX").zipWithIndex.toMap.mapValues(_ + 1);
