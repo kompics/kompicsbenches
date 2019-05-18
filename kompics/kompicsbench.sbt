@@ -9,9 +9,8 @@ scalaVersion in ThisBuild := "2.12.6"
 resolvers += Resolver.mavenLocal
 resolvers += Resolver.jcenterRepo
 resolvers += Resolver.bintrayRepo("kompics", "Maven")
-resolvers += Resolver.bintrayRepo("lkrollcom", "maven")
 
-val kompicsV = "1.1.0-SNAPSHOT";
+val kompicsV = "1.1.0";
 
 libraryDependencies ++= Seq(
 	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT" excludeAll(
