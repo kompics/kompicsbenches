@@ -73,7 +73,7 @@ object BenchNetSerializer extends Serializer {
   private val NET_HEADER_FLAG: Byte = 2;
   private val NET_MSG_FLAG: Byte = 3;
 
-  override def identifier(): Int = se.sics.benchmarks.kompics.SerializerIds.S_BENCH_NET;
+  override def identifier(): Int = se.kth.benchmarks.kompics.SerializerIds.S_BENCH_NET;
 
   override def toBinary(o: Any, buf: ByteBuf): Unit = {
     o match {
