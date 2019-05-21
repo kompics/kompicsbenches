@@ -1,4 +1,4 @@
-package se.sics.benchmarks.kompics;
+package se.kth.benchmarks.kompics;
 
 /**
  * Used to keep track of serializer ids to avoid duplicate assignments.

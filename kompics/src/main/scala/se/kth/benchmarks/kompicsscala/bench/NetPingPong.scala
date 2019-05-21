@@ -141,7 +141,7 @@ object NetPingPong extends DistributedBenchmark {
     private val PING_FLAG: Byte = 1;
     private val PONG_FLAG: Byte = 2;
 
-    override def identifier(): Int = se.sics.benchmarks.kompics.SerializerIds.S_NETPP;
+    override def identifier(): Int = se.kth.benchmarks.kompics.SerializerIds.S_NETPP;
 
     override def toBinary(o: Any, buf: ByteBuf): Unit = {
       o match {

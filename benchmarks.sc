@@ -31,7 +31,8 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 		val command = (runner.exec.toString +: runner.args.flatMap(_.s)).toList.asJava;
 		val pb = new ProcessBuilder(command);
 		val env = pb.environment();
-		env.put("RUST_BACKTRACE", "1"); // TODO remove this for non-testing!
+		//env.put("RUST_BACKTRACE", "1"); // TODO remove this for non-testing!
+		//env.put("JAVA_OPTS", "-Xms1G -Xmx32G -XX:+UseG1GC");
 		pb.directory(runner.env.toIO);
 		pb.redirectError(ProcessBuilder.Redirect.appendTo(errorLog(logFolder)));
 		pb.redirectOutput(ProcessBuilder.Redirect.appendTo(outputLog(logFolder)));
@@ -50,28 +51,29 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 }
 
 val javaBin = binp('java);
+val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx32G", "-XX:+UseG1GC");
 
 val implementations: Map[String, BenchmarkImpl] = Map(
 	"AKKA" -> BenchmarkImpl(
 		symbol="AKKA", 
 		label="Akka", 
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, Seq("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
+		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPICSSC" -> BenchmarkImpl(
 		symbol="KOMPICSSC", 
 		label="Kompics Scala", 
-		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchMasterAddr, benchClientAddr))
+		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPICSJ" -> BenchmarkImpl(
 		symbol="KOMPICSJ", 
 		label="Kompics Java", 
-		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, Seq("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchMasterAddr, benchClientAddr))
+		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTAC" -> BenchmarkImpl(
 		symbol="KOMPACTAC", 

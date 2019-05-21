@@ -75,9 +75,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.throughputPingPong(request)
     },
     space = ParameterSpacePB.cross(
-      1l.mio to 10l.mio by 3l.mio,
+      List(1l.mio, 10l.mio),
       List(10, 50, 500),
-      1 to 32 by 1,
+      List(1, 2, 4, 8, 16, 24, 32, 34, 36, 38, 40),
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(
@@ -106,9 +106,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.netThroughputPingPong(request)
     },
     space = ParameterSpacePB.cross(
-      1l.k to 10l.k by 3l.k,
+      List(1l.k, 10l.k, 20l.k),
       List(10, 100, 1000, 10000),
-      1 to 32 by 1,
+      List(1, 2, 4, 8, 16, 24),
       List(true, false)).msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(

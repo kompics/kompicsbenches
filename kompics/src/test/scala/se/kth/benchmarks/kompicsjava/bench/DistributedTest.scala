@@ -190,7 +190,7 @@ class DistributedTest extends FunSuite with Matchers {
     val addr = system.networkAddress.get;
 
     val latch = new CountDownLatch(1);
-    val pingerIdF = system.createNotify[Pinger](new Pinger.Init(1, latch, 100l, 2, addr.asJava));
+    val pingerIdF = system.createNotify[Pinger](new Pinger.Init(1, latch, 100l, 10, addr.asJava));
     val pinger = Await.result(pingerIdF, 5.second);
     val pingerConnF = system.connectNetwork(pinger);
     Await.result(pingerConnF, 5.seconds);

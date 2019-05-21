@@ -6,7 +6,7 @@ import java.net.UnknownHostException;
 import java.util.Optional;
 
 import io.netty.buffer.ByteBuf;
-import se.sics.benchmarks.kompics.SerializerHelper;
+import se.kth.benchmarks.kompics.SerializerHelper;
 import se.sics.kompics.KompicsEvent;
 import se.sics.kompics.network.Transport;
 import se.sics.kompics.network.netty.serialization.Serializer;
@@ -29,7 +29,7 @@ public class BenchNetSerializer implements Serializer {
 
     @Override
     public int identifier() {
-        return se.sics.benchmarks.kompics.SerializerIds.J_BENCH_NET;
+        return se.kth.benchmarks.kompics.SerializerIds.J_BENCH_NET;
     }
 
     @Override

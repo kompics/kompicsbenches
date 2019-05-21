@@ -3,7 +3,7 @@ package se.kth.benchmarks.kompicsjava.bench.netpingpong;
 import java.util.Optional;
 
 import io.netty.buffer.ByteBuf;
-import se.sics.benchmarks.kompics.SerializerHelper;
+import se.kth.benchmarks.kompics.SerializerHelper;
 import se.sics.kompics.network.netty.serialization.Serializer;
 import se.sics.kompics.network.netty.serialization.Serializers;
 
@@ -21,7 +21,7 @@ public class NetPingPongSerializer implements Serializer {
     private static final byte PONG_FLAG = 2;
 
     public int identifier() {
-        return se.sics.benchmarks.kompics.SerializerIds.J_NETPP;
+        return se.kth.benchmarks.kompics.SerializerIds.J_NETPP;
     }
 
     public void toBinary(Object o, ByteBuf buf) {

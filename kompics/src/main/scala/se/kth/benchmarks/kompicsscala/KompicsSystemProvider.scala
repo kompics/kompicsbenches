@@ -101,6 +101,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   private var Init(startPromise: Promise[KompicsSystem] @unchecked, networkAddrO: Option[NetAddress] @unchecked) = init;
 
   private val children = mutable.TreeMap.empty[UUID, Component];
+  private val channels = mutable.TreeMap.empty[UUID, List[Channel[_]]];
   private val awaitingStarted = mutable.TreeMap.empty[UUID, Promise[Unit]];
   private val awaitingKilled = mutable.TreeMap.empty[UUID, Promise[Unit]];
 
@@ -205,6 +206,10 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       }
     }
     case KillComponent(cid, p) => handle {
+      channels.remove(cid) match {
+        case Some(cs) => cs.foreach(c => c.disconnect())
+        case None     => () // ok, no channels connected
+      }
       children.get(cid) match {
         case Some(c) => {
           logger.debug(s"Sending Kill for component ${cid}");
@@ -219,7 +224,11 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
         reqC <- Try(children(req));
         provC <- Try(children(prov))
       } yield {
-        connect(reqC.required(port), provC.provided(port), Channel.TWO_WAY);
+        val c = connect(reqC.required(port), provC.provided(port), Channel.TWO_WAY);
+        val entry1 = channels.getOrElseUpdate(req, List.empty);
+        val entry2 = channels.getOrElseUpdate(prov, List.empty);
+        channels.put(req, c :: entry1);
+        channels.put(prov, c :: entry2);
         ()
       };
       p.complete(res)

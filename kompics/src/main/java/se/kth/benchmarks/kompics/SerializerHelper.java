@@ -1,4 +1,4 @@
-package se.sics.benchmarks.kompics;
+package se.kth.benchmarks.kompics;
 
 public abstract class SerializerHelper {
 
