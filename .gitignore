@@ -80,22 +80,8 @@ kompics_rust/src/kompics_benchmark/benchmarks_grpc.rs
 # IntelliJ
 *.iml
 
-# Erlang
-.eunit
-deps
-*.o
-*.beam
-*.plt
-erl_crash.dump
-ebin/
-_rel/
-.erlang.mk/
-doc/
-erlang_benchmarks.d
-
-# Metals / VSC
-out/
-.bloop/
-.metals/
-*.code-workspace
-.vscode
+shared_rust/src/kompics_benchmarks/benchmarks.rs
+shared_rust/src/kompics_benchmarks/benchmarks_grpc.rs
+shared_rust/src/kompics_benchmarks/distributed.rs
+shared_rust/src/kompics_benchmarks/distributed_grpc.rs
+shared_rust/src/kompics_benchmarks/messages.rs
