@@ -1,5 +1,11 @@
 #!/usr/bin/env amm
 
+interp.repositories() ++= Seq(coursier.MavenRepository(
+    "https://dl.bintray.com/lkrollcom/maven"
+))
+
+@
+
 import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 //import $ivy.`com.lihaoyi::scalatags:0.6.2`, scalatags.Text.all._
