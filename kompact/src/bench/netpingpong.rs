@@ -8,8 +8,6 @@ use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
 #[derive(Clone, Debug)]
-struct Start;
-#[derive(Clone, Debug)]
 struct Ping;
 #[derive(Clone, Debug)]
 struct Pong;
@@ -129,7 +127,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
                 let latch = self.latch.take().unwrap();
                 if let Some(pinger) = self.pinger.take() {
                     let pinger_ref = pinger.actor_ref();
-                    pinger_ref.tell(Box::new(Start), system);
+                    pinger_ref.tell(&START, system);
                     latch.wait();
                     self.pinger = Some(pinger);
                 } else {
@@ -332,7 +330,7 @@ impl Provide<ControlPort> for Pinger {
 }
 
 impl Actor for Pinger {
-    fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
         if msg.is::<Start>() {
             self.ponger.tell((PingMsg, PING_PONG_SER), self);
         } else {
@@ -388,7 +386,7 @@ impl Provide<ControlPort> for Ponger {
 }
 
 impl Actor for Ponger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
         crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
         unimplemented!(); // shouldn't happen during the test
     }

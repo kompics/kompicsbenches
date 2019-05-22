@@ -5,12 +5,13 @@ use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-#[derive(Clone, Debug)]
-struct Start;
+
 #[derive(Clone, Debug)]
 struct Ping;
+const PING: Ping = Ping;
 #[derive(Clone, Debug)]
 struct Pong;
+const PONG: Pong = Pong;
 
 pub mod actor_pingpong {
     use super::*;
@@ -99,7 +100,7 @@ pub mod actor_pingpong {
                         let latch = self.latch.take().unwrap();
                         let pinger_ref = pinger.actor_ref();
 
-                        pinger_ref.tell(Box::new(Start), system);
+                        pinger_ref.tell(&START, system);
                         latch.wait();
                     }
                     None => unimplemented!(),
@@ -159,13 +160,13 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Pinger {
-        fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
             if msg.is::<Start>() {
-                self.ponger.tell(Box::new(Ping), &self.ctx);
+                self.ponger.tell(&PING, &self.ctx);
             } else if msg.is::<Pong>() {
                 if self.count_down > 0 {
                     self.count_down -= 1;
-                    self.ponger.tell(Box::new(Ping), &self.ctx);
+                    self.ponger.tell(&PING, &self.ctx);
                 } else {
                     let _ = self.latch.decrement();
                 }
@@ -200,9 +201,9 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Ponger {
-        fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
             if msg.is::<Ping>() {
-                sender.tell(Box::new(Pong), &self.ctx);
+                sender.tell(&PONG, &self.ctx);
             } else {
                 crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
                 unimplemented!(); // shouldn't happen during the test

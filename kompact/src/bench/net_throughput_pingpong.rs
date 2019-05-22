@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-use throughput_pingpong::{EitherComponents, Params, Ping, Pong, Start, StaticPing, StaticPong};
+use throughput_pingpong::{EitherComponents, Params, Ping, Pong, StaticPing, StaticPong};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
@@ -188,7 +188,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
             Some(ref system) => {
                 let latch = self.latch.take().unwrap();
                 self.pingers.actor_ref_for_each(|pinger_ref| {
-                    pinger_ref.tell(Box::new(Start), system);
+                    pinger_ref.tell(&START, system);
                 });
                 latch.wait();
             }
@@ -459,7 +459,7 @@ impl Provide<ControlPort> for StaticPinger {
 }
 
 impl Actor for StaticPinger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
         if msg.is::<Start>() {
             let mut pipelined: u64 = 0;
             while (pipelined < self.pipeline) && (self.sent_count < self.count) {
@@ -472,7 +472,7 @@ impl Actor for StaticPinger {
                 self.ctx.log(),
                 "Got unexpected local msg {:?} (tid: {:?})",
                 msg,
-                msg.as_ref().type_id()
+                msg.type_id(),
             );
             unimplemented!(); // shouldn't happen during the test
         }
@@ -530,12 +530,12 @@ impl Provide<ControlPort> for StaticPonger {
 }
 
 impl Actor for StaticPonger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
         crit!(
             self.ctx.log(),
             "Got unexpected local msg {:?} (tid: {:?})",
             msg,
-            msg.as_ref().type_id()
+            msg.type_id(),
         );
         unimplemented!(); // shouldn't happen during the test
     }
@@ -596,7 +596,7 @@ impl Provide<ControlPort> for Pinger {
 }
 
 impl Actor for Pinger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
         if msg.is::<Start>() {
             let mut pipelined: u64 = 0;
             while (pipelined < self.pipeline) && (self.sent_count < self.count) {
@@ -610,7 +610,7 @@ impl Actor for Pinger {
                 self.ctx.log(),
                 "Got unexpected local msg {:?} (tid: {:?})",
                 msg,
-                msg.as_ref().type_id()
+                msg.type_id()
             );
             unimplemented!(); // shouldn't happen during the test
         }
@@ -669,12 +669,12 @@ impl Provide<ControlPort> for Ponger {
 }
 
 impl Actor for Ponger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
         crit!(
             self.ctx.log(),
             "Got unexpected local msg {:?} (tid: {:?})",
             msg,
-            msg.as_ref().type_id()
+            msg.type_id()
         );
         unimplemented!(); // shouldn't happen during the test
     }

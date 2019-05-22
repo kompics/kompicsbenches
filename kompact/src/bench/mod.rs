@@ -7,6 +7,10 @@ pub mod netpingpong;
 pub mod pingpong;
 pub mod throughput_pingpong;
 
+#[derive(Clone, Debug)]
+pub struct Start;
+pub const START: Start = Start;
+
 pub fn component() -> Box<BenchmarkFactory> {
     Box::new(ComponentFactory {})
 }
