@@ -4,16 +4,17 @@ import java.util
 
 import org.scalatest._
 
-import scala.util.{Failure, Success, Try}
-import se.kth.benchmarks.kompicsscala.{KompicsSystemProvider, NetAddress => SNetAddress}
+import scala.util.{ Failure, Success, Try }
+import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, NetAddress => SNetAddress }
 import se.kth.benchmarks.kompicsjava._
 import se.kth.benchmarks.kompicsjava.net._
 import java.util.concurrent.CountDownLatch
 
 import NetPingPong._
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events._;
 import se.sics.kompics.sl._
 
-import scala.concurrent.{Await, Promise}
+import scala.concurrent.Await
 import scala.concurrent.duration._
 import com.typesafe.scalalogging.StrictLogging
 
@@ -25,6 +26,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
 
     import se.kth.benchmarks.kompicsjava.bench.netpingpong._
     import se.kth.benchmarks.kompicsjava.bench.atomicregister._
+    import se.kth.benchmarks.kompicsjava.bench.atomicregister.ReadImposeWriteConsultMajority
     import se.sics.kompics.network.netty.serialization.Serializers;
     import io.netty.buffer.{ByteBuf, Unpooled};
     import java.util.{HashSet, Optional}
@@ -39,6 +41,16 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val addr2 = NetAddress.from("127.0.0.1", 45678); // larger port number that doesn't fit into a short
     val ping = NetMessage.viaTCP(addr, addr, Ping.event);
     val pong = NetMessage.viaTCP(addr, addr, Pong.event);
+
+    // Atomic Register events
+    val rid = 123;
+    val ts = 1;
+    val wr = 2;
+    val v = 3;
+    val read = NetMessage.viaTCP(addr, addr, new READ(rid));
+    val ack = NetMessage.viaTCP(addr, addr, new ACK(rid));
+    val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v));
+    val value = NetMessage.viaTCP(addr, addr, new VALUE(rid, ts, wr, v));
 
     val buf = Unpooled.directBuffer();
 
@@ -70,9 +82,39 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val pongDeserO = Serializers.fromBinary(buf, noHint);
     pongDeserO shouldBe a[NetMessage];
     val pongDeser = pongDeserO.asInstanceOf[NetMessage];
-    pongDeser should equal(pong);
+    pongDeser should equal (pong);
 
-    buf.clear();
+    Serializers.toBinary(read, buf);
+    val readDeserO = Serializers.fromBinary(buf, noHint);
+    readDeserO shouldBe a[NetMessage];
+    val readDeser = readDeserO.asInstanceOf[NetMessage];
+    readDeser should equal (read);
+
+    buf.clear()
+
+    Serializers.toBinary(ack, buf);
+    val ackDeserO = Serializers.fromBinary(buf, noHint);
+    ackDeserO shouldBe a[NetMessage];
+    val ackDeser = ackDeserO.asInstanceOf[NetMessage];
+    ackDeser should equal (ack);
+
+    buf.clear()
+
+    Serializers.toBinary(write, buf);
+    val writeDeserO = Serializers.fromBinary(buf, noHint);
+    writeDeserO shouldBe a[NetMessage];
+    val writeDeser = writeDeserO.asInstanceOf[NetMessage];
+    writeDeser should equal (write);
+
+    buf.clear()
+
+    Serializers.toBinary(value, buf);
+    val valueDeserO = Serializers.fromBinary(buf, noHint);
+    valueDeserO shouldBe a[NetMessage];
+    val valueDeser = valueDeserO.asInstanceOf[NetMessage];
+    valueDeser should equal (value);
+
+    buf.clear()
   }
 
   test("Throughput Network Ser/Deser") {

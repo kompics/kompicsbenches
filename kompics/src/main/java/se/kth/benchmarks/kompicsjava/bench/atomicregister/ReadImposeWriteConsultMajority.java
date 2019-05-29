@@ -1,5 +1,9 @@
 package se.kth.benchmarks.kompicsjava.bench.atomicregister;
 
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.ACK;
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.READ;
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.VALUE;
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.WRITE;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBDeliver;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBRequest;
 import se.kth.benchmarks.kompicsjava.broadcast.BestEffortBroadcast;
@@ -9,8 +13,6 @@ import se.kth.benchmarks.kompicsjava.net.NetMessage;
 import se.sics.kompics.ClassMatchedHandler;
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
-import se.sics.kompics.KompicsEvent;
-import se.sics.kompics.Negative;
 import se.sics.kompics.Positive;
 import se.sics.kompics.Start;
 import se.sics.kompics.network.Network;
@@ -19,6 +21,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 
 public class ReadImposeWriteConsultMajority extends ComponentDefinition {
     public static class Init extends se.sics.kompics.Init<ReadImposeWriteConsultMajority> {
@@ -33,7 +36,6 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
         }
     }
 
-    private Negative<AtomicRegister> atomicRegister = provides(AtomicRegister.class);
     private Positive<BestEffortBroadcast> beb = requires(BestEffortBroadcast.class);
     private Positive<Network> net = requires(Network.class);
 
@@ -50,6 +52,11 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
     private int writeval;
     private HashMap<NetAddress, Tuple> readList;
 
+    // benchmark variables
+    private CountDownLatch latch;
+    private long read_count;
+    private long write_count;
+
 
     public ReadImposeWriteConsultMajority(Init init) {
 //        selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
@@ -60,8 +67,6 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
         subscribe(startHandler, control);
         subscribe(readRequestHandler, beb);
         subscribe(writeRequestHandler, beb);
-        subscribe(ARReadHandler, atomicRegister);
-        subscribe(ARWriteHandler, atomicRegister);
         subscribe(readResponseHandler, net);
         subscribe(ackHandler, net);
     }
@@ -74,36 +79,47 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
             rid = 0;
             reading = false;
             readList = new HashMap<>();
+            // TODO start experiment invoke read or write
         }
 
     };
 
-    private Handler<AR_Read_Request> ARReadHandler = new Handler<AR_Read_Request>() {
+    private void invokeRead(){
+        rid++;
+        acks = 0;
+        readList.clear();
+        reading = true;
+        trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
+    }
 
-        @Override
-        public void handle(AR_Read_Request event) {
-            rid++;
-            acks = 0;
-            readList.clear();
-            reading = true;
-            trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
+    private void invokeWrite(int value){
+        rid++;
+        writeval = value;
+        acks = 0;
+        readList.clear();
+        reading = true;
+        trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
+    }
+
+    private void responseRead(int read_value){
+        if (read_count > 0){
+            read_count--;
+        }
+        else if (read_count == 0&& write_count == 0){
+            latch.countDown();
+        }
+    }
+
+    private void responseWrite(){
+        if (write_count > 0){
+            write_count--;
+
+        }
+        else if (read_count == 0&& write_count == 0){
+            latch.countDown();
         }
 
-    };
-
-    private Handler<AR_Write_Request> ARWriteHandler = new Handler<AR_Write_Request>() {
-
-        @Override
-        public void handle(AR_Write_Request event) {
-            rid++;
-            writeval = event.value;
-            acks = 0;
-            readList.clear();
-            reading = true;
-            trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
-        }
-
-    };
+    }
 
     private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
         @Override
@@ -158,9 +174,9 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
                     acks = 0;
                     if (reading){
                         reading = false;
-                        trigger(new AR_Read_Response(readval), atomicRegister);
+                        responseRead(readval);
                     } else {
-                        trigger(new AR_Write_Response(), atomicRegister);
+                        responseWrite();
                     }
                 }
             }
@@ -201,35 +217,4 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
 //        }
     }
 
-    private class READ implements KompicsEvent {
-        int rid;
-        READ(int rid){ this.rid = rid; }
-    }
-
-    private class ACK implements KompicsEvent {
-        int rid;
-        ACK(int rid){ this.rid = rid; }
-    }
-
-    private class VALUE implements KompicsEvent{
-        int rid, ts, wr, value;
-
-        VALUE(int rid, int ts, int wr, int value){
-            this.rid = rid;
-            this.ts = ts;
-            this.wr = wr;
-            this.value = value;
-        }
-    }
-
-    private class WRITE implements KompicsEvent{
-        int rid, ts, wr, value;
-
-        WRITE(int rid, int ts, int wr, int value){
-            this.rid = rid;
-            this.ts = ts;
-            this.wr = wr;
-            this.value = value;
-        }
-    }
 }
