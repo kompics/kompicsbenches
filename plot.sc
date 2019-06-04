@@ -10,7 +10,7 @@ import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 //import $ivy.`com.lihaoyi::scalatags:0.6.2`, scalatags.Text.all._
 //import $ivy.`org.sameersingh::scalaplot:0.0.4`, org.sameersingh.scalaplot.Implicits._
-import $ivy.`com.panayotis.javaplot:javaplot:0.5.0`, com.panayotis.gnuplot.{plot => gplot, _}
+import $ivy.`com.panayotis.javaplot:javaplot:0.5.0`, com.panayotis.gnuplot.{plot => gplot, utils => gutils, _}
 import $ivy.`com.github.tototoshi::scala-csv:1.3.5`, com.github.tototoshi.csv._
 import $file.build
 import java.io.File
@@ -110,8 +110,8 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 	val meanGroupedParams = ImplResults.mapData(
 		meanGroupedParamsTime,
 		(req: ThroughputPingPongRequest, meanTime: Double) => {
-			val totalMessages = req.messagesPerPair * req.parallelism;
-			val throughput = (totalMessages.toDouble*1000.0)/meanTime; // msgs/s
+			val totalMessages = req.messagesPerPair * req.parallelism * 2; // 1 Ping  and 1 Pong per exchange
+			val throughput = (totalMessages.toDouble*1000.0)/meanTime; // msgs/s (1000 to get from ms to s)
 			throughput
 		}
 	);
@@ -175,6 +175,60 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 			p.plot();
 		}
 	}
+	{
+		val staticImpls = ImplResults.paramsToImpl(
+			meanGroupedParams,
+			(label: String, req: ThroughputPingPongRequest) => s"${label} (${if (req.staticOnly) { "Static" } else { "Alloc." }})"
+		);
+		val meanGrouped = ImplResults.slices(
+			staticImpls,
+			(req: ThroughputPingPongRequest) => (req.messagesPerPair, req.parallelism),
+			(req: ThroughputPingPongRequest) => req.pipelineSize
+		);
+		meanGrouped.foreach { case (params, impls) =>
+			val merged = ImplResults.merge(impls);
+			//println("Merged:\n" + merged);
+			val p = new JavaPlot();
+			//GNUPlot.getDebugger().setLevel(gutils.Debug.VERBOSE);
+			if (!show) {
+				val outfile = output / s"${b.symbol}-msgs${params._1}-pairs${params._2}.eps";
+				val epsf = new terminal.PostscriptTerminal(outfile.toString);
+				epsf.setColor(true);
+		        p.setTerminal(epsf);
+			}
+			p.getAxis("x").setLabel("pipeline size (#msgs)");
+			p.getAxis("y").setLabel("throughput (msgs/s)");
+			p.setTitle(s"${b.name} (#msgs/pair = ${params._1}, #pairs = ${params._2})");
+			p.set("boxwidth", "0.8");
+			p.set("style", "data histograms");
+			merged.labels.zipWithIndex.foreach { case (label, i) =>
+				//println(s"Setting $label at $i (column ${i + merged.dataColumnOffset})");
+				val dsp = new gplot.DataSetPlot(merged);
+				if (i == 0) {
+					dsp.set("using", s"""${i + merged.dataColumnOffset + 1}:xtic(${1})""");
+					// val ps = new style.PlotStyle(style.Style.HISTOGRAMS);
+					// dsp.setPlotStyle(ps);
+				} else {
+					dsp.set("using", s"""${i + merged.dataColumnOffset + 1}""");
+				}
+				dsp.setTitle(label);
+				//val ps = new style.PlotStyle();
+				val ps = new style.PlotStyle(style.Style.HISTOGRAMS);
+				val colour = colourMap2.find {
+					case (k, v) => label.toLowerCase().startsWith(k.toLowerCase())
+				}.map(_._2).getOrElse(style.NamedPlotColor.BLACK);
+				ps.setLineType(colour);
+				// // ps.setPointType(pointMap(key));
+				dsp.setPlotStyle(ps);
+				p.addPlot(dsp);
+				val definitionSB = new java.lang.StringBuilder();
+				dsp.retrieveDefinition(definitionSB);
+				val definition = definitionSB.toString();
+				println(s"Definition: $definition");
+			}
+			p.plot();
+		}
+	}
 }
 
 // From here: http://javaplot.panayotis.com/doc/com/panayotis/gnuplot/style/NamedPlotColor.html
@@ -186,6 +240,16 @@ private val colourMap: Map[String, style.PlotColor] = Map(
 	"KOMPICSJ" -> style.NamedPlotColor.RED,
 	"KOMPICSSC" -> style.NamedPlotColor.DARK_RED,
 	"ACTIX" -> style.NamedPlotColor.DARK_BLUE
+);
+
+private val colourMap2: Map[String, style.PlotColor] = Map(
+	"Akka" -> style.NamedPlotColor.SKYBLUE,
+	"Kompact Actor" -> style.NamedPlotColor.SEA_GREEN,
+	"Kompact Component" -> style.NamedPlotColor.SPRING_GREEN,
+	"Kompact Mixed" -> style.NamedPlotColor.TURQUOISE ,
+	"Kompics Java" -> style.NamedPlotColor.RED,
+	"Kompics Scala" -> style.NamedPlotColor.DARK_RED,
+	"Actix" -> style.NamedPlotColor.DARK_BLUE
 );
 
 private val pointMap: Map[String, Int] = 
