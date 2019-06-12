@@ -280,25 +280,4 @@ object TestFactory extends BenchmarkFactory {
   override def throughputPingPong(): Benchmark = TestLocalBench;
   override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
   override def atomicRegister(): DistributedBenchmark = TestDistributedBench;
-  override def streamingWindows(): DistributedBenchmark = TestDistributedBench;
-  override def allPairsShortestPath(): Benchmark = TestLocalBench;
-  override def chameneos(): Benchmark = TestLocalBench;
-  override def fibonacci: Benchmark = TestLocalBench;
-}
-
-class FailFactory(val masterFailAt: Option[Stage], val clientFailAt: Option[Stage]) extends BenchmarkFactory {
-
-  override def pingPong(): Benchmark = masterFailAt match {
-    case Some(s) => new FailLocalBench(s) // fail on first
-    case None    => TestLocalBench
-  };
-  override def netPingPong(): DistributedBenchmark =
-    new FailDistributedBench(masterFailAt, clientFailAt); // of each type
-  override def throughputPingPong(): Benchmark = TestLocalBench; // run one of each of the others normally
-  override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
-  override def atomicRegister(): DistributedBenchmark = ???;
-  override def streamingWindows(): DistributedBenchmark = ???;
-  override def allPairsShortestPath(): Benchmark = ???;
-  override def chameneos(): Benchmark = ???;
-  override def fibonacci: Benchmark = ???;
 }

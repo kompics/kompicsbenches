@@ -1,15 +1,13 @@
 package se.kth.benchmarks.kompicsjava.bench.atomicregister;
 
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.ACK;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.READ;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.VALUE;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.WRITE;
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.*;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBDeliver;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBRequest;
 import se.kth.benchmarks.kompicsjava.broadcast.BestEffortBroadcast;
 import se.kth.benchmarks.kompicsjava.net.NetAddress;
 import se.kth.benchmarks.kompicsjava.net.NetMessage;
 
+import se.kth.benchmarks.kompicsscala.KompicsSystemProvider;
 import se.sics.kompics.ClassMatchedHandler;
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
@@ -20,19 +18,23 @@ import se.sics.kompics.network.Network;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
-public class ReadImposeWriteConsultMajority extends ComponentDefinition {
-    public static class Init extends se.sics.kompics.Init<ReadImposeWriteConsultMajority> {
-        private final Collection<NetAddress> nodes;
-        private final NetAddress selfAddress;
-        private final int selfRank;
+public class AtomicRegister extends ComponentDefinition {
 
-        public Init(int selfRank, NetAddress selfAddress, Collection<NetAddress> nodes) {
-            this.selfRank = selfRank;
-            this.selfAddress = selfAddress;
+    public static class Init extends se.sics.kompics.Init<AtomicRegister> {
+        private final Set<NetAddress> nodes;
+        private final long num_read;
+        private final long num_write;
+        private final CountDownLatch latch;
+
+        public Init(CountDownLatch latch, Set<NetAddress> nodes, long num_read, long num_write) {
+            this.latch = latch;
             this.nodes = nodes;
+            this.num_read = num_read;
+            this.num_write = num_write;
         }
     }
 
@@ -41,8 +43,8 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
 
     private int selfRank;
     private final NetAddress selfAddr;
-    private final Set<NetAddress> nodes;
-    private final int N;
+    private Set<NetAddress> nodes;
+    private int N;
     private int ts, wr;
     private int value;
     private int acks;
@@ -56,14 +58,24 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
     private CountDownLatch latch;
     private long read_count;
     private long write_count;
+    private int init_ack_count;
+    private Random random;
+
+    private static final int INIT_ACK = -1;
+    private static final int MAX_WRITEVAL = 100;
 
 
-    public ReadImposeWriteConsultMajority(Init init) {
-//        selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
-        selfRank = init.selfRank;
-        selfAddr = init.selfAddress;
-        nodes = new HashSet<>(init.nodes);
-        N = nodes.size();
+    public AtomicRegister(Init init) {
+        random = new Random();
+        selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
+        selfRank = selfAddr.hashCode();
+        read_count = init.num_read;
+        write_count = init.num_write;
+        if (init.nodes != null){
+            nodes = new HashSet<>(init.nodes);
+            nodes.add(selfAddr);
+            N = nodes.size();
+        }
         subscribe(startHandler, control);
         subscribe(readRequestHandler, beb);
         subscribe(writeRequestHandler, beb);
@@ -75,11 +87,15 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
 
         @Override
         public void handle(Start event) {
+            assert(selfAddr != null);
             acks = 0;
             rid = 0;
             reading = false;
             readList = new HashMap<>();
-            // TODO start experiment invoke read or write
+            if (N > 0) {
+                init_ack_count = N;
+                trigger(new BEBRequest(nodes, new INIT(nodes)), beb);
+            }
         }
 
     };
@@ -89,7 +105,7 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
         acks = 0;
         readList.clear();
         reading = true;
-        trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
+        trigger(new BEBRequest(nodes, new READ(rid)), beb);
     }
 
     private void invokeWrite(int value){
@@ -98,28 +114,32 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
         acks = 0;
         readList.clear();
         reading = true;
-        trigger(new BEBRequest(selfAddr, nodes, new READ(rid)), beb);
+        trigger(new BEBRequest(nodes, new READ(rid)), beb);
     }
 
     private void responseRead(int read_value){
-        if (read_count > 0){
-            read_count--;
-        }
-        else if (read_count == 0&& write_count == 0){
+        read_count--;
+        if (read_count == 0 && write_count == 0){
             latch.countDown();
         }
+        else invokeWrite(random.nextInt(MAX_WRITEVAL));
     }
 
     private void responseWrite(){
-        if (write_count > 0){
-            write_count--;
-
-        }
-        else if (read_count == 0&& write_count == 0){
+        write_count--;
+        if (read_count == 0&& write_count == 0){
             latch.countDown();
         }
+        else invokeRead();
 
     }
+
+    private ClassMatchedHandler<INIT, BEBDeliver> initHandler = new ClassMatchedHandler<INIT, BEBDeliver>() {
+        @Override
+        public void handle(INIT init, BEBDeliver bebDeliver) {
+            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(INIT_ACK)), net);
+        }
+    };
 
     private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
         @Override
@@ -159,7 +179,7 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
                         maxts++;
                         bcastval = writeval;
                     }
-                    trigger(new BEBRequest(selfAddr, nodes, new WRITE(rid, maxts, rr, bcastval)), beb);
+                    trigger(new BEBRequest(nodes, new WRITE(rid, maxts, rr, bcastval)), beb);
                 }
             }
         }
@@ -167,8 +187,15 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
 
     private ClassMatchedHandler<ACK, NetMessage> ackHandler = new ClassMatchedHandler<ACK, NetMessage>() {
         @Override
-        public void handle(ACK v, NetMessage msg) {
-            if (v.rid == rid){
+        public void handle(ACK a, NetMessage msg) {
+            if (a.rid == INIT_ACK){
+                init_ack_count--;
+                if (init_ack_count == 0){
+                    logger.debug("Got init ack from everybody! Starting experiment");
+                    invokeWrite(random.nextInt(MAX_WRITEVAL));
+                }
+            }
+            else if (a.rid == rid){
                 acks++;
                 if (acks > N/2){
                     acks = 0;
@@ -204,17 +231,6 @@ public class ReadImposeWriteConsultMajority extends ComponentDefinition {
             this.wr = wr;
             this.value = value;
         }
-
-//        @Override
-//        public int compareTo(Tuple t) {
-//            if (this.ts > t.ts && this.wr > t.wr){
-//                return 1;
-//            }
-//            else if (this.ts < t.ts && this.wr < t.wr){
-//                return -1;
-//            }
-//            else return 0;
-//        }
     }
 
 }

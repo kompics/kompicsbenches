@@ -12,10 +12,6 @@ service BenchmarkRunner {
 	rpc ThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc NetThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc AtomicRegister (AtomicRegisterRequest) returns (TestResult);
-	rpc StreamingWindows (StreamingWindowsRequest) returns (TestResult);
-	rpc Fibonacci (FibonacciRequest) returns (TestResult);
-	rpc Chameneos (ChameneosRequest) returns (TestResult);
-	rpc AllPairsShortestPath (APSPRequest) returns (TestResult);
 }
 
 message PingPongRequest {
@@ -28,30 +24,6 @@ message ThroughputPingPongRequest {
 	bool static_only = 4;
 }
 message AtomicRegisterRequest {
-	float read_workload = 1;
-	float write_workload = 2;
-	uint32 partition_size = 3;
-	uint64 number_of_keys = 4;
-}
-
-message StreamingWindowsRequest {
-	uint32 number_of_partitions = 1;
-	uint64 batch_size = 2;
-	string window_size = 3;
-	uint64 number_of_windows = 4;
-	uint64 window_size_amplification = 5;
-}
-
-message FibonacciRequest {
-	uint32 fib_number = 1;
-}
-
-message ChameneosRequest {
-	uint32 number_of_chameneos = 1;
-	uint64 number_of_meetings = 2;
-}
-
-message APSPRequest {
-	uint32 number_of_nodes = 1;
-	uint32 block_size = 2;
+	uint64 number_of_reads = 1;
+	uint64 number_of_writes = 2;
 }

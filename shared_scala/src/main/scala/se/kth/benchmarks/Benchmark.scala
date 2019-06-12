@@ -57,8 +57,4 @@ trait BenchmarkFactory {
   def throughputPingPong(): Benchmark;
   def netThroughputPingPong(): DistributedBenchmark;
   def atomicRegister(): DistributedBenchmark;
-  def streamingWindows(): DistributedBenchmark;
-  def allPairsShortestPath(): Benchmark;
-  def chameneos(): Benchmark;
-  def fibonacci: Benchmark;
 }

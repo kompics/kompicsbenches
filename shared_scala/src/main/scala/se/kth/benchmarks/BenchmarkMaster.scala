@@ -96,24 +96,6 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       runBenchmark(b, request)
     };
 
-    override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.streamingWindows;
-      runBenchmark(b, request)
-    }
-
-    override def allPairsShortestPath(request: APSPRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.allPairsShortestPath;
-      runBenchmark(b, request)
-    }
-    override def chameneos(request: ChameneosRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.chameneos;
-      runBenchmark(b, request)
-    }
-    override def fibonacci(request: FibonacciRequest): Future[TestResult] = queueIfNotReady {
-      val b = benchmarks.fibonacci;
-      runBenchmark(b, request)
-    }
-
     override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
       logger.info(s"Got shutdown request with force=${request.force}");
 
