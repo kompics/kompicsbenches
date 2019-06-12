@@ -23,10 +23,10 @@ class DistributedTest extends FunSuite with Matchers {
 
     import se.kth.benchmarks.kompicsjava.bench.netpingpong._
     import se.kth.benchmarks.kompicsjava.bench.atomicregister._
-    import se.kth.benchmarks.kompicsjava.bench.atomicregister.ReadImposeWriteConsultMajority
     import se.sics.kompics.network.netty.serialization.Serializers;
     import io.netty.buffer.{ Unpooled, ByteBuf };
     import java.util.Optional;
+    import collection.JavaConverters._
 
     BenchNetSerializer.register();
     NetPingPongSerializer.register();
@@ -38,16 +38,6 @@ class DistributedTest extends FunSuite with Matchers {
     val addr2 = NetAddress.from("127.0.0.1", 45678); // larger port number that doesn't fit into a short
     val ping = NetMessage.viaTCP(addr, addr, Ping.event);
     val pong = NetMessage.viaTCP(addr, addr, Pong.event);
-
-    // Atomic Register events
-    val rid = 123;
-    val ts = 1;
-    val wr = 2;
-    val v = 3;
-    val read = NetMessage.viaTCP(addr, addr, new READ(rid));
-    val ack = NetMessage.viaTCP(addr, addr, new ACK(rid));
-    val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v));
-    val value = NetMessage.viaTCP(addr, addr, new VALUE(rid, ts, wr, v));
 
     val buf = Unpooled.directBuffer();
 
@@ -81,37 +71,72 @@ class DistributedTest extends FunSuite with Matchers {
     val pongDeser = pongDeserO.asInstanceOf[NetMessage];
     pongDeser should equal (pong);
 
-    Serializers.toBinary(read, buf);
-    val readDeserO = Serializers.fromBinary(buf, noHint);
-    readDeserO shouldBe a[NetMessage];
-    val readDeser = readDeserO.asInstanceOf[NetMessage];
-    readDeser should equal (read);
+    buf.clear();
+
+    // Atomic Register events
+    val rid = 123
+    val ts = 1
+    val wr = 2
+    val v = 3
+    val nodes: Set[NetAddress] = Set(addr, addr2)
+    val init = NetMessage.viaTCP(addr, addr, new INIT(nodes.asJava))
+    val read = NetMessage.viaTCP(addr, addr, new READ(rid))
+    val ack = NetMessage.viaTCP(addr, addr, new ACK(rid))
+    val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v))
+    val value = NetMessage.viaTCP(addr, addr, new VALUE(rid, ts, wr, v))
+
+    Serializers.toBinary(init, buf)
+    val initDeserN = Serializers.fromBinary(buf, noHint)
+    initDeserN shouldBe a[NetMessage]
+    val initDeserO = initDeserN.asInstanceOf[NetMessage].extractValue()
+    initDeserO shouldBe a[INIT]
+    val initDeser = initDeserO.asInstanceOf[INIT]
+    val nodesDeser = initDeser.nodes.asScala
+    nodesDeser should equal (nodes)
 
     buf.clear()
 
-    Serializers.toBinary(ack, buf);
-    val ackDeserO = Serializers.fromBinary(buf, noHint);
-    ackDeserO shouldBe a[NetMessage];
-    val ackDeser = ackDeserO.asInstanceOf[NetMessage];
-    ackDeser should equal (ack);
+    Serializers.toBinary(read, buf)
+    val readDeserN = Serializers.fromBinary(buf, noHint)
+    readDeserN shouldBe a[NetMessage]
+    val readDeser = readDeserN.asInstanceOf[NetMessage].extractValue()
+    readDeser shouldBe a[READ]
+    readDeser.asInstanceOf[READ].rid should equal (rid)
 
     buf.clear()
 
-    Serializers.toBinary(write, buf);
-    val writeDeserO = Serializers.fromBinary(buf, noHint);
-    writeDeserO shouldBe a[NetMessage];
-    val writeDeser = writeDeserO.asInstanceOf[NetMessage];
-    writeDeser should equal (write);
+    Serializers.toBinary(ack, buf)
+    val ackDeserN = Serializers.fromBinary(buf, noHint)
+    ackDeserN shouldBe a[NetMessage]
+    val ackDeser = ackDeserN.asInstanceOf[NetMessage].extractValue()
+    ackDeser shouldBe a[ACK]
+    ackDeser.asInstanceOf[ACK].rid should equal (rid)
+
+    buf.clear()
+
+    Serializers.toBinary(write, buf)
+    val writeDeserN = Serializers.fromBinary(buf, noHint)
+    writeDeserN shouldBe a[NetMessage]
+    val writeDeserO = writeDeserN.asInstanceOf[NetMessage].extractValue()
+    writeDeserO shouldBe a[WRITE]
+    val writeDeser = writeDeserO.asInstanceOf[WRITE]
+    writeDeser.rid should equal (rid)
+    writeDeser.ts should equal (ts)
+    writeDeser.value should equal (v)
+    writeDeser.wr should equal (wr)
 
     buf.clear()
 
     Serializers.toBinary(value, buf);
-    val valueDeserO = Serializers.fromBinary(buf, noHint);
-    valueDeserO shouldBe a[NetMessage];
-    val valueDeser = valueDeserO.asInstanceOf[NetMessage];
-    valueDeser should equal (value);
-
-    buf.clear()
+    val valueDeserN = Serializers.fromBinary(buf, noHint)
+    valueDeserN shouldBe a[NetMessage]
+    val valueDeserO = valueDeserN.asInstanceOf[NetMessage].extractValue()
+    valueDeserO shouldBe a[VALUE]
+    val valueDeser = valueDeserO.asInstanceOf[VALUE]
+    valueDeser.rid should equal (rid)
+    valueDeser.ts should equal (ts)
+    valueDeser.value should equal (v)
+    valueDeser.wr should equal (wr)
   }
 
   test("Throughput Network Ser/Deser") {

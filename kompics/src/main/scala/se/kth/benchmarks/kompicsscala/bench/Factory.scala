@@ -7,4 +7,5 @@ object Factory extends BenchmarkFactory {
   override def netPingPong(): DistributedBenchmark = NetPingPong;
   override def throughputPingPong(): Benchmark = ThroughputPingPong;
   override def netThroughputPingPong(): DistributedBenchmark = NetThroughputPingPong;
+  override def atomicRegister(): DistributedBenchmark = AtomicRegister;
 }

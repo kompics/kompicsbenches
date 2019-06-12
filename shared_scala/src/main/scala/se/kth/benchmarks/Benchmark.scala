@@ -54,4 +54,5 @@ trait BenchmarkFactory {
   def netPingPong(): DistributedBenchmark;
   def throughputPingPong(): Benchmark;
   def netThroughputPingPong(): DistributedBenchmark;
+  def atomicRegister(): DistributedBenchmark;
 }
