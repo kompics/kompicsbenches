@@ -19,19 +19,7 @@ val runnerAddr = "127.0.0.1:45678";
 //val masterAddr = "192.168.0.106:45679";
 val masterAddr = "127.0.0.1:45679";
 
-def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String]): BenchmarkRunner = {
-	var params: Seq[Shellable] = Seq(
-		"-jar",
-		"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
-		"--server", runnerAddr,
-		"--prefix", prefix,
-		"--output-folder", results.toString);
-	if (testing) {
-		params ++= Seq[Shellable]("--testing");
-	}
-	if (!benchmarks.isEmpty) {
-		params ++= Seq[Shellable]("--benchmarks", benchmarks.mkString(","));
-	}
+def getExperimentRunner(prefix: String, results: Path, testing: Boolean): BenchmarkRunner = if (testing) {
 	BenchmarkRunner(
 		bench = BenchmarkInfo(
 			"RUN",
@@ -39,7 +27,27 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchma
 		runner = Runner(
 			relp("runner"),
 			javaBin,
-			params
+			Seq("-jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"--server", runnerAddr,
+				"--prefix", prefix,
+				"--output-folder", results.toString,
+				"--testing")
+		)
+	)
+} else {
+	BenchmarkRunner(
+		bench = BenchmarkInfo(
+			"RUN",
+			"Experiment Runner"),
+		runner = Runner(
+			relp("runner"),
+			javaBin,
+			Seq("-jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"--server", runnerAddr,
+				"--prefix", prefix,
+				"--output-folder", results.toString)
 		)
 	)
 };
@@ -78,9 +86,11 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -117,14 +127,8 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val remoteDir = tmp.dir();
-	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
-	val masterBenches = runnersForImpl(impls, identity);
-	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
-		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
-	};
-	println(s"Going to copy files=${copyFiles.mkString("[", ",", "]")} and folders==${copyDirectories.mkString("[", ",", "]")}.");
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
@@ -141,7 +145,9 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	val masters = masterBenches.map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -180,8 +186,10 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
-	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
+def local(testing: Boolean = false, useOnly: String = ""): Unit = {
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val runners = use_impl.values.map(_.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;

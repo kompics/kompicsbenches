@@ -14,6 +14,8 @@ import se.kth.benchmarks.kompicsscala._
 import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
 import se.sics.kompics.sl._
+import se.sics.kompics.timer.{ Timer, SchedulePeriodicTimeout, Timeout, CancelPeriodicTimeout }
+import se.sics.kompics.timer.java.JavaTimer
 
 import scala.collection.mutable
 import scala.concurrent.Await
@@ -30,6 +32,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null;
+    private var timer: UUID = null;
     private var latch: CountDownLatch = null;
 
     override def setup(c: MasterConf): ClientConf = {
@@ -37,27 +40,43 @@ object AtomicRegister extends DistributedBenchmark {
       AtomicRegisterSerializer.register()
       this.num_reads = c.numberOfReads;
       this.num_writes = c.numberOfWrites;
+      println(s"Atomic Register(Master) setup: numReads=$num_reads numWrites=$num_writes")
       c
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
+      println("Atomic Register(Master) prepare iteration!")
       assert(system != null);
       latch = new CountDownLatch(1);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(latch, Some(d.toSet), num_reads, num_writes))
+      var nodes = d.toSet
+      nodes += addr
+      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(latch, Some(nodes), num_reads, num_writes))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: is addr correct?
+      val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: use config addr instead, same
       beb = Await.result(bebF, 5.second)
-      val beb_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
-      Await.result(beb_connF, 5.seconds);
+      val beb_netw_connF = system.connectNetwork(beb)
+      Await.result(beb_netw_connF, 5.second)
+      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
+      Await.result(beb_ar_connF, 5.seconds);
+
+      val timerF = system.createNotify[JavaTimer](Init.none[JavaTimer])
+      timer = Await.result(timerF, 5.second)
+      val timer_connF = system.connectComponents[Timer](atomicRegister, timer)
+      Await.result(timer_connF, 5.seconds);
+
     }
     override def runIteration(): Unit = {
       assert(system != null);
       assert(atomicRegister != null);
+      assert(beb != null)
+      println("Atomic Register(Master) run iteration!")
+      system.startNotify(timer)
+      system.startNotify(beb)
       val startF = system.startNotify(atomicRegister);
       //startF.failed.foreach(e => eprintln(s"Could not start pinger: $e"));
       latch.await();
@@ -69,12 +88,15 @@ object AtomicRegister extends DistributedBenchmark {
         latch = null;
       }
       if (atomicRegister != null) {
-        val killF = system.killNotify(atomicRegister);
-        Await.ready(killF, 5.seconds);
+        val killF = system.killNotify(atomicRegister)
+        Await.ready(killF, 5.seconds)
         val killBebF = system.killNotify(beb)
-        Await.ready(killBebF, 5.seconds);
-        atomicRegister = null;
+        Await.ready(killBebF, 5.seconds)
+        val killTimerF = system.killNotify(timer)
+        Await.ready(killTimerF, 5.seconds)
+        atomicRegister = null
         beb = null
+        timer = null
       }
       if (lastIteration) {
         val f = system.terminate();
@@ -107,8 +129,12 @@ object AtomicRegister extends DistributedBenchmark {
       /* connect best effort broadcast */
       val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: is addr correct?
       beb = Await.result(bebF, 5.second)
-      val beb_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
-      Await.result(beb_connF, 5.seconds);
+      val beb_net_connF = system.connectNetwork(beb)
+      Await.result(beb_net_connF, 5.second)
+      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
+      Await.result(beb_ar_connF, 5.seconds);
+      system.startNotify(beb)
+      system.startNotify(atomicRegister)
       addr
     }
     override def prepareIteration(): Unit = {
@@ -162,6 +188,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     val net = requires[Network]
     val beb = requires[BestEffortBroadcast]
+    val timer = requires[Timer]
 
     val Init(latch: CountDownLatch, option_nodes: Option[Set[NetAddress]], num_read: Long, num_write: Long) = init
     var nodes = option_nodes.getOrElse(Set[NetAddress]()) // master will receive the set, clients have to wait for master msg
@@ -181,10 +208,10 @@ object AtomicRegister extends DistributedBenchmark {
     var read_count = num_read
     var write_count = num_write
     var init_ack_count = n
-    val random = new scala.util.Random()
-    object AtomicRegisterComp {
+    var timerId: Option[UUID] = None
+
+    object AtomicRegisterComp { // TODO: put in config file?
       val INIT_ACK = -1
-      val MAX_WRITEVAL = 100
     }
 
     def invokeRead(): Unit = {
@@ -206,7 +233,7 @@ object AtomicRegister extends DistributedBenchmark {
     private def responseRead(read_value: Option[Int]): Unit = {
       read_count -= 1
       if (read_count == 0 && write_count == 0) latch.countDown()
-      else invokeWrite(random.nextInt(AtomicRegisterComp.MAX_WRITEVAL))
+      else invokeWrite(write_count.toInt)
     }
 
     private def responseWrite(): Unit = {
@@ -218,20 +245,35 @@ object AtomicRegister extends DistributedBenchmark {
     ctrl uponEvent {
       case _: Start => handle {
         assert(selfAddr != null)
+        logger.info(s"Atomic Register Component $selfAddr has started!")
         if (n > 0) {
-          nodes += selfAddr
-          n += 1
+          logger.info("Sending init to: ")
+          for (node <- nodes) println(node)
           init_ack_count = n
+          val spt = new SchedulePeriodicTimeout(5, 20000) // todo: second argument(period)
+          val timeout = InitTimeout(spt)
+          spt.setTimeoutEvent(timeout)
+          trigger(spt -> timer)
+          timerId = Some(timeout.getTimeoutId)
           trigger(BEBRequest(nodes, INIT(nodes)) -> beb)
         }
       }
     }
 
+    timer uponEvent {
+      case InitTimeout(_) => handle {
+        logger.error("Time out waiting for INIT ACKS")
+        latch.countDown()
+      }
+    }
+
     beb uponEvent {
       case BEBDeliver(INIT(received_nodes: Set[NetAddress]), src) => handle {
+        logger.info("Got INIT! Sending ack")
         nodes = received_nodes
         n = nodes.size
         trigger(NetMessage.viaTCP(selfAddr, src)(ACK(AtomicRegisterComp.INIT_ACK)) -> net)
+        // TODO: should client invoke reads or writes as well?
       }
 
       case BEBDeliver(READ(readID), src) => handle {
@@ -253,14 +295,15 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     net uponEvent {
-      case NetMessage(_, ACK(AtomicRegisterComp.INIT_ACK)) => handle{
+      case NetMessage(header, ACK(AtomicRegisterComp.INIT_ACK)) => handle{
+        val src = header.getSource()
+        logger.debug(s"Got init ack from $src")
         init_ack_count -= 1
         if (init_ack_count == 0) {
-          logger.debug("Got init ack from everybody! Starting experiment")
-          invokeWrite(random.nextInt(AtomicRegisterComp.MAX_WRITEVAL))
-
+          trigger(new CancelPeriodicTimeout(timerId.get) -> timer)
+          logger.info("Got init ack from everybody! Starting experiment")
+          invokeWrite(write_count.toInt)
         }
-
       }
 
       case NetMessage(header, v: VALUE) => handle {
@@ -300,6 +343,7 @@ object AtomicRegister extends DistributedBenchmark {
     }
   }
 
+  case class InitTimeout(spt: SchedulePeriodicTimeout) extends Timeout(spt);
   case class INIT(nodes: Set[NetAddress]) extends KompicsEvent;
   case class READ(rid: Int) extends KompicsEvent;
   case class ACK(rid: Int) extends KompicsEvent;

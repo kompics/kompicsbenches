@@ -19,71 +19,25 @@ lazy val commonSettings = Seq(
   javacOptions ++= Seq(
     "-Xlint:deprecation"
   ),
-  test in assembly := {},
-  assemblyMergeStrategy in assembly := {
-    case "META-INF/io.netty.versions.properties" => MergeStrategy.first
-    case x =>
-      val oldStrategy = (assemblyMergeStrategy in assembly).value
-      oldStrategy(x)
-  }
-);
+	"ch.qos.logback" % "logback-classic" % "1.2.3",
+    "se.sics.kompics" %% "kompics-scala" % kompicsV,
+    "se.sics.kompics" % "kompics-core" % kompicsV,
+    "se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV,
+    "se.sics.kompics.basic" % "kompics-port-network" % kompicsV,
+    "se.sics.kompics.basic" % "kompics-component-java-timer" % kompicsV,
+    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+)
 
-lazy val root = (project in file("."))
-  .aggregate(kompicsJava, kompicsScala1x, kompicsScala2x)
-  .settings(
-    commonSettings,
-    name := "Kompics Benchmark Suite (Root)",
-    skip in assembly := true
-  );
+fork := true; // needed for UDT tests to clean up properly after themselves
+parallelExecution in ThisBuild := false;
+//test in assembly := {}
 
-lazy val shared = (project in file("shared"))
-  .settings(
-    commonSettings,
-    name := "Kompics Benchmark Suite (Shared)",
-    libraryDependencies ++= Seq(
-      "se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT" excludeAll (
-        ExclusionRule(organization = "io.netty")
-      ),
-      "org.scala-lang.modules" %% "scala-java8-compat" % "0.9.0",
-      "ch.qos.logback" % "logback-classic" % "1.2.3",
-      "se.sics.kompics" % "kompics-core" % kompicsV,
-      "se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV,
-      "se.sics.kompics.basic" % "kompics-port-network" % kompicsV,
-      "se.sics.kompics.basic" % "kompics-component-java-timer" % kompicsV,
-      "org.scalatest" %% "scalatest" % "3.0.8" % "test",
-      "org.scala-lang" % "scala-reflect" % scalaVersion.value
-    )
-  );
-
-lazy val kompicsJava = (project in file("kompicsjava"))
-  .dependsOn(shared % "test->test;compile->compile")
-  .settings(
-    commonSettings,
-    name := "Kompics Java Benchmark Suite",
-    libraryDependencies ++= Seq(
-      "se.sics.kompics" %% "kompics-scala" % kompicsScala1xV // needed for SystemProvider
-    )
-  );
-
-lazy val kompicsScala1x = (project in file("kompicsscala1x"))
-  .dependsOn(shared % "test->test;compile->compile")
-  .settings(
-    commonSettings,
-    name := "Kompics Scala 1.x Benchmark Suite",
-    libraryDependencies ++= Seq(
-      "se.sics.kompics" %% "kompics-scala" % kompicsScala1xV
-    )
-  );
-
-lazy val kompicsScala2x = (project in file("kompicsscala2x"))
-  .dependsOn(shared % "test->test;compile->compile")
-  .settings(
-    commonSettings,
-    name := "Kompics Scala 2.x Benchmark Suite",
-    libraryDependencies ++= Seq(
-      "se.sics.kompics" %% "kompics-scala" % kompicsScala2xV
-    )
-  );
+assemblyMergeStrategy in assembly := {
+  case "META-INF/io.netty.versions.properties" => MergeStrategy.first
+  case x =>
+    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    oldStrategy(x)
+}
 
 // assemblyShadeRules in assembly := Seq(
 //   ShadeRule.rename("io.netty.**" -> "custom_netty.@1")

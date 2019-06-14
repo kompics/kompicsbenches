@@ -68,4 +68,6 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
       msg
     }
   }
+
+  override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = ???
 }
