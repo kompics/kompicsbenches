@@ -33,6 +33,8 @@ pub trait BenchmarkRunner {
     fn throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 
     fn net_throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
+
+    fn atomic_register(&self, o: ::grpc::RequestOptions, p: super::benchmarks::AtomicRegisterRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 }
 
 // client
@@ -45,6 +47,7 @@ pub struct BenchmarkRunnerClient {
     method_NetPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::PingPongRequest, super::messages::TestResult>>,
     method_ThroughputPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::ThroughputPingPongRequest, super::messages::TestResult>>,
     method_NetThroughputPingPong: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::ThroughputPingPongRequest, super::messages::TestResult>>,
+    method_AtomicRegister: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::AtomicRegisterRequest, super::messages::TestResult>>,
 }
 
 impl ::grpc::ClientStub for BenchmarkRunnerClient {
@@ -87,6 +90,12 @@ impl ::grpc::ClientStub for BenchmarkRunnerClient {
                 req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
                 resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
             }),
+            method_AtomicRegister: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/AtomicRegister".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
         }
     }
 }
@@ -114,6 +123,10 @@ impl BenchmarkRunner for BenchmarkRunnerClient {
 
     fn net_throughput_ping_pong(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ThroughputPingPongRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
         self.grpc_client.call_unary(o, p, self.method_NetThroughputPingPong.clone())
+    }
+
+    fn atomic_register(&self, o: ::grpc::RequestOptions, p: super::benchmarks::AtomicRegisterRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
+        self.grpc_client.call_unary(o, p, self.method_AtomicRegister.clone())
     }
 }
 
@@ -197,6 +210,18 @@ impl BenchmarkRunnerServer {
                     {
                         let handler_copy = handler_arc.clone();
                         ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.net_throughput_ping_pong(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/AtomicRegister".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.atomic_register(o, p))
                     },
                 ),
             ],

@@ -130,6 +130,15 @@ object Benchmarks extends ParameterDescriptionImplicits {
             staticOnly = s)
       });
 
+  val atomicRegister = Benchmark(
+    name = "Atomic Register",
+    symbol = "ATOMICREGISTER",
+    invoke = (stub, request: AtomicRegisterRequest) => {
+      stub.atomicRegister(request)
+    },
+    space = ParameterSpacePB.mapped(1l.k to 10l.k by 1l.k).msg[AtomicRegisterRequest](n => AtomicRegisterRequest(numberOfReads = n, numberOfWrites = n)),
+    testSpace = ParameterSpacePB.mapped(100l to 1l.k by 100l).msg[AtomicRegisterRequest](n => AtomicRegisterRequest(numberOfReads = n, numberOfWrites = n)));
+
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;
 }
