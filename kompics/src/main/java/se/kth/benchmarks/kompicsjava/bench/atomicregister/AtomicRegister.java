@@ -64,18 +64,25 @@ public class AtomicRegister extends ComponentDefinition {
     private CountDownLatch latch;
     private long read_count;
     private long write_count;
-    private int init_ack_count;
+    private int init_ack_count = 0;
+    private int done_count = 0;
     private UUID timerId;
     private final int init_id;
+    private final long num_read;
+    private final long num_write;
+    private boolean started_exp = false;
+    private NetAddress master;
 
     public AtomicRegister(Init init) {
-        latch = init.latch;
         selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
         selfRank = selfAddr.hashCode();
+        num_read = init.num_read;
+        num_write = init.num_write;
         read_count = init.num_read;
         write_count = init.num_write;
         init_id = init.init_id;
         if (init.nodes != null){
+            latch = init.latch;
             nodes = init.nodes;
             logger.info(nodes.toString());
             N = nodes.size();
@@ -86,7 +93,23 @@ public class AtomicRegister extends ComponentDefinition {
         subscribe(readResponseHandler, net);
         subscribe(ackHandler, net);
         subscribe(initHandler, net);
+        subscribe(doneHandler, net);
         subscribe(timeoutHandler, timer);
+    }
+
+    private void resetVariables(){
+        ts = 0;
+        wr = 0;
+        rid = 0;
+        acks = 0;
+        value = 0;
+        readval = 0;
+        writeval = 0;
+        readList.clear();
+        reading = false;
+        started_exp = false;
+        read_count = num_read;
+        write_count = num_write;
     }
 
     private void invokeRead(){
@@ -108,14 +131,14 @@ public class AtomicRegister extends ComponentDefinition {
     private void readResponse(int read_value){
         logger.info("Read response[" + read_count + "] value=" + read_value);
         read_count--;
-        if (read_count == 0 && write_count == 0) latch.countDown();
+        if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
         else invokeWrite((int) write_count);
     }
 
     private void writeResponse(){
         logger.info("Write response[" + write_count + "]");
         write_count--;
-        if (read_count == 0 && write_count == 0) latch.countDown();
+        if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
         else invokeRead();
     }
 
@@ -131,13 +154,11 @@ public class AtomicRegister extends ComponentDefinition {
             logger.info("Atomic Register Component " + selfAddr.asString() + " has started!");
             if (N > 0) {
                 logger.info("Broadcasting init id=" + init_id + " to " + nodes);
-                init_ack_count = N;
                 ScheduleTimeout spt = new ScheduleTimeout(50000);
                 InitTimeout timeout = new InitTimeout(spt);
                 spt.setTimeoutEvent(timeout);
                 trigger(spt, timer);
                 timerId = timeout.getTimeoutId();
-//                trigger(new BEBRequest(nodes, new INIT(init_id, nodes)), beb);
                 int rank = 0;
                 for (NetAddress node : nodes){
                     trigger(NetMessage.viaTCP(selfAddr, node, new INIT(rank++, init_id, nodes)), net);
@@ -154,20 +175,15 @@ public class AtomicRegister extends ComponentDefinition {
             latch.countDown();
         }
     };
-/*
-    private ClassMatchedHandler<INIT, BEBDeliver> initHandler = new ClassMatchedHandler<INIT, BEBDeliver>() {
-        @Override
-        public void handle(INIT init, BEBDeliver bebDeliver) {
-            logger.info("Acking INIT id=" + init.id);
-            nodes = init.nodes;
-            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(init.id)), net);
-        }
-    };
-    */
 
     private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
         @Override
         public void handle(READ read, BEBDeliver bebDeliver) {
+            if (!started_exp){
+                started_exp = true;
+                if (selfRank % 2 == 0) invokeWrite((int) write_count);
+                else invokeRead();
+            }
             trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.rid, ts, wr, value)), net);
         }
     };
@@ -190,6 +206,8 @@ public class AtomicRegister extends ComponentDefinition {
             nodes = init.nodes;
             N = nodes.size();
             selfRank = init.rank;
+            master = netMessage.getSource();
+            resetVariables(); // reset all variables when a new iteration is starting
             logger.info("Got rank=" + selfRank + " Acking init_id=" + init.id);
             trigger(NetMessage.viaTCP(selfAddr, netMessage.getSource(), new ACK(init.id)), net);
         }
@@ -225,9 +243,9 @@ public class AtomicRegister extends ComponentDefinition {
         public void handle(ACK a, NetMessage msg) {
             if (a.rid == init_id){
                 NetAddress src = msg.getSource();
-                init_ack_count--;
+                init_ack_count++;
                 logger.info("Received INIT ACK for id=" + init_id + " from " + src.asString() + ", acks remaining: " + init_ack_count);
-                if (init_ack_count == 0){
+                if (init_ack_count == N){
                     trigger(new CancelTimeout(timerId), timer);
                     logger.info("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
                     invokeWrite((int) write_count);
@@ -248,6 +266,16 @@ public class AtomicRegister extends ComponentDefinition {
         }
     };
 
+    private ClassMatchedHandler<DONE, NetMessage> doneHandler = new ClassMatchedHandler<DONE, NetMessage>() {
+        @Override
+        public void handle(DONE done, NetMessage netMessage) {
+            done_count++;
+            if (done_count == N){
+                logger.info("Everybody is done! Ending run.");
+                latch.countDown();
+            }
+        }
+    };
 
     private Tuple getMaxTuple(){
         Collection<Tuple> readListValues = readList.values();

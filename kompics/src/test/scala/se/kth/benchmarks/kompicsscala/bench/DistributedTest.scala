@@ -76,6 +76,15 @@ class DistributedTest extends FunSuite with Matchers {
     val ack = NetMessage.viaTCP(addr, addr)(ACK(rid))
     val write = NetMessage.viaTCP(addr, addr)(WRITE(rid, ts, wr, Some(v)))
     val value = NetMessage.viaTCP(addr, addr)(VALUE(rid, ts, wr, None)) // test none
+    val done = NetMessage.viaTCP(addr, addr)(DONE)
+
+    Serializers.toBinary(done, buf)
+    val doneDeserO = Serializers.fromBinary(buf, noHint);
+    doneDeserO shouldBe a[NetMessage[_]];
+    val doneDeser = doneDeserO.asInstanceOf[NetMessage[DONE.type]];
+    doneDeser should equal (done);
+
+    buf.clear()
 
     Serializers.toBinary(init, buf)
     val initDeserN = Serializers.fromBinary(buf, noHint)
