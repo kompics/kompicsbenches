@@ -11,7 +11,7 @@ import se.kth.benchmarks.kompicsjava.net._
 import java.util.concurrent.CountDownLatch
 
 import NetPingPong._
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events._;
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.events._
 import se.sics.kompics.sl._
 
 import scala.concurrent.Await
@@ -28,8 +28,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     import se.kth.benchmarks.kompicsjava.bench.atomicregister._
     import se.sics.kompics.network.netty.serialization.Serializers;
     import io.netty.buffer.{ Unpooled, ByteBuf };
-    import java.util.Optional;
-    import collection.JavaConverters._
+    import java.util.{ Optional, HashSet }
 
     BenchNetSerializer.register();
     NetPingPongSerializer.register();
@@ -80,8 +79,11 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val ts = 1
     val wr = 2
     val v = 3
-    val nodes: Set[NetAddress] = Set(addr, addr2)
-    val init = NetMessage.viaTCP(addr, addr, new INIT(nodes.asJava))
+    val init_id = -1;
+    var nodes: java.util.HashSet[NetAddress] = new java.util.HashSet[NetAddress]()
+    nodes.add(addr)
+    nodes.add(addr2)
+    val init = NetMessage.viaTCP(addr, addr, new INIT(init_id, nodes))
     val read = NetMessage.viaTCP(addr, addr, new READ(rid))
     val ack = NetMessage.viaTCP(addr, addr, new ACK(rid))
     val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v))
@@ -93,7 +95,9 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val initDeserO = initDeserN.asInstanceOf[NetMessage].extractValue()
     initDeserO shouldBe a[INIT]
     val initDeser = initDeserO.asInstanceOf[INIT]
-    val nodesDeser = initDeser.nodes.asScala
+    val idDeser = initDeser.id;
+    idDeser should equal (init_id)
+    val nodesDeser = initDeser.nodes
     nodesDeser should equal (nodes)
 
     buf.clear()
