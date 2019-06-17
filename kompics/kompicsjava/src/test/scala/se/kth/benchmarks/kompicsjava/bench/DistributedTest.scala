@@ -89,6 +89,15 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val ack = NetMessage.viaTCP(addr, addr, new ACK(rid))
     val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v))
     val value = NetMessage.viaTCP(addr, addr, new VALUE(rid, ts, wr, v))
+    val done = NetMessage.viaTCP(addr, addr, DONE.event);
+
+    Serializers.toBinary(done, buf)
+    val doneDeserO = Serializers.fromBinary(buf, noHint);
+    doneDeserO shouldBe a[NetMessage];
+    val doneDeser = doneDeserO.asInstanceOf[NetMessage];
+    doneDeser should equal (done);
+
+    buf.clear()
 
     Serializers.toBinary(init, buf)
     val initDeserN = Serializers.fromBinary(buf, noHint)

@@ -23,6 +23,7 @@ public class AtomicRegisterSerializer implements Serializer {
         Serializers.register(WRITE.class, "atomicregister");
         Serializers.register(ACK.class, "atomicregister");
         Serializers.register(VALUE.class, "atomicregister");
+        Serializers.register(DONE.class, "atomicregister");
     }
 
     public static final Optional<Object> NO_HINT = Optional.empty();
@@ -32,6 +33,7 @@ public class AtomicRegisterSerializer implements Serializer {
     private static final byte ACK_FLAG = 3;
     private static final byte VALUE_FLAG = 4;
     private static final byte INIT_FLAG = 5;
+    private static final byte DONE_FLAG = 6;
 
     @Override
     public int identifier() {
@@ -40,7 +42,8 @@ public class AtomicRegisterSerializer implements Serializer {
 
     @Override
     public void toBinary(Object o, ByteBuf buf) {
-        if (o instanceof INIT){
+        if (o instanceof DONE) buf.writeByte(DONE_FLAG);
+        else if (o instanceof INIT){
             INIT init = (INIT) o;
             buf.writeByte(INIT_FLAG);
             buf.writeInt(init.rank);
@@ -86,6 +89,7 @@ public class AtomicRegisterSerializer implements Serializer {
     public Object fromBinary(ByteBuf buf, Optional<Object> optional) {
         byte flag = buf.readByte();
         switch (flag){
+            case DONE_FLAG: return DONE.event;
             case INIT_FLAG: {
                 int rank = buf.readInt();
                 int id = buf.readInt();
