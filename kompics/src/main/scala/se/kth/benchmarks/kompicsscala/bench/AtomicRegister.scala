@@ -34,6 +34,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var beb: UUID = null;
     private var timer: UUID = null;
     private var latch: CountDownLatch = null;
+    private var init_id: Int = 0;
 
     override def setup(c: MasterConf): ClientConf = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
@@ -48,10 +49,10 @@ object AtomicRegister extends DistributedBenchmark {
       latch = new CountDownLatch(1);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-
+      init_id -= 1
       var nodes = d.toSet
       nodes += addr
-      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(latch, Some(nodes), num_reads, num_writes))
+      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(latch, Some(nodes), num_reads, num_writes, Some(init_id)))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -117,7 +118,7 @@ object AtomicRegister extends DistributedBenchmark {
       println(s"Atomic Register(Client) Path is $addr");
       this.num_reads = c.numberOfReads;
       this.num_writes = c.numberOfWrites;
-      val atomicRegisterF = system.createNotify[AtomicRegisterComp](Init(latch, None, num_reads, num_writes))
+      val atomicRegisterF = system.createNotify[AtomicRegisterComp](Init(latch, None, num_reads, num_writes, None))
       atomicRegister = Await.result(atomicRegisterF, 5.seconds)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -186,11 +187,12 @@ object AtomicRegister extends DistributedBenchmark {
     val beb = requires[BestEffortBroadcast]
     val timer = requires[Timer]
 
-    val Init(latch: CountDownLatch, option_nodes: Option[Set[NetAddress]], num_read: Long, num_write: Long) = init
+    val Init(latch: CountDownLatch, option_nodes: Option[Set[NetAddress]], num_read: Long, num_write: Long, init_id: Option[Int]) = init
     var nodes = option_nodes.getOrElse(Set[NetAddress]()) // master will receive the set, clients have to wait for master msg
     var n = nodes.size
     val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
-    var selfRank: Int = selfAddr.hashCode()
+    var selfRank: Int = -1
+    //    var selfRank: Int = selfAddr.hashCode()
     var (ts, wr) = (0, 0)
     var value: Option[Int] = None
     var acks = 0
@@ -205,10 +207,6 @@ object AtomicRegister extends DistributedBenchmark {
     var write_count = num_write
     var init_ack_count = n
     var timerId: Option[UUID] = None
-
-    object AtomicRegisterComp { // TODO: put in config file?
-      val INIT_ACK = -1
-    }
 
     def invokeRead(): Unit = {
       rid = rid + 1;
@@ -246,12 +244,17 @@ object AtomicRegister extends DistributedBenchmark {
         logger.info(s"Atomic Register Component $selfAddr has started!")
         if (n > 0) {
           init_ack_count = n
-          val spt = new ScheduleTimeout(50000)
+          val spt = new ScheduleTimeout(50000) // TODO: delay
           val timeout = InitTimeout(spt)
           spt.setTimeoutEvent(timeout)
           trigger(spt -> timer)
           timerId = Some(timeout.getTimeoutId)
-          trigger(BEBRequest(nodes, INIT(nodes)) -> beb)
+          //          trigger(BEBRequest(nodes, INIT(nodes)) -> beb)
+          var rank: Int = 0
+          for (node <- nodes) {
+            trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id.get, nodes)) -> net)
+            rank += 1
+          }
         }
       }
     }
@@ -264,13 +267,13 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     beb uponEvent {
-      case BEBDeliver(INIT(received_nodes: Set[NetAddress]), src) => handle {
+      /*case BEBDeliver(INIT(received_nodes: Set[NetAddress]), src) => handle {
         logger.info("Got INIT! Sending ack")
         nodes = received_nodes
         n = nodes.size
         trigger(NetMessage.viaTCP(selfAddr, src)(ACK(AtomicRegisterComp.INIT_ACK)) -> net)
         // TODO: should client invoke reads or writes as well?
-      }
+      }*/
 
       case BEBDeliver(READ(readID), src) => handle {
         trigger(NetMessage.viaTCP(selfAddr, src)(VALUE(readID, ts, wr, value)) -> net)
@@ -291,15 +294,12 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     net uponEvent {
-      case NetMessage(header, ACK(AtomicRegisterComp.INIT_ACK)) => handle{
-        val src = header.getSource()
-        logger.info(s"Got INIT ACK from $src")
-        init_ack_count -= 1
-        if (init_ack_count == 0) {
-          trigger(new CancelTimeout(timerId.get) -> timer)
-          logger.info("Got init ack from everybody! Starting experiment")
-          invokeWrite(write_count.toInt)
-        }
+      case NetMessage(header, i: INIT) => handle{
+        nodes = i.nodes
+        n = nodes.size
+        selfRank = i.rank
+        logger.info(s"Got rank=$selfRank, Acking init_id=" + i.init_id)
+        trigger(NetMessage.viaTCP(selfAddr, header.getSource())(ACK(i.init_id)) -> net)
       }
 
       case NetMessage(header, v: VALUE) => handle {
@@ -322,7 +322,7 @@ object AtomicRegister extends DistributedBenchmark {
           }
         }
       }
-      case NetMessage(_, a: ACK) => handle {
+      case NetMessage(header, a: ACK) => handle {
         if (a.rid == rid) {
           acks = acks + 1
           if (acks > n / 2) {
@@ -334,13 +334,24 @@ object AtomicRegister extends DistributedBenchmark {
               writeResponse()
             }
           }
+        } else if (!init_id.isEmpty) { // INIT ACK
+          if (a.rid == init_id.get) {
+            val src = header.getSource()
+            logger.info(s"Got INIT ACK from $src")
+            init_ack_count -= 1
+            if (init_ack_count == 0) {
+              trigger(new CancelTimeout(timerId.get) -> timer)
+              logger.info("Got init ack from everybody! Starting experiment")
+              invokeWrite(write_count.toInt)
+            }
+          }
         }
       }
     }
   }
 
   case class InitTimeout(spt: ScheduleTimeout) extends Timeout(spt);
-  case class INIT(nodes: Set[NetAddress]) extends KompicsEvent;
+  case class INIT(rank: Int, init_id: Int, nodes: Set[NetAddress]) extends KompicsEvent;
   case class READ(rid: Int) extends KompicsEvent;
   case class ACK(rid: Int) extends KompicsEvent;
   case class VALUE(rid: Int, ts: Int, wr: Int, value: Option[Int]) extends KompicsEvent;
@@ -362,7 +373,7 @@ object AtomicRegister extends DistributedBenchmark {
       val a = ACK(0)
       val w = WRITE(0, 0, 0, Some(0))
       val v = VALUE(0, 0, 0, Some(0))
-      val i = INIT(Set[NetAddress]())
+      val i = INIT(0, 0, Set[NetAddress]())
 
       Serializers.register(this, "atomicregister");
       Serializers.register(i.getClass, "atomicregister");
@@ -376,6 +387,8 @@ object AtomicRegister extends DistributedBenchmark {
       o match {
         case i: INIT => {
           buf.writeByte(INIT_FLAG)
+          buf.writeInt(i.rank)
+          buf.writeInt(i.init_id)
           buf.writeInt(i.nodes.size)
           for (node <- i.nodes) {
             val ip = node.getIp().getAddress
@@ -430,6 +443,8 @@ object AtomicRegister extends DistributedBenchmark {
           VALUE(rid, ts, wr, value)
         }
         case INIT_FLAG => {
+          val rank = buf.readInt()
+          val init_id = buf.readInt()
           val n = buf.readInt()
           var nodes = Set[NetAddress]()
           for (_ <- 0 until n) {
@@ -439,7 +454,7 @@ object AtomicRegister extends DistributedBenchmark {
             val port: Int = buf.readUnsignedShort()
             nodes += NetAddress(new InetSocketAddress(addr, port))
           }
-          INIT(nodes)
+          INIT(rank, init_id, nodes)
         }
         case _ => {
           Console.err.print(s"Got invalid ser flag: $flag");

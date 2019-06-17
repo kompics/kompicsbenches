@@ -68,8 +68,10 @@ class DistributedTest extends FunSuite with Matchers {
     val ts = 1
     val wr = 2
     val v = 3
+    val rank = 4
+    val init_id = -1
     val nodes: Set[NetAddress] = Set(addr, addr2)
-    val init = NetMessage.viaTCP(addr, addr)(INIT(nodes))
+    val init = NetMessage.viaTCP(addr, addr)(INIT(rank, init_id, nodes))
     val read = NetMessage.viaTCP(addr, addr)(READ(rid))
     val ack = NetMessage.viaTCP(addr, addr)(ACK(rid))
     val write = NetMessage.viaTCP(addr, addr)(WRITE(rid, ts, wr, Some(v)))
@@ -80,6 +82,8 @@ class DistributedTest extends FunSuite with Matchers {
     initDeserN shouldBe a[NetMessage[_]]
     val initDeser = initDeserN.asInstanceOf[NetMessage[_]].payload
     initDeser shouldBe a[INIT]
+    initDeser.asInstanceOf[INIT].rank should equal (rank)
+    initDeser.asInstanceOf[INIT].init_id should equal (init_id)
     initDeser.asInstanceOf[INIT].nodes should equal (nodes)
 
     buf.clear()

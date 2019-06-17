@@ -43,6 +43,7 @@ public class AtomicRegisterSerializer implements Serializer {
         if (o instanceof INIT){
             INIT init = (INIT) o;
             buf.writeByte(INIT_FLAG);
+            buf.writeInt(init.rank);
             buf.writeInt(init.id);
             buf.writeInt(init.nodes.size());
             for (NetAddress node : init.nodes){
@@ -86,6 +87,7 @@ public class AtomicRegisterSerializer implements Serializer {
         byte flag = buf.readByte();
         switch (flag){
             case INIT_FLAG: {
+                int rank = buf.readInt();
                 int id = buf.readInt();
                 int n = buf.readInt();
                 Set<NetAddress> nodes = new HashSet<>();
@@ -100,7 +102,7 @@ public class AtomicRegisterSerializer implements Serializer {
                         throw SerializerHelper.notSerializable("UnknownHostException when trying to create InetAddress from bytes");
                     }
                 }
-                return new INIT(id, nodes);
+                return new INIT(rank, id, nodes);
             }
             case READ_FLAG: {
                 int rid = buf.readInt();
