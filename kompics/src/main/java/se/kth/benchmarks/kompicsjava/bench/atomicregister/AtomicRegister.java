@@ -129,14 +129,14 @@ public class AtomicRegister extends ComponentDefinition {
     }
 
     private void readResponse(int read_value){
-        logger.info("Read response[" + read_count + "] value=" + read_value);
+//        logger.debug("Read response[" + read_count + "] value=" + read_value);
         read_count--;
         if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
         else invokeWrite((int) write_count);
     }
 
     private void writeResponse(){
-        logger.info("Write response[" + write_count + "]");
+//        logger.debug("Write response[" + write_count + "]");
         write_count--;
         if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
         else invokeRead();
@@ -151,9 +151,8 @@ public class AtomicRegister extends ComponentDefinition {
             rid = 0;
             reading = false;
             readList = new HashMap<>();
-            logger.info("Atomic Register Component " + selfAddr.asString() + " has started!");
+            logger.debug("Atomic Register Component " + selfAddr.asString() + " has started!");
             if (N > 0) {
-                logger.info("Broadcasting init id=" + init_id + " to " + nodes);
                 ScheduleTimeout spt = new ScheduleTimeout(50000);
                 InitTimeout timeout = new InitTimeout(spt);
                 spt.setTimeoutEvent(timeout);
@@ -208,7 +207,7 @@ public class AtomicRegister extends ComponentDefinition {
             selfRank = init.rank;
             master = netMessage.getSource();
             resetVariables(); // reset all variables when a new iteration is starting
-            logger.info("Got rank=" + selfRank + " Acking init_id=" + init.id);
+            logger.debug("Got rank=" + selfRank + " Acking init_id=" + init.id);
             trigger(NetMessage.viaTCP(selfAddr, netMessage.getSource(), new ACK(init.id)), net);
         }
     };
@@ -244,10 +243,10 @@ public class AtomicRegister extends ComponentDefinition {
             if (a.rid == init_id){
                 NetAddress src = msg.getSource();
                 init_ack_count++;
-                logger.info("Received INIT ACK for id=" + init_id + " from " + src.asString() + ", acks remaining: " + init_ack_count);
+//                logger.debug("Received INIT ACK for id=" + init_id + " from " + src.asString() + ", acks remaining: " + init_ack_count);
                 if (init_ack_count == N){
                     trigger(new CancelTimeout(timerId), timer);
-                    logger.info("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
+//                    logger.info("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
                     invokeWrite((int) write_count);
                 }
             }

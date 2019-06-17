@@ -76,8 +76,8 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val init = NetMessage.viaTCP(addr, addr)(INIT(rank, init_id, nodes))
     val read = NetMessage.viaTCP(addr, addr)(READ(rid))
     val ack = NetMessage.viaTCP(addr, addr)(ACK(rid))
-    val write = NetMessage.viaTCP(addr, addr)(WRITE(rid, ts, wr, Some(v)))
-    val value = NetMessage.viaTCP(addr, addr)(VALUE(rid, ts, wr, None)) // test none
+    val write = NetMessage.viaTCP(addr, addr)(WRITE(rid, ts, wr, v))
+    val value = NetMessage.viaTCP(addr, addr)(VALUE(rid, ts, wr, v))
     val done = NetMessage.viaTCP(addr, addr)(DONE)
 
     Serializers.toBinary(done, buf)
@@ -126,7 +126,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     writeDeser.rid should equal (rid)
     writeDeser.ts should equal (ts)
     writeDeser.wr should equal (wr)
-    writeDeser.value should equal (Some(v))
+    writeDeser.value should equal (v)
 
     buf.clear()
 
@@ -139,7 +139,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     valueDeser.rid should equal (rid)
     valueDeser.ts should equal (ts)
     valueDeser.wr should equal (wr)
-    valueDeser.value should equal (None)
+    valueDeser.value should equal (v)
   }
 
   test("Throughput Network Ser/Deser") {
