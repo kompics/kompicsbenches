@@ -8,5 +8,6 @@ import java.util.Set;
 public class INIT implements KompicsEvent {
     public Set<NetAddress> nodes;
     public int id;
-    public INIT(int id, Set<NetAddress> nodes) { this.id = id; this.nodes = nodes; }
+    public int rank;
+    public INIT(int rank, int id, Set<NetAddress> nodes) {this.rank = rank; this.id = id; this.nodes = nodes; }
 }

@@ -79,11 +79,12 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val ts = 1
     val wr = 2
     val v = 3
-    val init_id = -1;
+    val rank = 4
+    val init_id = -1
     var nodes: java.util.HashSet[NetAddress] = new java.util.HashSet[NetAddress]()
     nodes.add(addr)
     nodes.add(addr2)
-    val init = NetMessage.viaTCP(addr, addr, new INIT(init_id, nodes))
+    val init = NetMessage.viaTCP(addr, addr, new INIT(rank, init_id, nodes))
     val read = NetMessage.viaTCP(addr, addr, new READ(rid))
     val ack = NetMessage.viaTCP(addr, addr, new ACK(rid))
     val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v))
@@ -95,6 +96,8 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val initDeserO = initDeserN.asInstanceOf[NetMessage].extractValue()
     initDeserO shouldBe a[INIT]
     val initDeser = initDeserO.asInstanceOf[INIT]
+    val rankDeser = initDeser.rank
+    rankDeser should equal (rank)
     val idDeser = initDeser.id;
     idDeser should equal (init_id)
     val nodesDeser = initDeser.nodes

@@ -68,9 +68,6 @@ public class AtomicRegister extends ComponentDefinition {
     private UUID timerId;
     private final int init_id;
 
-    private static final int MAX_WRITEVAL = 100;
-
-
     public AtomicRegister(Init init) {
         latch = init.latch;
         selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
@@ -84,11 +81,11 @@ public class AtomicRegister extends ComponentDefinition {
             N = nodes.size();
         }
         subscribe(startHandler, control);
-        subscribe(initHandler, beb);
         subscribe(readRequestHandler, beb);
         subscribe(writeRequestHandler, beb);
         subscribe(readResponseHandler, net);
         subscribe(ackHandler, net);
+        subscribe(initHandler, net);
         subscribe(timeoutHandler, timer);
     }
 
@@ -140,7 +137,11 @@ public class AtomicRegister extends ComponentDefinition {
                 spt.setTimeoutEvent(timeout);
                 trigger(spt, timer);
                 timerId = timeout.getTimeoutId();
-                trigger(new BEBRequest(nodes, new INIT(init_id, nodes)), beb);
+//                trigger(new BEBRequest(nodes, new INIT(init_id, nodes)), beb);
+                int rank = 0;
+                for (NetAddress node : nodes){
+                    trigger(NetMessage.viaTCP(selfAddr, node, new INIT(rank++, init_id, nodes)), net);
+                }
             }
         }
 
@@ -153,7 +154,7 @@ public class AtomicRegister extends ComponentDefinition {
             latch.countDown();
         }
     };
-
+/*
     private ClassMatchedHandler<INIT, BEBDeliver> initHandler = new ClassMatchedHandler<INIT, BEBDeliver>() {
         @Override
         public void handle(INIT init, BEBDeliver bebDeliver) {
@@ -162,6 +163,7 @@ public class AtomicRegister extends ComponentDefinition {
             trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(init.id)), net);
         }
     };
+    */
 
     private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
         @Override
@@ -179,6 +181,17 @@ public class AtomicRegister extends ComponentDefinition {
                 value = write.value;
             }
             trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(write.rid)), net);
+        }
+    };
+
+    private ClassMatchedHandler<INIT, NetMessage> initHandler = new ClassMatchedHandler<INIT, NetMessage>() {
+        @Override
+        public void handle(INIT init, NetMessage netMessage) {
+            nodes = init.nodes;
+            N = nodes.size();
+            selfRank = init.rank;
+            logger.info("Got rank=" + selfRank + " Acking init_id=" + init.id);
+            trigger(NetMessage.viaTCP(selfAddr, netMessage.getSource(), new ACK(init.id)), net);
         }
     };
 
