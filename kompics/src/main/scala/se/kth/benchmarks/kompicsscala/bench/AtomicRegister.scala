@@ -58,7 +58,7 @@ object AtomicRegister extends DistributedBenchmark {
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: use config addr instead, same
+      val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: use config addr instead
       beb = Await.result(bebF, 5.second)
       val beb_net_connF = system.connectNetwork(beb)
       Await.result(beb_net_connF, 5.second)
@@ -177,6 +177,19 @@ object AtomicRegister extends DistributedBenchmark {
   override def clientDataToString(d: ClientData): String = {
     s"${d.isa.getHostString()}:${d.getPort()}"
   }
+  /*
+  class AtomicRegisterState {
+    var (ts, wr) = (0, 0)
+    var value = 0
+    var acks = 0
+    var readval = 0
+    var writeval = 0
+    var rid = 0
+    var readlist: mutable.Map[NetAddress, (Int, Int, Int)] = mutable.Map.empty // (ts, processID, value)
+    var reading = false
+  }
+  */
+
   class AtomicRegisterComp(init: Init[AtomicRegisterComp]) extends ComponentDefinition {
     implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops = o.mkOrderingOps(x); // for tuple comparison
 
@@ -198,6 +211,8 @@ object AtomicRegister extends DistributedBenchmark {
     var rid = 0
     var readlist: mutable.Map[NetAddress, (Int, Int, Int)] = mutable.Map.empty // (ts, processID, value)
     var reading = false
+
+//    var state = mutable.Map[Int, AtomicRegisterState] = mutable.Map.empty // (register, state)
 
     /* Experiment variables */
     var read_count = num_read
@@ -243,16 +258,16 @@ object AtomicRegister extends DistributedBenchmark {
       //      logger.debug("Read response[" + read_count + "] value=" + read_value)
       read_count -= 1
       if (read_count == 0 && write_count == 0) {
-//        logger.debug(s"Atomic register $selfAddr is done!")
+        //        logger.debug(s"Atomic register $selfAddr is done!")
         trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
-      } else invokeWrite(write_count.toInt)
+      } else invokeWrite(selfRank)
     }
 
     private def writeResponse(): Unit = {
       //      logger.debug("Write response[" + write_count + "]")
       write_count -= 1
       if (read_count == 0 && write_count == 0) {
-//        logger.debug(s"Atomic register $selfAddr is done!")
+        //        logger.debug(s"Atomic register $selfAddr is done!")
         trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
       } else invokeRead()
     }
@@ -287,7 +302,7 @@ object AtomicRegister extends DistributedBenchmark {
       case BEBDeliver(READ(readID), src) => handle {
         if (!started_exp) {
           started_exp = true
-          if (selfRank % 2 == 0) invokeWrite(write_count.toInt) else invokeRead()
+          if (selfRank % 2 == 0) invokeWrite(selfRank) else invokeRead()
         }
         trigger(NetMessage.viaTCP(selfAddr, src)(VALUE(readID, ts, wr, value)) -> net)
       };
@@ -336,7 +351,7 @@ object AtomicRegister extends DistributedBenchmark {
         }
       }
 
-      case NetMessage(header, a: ACK) => handle {
+      case NetMessage(_, a: ACK) => handle {
         if (a.rid == rid) {
           acks = acks + 1
           if (acks > n / 2) {
@@ -349,14 +364,12 @@ object AtomicRegister extends DistributedBenchmark {
             }
           }
         } else if (a.rid == init_id) {
-          val src = header.getSource()
-//          logger.debug(s"Got INIT ACK from $src")
           init_ack_count += 1
           if (init_ack_count == n) {
             trigger(new CancelTimeout(timerId.get) -> timer)
-//            logger.info("Got init ack from everybody! Starting experiment")
+            //            logger.debug("Got init ack from everybody! Starting experiment")
             started_exp = true
-            if (selfRank % 2 == 0) invokeWrite(write_count.toInt) else invokeRead()
+            if (selfRank % 2 == 0) invokeWrite(selfRank) else invokeRead()
           }
         }
       }
@@ -458,14 +471,14 @@ object AtomicRegister extends DistributedBenchmark {
           val rid = buf.readInt()
           val ts = buf.readInt()
           val wr = buf.readInt()
-          var value = buf.readInt()
+          val value = buf.readInt()
           WRITE(rid, ts, wr, value)
         }
         case VALUE_FLAG => {
           val rid = buf.readInt()
           val ts = buf.readInt()
           val wr = buf.readInt()
-          var value = buf.readInt()
+          val value = buf.readInt()
           VALUE(rid, ts, wr, value)
         }
         case INIT_FLAG => {

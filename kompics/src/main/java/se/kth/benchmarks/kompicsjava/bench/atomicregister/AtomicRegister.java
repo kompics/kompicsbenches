@@ -132,7 +132,7 @@ public class AtomicRegister extends ComponentDefinition {
 //        logger.debug("Read response[" + read_count + "] value=" + read_value);
         read_count--;
         if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
-        else invokeWrite((int) write_count);
+        else invokeWrite(selfRank);
     }
 
     private void writeResponse(){
@@ -180,7 +180,7 @@ public class AtomicRegister extends ComponentDefinition {
         public void handle(READ read, BEBDeliver bebDeliver) {
             if (!started_exp){
                 started_exp = true;
-                if (selfRank % 2 == 0) invokeWrite((int) write_count);
+                if (selfRank % 2 == 0) invokeWrite(selfRank);
                 else invokeRead();
             }
             trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.rid, ts, wr, value)), net);
@@ -241,13 +241,11 @@ public class AtomicRegister extends ComponentDefinition {
         @Override
         public void handle(ACK a, NetMessage msg) {
             if (a.rid == init_id){
-                NetAddress src = msg.getSource();
                 init_ack_count++;
-//                logger.debug("Received INIT ACK for id=" + init_id + " from " + src.asString() + ", acks remaining: " + init_ack_count);
                 if (init_ack_count == N){
                     trigger(new CancelTimeout(timerId), timer);
-//                    logger.info("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
-                    invokeWrite((int) write_count);
+//                    logger.debug("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
+                    invokeWrite(selfRank);
                 }
             }
             else if (a.rid == rid){
@@ -289,7 +287,7 @@ public class AtomicRegister extends ComponentDefinition {
 
     private class Tuple{
         int ts;     // seq nr
-        int wr;     // process
+        int wr;     // rank
         int value;
 
         Tuple(int ts, int wr, int value){
