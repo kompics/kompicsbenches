@@ -105,9 +105,9 @@ class DistributedTest extends FunSuite with Matchers {
     initDeserO shouldBe a[INIT]
     val initDeser = initDeserO.asInstanceOf[INIT]
     val rankDeser = initDeser.rank
-    rankDeser should equal (rank)
+    rankDeser should be (rank)
     val idDeser = initDeser.id;
-    idDeser should equal (init_id)
+    idDeser should be (init_id)
     val nodesDeser = initDeser.nodes
     nodesDeser should equal (nodes)
 
@@ -118,7 +118,7 @@ class DistributedTest extends FunSuite with Matchers {
     readDeserN shouldBe a[NetMessage]
     val readDeser = readDeserN.asInstanceOf[NetMessage].extractValue()
     readDeser shouldBe a[READ]
-    readDeser.asInstanceOf[READ].rid should equal (rid)
+    readDeser.asInstanceOf[READ].rid should be (rid)
 
     buf.clear()
 
@@ -127,7 +127,7 @@ class DistributedTest extends FunSuite with Matchers {
     ackDeserN shouldBe a[NetMessage]
     val ackDeser = ackDeserN.asInstanceOf[NetMessage].extractValue()
     ackDeser shouldBe a[ACK]
-    ackDeser.asInstanceOf[ACK].rid should equal (rid)
+    ackDeser.asInstanceOf[ACK].rid should be (rid)
 
     buf.clear()
 
@@ -137,10 +137,10 @@ class DistributedTest extends FunSuite with Matchers {
     val writeDeserO = writeDeserN.asInstanceOf[NetMessage].extractValue()
     writeDeserO shouldBe a[WRITE]
     val writeDeser = writeDeserO.asInstanceOf[WRITE]
-    writeDeser.rid should equal (rid)
-    writeDeser.ts should equal (ts)
-    writeDeser.value should equal (v)
-    writeDeser.wr should equal (wr)
+    writeDeser.rid should be (rid)
+    writeDeser.ts should be (ts)
+    writeDeser.value should be (v)
+    writeDeser.wr should be (wr)
 
     buf.clear()
 
@@ -150,10 +150,10 @@ class DistributedTest extends FunSuite with Matchers {
     val valueDeserO = valueDeserN.asInstanceOf[NetMessage].extractValue()
     valueDeserO shouldBe a[VALUE]
     val valueDeser = valueDeserO.asInstanceOf[VALUE]
-    valueDeser.rid should equal (rid)
-    valueDeser.ts should equal (ts)
-    valueDeser.value should equal (v)
-    valueDeser.wr should equal (wr)
+    valueDeser.rid should be (rid)
+    valueDeser.ts should be (ts)
+    valueDeser.value should be (v)
+    valueDeser.wr should be (wr)
   }
 
   test("Throughput Network Ser/Deser") {
