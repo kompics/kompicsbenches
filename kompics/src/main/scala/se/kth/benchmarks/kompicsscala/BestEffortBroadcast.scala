@@ -9,7 +9,7 @@ class BestEffortBroadcast extends Port {
 }
 
 case class BEBDeliver(payLoad: KompicsEvent, src: NetAddress) extends KompicsEvent;
-case class BEBRequest(nodes: Set[NetAddress], payLoad: KompicsEvent) extends KompicsEvent;
+case class BEBRequest(nodes: List[NetAddress], payLoad: KompicsEvent) extends KompicsEvent;
 
 class BEBComp(init: Init[BEBComp]) extends ComponentDefinition {
   val net = requires[Network]

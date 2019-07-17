@@ -107,10 +107,8 @@ object KompicsSystemProvider extends StrictLogging {
 case class NewComponent[C <: JComponentDefinition](c: Class[C], init: JInit[C], p: Promise[UUID]) extends KompicsEvent;
 case class StartComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
-case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit])
-    extends KompicsEvent;
-case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent;
-case class RunOnComponent[T](id: UUID, fun: Component => T, p: Promise[T]) extends KompicsEvent;
+case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
+case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent
 
 class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
 
@@ -249,22 +247,13 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       };
       p.complete(res)
     }
-    case TriggerComponent(cid, event, p) => {
+    case TriggerComponent(cid, event, p) => handle {
       children.get(cid) match {
         case Some(c) => {
           trigger(event -> c.control())
-          p.success(())
+          p.success()
         }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on!"))
-      }
-    }
-    case RunOnComponent(cid, fun, p) => {
-      children.get(cid) match {
-        case Some(c) => {
-          val res = Try(fun(c));
-          p.complete(res)
-        }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to run function on!"))
+        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on"))
       }
     }
   }
@@ -316,12 +305,6 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   def triggerComponent(event: KompicsEvent, id: UUID): Future[Unit] = {
     val p = Promise[Unit];
     trigger(TriggerComponent(id, event, p) -> onSelf)
-    p.future
-  }
-
-  def runOnComponent[T](id: UUID)(f: Component => T): Future[T] = {
-    val p = Promise[T];
-    trigger(RunOnComponent(id, f, p) -> onSelf)
     p.future
   }
 
