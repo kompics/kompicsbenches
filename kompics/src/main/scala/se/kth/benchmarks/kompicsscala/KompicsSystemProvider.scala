@@ -95,6 +95,7 @@ case class NewComponent[C <: JComponentDefinition](c: Class[C], init: JInit[C], 
 case class StartComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
+case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent
 
 class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
 
@@ -233,6 +234,15 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       };
       p.complete(res)
     }
+    case TriggerComponent(cid, event, p) => handle {
+      children.get(cid) match {
+        case Some(c) => {
+          trigger(event -> c.control())
+          p.success()
+        }
+        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on"))
+      }
+    }
   }
 
   //  override def handleFault(fault: Fault): Fault.ResolveAction = {
@@ -277,6 +287,12 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       case Success(provider) => connectComponents[Network](requirer, provider)
       case Failure(e)        => Future.failed(e)
     }
+  }
+
+  def triggerComponent(event: KompicsEvent, id: UUID): Future[Unit] = {
+    val p = Promise[Unit];
+    trigger(TriggerComponent(id, event, p) -> onSelf)
+    p.future
   }
 
   def terminate(): Unit = Kompics.shutdown();

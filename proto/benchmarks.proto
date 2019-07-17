@@ -24,6 +24,9 @@ message ThroughputPingPongRequest {
 	bool static_only = 4;
 }
 message AtomicRegisterRequest {
-	uint64 number_of_reads = 1;
-	uint64 number_of_writes = 2;
+	float read_workload = 1;
+	float write_workload = 2;
+	uint32 partition_size = 3;
+	uint64 number_of_keys = 4;
+	uint32 parallelism = 5;
 }
