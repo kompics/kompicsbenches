@@ -14,132 +14,124 @@ import se.sics.kompics.Handler;
 import se.sics.kompics.Positive;
 import se.sics.kompics.Start;
 import se.sics.kompics.network.Network;
-import se.sics.kompics.timer.CancelTimeout;
-import se.sics.kompics.timer.ScheduleTimeout;
-import se.sics.kompics.timer.Timeout;
-import se.sics.kompics.timer.Timer;
 
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
+import java.util.List;
 
 public class AtomicRegister extends ComponentDefinition {
 
     public static class Init extends se.sics.kompics.Init<AtomicRegister> {
-        private final Set<NetAddress> nodes;
-        private final long num_read;
-        private final long num_write;
-        private final CountDownLatch latch;
-        private final int init_id;
+        private final float read_workload;
+        private final float write_workload;
 
-        public Init(CountDownLatch latch, Set<NetAddress> nodes, long num_read, long num_write, int init_id) {
-            this.latch = latch;
-            this.nodes = nodes;
-            this.num_read = num_read;
-            this.num_write = num_write;
-            this.init_id = init_id;
+        public Init(float read_workload, float write_workload) {
+            this.read_workload = read_workload;
+            this.write_workload = write_workload;
         }
     }
 
     private Positive<BestEffortBroadcast> beb = requires(BestEffortBroadcast.class);
     private Positive<Network> net = requires(Network.class);
-    private Positive<Timer> timer = requires(Timer.class);
 
     private int selfRank;
     private final NetAddress selfAddr;
-    private Set<NetAddress> nodes;
+    private List<NetAddress> nodes;
     private int N;
-    private int ts, wr;
-    private int value;
-    private int acks;
-    private int rid;
-    private Boolean reading;
-    private int readval;
-    private int writeval;
-    private HashMap<NetAddress, Tuple> readList;
+    private long min_key = -1;
+    private long max_key = -1;
+    private HashMap<Long, AtomicRegisterState> register_state = new HashMap<>();
+    private HashMap<Long, HashMap<NetAddress, Tuple>> register_readList = new HashMap<>();
 
     // benchmark variables
-    private CountDownLatch latch;
     private long read_count;
     private long write_count;
-    private int init_ack_count = 0;
-    private int done_count = 0;
-    private UUID timerId;
-    private final int init_id;
-    private final long num_read;
-    private final long num_write;
-    private boolean started_exp = false;
+    private float read_workload;
+    private float write_workload;
     private NetAddress master;
 
     public AtomicRegister(Init init) {
         selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
-        selfRank = selfAddr.hashCode();
-        num_read = init.num_read;
-        num_write = init.num_write;
-        read_count = init.num_read;
-        write_count = init.num_write;
-        init_id = init.init_id;
-        if (init.nodes != null){
-            latch = init.latch;
-            nodes = init.nodes;
-            logger.info(nodes.toString());
-            N = nodes.size();
-        }
+        read_workload = init.read_workload;
+        write_workload = init.write_workload;
         subscribe(startHandler, control);
         subscribe(readRequestHandler, beb);
         subscribe(writeRequestHandler, beb);
         subscribe(readResponseHandler, net);
         subscribe(ackHandler, net);
         subscribe(initHandler, net);
-        subscribe(doneHandler, net);
-        subscribe(timeoutHandler, timer);
+        subscribe(runHandler, net);
     }
 
-    private void resetVariables(){
-        ts = 0;
-        wr = 0;
-        rid = 0;
-        acks = 0;
-        value = 0;
-        readval = 0;
-        writeval = 0;
-        readList.clear();
-        reading = false;
-        started_exp = false;
-        read_count = num_read;
-        write_count = num_write;
+    private void newIteration(INIT i){
+        nodes = i.nodes;
+        N = nodes.size();
+        selfRank = i.rank;
+        min_key = i.min;
+        max_key = i.max;
+        register_state.clear();
+        register_readList.clear();
+        for (long l = min_key; l <= max_key; l++){
+            register_state.put(l, new AtomicRegisterState());
+            register_readList.put(l, new HashMap<>());
+        }
     }
 
-    private void invokeRead(){
-        rid++;
-        acks = 0;
-        readList.clear();
-        reading = true;
-        trigger(new BEBRequest(nodes, new READ(rid)), beb);
+    private void invokeRead(long key){
+        AtomicRegisterState register = register_state.get(key);
+        register.rid++;
+        register.acks = 0;
+        register_readList.get(key).clear();
+        register.reading = true;
+        trigger(new BEBRequest(nodes, new READ(key, register.rid)), beb);
     }
 
-    private void invokeWrite(int value){
-        rid++;
-        writeval = value;
-        acks = 0;
-        readList.clear();
-        trigger(new BEBRequest(nodes, new READ(rid)), beb);
+    private void invokeWrite(long key){
+        int wval = selfRank;
+        AtomicRegisterState register = register_state.get(key);
+        register.rid++;
+        register.writeval = wval;
+        register.acks = 0;
+        register.reading = false;
+        register_readList.get(key).clear();
+        trigger(new BEBRequest(nodes, new READ(key, register.rid)), beb);
     }
 
-    private void readResponse(int read_value){
-//        logger.debug("Read response[" + read_count + "] value=" + read_value);
+    private void invokeOperations(){
+        long num_keys = max_key - min_key + 1;
+        long num_reads = (long) (num_keys * read_workload);
+        long num_writes = (long) (num_keys * write_workload);
+
+        read_count = num_reads;
+        write_count = num_writes;
+
+        if (selfRank % 2 == 0){
+            for (long l = 0; l < num_reads; l++) invokeRead(min_key + l);
+            for (long l = 0; l < num_writes; l++) invokeWrite(min_key + num_reads + l);
+        } else {
+            for (long l = 0; l < num_reads; l++) invokeWrite(min_key + l);
+            for (long l = 0; l < num_writes; l++) invokeRead(min_key + num_writes + l);
+        }
+    }
+
+    private void readResponse(long key, int read_value){
+//        logger.info("Read response[" + key + "] value=" + read_value);
         read_count--;
-        if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
-        else invokeWrite(selfRank);
+        if (read_count == 0 && write_count == 0) {
+            logger.info("Atomic Register " + selfAddr.asString() + " is done!");
+            trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
+//            trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
+        }
     }
 
-    private void writeResponse(){
+    private void writeResponse(long key){
 //        logger.debug("Write response[" + write_count + "]");
         write_count--;
-        if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
-        else invokeRead();
+        if (read_count == 0 && write_count == 0) {
+            logger.info("Atomic Register " + selfAddr.asString() + " is done!");
+            trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
+//            trigger(NetMessage.viaTCP(selfAddr, master, DONE.event), net);
+        }
     }
 
     private Handler<Start> startHandler = new Handler<Start>() {
@@ -147,92 +139,71 @@ public class AtomicRegister extends ComponentDefinition {
         @Override
         public void handle(Start event) {
             assert(selfAddr != null);
-            acks = 0;
-            rid = 0;
-            reading = false;
-            readList = new HashMap<>();
-            logger.debug("Atomic Register Component " + selfAddr.asString() + " has started!");
-            if (N > 0) {
-                ScheduleTimeout spt = new ScheduleTimeout(50000);
-                InitTimeout timeout = new InitTimeout(spt);
-                spt.setTimeoutEvent(timeout);
-                trigger(spt, timer);
-                timerId = timeout.getTimeoutId();
-                int rank = 0;
-                for (NetAddress node : nodes){
-                    trigger(NetMessage.viaTCP(selfAddr, node, new INIT(rank++, init_id, nodes)), net);
-                }
-            }
+            logger.info("Atomic Register Component " + selfAddr.asString() + " has started!");
         }
 
-    };
-
-    private Handler<InitTimeout> timeoutHandler = new Handler<InitTimeout>() {
-        @Override
-        public void handle(InitTimeout initTimeout) {
-            logger.error("Time out waiting for INIT ACKS for id=" + init_id);
-            latch.countDown();
-        }
     };
 
     private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
         @Override
         public void handle(READ read, BEBDeliver bebDeliver) {
-            if (!started_exp){
-                started_exp = true;
-                if (selfRank % 2 == 0) invokeWrite(selfRank);
-                else invokeRead();
-            }
-            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.rid, ts, wr, value)), net);
+            AtomicRegisterState current_state = register_state.get(read.key);
+            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.key, read.rid, current_state.ts, current_state.wr, current_state.value)), net);
         }
     };
 
     private ClassMatchedHandler<WRITE, BEBDeliver> writeRequestHandler = new ClassMatchedHandler<WRITE, BEBDeliver>() {
         @Override
         public void handle(WRITE write, BEBDeliver bebDeliver) {
-            if (write.ts > ts || write.ts == ts && write.wr > wr){
-                ts = write.ts;
-                wr = write.wr;
-                value = write.value;
+            AtomicRegisterState current_state = register_state.get(write.key);
+            if (write.ts > current_state.ts || write.ts == current_state.ts && write.wr > current_state.wr){
+                current_state.ts = write.ts;
+                current_state.wr = write.wr;
+                current_state.value = write.value;
             }
-            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(write.rid)), net);
+            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(write.key, write.rid)), net);
         }
     };
 
     private ClassMatchedHandler<INIT, NetMessage> initHandler = new ClassMatchedHandler<INIT, NetMessage>() {
         @Override
         public void handle(INIT init, NetMessage netMessage) {
-            nodes = init.nodes;
-            N = nodes.size();
-            selfRank = init.rank;
+//            logger.info("Got INIT id=" + init.id);
+            newIteration(init);
             master = netMessage.getSource();
-            resetVariables(); // reset all variables when a new iteration is starting
-            logger.debug("Got rank=" + selfRank + " Acking init_id=" + init.id);
-            trigger(NetMessage.viaTCP(selfAddr, netMessage.getSource(), new ACK(init.id)), net);
+            trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), netMessage.getSource().asScala(), new INIT_ACK(init.id)), net);
+//            trigger(NetMessage.viaTCP(selfAddr, netMessage.getSource(), new INIT_ACK(init.id)), net);
         }
     };
 
     private ClassMatchedHandler<VALUE, NetMessage> readResponseHandler = new ClassMatchedHandler<VALUE, NetMessage>() {
         @Override
         public void handle(VALUE v, NetMessage msg) {
-            if (v.rid == rid){
-                readList.put(msg.getSource(), new Tuple(v.ts, v.wr, v.value));
-                if (readList.size() > N/2){
-                    Tuple maxtuple = getMaxTuple();
-                    int maxts = maxtuple.ts;
-                    int rr = maxtuple.wr;
-                    readval = maxtuple.value;
-                    int bcastval;
-                    readList.clear();
-                    if (reading){
-                        bcastval = readval;
-                    } else {
-                        rr = selfRank;
-                        maxts++;
-                        bcastval = writeval;
+            try {
+                NetAddress src = msg.getSource();
+                AtomicRegisterState current_register = register_state.get(v.key);
+                if (v.rid == current_register.rid) {
+                    HashMap<NetAddress, Tuple> readList = register_readList.get(v.key);
+                    readList.put(src, new Tuple(v.ts, v.wr, v.value));
+                    if (readList.size() > N / 2) {
+                        Tuple maxtuple = getMaxTuple(v.key);
+                        int maxts = maxtuple.ts;
+                        int rr = maxtuple.wr;
+                        current_register.readval = maxtuple.value;
+                        readList.clear(); // TODO check if this is correct
+                        int bcastval;
+                        if (current_register.reading) {
+                            bcastval = current_register.readval;
+                        } else {
+                            rr = selfRank;
+                            maxts++;
+                            bcastval = current_register.writeval;
+                        }
+                        trigger(new BEBRequest(nodes, new WRITE(v.key, v.rid, maxts, rr, bcastval)), beb);
                     }
-                    trigger(new BEBRequest(nodes, new WRITE(rid, maxts, rr, bcastval)), beb);
                 }
+            } catch (NullPointerException nex){
+//                logger.info("Got redundant VALUE key=" + v.key + ". Keys: " + min_key + " - " + max_key);
             }
         }
     };
@@ -240,42 +211,34 @@ public class AtomicRegister extends ComponentDefinition {
     private ClassMatchedHandler<ACK, NetMessage> ackHandler = new ClassMatchedHandler<ACK, NetMessage>() {
         @Override
         public void handle(ACK a, NetMessage msg) {
-            if (a.rid == init_id){
-                init_ack_count++;
-                if (init_ack_count == N){
-                    trigger(new CancelTimeout(timerId), timer);
-//                    logger.debug("Got INIT ACK for id=" + init_id + " from everybody! Starting experiment");
-                    invokeWrite(selfRank);
-                }
-            }
-            else if (a.rid == rid){
-                acks++;
-                if (acks > N/2){
-                    acks = 0;
-                    if (reading){
-                        reading = false;
-                        readResponse(readval);
-                    } else {
-                        writeResponse();
+            try {
+                AtomicRegisterState current_register = register_state.get(a.key);
+                if (a.rid == current_register.rid) {
+                    current_register.acks++;
+                    if (current_register.acks > N / 2) {
+                        current_register.acks = 0;
+                        if (current_register.reading) {
+                            readResponse(a.key, current_register.readval);
+                        } else {
+                            writeResponse(a.key);
+                        }
                     }
                 }
+            } catch (NullPointerException nex){
+//                logger.info("Got redundant ACK for key=" + a.key + ". Keys: " + min_key + " - " + max_key);
             }
         }
     };
 
-    private ClassMatchedHandler<DONE, NetMessage> doneHandler = new ClassMatchedHandler<DONE, NetMessage>() {
+    private ClassMatchedHandler<RUN, NetMessage> runHandler = new ClassMatchedHandler<RUN, NetMessage>() {
         @Override
-        public void handle(DONE done, NetMessage netMessage) {
-            done_count++;
-            if (done_count == N){
-                logger.info("Everybody is done! Ending run.");
-                latch.countDown();
-            }
+        public void handle(RUN run, NetMessage netMessage) {
+            invokeOperations();
         }
     };
 
-    private Tuple getMaxTuple(){
-        Collection<Tuple> readListValues = readList.values();
+    private Tuple getMaxTuple(long key){
+        Collection<Tuple> readListValues = register_readList.get(key).values();
         Tuple maxtuple = readListValues.iterator().next();
         for (Tuple t : readListValues){
             if (t.ts > maxtuple.ts){
@@ -297,10 +260,14 @@ public class AtomicRegister extends ComponentDefinition {
         }
     }
 
-    private static class InitTimeout extends Timeout {
-        public InitTimeout(ScheduleTimeout spt) {
-            super(spt);
-        }
+    private class AtomicRegisterState{
+        private int ts, wr;
+        private int value = -1;
+        private int acks;
+        private int rid;
+        private Boolean reading;
+        private int readval;
+        private int writeval;
     }
 
 }

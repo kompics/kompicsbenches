@@ -13,7 +13,7 @@ import se.sics.kompics.sl.{ ComponentDefinition, Init, KompicsEvent, Start, hand
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
-// used to send topology and rank to nodes in atomic register and sequence paxos
+// used to send topology and rank to nodes in atomic register
 class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
   val net = requires[Network]
 
@@ -145,7 +145,6 @@ object IterationCompSerializer extends Serializer {
           val port: Int = buf.readUnsignedShort()
           nodes += NetAddress(new InetSocketAddress(addr, port))
         }
-
         INIT(rank, init_id, nodes.toList, min, max)
       }
       case INIT_ACK_FLAG => INIT_ACK(buf.readInt())

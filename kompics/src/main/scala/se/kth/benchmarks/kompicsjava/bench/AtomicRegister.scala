@@ -1,17 +1,15 @@
 package se.kth.benchmarks.kompicsjava.bench
 
-import java.util.{ HashSet, UUID }
-import java.util.concurrent.CountDownLatch
+import java.util.{ UUID }
+import java.util.concurrent.{ CountDownLatch, TimeUnit }
 
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import se.kth.benchmarks.{ ClientEntry, DistributedBenchmark }
 import se.kth.benchmarks.kompicsjava.broadcast.{ BEBComp, BestEffortBroadcast => JBestEffortBroadcast }
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister, AtomicRegisterSerializer }
-import se.kth.benchmarks.kompicsjava.net.{ NetAddress => JNetAddress }
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister, AtomicRegisterSerializer, JIterationCompSerializer }
 import se.kth.benchmarks.kompicsscala._
+import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.{ ClientParams, FailedPreparationException }
 import se.sics.kompics.sl.Init
-import se.sics.kompics.timer.Timer
-import se.sics.kompics.timer.java.JavaTimer
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
@@ -19,39 +17,41 @@ import scala.util.{ Success, Try }
 
 object AtomicRegister extends DistributedBenchmark {
   override type MasterConf = AtomicRegisterRequest;
-  override type ClientConf = AtomicRegisterRequest;
+  override type ClientConf = ClientParams;
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var num_reads = -1l;
-    private var num_writes = -1l;
+    private var read_workload = 0.0F;
+    private var write_workload = 0.0F;
+    private var partition_size: Int = -1;
+    private var num_keys: Long = -1l;
+    private var parallelism: Int = -1;
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null;
-    private var timer: UUID = null;
-    private var latch: CountDownLatch = null;
-    private var init_id: Int = 0;
+    private var iterationComp: UUID = null;
+    private var prepare_latch: CountDownLatch = null;
+    private var finished_latch: CountDownLatch = null;
+    private var init_id: Int = -1;
 
     override def setup(c: MasterConf): ClientConf = {
+      println("Atomic Register setup!")
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       AtomicRegisterSerializer.register();
-      this.num_reads = c.numberOfReads;
-      this.num_writes = c.numberOfWrites;
-      println(s"Atomic Register(Master) setup: numReads=$num_reads numWrites=$num_writes")
-      c
+      JIterationCompSerializer.register();
+      this.read_workload = c.readWorkload;
+      this.write_workload = c.writeWorkload;
+      this.partition_size = c.partitionSize;
+      this.num_keys = c.numberOfKeys;
+      this.parallelism = c.parallelism;
+      ClientParams(read_workload, write_workload, parallelism)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
       assert(system != null);
-      latch = new CountDownLatch(1);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-
-      init_id -= 1
-      var nodes = new java.util.HashSet[JNetAddress]()
-      nodes.add(addr.asJava)
-      for (node <- d) { nodes.add(node.asJava) }
-      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(latch, nodes, num_reads, num_writes, init_id))
-      atomicRegister = Await.result(atomicRegisterIdF, 5.second);
+      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(read_workload, write_workload))
+      atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
@@ -62,39 +62,61 @@ object AtomicRegister extends DistributedBenchmark {
       Await.result(beb_net_connF, 5.second)
       val beb_ar_connF = system.connectComponents[JBestEffortBroadcast](atomicRegister, beb)
       Await.result(beb_ar_connF, 5.seconds);
-      /* connect timer */
-      val timerF = system.createNotify[JavaTimer](Init.none[JavaTimer])
-      timer = Await.result(timerF, 5.second)
-      val timer_connF = system.connectComponents[Timer](atomicRegister, timer)
-      Await.result(timer_connF, 5.seconds);
+      /* connect Iteration prepare component */
+      val nodes = addr :: d
+      //      val nodes = addr :: d
+      val num_nodes = nodes.size
+      if (num_nodes < partition_size || partition_size == 0 || num_nodes % partition_size != 0) {
+        throw new FailedPreparationException(s"Bad partition arguments: N=$num_nodes, partition size=$partition_size")
+      }
+      if (read_workload + write_workload != 1) throw new FailedPreparationException(s"Sum of Workload arguments is not 1: read=$read_workload, write=$write_workload")
+      init_id += 1
+      prepare_latch = new CountDownLatch(1)
+      finished_latch = new CountDownLatch(1)
+      //      val java_init = true
+
+      val iterationCompF = system.createNotify[JIterationComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size))
+      //      val iterationCompF = system.createNotify[IterationComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size, java_init))
+      iterationComp = Await.result(iterationCompF, 5.second)
+      val iterationComp_net_connF = system.connectNetwork(iterationComp)
+      Await.result(iterationComp_net_connF, 5.seconds)
+      assert(system != null && beb != null && iterationComp != null && atomicRegister != null);
+      system.startNotify(beb)
+      system.startNotify(atomicRegister)
+      system.startNotify(iterationComp)
+      val successful_prep = prepare_latch.await(100, TimeUnit.SECONDS)
+      if (!successful_prep) {
+        println("Timeout on INIT_ACK in prepareIteration")
+        throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
+      }
     }
     override def runIteration(): Unit = {
-      assert(system != null && atomicRegister != null && beb != null && timer != null);
-      println("run iteration!")
-      system.startNotify(timer)
-      system.startNotify(beb)
-      val startF = system.startNotify(atomicRegister);
+      system.triggerComponent(RUN, iterationComp)
       //startF.failed.foreach(e => eprintln(s"Could not start pinger: $e"));
-      latch.await();
+      val timeout = 5
+      val timeunit = TimeUnit.MINUTES
+      val succesful_run = finished_latch.await(timeout, timeunit)
+      if (!succesful_run) println(s"Timeout in runIteration: Did not finish in $timeout $timeunit...")
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
       assert(system != null);
-      if (latch != null) {
-        latch = null;
+      if (finished_latch != null) {
+        finished_latch = null;
       }
       if (atomicRegister != null) {
-        val killF = system.killNotify(atomicRegister);
-        Await.ready(killF, 5.seconds);
+        val killF = system.killNotify(atomicRegister)
+        Await.ready(killF, 5.seconds)
         val killBebF = system.killNotify(beb)
-        Await.ready(killBebF, 5.seconds);
-        val killTimerF = system.killNotify(timer)
-        Await.ready(killTimerF, 5.seconds)
-        atomicRegister = null;
+        Await.ready(killBebF, 5.seconds)
+        val killiterationCompF = system.killNotify(iterationComp)
+        Await.ready(killiterationCompF, 5.seconds)
+        atomicRegister = null
         beb = null
-        timer = null
+        iterationComp = null
       }
       if (lastIteration) {
+        println("Cleaning up Last iteration")
         val f = system.terminate();
         system = null;
       }
@@ -102,29 +124,29 @@ object AtomicRegister extends DistributedBenchmark {
   }
 
   class ClientImpl extends Client {
-    private var num_reads = -1l;
-    private var num_writes = -1l;
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
-    private var beb: UUID = null;
-    private var latch: CountDownLatch = null
+    private var beb: UUID = null
+    private var read_workload = 0.0F
+    private var write_workload = 0.0F
+    private var parallelism = -1
 
     override def setup(c: ClientConf): ClientData = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
-      latch = new CountDownLatch(1);
       AtomicRegisterSerializer.register();
+      JIterationCompSerializer.register();
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Client) Path is $addr");
-      /* Atomic Register */
-      this.num_reads = c.numberOfReads;
-      this.num_writes = c.numberOfWrites;
-      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(latch, null, num_reads, num_writes, 0))
+      this.read_workload = c.read_workload;
+      this.write_workload = c.write_workload;
+      this.parallelism = c.parallelism // TODO: parallelism
+      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](new BEBComp.Init(addr.asJava)) // TODO: is addr correct?
+      val bebF = system.createNotify[BEBComp](new BEBComp.Init(addr.asJava))
       beb = Await.result(bebF, 5.second)
       val beb_net_connF = system.connectNetwork(beb)
       Await.result(beb_net_connF, 5.second)
@@ -162,14 +184,23 @@ object AtomicRegister extends DistributedBenchmark {
 
   override def strToClientConf(str: String): Try[ClientConf] = Try {
     val split = str.split(":");
-    assert(split.length == 2);
-    AtomicRegisterRequest({ split(0).toInt }, { split(1).toInt })
+    assert(split.length == 3);
+    ClientParams(split(0).toFloat, split(1).toFloat, split(2).toInt)
   };
 
-  override def strToClientData(str: String): Try[ClientData] = NetAddress.fromString(str);
+  override def strToClientData(str: String): Try[ClientData] = Try {
+    val split = str.split(":");
+    assert(split.length == 2);
+    val ipStr = split(0); //.replaceAll("""/""", "");
+    val portStr = split(1);
+    val port = portStr.toInt;
+    NetAddress.from(ipStr, port)
+  }.flatten;
 
-  override def clientConfToString(c: ClientConf): String = s"${c.numberOfReads}:${c.numberOfWrites}";
+  override def clientConfToString(c: ClientConf): String = s"${c.read_workload}:${c.write_workload}:${c.parallelism}";
 
-  override def clientDataToString(d: ClientData): String = s"${d.isa.getHostString()}:${d.getPort()}";
+  override def clientDataToString(d: ClientData): String = {
+    s"${d.isa.getHostString()}:${d.getPort()}"
+  }
 
 }

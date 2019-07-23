@@ -56,43 +56,51 @@ object AtomicRegister extends DistributedBenchmark {
       assert(system != null);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
+      val nodes = addr :: d
+      val num_nodes = nodes.size
+      if (num_nodes < partition_size || partition_size == 0 || num_nodes % partition_size != 0) {
+        throw new FailedPreparationException(s"Bad partition arguments: N=$num_nodes, partition size=$partition_size")
+      }
+      if (read_workload + write_workload != 1) throw new FailedPreparationException(s"Sum of workload must be 1.0: read=$read_workload, write=$write_workload")
       val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(read_workload, write_workload)) // TODO parallelism
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](Init(addr)) // TODO: use config addr instead
+      val bebF = system.createNotify[BEBComp](Init(addr))
       beb = Await.result(bebF, 5.second)
       val beb_net_connF = system.connectNetwork(beb)
       Await.result(beb_net_connF, 5.second)
       val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
       Await.result(beb_ar_connF, 5.seconds)
       /* connect Iteration prepare component */
-      val nodes = addr :: d
-      val num_nodes = nodes.size
-      if (num_nodes < partition_size || partition_size == 0 || num_nodes % partition_size != 0) {
-        throw new FailedPreparationException(s"Bad partition arguments: N=$num_nodes, partition size=$partition_size")
-      }
-      if (read_workload + write_workload != 1) throw new FailedPreparationException(s"Sum of Workload arguments is not 1: read=$read_workload, write=$write_workload")
       init_id += 1
       prepare_latch = new CountDownLatch(1)
-      finished_latch = new CountDownLatch(1);
+      finished_latch = new CountDownLatch(1)
       val iterationCompF = system.createNotify[IterationComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for INIT_ACK from clients
       iterationComp = Await.result(iterationCompF, 5.second)
       val iterationComp_net_connF = system.connectNetwork(iterationComp)
       Await.result(iterationComp_net_connF, 5.seconds)
-      assert(system != null && beb != null && iterationComp != null && atomicRegister != null);
+      assert(beb != null && iterationComp != null && atomicRegister != null);
       system.startNotify(beb)
       system.startNotify(atomicRegister)
       system.startNotify(iterationComp)
-      val successful_prep = prepare_latch.await(100, TimeUnit.SECONDS)
-      if (!successful_prep) throw new FailedPreparationException("Did not receive INIT ACK from all nodes")
+      val timeout = 100
+      val timeunit = TimeUnit.SECONDS
+      val successful_prep = prepare_latch.await(timeout, timeunit)
+      if (!successful_prep) {
+        println("Timeout on INIT_ACK in prepareIteration")
+        throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
+      }
     }
     override def runIteration(): Unit = {
       system.triggerComponent(RUN, iterationComp)
-      //startF.failed.foreach(e => eprintln(s"Could not start pinger: $e"));
-      finished_latch.await();
+      //      finished_latch.await()
+      val timeout = 5
+      val timeunit = TimeUnit.MINUTES
+      val succesful_run = finished_latch.await(timeout, timeunit)
+      if (!succesful_run) println(s"Timeout in runIteration: Did not finish in $timeout $timeunit...")
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
@@ -238,7 +246,7 @@ object AtomicRegister extends DistributedBenchmark {
       selfRank = i.rank
       min_key = i.min
       max_key = i.max
-      logger.info(s"New Iteration: n=$n, min_key=$min_key, max_key=$max_key")
+      //      logger.info(s"New Iteration: n=$n, min_key=$min_key, max_key=$max_key")
       /* Reset KV and states */
       register_state = mutable.Map.empty
       register_readlist = mutable.Map.empty
@@ -254,6 +262,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register_readlist(key) = mutable.Map.empty
       register.reading = true
+      //      logger.info(s"Invoking READ key=$key")
       trigger(BEBRequest(nodes, READ(key, register.rid)) -> beb)
     }
 
@@ -265,6 +274,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key) = mutable.Map.empty
+      //      logger.info(s"Invoking WRITE key=$key")
       trigger(BEBRequest(nodes, READ(key, register.rid)) -> beb)
     }
 
@@ -273,7 +283,7 @@ object AtomicRegister extends DistributedBenchmark {
       val num_reads = (num_keys * read_workload).toLong
       val num_writes = (num_keys * write_workload).toLong
 
-      logger.info(s"Invoking operations: $num_reads reads and $num_writes writes")
+      logger.info(s"Invoking operations: $num_reads reads and $num_writes writes. Keys: $min_key - $max_key. n=$n")
       read_count = num_reads
       write_count = num_writes
 
@@ -288,6 +298,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
+      //      logger.info(s"Read response key=$key read_count=$read_count")
       if (read_count == 0 && write_count == 0) {
         logger.info(s"Atomic register $selfAddr is done!")
         trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
@@ -296,6 +307,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
+      //      logger.info(s"Write response key=$key, write_count=$write_count")
       if (read_count == 0 && write_count == 0) {
         logger.info(s"Atomic register $selfAddr is done!")
         trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
@@ -340,6 +352,7 @@ object AtomicRegister extends DistributedBenchmark {
           if (v.rid == current_register.rid) {
             var readlist = register_readlist(v.key)
             readlist(src) = (v.ts, v.wr, v.value)
+            //            logger.info("Got VALUE key=" + v.key + " from " + src + "readlist size=" + readlist.size)
             if (readlist.size > n / 2) {
               var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)
               current_register.readval = readvalue
@@ -350,6 +363,7 @@ object AtomicRegister extends DistributedBenchmark {
                 maxts += 1
                 bcastvalue = current_register.writeval
               }
+              //              logger.info("Sending WRITE key=" + v.key)
               trigger(BEBRequest(nodes, WRITE(v.key, v.rid, maxts, rr, bcastvalue)) -> beb)
             }
           }
@@ -357,7 +371,7 @@ object AtomicRegister extends DistributedBenchmark {
           case _: NoSuchElementException =>
             val key = v.key
             val rid = v.rid
-            logger.info(s"Got redundant value: key=$key, rid=$rid, current keys: $min_key - $max_key")
+          //            logger.info(s"Got redundant value: key=$key, rid=$rid, current keys: $min_key - $max_key")
         }
       }
 
@@ -366,6 +380,7 @@ object AtomicRegister extends DistributedBenchmark {
           val current_register = register_state(a.key)
           if (a.rid == current_register.rid) {
             current_register.acks += 1
+            //            logger.info("Got ack key=" + a.key + " from " + header.getSource() + ", count=" + current_register.acks)
             if (current_register.acks > n / 2) {
               register_state(a.key).acks = 0
               if (current_register.reading) {
@@ -379,13 +394,13 @@ object AtomicRegister extends DistributedBenchmark {
           case _: NoSuchElementException =>
             val key = a.key
             val rid = a.rid
-            logger.info(s"Got redundant ack for old op key=$key, rid=$rid. Current keys: $min_key - $max_key")
+          //            logger.info(s"Got redundant ack for old op key=$key, rid=$rid. Current keys: $min_key - $max_key")
         }
 
       }
 
       case NetMessage(_, RUN) => handle{
-        logger.info("Starting run")
+        //        logger.info("Starting run")
         invokeOperations()
       }
     }
