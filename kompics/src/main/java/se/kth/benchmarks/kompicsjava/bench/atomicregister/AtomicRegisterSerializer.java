@@ -32,8 +32,7 @@ public class AtomicRegisterSerializer implements Serializer {
     private static final byte WRITE_FLAG = 2;
     private static final byte ACK_FLAG = 3;
     private static final byte VALUE_FLAG = 4;
-    private static final byte INIT_FLAG = 5;
-    private static final byte DONE_FLAG = 6;
+    private static final byte DONE_FLAG = 5;
 
     @Override
     public int identifier() {
@@ -43,25 +42,16 @@ public class AtomicRegisterSerializer implements Serializer {
     @Override
     public void toBinary(Object o, ByteBuf buf) {
         if (o instanceof DONE) buf.writeByte(DONE_FLAG);
-        else if (o instanceof INIT){
-            INIT init = (INIT) o;
-            buf.writeByte(INIT_FLAG);
-            buf.writeInt(init.rank);
-            buf.writeInt(init.id);
-            buf.writeInt(init.nodes.size());
-            for (NetAddress node : init.nodes){
-                buf.writeBytes(node.getIp().getAddress());
-                buf.writeShort(node.getPort());
-            }
-        }
         else if (o instanceof READ){
             READ read = (READ) o;
             buf.writeByte(READ_FLAG);
+            buf.writeLong(read.key);
             buf.writeInt(read.rid);
         }
         else if (o instanceof WRITE){
             WRITE write = (WRITE) o;
             buf.writeByte(WRITE_FLAG);
+            buf.writeLong(write.key);
             buf.writeInt(write.rid);
             buf.writeInt(write.ts);
             buf.writeInt(write.wr);
@@ -70,11 +60,13 @@ public class AtomicRegisterSerializer implements Serializer {
         else if (o instanceof ACK){
             ACK ack = (ACK) o;
             buf.writeByte(ACK_FLAG);
+            buf.writeLong(ack.key);
             buf.writeInt(ack.rid);
         }
         else if (o instanceof VALUE){
             VALUE value = (VALUE) o;
             buf.writeByte(VALUE_FLAG);
+            buf.writeLong(value.key);
             buf.writeInt(value.rid);
             buf.writeInt(value.ts);
             buf.writeInt(value.wr);
@@ -90,45 +82,31 @@ public class AtomicRegisterSerializer implements Serializer {
         byte flag = buf.readByte();
         switch (flag){
             case DONE_FLAG: return DONE.event;
-            case INIT_FLAG: {
-                int rank = buf.readInt();
-                int id = buf.readInt();
-                int n = buf.readInt();
-                Set<NetAddress> nodes = new HashSet<>();
-                for (int i = 0; i < n; i++){
-                    byte[] ipBytes = new byte[4];
-                    buf.readBytes(ipBytes);
-                    try {
-                        InetAddress address = InetAddress.getByAddress(ipBytes);
-                        int port = buf.readUnsignedShort();
-                        nodes.add(new NetAddress(new InetSocketAddress(address, port)));
-                    } catch (UnknownHostException e) {
-                        throw SerializerHelper.notSerializable("UnknownHostException when trying to create InetAddress from bytes");
-                    }
-                }
-                return new INIT(rank, id, nodes);
-            }
             case READ_FLAG: {
+                long key = buf.readLong();
                 int rid = buf.readInt();
-                return new READ(rid);
+                return new READ(key, rid);
             }
             case WRITE_FLAG: {
+                long key = buf.readLong();
                 int rid = buf.readInt();
                 int ts = buf.readInt();
                 int wr = buf.readInt();
                 int value = buf.readInt();
-                return new WRITE(rid, ts, wr, value);
+                return new WRITE(key, rid, ts, wr, value);
             }
             case ACK_FLAG: {
+                long key = buf.readLong();
                 int rid = buf.readInt();
-                return new ACK(rid);
+                return new ACK(key, rid);
             }
             case VALUE_FLAG: {
+                long key = buf.readLong();
                 int rid = buf.readInt();
                 int ts = buf.readInt();
                 int wr = buf.readInt();
                 int value = buf.readInt();
-                return new VALUE(rid, ts, wr, value);
+                return new VALUE(key, rid, ts, wr, value);
             }
             default: {
                 throw SerializerHelper.notSerializable("Invalid flag: " + flag);

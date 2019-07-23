@@ -3,6 +3,8 @@
 import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 import scala.concurrent.duration._
+import scala.collection.mutable.ListBuffer
+import scala.collection.immutable.List
 //import scala.collection.JavaConverters._
 import scala.util.{Try, Success, Failure}
 //import java.lang.{Process, ProcessBuilder}
@@ -127,13 +129,43 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 @main
 def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val remoteDir = tmp.dir();
+	val lowercaseUseOnly = useOnly.toLowerCase()
+	var copyDirectories:  ListBuffer[String] = ListBuffer("proto", "runner")
+	val copyFiles = List[String]("build.sc", "bench.sc", "benchmarks.sc", "plot.sc", "client.sh", "nodes.conf")
+	var useScala = false
+	var useRust = false
+	if (lowercaseUseOnly.contains("kompics")) {
+		copyDirectories += "kompics"
+		useScala = true
+	}
+	if (lowercaseUseOnly.contains("kompact")) {
+		copyDirectories += "kompact"
+		useRust = true
+	}
+	if (lowercaseUseOnly.contains("akka")){
+		copyDirectories += "akka"
+		useScala = true
+	}
+	if (lowercaseUseOnly.contains("actix")) {
+		copyDirectories += "actix"
+		useRust = true
+	}
+	if (useScala) copyDirectories += "shared_scala"
+	if (useRust) copyDirectories += "shared_rust"
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
 		val dirName = s"${ip}-port-${p}";
 		val dir = remoteDir / dirName;
 		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
-		cp(pwd, dir);
+		if (copyDirectories.size == 0) cp(pwd, dir);
+		else {
+			for (d <- copyDirectories) {
+				mkdir(dir / d)
+				cp.over(pwd / d, dir / d);
+			}
+			for (file <- copyFiles) cp.into(pwd / file, dir)
+		}
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;

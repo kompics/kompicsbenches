@@ -73,6 +73,7 @@ class DistributedTest extends FunSuite with Matchers {
     pongDeser should equal (pong);
 
     buf.clear();
+    /*
     // Atomic Register events
     val rid = 123
     val ts = 1
@@ -154,6 +155,7 @@ class DistributedTest extends FunSuite with Matchers {
     valueDeser.ts should be (ts)
     valueDeser.value should be (v)
     valueDeser.wr should be (wr)
+    */
   }
 
   test("Throughput Network Ser/Deser") {

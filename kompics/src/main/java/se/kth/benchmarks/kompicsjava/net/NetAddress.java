@@ -69,4 +69,8 @@ public class NetAddress implements Address {
         int port = Integer.parseInt(portStr);
         return NetAddress.from(ipStr, port);
     }
+
+    public se.kth.benchmarks.kompicsscala.NetAddress asScala() {
+        return new se.kth.benchmarks.kompicsscala.NetAddress(this.isa);
+    }
 }
