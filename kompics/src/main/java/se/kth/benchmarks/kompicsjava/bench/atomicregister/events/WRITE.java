@@ -4,9 +4,10 @@ import se.sics.kompics.KompicsEvent;
 
 public class WRITE implements KompicsEvent {
     public long key;
-    public int rid, ts, wr, value;
+    public int run_id, rid, ts, wr, value;
 
-    public WRITE(long key, int rid, int ts, int wr, int value){
+    public WRITE(int run_id, long key, int rid, int ts, int wr, int value){
+        this.run_id = run_id;
         this.key = key;
         this.rid = rid;
         this.ts = ts;

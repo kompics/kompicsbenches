@@ -110,14 +110,6 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     checkResult("NetThroughputPingPong (gc)", tnpprRes2);
 
     /*
-     * Atomic Register
-     */
-    val arr = AtomicRegisterRequest().withNumberOfReads(50).withNumberOfWrites(50)
-    val arrResF = benchStub.atomicRegister(arr)
-    val arrRes = Await.result(arrResF, 30.seconds)
-    checkResult("AtomicRegister", arrRes)
-
-    /*
      * Clean Up
      */
     println("Sending shutdown request to master");

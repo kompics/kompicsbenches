@@ -10,7 +10,6 @@ import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
 import se.sics.kompics.sl.{ ComponentDefinition, Init, KompicsEvent, Start, handle }
 
-import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 
 // used to send topology and rank to nodes in atomic register
@@ -18,15 +17,30 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
   val net = requires[Network]
 
   val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
-  val n = nodes.size
-  var init_ack_count: Int = n
-  var done_count = n
-  var partitions = mutable.Map[Long, List[NetAddress]]()
+  var active_nodes = nodes
+  var n = nodes.size
+  var init_ack_count: Int = 0
+  var done_count = 0
+  val min_key: Long = 0l
+  val max_key: Long = num_keys - 1
+  //  var partitions = mutable.Map[Long, List[NetAddress]]()
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
     case _: Start => handle {
       assert(selfAddr != null)
+      if (partition_size < n) {
+        active_nodes = nodes.slice(0, partition_size)
+        n = active_nodes.size
+      }
+      logger.info(s"Active nodes: $n/${nodes.size}")
+      var rank = 0
+      for (node <- active_nodes) {
+        trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, active_nodes, min_key, max_key)) -> net)
+        rank += 1
+      }
+
+      /*
       val num_partitions: Long = n / partition_size
       val offset = num_keys / num_partitions
       var rank = 0
@@ -56,11 +70,12 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
         rank += 1
       }
       partitions += (num_partitions - 1 -> partition)
+      */
 
     }
     case RUN => handle {
       logger.info("Sending RUN to everybody...")
-      for (node <- nodes) {
+      for (node <- active_nodes) {
         trigger(NetMessage.viaTCP(selfAddr, node)(RUN) -> net)
       }
     }
@@ -68,16 +83,16 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
 
   net uponEvent {
     case NetMessage(_, INIT_ACK(init_id)) => handle {
-      init_ack_count -= 1
-      if (init_ack_count == 0) {
+      init_ack_count += 1
+      if (init_ack_count == n) {
         logger.info("Got INIT_ACK from everybody")
         prepare_latch.countDown()
       }
     }
     case NetMessage(header, DONE) => handle{
       logger.info("Got done from " + header.getSource())
-      done_count -= 1
-      if (done_count == 0) {
+      done_count += 1
+      if (done_count == n) {
         logger.info("Everybody is done")
         finished_latch.countDown()
       }

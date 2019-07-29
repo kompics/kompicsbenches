@@ -28,5 +28,4 @@ message AtomicRegisterRequest {
 	float write_workload = 2;
 	uint32 partition_size = 3;
 	uint64 number_of_keys = 4;
-	uint32 parallelism = 5;
 }
