@@ -15,89 +15,47 @@ class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
   val net = requires[Network]
 
   val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
-  val n = nodes.size
-  var init_ack_count: Int = n
-  var done_count = n
+  val active_nodes = new util.LinkedList[JNetAddress]()
+  var n = nodes.size
+  var init_ack_count: Int = 0
+  var done_count = 0
   var partitions = mutable.Map[Long, List[NetAddress]]()
+  val min_key: Long = 0l
+  val max_key: Long = num_keys - 1
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
     case _: Start => handle {
       assert(selfAddr != null)
-      val num_partitions: Long = n / partition_size
-      val offset = num_keys / num_partitions
-      var rank = 0
-      var j = 0
-      logger.info(s"Start partitioning: #nodes=$n #keys=$num_keys, #partitions=$num_partitions, #offset=$offset")
-      for (i <- 0l until num_partitions - 1) {
-        val min = i * offset
-        val max = min + offset - 1
-        val partition = nodes.slice(j, j + partition_size)
-        val num_nodes = partition.size
-        val jpartition = new util.LinkedList[JNetAddress]()
-        for (node <- partition) jpartition.add(node.asJava)
-        logger.info(s"Partition $i, #nodes=$num_nodes, keys: $min - $max")
-        for (node <- partition) {
-          trigger(JNetMessage.viaTCP(selfAddr.asJava, node.asJava, new JINIT(rank, init_id, jpartition, min, max)), net)
-          rank += 1
-        }
-        partitions += (i -> partition)
-        j += partition_size
+      for (i <- 0 until partition_size) {
+        active_nodes.add(nodes(i).asJava)
       }
-      // rest of the keys in the last partition
-      val last_min = (num_partitions - 1) * offset
-      val last_max = num_keys - 1
-      val partition = nodes.slice(j, j + partition_size)
-      val num_nodes = partition.size
-      val jpartition = new util.LinkedList[JNetAddress]()
-      for (node <- partition) jpartition.add(node.asJava)
-      logger.info(s"Last Partition, #nodes=$num_nodes, keys: $last_min - $last_max")
-      for (node <- partition) {
-        trigger(JNetMessage.viaTCP(selfAddr.asJava, node.asJava, new JINIT(rank, init_id, jpartition, last_min, last_max)), net)
-        //        trigger(NetMessage.viaTCP(selfAddr, node)(new JINIT(rank, init_id, jpartition, last_min, last_max)) -> net)
-        rank += 1
+      n = active_nodes.size()
+      logger.info(s"Active nodes: $n/${nodes.size}")
+      for (i <- 0 until partition_size) {
+        trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), new JINIT(i, init_id, active_nodes, min_key, max_key)), net)
       }
-      partitions += (num_partitions - 1 -> partition)
-
     }
     case RUN => handle {
       logger.info("Sending RUN to everybody...")
-      for (node <- nodes) {
-        trigger(JNetMessage.viaTCP(selfAddr.asJava, node.asJava, JRUN.event), net)
+      val it = active_nodes.iterator()
+      while (it.hasNext()) {
+        trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRUN.event), net)
       }
+      /*
+      for (i <- 0 until n) {
+        trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), JRUN.event), net)
+      }*/
     }
 
   }
 
   net uponEvent {
-    /*case j: JNetMessage => handle{
-      //      logger.info("GOT JAVA MESSAGE: extractValue=" + j.extractValue() + ", pattern=" + j.extractPattern())
-      j.extractValue() match {
-        case init_ack: JINIT_ACK =>
-          if (init_ack.init_id == init_id) {
-            //            logger.info("Got INIT_ACK from " + j.getSource().asString)
-            init_ack_count -= 1
-            if (init_ack_count == 0) {
-              logger.info("Got INIT_ACK from everybody")
-              prepare_latch.countDown()
-            }
-          }
-        case _: JDONE =>
-          logger.info("Got done from " + j.getSource().asString())
-          done_count -= 1
-          if (done_count == 0) {
-            logger.info("Everybody is done")
-            finished_latch.countDown()
-          }
-        case otherjavamsg => // other java msg
-      }
-    }*/
-
     case NetMessage(header, init_ack: JINIT_ACK) => handle {
       if (init_ack.init_id == init_id) {
-        logger.info("Got INIT_ACK from " + header.getSource().asString)
-        init_ack_count -= 1
-        if (init_ack_count == 0) {
+        //        logger.info("Got INIT_ACK from " + header.getSource().asString)
+        init_ack_count += 1
+        if (init_ack_count == n) {
           //          logger.info("Got INIT_ACK from everybody")
           prepare_latch.countDown()
         }
@@ -106,8 +64,8 @@ class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
 
     case NetMessage(header, _: JDONE) => handle{
       //      logger.info("Got done from " + header.getSource().asString)
-      done_count -= 1
-      if (done_count == 0) {
+      done_count += 1
+      if (done_count == n) {
         logger.info("Everybody is done")
         finished_latch.countDown()
       }

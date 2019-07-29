@@ -1,29 +1,20 @@
 package se.kth.benchmarks.kompicsscala
 
 import se.kth.benchmarks.BenchmarkException
-import se.sics.kompics.{
-  Channel,
-  Component,
-  Fault,
-  FaultHandler,
-  LoopbackPort,
-  PortType,
-  ComponentDefinition => JComponentDefinition,
-  Init => JInit
-}
+import se.sics.kompics.{ Channel, Component, Fault, FaultHandler, LoopbackPort, PortType, ComponentDefinition => JComponentDefinition, Init => JInit }
 import se.sics.kompics.config.Conversions
 import se.sics.kompics.sl._
-import se.sics.kompics.network.{ListeningStatus, Network, NetworkControl, Transport}
-import se.sics.kompics.network.netty.{NettyInit, NettyNetwork}
+import se.sics.kompics.network.{ ListeningStatus, Network, NetworkControl, Transport }
+import se.sics.kompics.network.netty.{ NettyInit, NettyNetwork }
 
-import scala.concurrent.{Await, Future, Promise}
+import scala.concurrent.{ Await, Future, Promise }
 import scala.concurrent.duration.Duration
 import java.util.UUID
 import java.net.ServerSocket
 
 import scala.reflect._
 import scala.collection.mutable
-import scala.util.{Failure, Success, Try}
+import scala.util.{ Failure, Success, Try }
 import com.google.common.collect.ImmutableSet
 
 import scala.compat.java8.OptionConverters._

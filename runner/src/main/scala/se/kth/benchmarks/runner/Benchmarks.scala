@@ -240,8 +240,28 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicRegisterRequest) => {
       stub.atomicRegister(request)
     },
-    space = ParameterSpacePB.mapped(1l.k to 10l.k by 1l.k).msg[AtomicRegisterRequest](n => AtomicRegisterRequest(numberOfReads = n, numberOfWrites = n)),
-    testSpace = ParameterSpacePB.mapped(100l to 1l.k by 100l).msg[AtomicRegisterRequest](n => AtomicRegisterRequest(numberOfReads = n, numberOfWrites = n)));
+    space = ParameterSpacePB.cross(
+      List( (0.5f, 0.5f), (0.95f, 0.05f) ),
+      List(3, 5, 7, 9),
+      List(10l.k, 20l.k, 40l.k, 80l.k)).msg[AtomicRegisterRequest] {
+      case ((read_workload, write_workload), p, k) =>
+        AtomicRegisterRequest(
+          readWorkload = read_workload,
+          writeWorkload = write_workload,
+          partitionSize = p,
+          numberOfKeys = k)
+    },
+    testSpace = ParameterSpacePB.cross(
+      List( (0.5f, 0.5f), (0.95f, 0.05f) ),
+      List(3, 5),
+      List(1l.k, 2l.k, 4l.k, 8l.k)).msg[AtomicRegisterRequest] {
+      case ((rwl, wwl), p, k) =>
+        AtomicRegisterRequest(
+          readWorkload = rwl,
+          writeWorkload = wwl,
+          partitionSize = p,
+          numberOfKeys = k)
+    });
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;

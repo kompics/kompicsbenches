@@ -45,12 +45,14 @@ public class AtomicRegisterSerializer implements Serializer {
         else if (o instanceof READ){
             READ read = (READ) o;
             buf.writeByte(READ_FLAG);
+            buf.writeInt(read.run_id);
             buf.writeLong(read.key);
             buf.writeInt(read.rid);
         }
         else if (o instanceof WRITE){
             WRITE write = (WRITE) o;
             buf.writeByte(WRITE_FLAG);
+            buf.writeInt(write.run_id);
             buf.writeLong(write.key);
             buf.writeInt(write.rid);
             buf.writeInt(write.ts);
@@ -60,12 +62,14 @@ public class AtomicRegisterSerializer implements Serializer {
         else if (o instanceof ACK){
             ACK ack = (ACK) o;
             buf.writeByte(ACK_FLAG);
+            buf.writeInt(ack.run_id);
             buf.writeLong(ack.key);
             buf.writeInt(ack.rid);
         }
         else if (o instanceof VALUE){
             VALUE value = (VALUE) o;
             buf.writeByte(VALUE_FLAG);
+            buf.writeInt(value.run_id);
             buf.writeLong(value.key);
             buf.writeInt(value.rid);
             buf.writeInt(value.ts);
@@ -83,30 +87,34 @@ public class AtomicRegisterSerializer implements Serializer {
         switch (flag){
             case DONE_FLAG: return DONE.event;
             case READ_FLAG: {
+                int run_id = buf.readInt();
                 long key = buf.readLong();
                 int rid = buf.readInt();
-                return new READ(key, rid);
+                return new READ(run_id, key, rid);
             }
             case WRITE_FLAG: {
+                int run_id = buf.readInt();
                 long key = buf.readLong();
                 int rid = buf.readInt();
                 int ts = buf.readInt();
                 int wr = buf.readInt();
                 int value = buf.readInt();
-                return new WRITE(key, rid, ts, wr, value);
+                return new WRITE(run_id, key, rid, ts, wr, value);
             }
             case ACK_FLAG: {
+                int run_id = buf.readInt();
                 long key = buf.readLong();
                 int rid = buf.readInt();
-                return new ACK(key, rid);
+                return new ACK(run_id, key, rid);
             }
             case VALUE_FLAG: {
+                int run_id = buf.readInt();
                 long key = buf.readLong();
                 int rid = buf.readInt();
                 int ts = buf.readInt();
                 int wr = buf.readInt();
                 int value = buf.readInt();
-                return new VALUE(key, rid, ts, wr, value);
+                return new VALUE(run_id, key, rid, ts, wr, value);
             }
             default: {
                 throw SerializerHelper.notSerializable("Invalid flag: " + flag);
