@@ -95,12 +95,12 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
     override def runIteration(): Unit = {
-      system.triggerComponent(RUN, iterationComp)
-      //      finished_latch.await()
       val timeout = 5
       val timeunit = TimeUnit.MINUTES
-      val succesful_run = finished_latch.await(timeout, timeunit)
-      if (!succesful_run) println(s"Timeout in runIteration: num_keys=$num_keys, read=$read_workload, write=$write_workload (timeout=$timeout $timeunit)")
+      val successful_run = finished_latch.await(timeout, timeunit)
+      system.triggerComponent(RUN, iterationComp)
+      //      finished_latch.await()
+      if (!successful_run) println(s"Timeout in runIteration: num_keys=$num_keys, read=$read_workload, write=$write_workload (timeout=$timeout $timeunit)")
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
