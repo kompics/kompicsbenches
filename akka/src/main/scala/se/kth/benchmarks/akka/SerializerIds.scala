@@ -7,4 +7,6 @@ package se.kth.benchmarks.akka;
 object SerializerIds {
   val NETPP = 101;
   val NETTPPP = 102;
+  val ATOMICREG = 103;
+  val ITACTOR = 104;
 }

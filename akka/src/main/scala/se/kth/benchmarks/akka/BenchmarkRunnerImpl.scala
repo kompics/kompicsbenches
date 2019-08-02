@@ -42,4 +42,8 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
     Future.successful(NotImplemented())
   }
+
+  override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = {
+    Future.successful(NotImplemented())
+  }
 }
