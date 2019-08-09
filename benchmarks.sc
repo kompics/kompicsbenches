@@ -10,13 +10,7 @@ type LocalRunner = (AddressArg) => Runner;
 type RemoteRunner = (AddressArg, AddressArg, Int) => Runner;
 type ClientRunner = (AddressArg, AddressArg) => Runner;
 
-case class BenchmarkImpl(
-	symbol: String, 
-	label: String, 
-	local: LocalRunner, 
-	remote: RemoteRunner, 
-	client: ClientRunner,
-	mustCopy: List[Path]) {
+case class BenchmarkImpl(symbol: String, label: String, local: LocalRunner, remote: RemoteRunner, client: ClientRunner) {
 	def localRunner(benchRunnerAddr: AddressArg): BenchmarkRunner =
 		BenchmarkRunner(info, local(benchRunnerAddr));
 	def remoteRunner(benchRunnerAddr: AddressArg, benchMasterAddr: AddressArg, numClients: Int): BenchmarkRunner =
@@ -64,42 +58,30 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 	"AKKA" -> BenchmarkImpl(
 		symbol="AKKA",
 		label="Akka",
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar"))
+		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "untyped", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "untyped", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "untyped", benchMasterAddr, benchClientAddr))
 	),
 	"AKKATYPED" -> BenchmarkImpl(
 		symbol="AKKATYPED",
 		label="Akka Typed",
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar"))
+		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "typed", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "typed", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", "typed", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPICSSC" -> BenchmarkImpl(
 		symbol="KOMPICSSC",
-		label="Kompics Scala 1.x",
-		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsscala1x/target/scala-2.12/Kompics Scala 1.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsscala1x/target/scala-2.12/Kompics Scala 1.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "-jar", "kompicsscala1x/target/scala-2.12/Kompics Scala 1.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompics/kompicsscala1x/target/scala-2.12/Kompics Scala 1.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar"))
-	),
-	"KOMPICSSC2" -> BenchmarkImpl(
-		symbol="KOMPICSSC2",
-		label="Kompics Scala 2.x",
-		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsscala2x/target/scala-2.12/Kompics Scala 2.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsscala2x/target/scala-2.12/Kompics Scala 2.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "-jar", "kompicsscala2x/target/scala-2.12/Kompics Scala 2.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompics/kompicsscala2x/target/scala-2.12/Kompics Scala 2.x Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar"))
+		label="Kompics Scala",
+		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "scala", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPICSJ" -> BenchmarkImpl(
 		symbol="KOMPICSJ",
 		label="Kompics Java",
-		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsjava/target/scala-2.12/Kompics Java Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsjava/target/scala-2.12/Kompics Java Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "kompicsjava/target/scala-2.12/Kompics Java Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompics/kompicsjava/target/scala-2.12/Kompics Java Benchmark Suite-assembly-0.2.0-SNAPSHOT.jar"))
+		local = (benchRunnerAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompics"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Kompics Benchmark Suite-assembly-0.1.0-SNAPSHOT.jar", "java", benchMasterAddr, benchClientAddr))
 	),
 	"KOMPACTAC" -> BenchmarkImpl(
 		symbol="KOMPACTAC",

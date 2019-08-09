@@ -97,17 +97,16 @@ object AtomicRegister extends DistributedBenchmark {
     override def runIteration(): Unit = {
       val timeout = 5
       val timeunit = TimeUnit.MINUTES
-      val successful_run = finished_latch.await(timeout, timeunit)
       system.triggerComponent(RUN, iterationComp)
+      val successful_run = finished_latch.await(timeout, timeunit)
       //      finished_latch.await()
       if (!successful_run) println(s"Timeout in runIteration: num_keys=$num_keys, read=$read_workload, write=$write_workload (timeout=$timeout $timeunit)")
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
       assert(system != null);
-      if (finished_latch != null) {
-        finished_latch = null;
-      }
+      if (prepare_latch != null) prepare_latch = null
+      if (finished_latch != null) finished_latch = null
       if (atomicRegister != null) {
         val killF = system.killNotify(atomicRegister)
         Await.ready(killF, 5.seconds)
@@ -299,13 +298,13 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      //      logger.info(s"Read response key=$key read_count=$read_count")
+      logger.info(s"Read response key=$key read_count=$read_count")
       if (read_count == 0 && write_count == 0) runFinished()
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      //      logger.info(s"Write response key=$key, write_count=$write_count")
+      logger.info(s"Write response key=$key, write_count=$write_count")
       if (read_count == 0 && write_count == 0) runFinished()
     }
 
@@ -409,7 +408,6 @@ object AtomicRegister extends DistributedBenchmark {
       }
 
       case NetMessage(_, RUN) => handle{
-        //        logger.info("Starting run")
         invokeOperations()
       }
     }

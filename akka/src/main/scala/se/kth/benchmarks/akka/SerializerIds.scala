@@ -8,5 +8,9 @@ object SerializerIds {
   val NETPP = 101;
   val NETTPPP = 102;
   val ATOMICREG = 103;
-  val ITACTOR = 104;
+  val TYPEDNETPP = 104;
+  val TYPEDNETPPP = 105
+  val ITACTOR = 106;
+  val TYPEDATOMICREG = 107;
+  val TYPEDITACTOR = 108;
 }

@@ -23,7 +23,6 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
   var done_count = 0
   val min_key: Long = 0l
   val max_key: Long = num_keys - 1
-  //  var partitions = mutable.Map[Long, List[NetAddress]]()
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
@@ -33,45 +32,10 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
         active_nodes = nodes.slice(0, partition_size)
         n = active_nodes.size
       }
-      logger.info(s"Active nodes: $n/${nodes.size}")
-      var rank = 0
-      for (node <- active_nodes) {
+      //      logger.info(s"Active nodes: $n/${nodes.size}")
+      for ((node, rank) <- active_nodes.zipWithIndex) {
         trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, active_nodes, min_key, max_key)) -> net)
-        rank += 1
       }
-
-      /*
-      val num_partitions: Long = n / partition_size
-      val offset = num_keys / num_partitions
-      var rank = 0
-      var j = 0
-      logger.info(s"Start partitioning: #keys=$num_keys, #partitions=$num_partitions, #offset=$offset")
-      for (i <- 0l until num_partitions - 1) {
-        val min = i * offset
-        val max = min + offset - 1
-        val partition = nodes.slice(j, j + partition_size)
-        val num_nodes = partition.size
-        logger.info(s"Partition $i, #nodes=$num_nodes, keys: $min - $max")
-        for (node <- partition) {
-          trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, partition, min, max)) -> net)
-          rank += 1
-        }
-        partitions += (i -> partition)
-        j += partition_size
-      }
-      // rest of the keys in the last partition
-      val last_min = (num_partitions - 1) * offset
-      val last_max = num_keys - 1
-      val partition = nodes.slice(j, j + partition_size)
-      val num_nodes = partition.size
-      logger.info(s"Last Partition, #nodes=$num_nodes, keys: $last_min - $last_max")
-      for (node <- partition) {
-        trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, partition, last_min, last_max)) -> net)
-        rank += 1
-      }
-      partitions += (num_partitions - 1 -> partition)
-      */
-
     }
     case RUN => handle {
       logger.info("Sending RUN to everybody...")
@@ -98,7 +62,6 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
       }
     }
   }
-
 }
 
 case class INIT(rank: Int, init_id: Int, nodes: List[NetAddress], min: Long, max: Long) extends KompicsEvent;

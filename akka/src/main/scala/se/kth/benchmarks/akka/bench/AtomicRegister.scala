@@ -12,6 +12,7 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
+import IterationActor._
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 
 import scala.collection.mutable
@@ -78,7 +79,7 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-//      iterationActor = system.actorOf(Props(new IterationActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), "itactor")
+      iterationActor = system.actorOf(Props(new IterationActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), "itactor")
       iterationActor ! START
       val timeout = 100
       val timeunit = TimeUnit.SECONDS
@@ -90,6 +91,7 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def runIteration(): Unit = {
+//      println("RUN ITERATION")
       val timeout = 5
       val timeunit = TimeUnit.MINUTES
       iterationActor ! RUN
@@ -100,9 +102,8 @@ object AtomicRegister extends DistributedBenchmark {
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
-      if (finished_latch != null) {
-        finished_latch = null;
-      }
+      if (prepare_latch != null) prepare_latch = null
+      if (finished_latch != null) finished_latch = null
       if (atomicRegister != null) {
         system.stop(atomicRegister)
         atomicRegister = null
@@ -415,7 +416,6 @@ object AtomicRegister extends DistributedBenchmark {
   }
 
   trait AtomicRegisterMessage
-  case object START extends AtomicRegisterMessage
   case object DONE extends AtomicRegisterMessage
   case object IDENTIFY extends AtomicRegisterMessage
   case class READ(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage

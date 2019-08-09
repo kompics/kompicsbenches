@@ -3,7 +3,6 @@ package se.kth.benchmarks.akka
 import akka.actor._
 import akka.actor.typed.Behavior
 import com.typesafe.config.{Config, ConfigFactory}
-import com.typesafe.scalalogging.StrictLogging
 
 import scala.util.Properties._
 import scala.reflect.runtime.universe._
@@ -200,27 +199,19 @@ object ActorSystemProvider extends StrictLogging {
     ActorSystem(name, conf)
   }
 
-  def newTypedActorSystem[T](behavior: typed.Behavior[T], name: String): typed.ActorSystem[T] = {
-    typed.ActorSystem(behavior, name, config)
-  }
-
   def newTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int): typed.ActorSystem[T] = {
     val confStr = ConfigFactory.parseString(customConfig(corePoolSize = threads, maxPoolSize = threads));
     val conf = ConfigFactory.load(confStr);
     typed.ActorSystem(behavior, name, conf)
   }
 
-  def newRemoteTypedActorSystem[T](behavior: typed.Behavior[T],
-                                   name: String,
-                                   threads: Int,
-                                   serialization: SerializerBindings): typed.ActorSystem[T] = {
-    val confStr = ConfigFactory.parseString(
-      remoteConfig(corePoolSize = threads,
-                   maxPoolSize = threads,
-                   hostname = getPublicIf,
-                   port = 0,
-                   customSerializers = serialization)
-    );
+  def newRemoteTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int, serialization: SerializerBindings): typed.ActorSystem[T] = {
+    val confStr = ConfigFactory.parseString(remoteConfig(
+      corePoolSize = threads,
+      maxPoolSize = threads,
+      hostname = getPublicIf,
+      port = 0,
+      customSerializers = serialization));
     val conf = ConfigFactory.load(confStr);
     typed.ActorSystem[T](behavior, name, conf)
   }
