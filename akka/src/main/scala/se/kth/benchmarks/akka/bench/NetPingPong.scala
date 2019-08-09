@@ -29,6 +29,7 @@ object NetPingPong extends DistributedBenchmark {
     private var system: ActorSystem = null;
     private var pinger: ActorRef = null;
     private var latch: CountDownLatch = null;
+    private var run_id = -1
 
     override def setup(c: MasterConf): ClientConf = {
       this.num = c.numberOfMessages;
@@ -45,7 +46,8 @@ object NetPingPong extends DistributedBenchmark {
       val ponger = Await.result(pongerF, 5 seconds);
       println(s"Resolved path to $ponger");
       latch = new CountDownLatch(1);
-      pinger = system.actorOf(Props(new Pinger(latch, num, ponger)), "pinger");
+      run_id += 1
+      pinger = system.actorOf(Props(new Pinger(latch, num, ponger)), s"pinger$run_id");
     }
     override def runIteration(): Unit = {
       pinger ! Start;

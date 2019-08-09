@@ -42,10 +42,6 @@ class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
       while (it.hasNext()) {
         trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRUN.event), net)
       }
-      /*
-      for (i <- 0 until n) {
-        trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), JRUN.event), net)
-      }*/
     }
 
   }

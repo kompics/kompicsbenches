@@ -6,16 +6,15 @@ import akka.actor.{Actor, ActorRef}
 import akka.event.Logging
 import akka.serialization.Serializer
 import akka.util.ByteString
-import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef, DONE, START}
+import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef, DONE}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.Await
 import scala.concurrent.duration._
-
+import IterationActor._
 
 class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int) extends Actor{
   val logger = Logging(context.system, this)
-
 
   var active_nodes = nodes
   var n = nodes.size
@@ -32,13 +31,20 @@ class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLat
         n = active_nodes.size
       }
 //      logger.info(s"Active nodes $n/${nodes.size}: $active_nodes")
+
+      for ((node, rank) <- active_nodes.zipWithIndex){
+        val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
+        val a_ref: ActorRef = Await.result(f, 5 seconds)
+        a_ref ! INIT(rank, init_id, active_nodes, min_key, max_key)
+      }
+      /*
       var rank = 0
       for (node <- active_nodes) {
         val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
         val a_ref: ActorRef = Await.result(f, 5 seconds)
         a_ref ! INIT(rank, init_id, active_nodes, min_key, max_key)
         rank += 1
-      }
+      }*/
     }
 
     case INIT_ACK(init_id) => {
@@ -68,10 +74,13 @@ class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLat
   }
 }
 
-case object Start
-case class INIT(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
-case class INIT_ACK(init_id: Int)
-case object RUN
+object IterationActor{
+  case object START
+  case class INIT(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
+  case class INIT_ACK(init_id: Int)
+  case object RUN
+}
+
 
 object IterationActorSerializer {
   val NAME = "iterationactor"

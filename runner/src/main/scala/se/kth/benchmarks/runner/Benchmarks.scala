@@ -150,7 +150,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     testSpace = ParameterSpacePB.cross(
       List( (0.5f, 0.5f), (0.95f, 0.05f) ),
       List(3, 5),
-      List(1l.k, 2l.k, 4l.k, 8l.k)).msg[AtomicRegisterRequest] {
+      List(500l, 1000l, 2000l)).msg[AtomicRegisterRequest] {
       case ((rwl, wwl), p, k) =>
         AtomicRegisterRequest(
           readWorkload = rwl,
@@ -158,7 +158,6 @@ object Benchmarks extends ParameterDescriptionImplicits {
           partitionSize = p,
           numberOfKeys = k)
     });
-
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;
 }
