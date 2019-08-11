@@ -11,7 +11,7 @@ import scalapb.GeneratedMessage
 import se.kth.benchmarks.Benchmark
 import se.kth.benchmarks.akka.ActorSystemProvider
 import se.kth.benchmarks.akka.bench.ThroughputPingPong.{Conf, Ping}
-import se.kth.benchmarks.akka.typed_bench.ThroughputPingPong.SystemSupervisor.{OperationSucceeded, RunIteration, StartActors, StopActors, SystemMesssage}
+import se.kth.benchmarks.akka.typed_bench.ThroughputPingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunIteration, StartActors, StopActors, SystemMesssage}
 
 import scala.util.Try
 import scala.concurrent.{Await, Future}
@@ -68,7 +68,8 @@ object ThroughputPingPong extends Benchmark{
       implicit val ec = system.executionContext
       Await.result(f, 3 seconds)
       if (lastIteration) {
-        system.terminate();
+//        system.terminate();
+        system ! GracefulShutdown
         Await.ready(system.whenTerminated, 5.second);
         system = null;
       }
@@ -81,6 +82,7 @@ object ThroughputPingPong extends Benchmark{
     case class StartActors(replyTo: ActorRef[OperationSucceeded.type], latch: CountDownLatch, numMsgs: Long, numPairs: Int, pipeline: Long, staticOnly: Boolean) extends SystemMesssage
     case object RunIteration extends SystemMesssage
     case class StopActors(replyTo: ActorRef[OperationSucceeded.type]) extends SystemMesssage
+    case object GracefulShutdown extends SystemMesssage
     case object OperationSucceeded
 
     def apply(): Behavior[SystemMesssage] = Behaviors.setup(context => new SystemSupervisor(context))
@@ -114,10 +116,12 @@ object ThroughputPingPong extends Benchmark{
           }
           s.replyTo ! OperationSucceeded
           context.log.info("StartActors completed")
+          this
         }
         case RunIteration => {
           if (staticOnly) static_pingers.foreach(static_pinger => static_pinger ! RunStaticPinger)
           else pingers.foreach(pinger => pinger ! RunPinger)
+          this
         }
         case StopActors(replyTo: ActorRef[OperationSucceeded.type]) => {
           if (staticOnly){
@@ -141,9 +145,12 @@ object ThroughputPingPong extends Benchmark{
             }
           }
           replyTo ! OperationSucceeded
+          this
+        }
+        case GracefulShutdown => {
+          Behaviors.stopped
         }
       }
-      this
     }
   }
 

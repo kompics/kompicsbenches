@@ -31,13 +31,11 @@ class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
         active_nodes.add(nodes(i).asJava)
       }
       n = active_nodes.size()
-      logger.info(s"Active nodes: $n/${nodes.size}")
       for (i <- 0 until partition_size) {
         trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), new JINIT(i, init_id, active_nodes, min_key, max_key)), net)
       }
     }
     case RUN => handle {
-      logger.info("Sending RUN to everybody...")
       val it = active_nodes.iterator()
       while (it.hasNext()) {
         trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRUN.event), net)
@@ -49,20 +47,16 @@ class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
   net uponEvent {
     case NetMessage(header, init_ack: JINIT_ACK) => handle {
       if (init_ack.init_id == init_id) {
-        //        logger.info("Got INIT_ACK from " + header.getSource().asString)
         init_ack_count += 1
         if (init_ack_count == n) {
-          //          logger.info("Got INIT_ACK from everybody")
           prepare_latch.countDown()
         }
       }
     }
 
     case NetMessage(header, _: JDONE) => handle{
-      //      logger.info("Got done from " + header.getSource().asString)
       done_count += 1
       if (done_count == n) {
-        logger.info("Everybody is done")
         finished_latch.countDown()
       }
     }

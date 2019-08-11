@@ -85,7 +85,6 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register_readList.get(key).clear();
         register.reading = true;
-//        logger.info("Invoking read key=" + key);
         trigger(new BEBRequest(nodes, new READ(current_run_id, key, register.rid)), beb);
     }
 
@@ -97,7 +96,6 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register.reading = false;
         register_readList.get(key).clear();
-//        logger.info("Invoking write key=" + key);
         trigger(new BEBRequest(nodes, new READ(current_run_id, key, register.rid)), beb);
     }
 
@@ -105,7 +103,6 @@ public class AtomicRegister extends ComponentDefinition {
         long num_keys = max_key - min_key + 1;
         long num_reads = (long) (num_keys * read_workload);
         long num_writes = (long) (num_keys * write_workload);
-//        logger.info("Invoke operations: " + num_reads + " reads, " + num_writes + " writes");
         read_count = num_reads;
         write_count = num_writes;
 
@@ -118,22 +115,14 @@ public class AtomicRegister extends ComponentDefinition {
         }
     }
 
-    private void runFinished(){
-        logger.info("Atomic Register " + selfAddr.asString() + " is done!");
-        trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
-    }
-
     private void readResponse(long key, int read_value){
         read_count--;
-//        logger.info("Read response: key=" + key + ", read_count=" + read_count); // + ", value=" + read_value);
-        if (read_count == 0 && write_count == 0) runFinished();
-
+        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
     }
 
     private void writeResponse(long key){
         write_count--;
-//        logger.info("Write response: key=" + key + ", write_count=" + write_count);
-        if (read_count == 0 && write_count == 0) runFinished();
+        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
     }
 
     private Handler<Start> startHandler = new Handler<Start>() {
@@ -141,7 +130,6 @@ public class AtomicRegister extends ComponentDefinition {
         @Override
         public void handle(Start event) {
             assert(selfAddr != null);
-//            logger.info("Atomic Register Component " + selfAddr.asString() + " has started!");
         }
 
     };
@@ -151,7 +139,6 @@ public class AtomicRegister extends ComponentDefinition {
         public void handle(READ read, BEBDeliver bebDeliver) {
             if (read.run_id == current_run_id) {
                 AtomicRegisterState current_state = register_state.get(read.key);
-//                logger.info("Responding to read with VALUE, key=" + read.key + " to " + bebDeliver.src.asString());
                 trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.run_id, read.key, read.rid, current_state.ts, current_state.wr, current_state.value)), net);
             }
         }
@@ -168,7 +155,6 @@ public class AtomicRegister extends ComponentDefinition {
                     current_state.value = write.value;
                 }
             }
-//            logger.info("Acking WRITE key=" + write.key + ", run_id=" + current_run_id + " to " + bebDeliver.src.asString());
             trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(write.run_id, write.key, write.rid)), net);
         }
     };
@@ -176,7 +162,6 @@ public class AtomicRegister extends ComponentDefinition {
     private ClassMatchedHandler<INIT, NetMessage> initHandler = new ClassMatchedHandler<INIT, NetMessage>() {
         @Override
         public void handle(INIT init, NetMessage netMessage) {
-            logger.info("Got INIT id=" + init.id);
             newIteration(init);
             master = netMessage.getSource();
             trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), netMessage.getSource().asScala(), new INIT_ACK(init.id)), net);
@@ -201,7 +186,6 @@ public class AtomicRegister extends ComponentDefinition {
                     readList.put(msg.getSource(), new Tuple(v.ts, v.wr, v.value));
                     if (readList.size() > N / 2) {
                         if (current_register.reading && current_register.skip_impose) {
-//                            logger.info("Skipped impose: key=" + v.key + ",  ts=" + v.ts);
                             current_register.value = current_register.readval;
                             readList.clear();
                             readResponse(v.key, current_register.readval);
@@ -210,7 +194,6 @@ public class AtomicRegister extends ComponentDefinition {
                             int maxts = maxtuple.ts;
                             int rr = maxtuple.wr;
                             current_register.readval = maxtuple.value;
-//                            logger.info("Trigger WRITE key=" + v.key + ", reading=" + current_register.reading + ", readList size=" + readList.size());
                             readList.clear();
                             int bcastval;
                             if (current_register.reading) {
@@ -235,7 +218,6 @@ public class AtomicRegister extends ComponentDefinition {
                 AtomicRegisterState current_register = register_state.get(a.key);
                 if (a.rid == current_register.rid) {
                     current_register.acks++;
-//                    logger.info("Got ack #" + current_register.acks + " for key=" + a.key + ", run_id=" + a.run_id + " from " + msg.getSource().asString());
                     if (current_register.acks > N / 2) {
                         current_register.acks = 0;
                         if (current_register.reading) readResponse(a.key, current_register.readval);

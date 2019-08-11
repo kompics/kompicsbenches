@@ -5,12 +5,11 @@ import java.util.concurrent.CountDownLatch
 import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 import akka.actor.typed.scaladsl.AskPattern._
-
 import kompics.benchmarks.benchmarks.PingPongRequest
 import scalapb.GeneratedMessage
 import se.kth.benchmarks.Benchmark
 import se.kth.benchmarks.akka.ActorSystemProvider
-import se.kth.benchmarks.akka.typed_bench.PingPong.SystemSupervisor.{RunIteration, StartActors, StopActors, OperationSucceeded, SystemMessage}
+import se.kth.benchmarks.akka.typed_bench.PingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunIteration, StartActors, StopActors, SystemMessage}
 import akka.util.Timeout
 
 import scala.concurrent.{Await, Future}
@@ -66,7 +65,8 @@ object PingPong extends Benchmark {
       implicit val ec = system.executionContext
       Await.result(result, 3 seconds)
       if (lastIteration){
-        system.terminate();
+//        system.terminate();
+        system ! GracefulShutdown
         Await.ready(system.whenTerminated, 5.second);
         system = null;
       }
@@ -79,6 +79,7 @@ object PingPong extends Benchmark {
     case class StartActors(replyTo: ActorRef[OperationSucceeded.type], latch: CountDownLatch, num: Long) extends SystemMessage
     case object RunIteration extends SystemMessage
     case class StopActors(replyTo: ActorRef[OperationSucceeded.type]) extends SystemMessage
+    case object GracefulShutdown extends SystemMessage
     case object OperationSucceeded
 
     def apply(): Behavior[SystemMessage] = Behaviors.setup(context => new SystemSupervisor(context))
@@ -97,8 +98,12 @@ object PingPong extends Benchmark {
           ponger = context.spawn(Ponger(), s"typed_ponger$run_id")
           pinger = context.spawn(Pinger(s.latch, s.num, ponger), s"typed_pinger$run_id")
           s.replyTo ! OperationSucceeded
+          this
         }
-        case RunIteration => pinger ! Run
+        case RunIteration => {
+          pinger ! Run
+          this
+        }
         case StopActors(replyTo: ActorRef[OperationSucceeded.type]) => {
           if (pinger != null) {
             context.stop(pinger)
@@ -109,9 +114,12 @@ object PingPong extends Benchmark {
             ponger = null
           }
           replyTo ! OperationSucceeded
+          this
+        }
+        case GracefulShutdown => {
+          Behaviors.stopped
         }
       }
-      this
     }
   }
 

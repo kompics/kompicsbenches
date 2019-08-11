@@ -8,7 +8,7 @@ scalaVersion in ThisBuild := "2.12.9"
 
 resolvers += Resolver.mavenLocal
 
-val akkaV = "2.5.23"
+val akkaV = "2.5.24"
 
 libraryDependencies ++= Seq(
 	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",

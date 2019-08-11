@@ -87,12 +87,8 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def runIteration(): Unit = {
-      val timeout = 5
-      val timeunit = TimeUnit.MINUTES
       system ! RunIteration
-      val succesful_run = finished_latch.await(timeout, timeunit)
-      if (!succesful_run) println(s"Timeout in runIteration: num_keys=$num_keys, read=$read_workload, write=$write_workload (timeout=$timeout $timeunit)")
-
+      finished_latch.await()
     };
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
@@ -106,11 +102,11 @@ object AtomicRegister extends DistributedBenchmark {
       Await.result(f, 5 seconds)
       if (lastIteration) {
         println("Cleaning up Last iteration")
-        system.terminate()
-        Await.result(system.whenTerminated, 5 seconds)
-//        Await.ready(system.whenTerminated, 5 seconds)
+//        system.terminate()
+        system ! GracefulShutdown
+        Await.ready(system.whenTerminated, 5 seconds)
         system = null
-        println("Clean up completed")
+        println("Last clean up completed")
       }
     }
 
@@ -123,8 +119,8 @@ object AtomicRegister extends DistributedBenchmark {
       case class StartAtomicRegister(read_workload: Float, write_workload: Float) extends SystemMessage
       case class StopActors(ref: ActorRef[OperationSucceeded.type]) extends SystemMessage
       case object RunIteration extends SystemMessage
+      case object GracefulShutdown extends SystemMessage
       case object OperationSucceeded
-
     }
 
     class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage]{
@@ -137,8 +133,8 @@ object AtomicRegister extends DistributedBenchmark {
         msg match {
           case StartAtomicRegister(r, w) => {
             atomicRegister = context.spawn[AtomicRegisterMessage](AtomicRegisterActor(r, w), "typed_atomicreg".concat(init_id.toString))
-
             println(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
+            this
           }
           case s: StartIterationActor => {
             val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
@@ -147,6 +143,7 @@ object AtomicRegister extends DistributedBenchmark {
             assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
             iterationActor = context.spawn[IterationMessage](TypedIterationActor(s.prepare_latch, s.finished_latch, s.init_id, nodes, s.num_keys, s.partition_size), "typed_itactor")
             iterationActor ! START
+            this
           }
           case StopActors(ref) => {
             if (atomicRegister != null){
@@ -156,12 +153,17 @@ object AtomicRegister extends DistributedBenchmark {
               iterationActor = null
             }
             ref ! OperationSucceeded
+            this
           }
           case RunIteration => {
             iterationActor ! TypedIterationActor.RUN
+            this
+          }
+          case GracefulShutdown => {
+            context.log.info("Graceful shutdown of SystemSupervisor for Atomic Register")
+            Behaviors.stopped
           }
         }
-        this
       }
     }
   }
@@ -188,10 +190,11 @@ object AtomicRegister extends DistributedBenchmark {
       println("Cleaning up Atomic Register(Client) side")
       if (lastIteration){
         println("Cleaning up Last iteration")
-        system.terminate()
-        Await.result(system.whenTerminated, 5 seconds)
+//        system.terminate()
+        system ! STOP
+        Await.ready(system.whenTerminated, 5 seconds)
         system = null
-        println("Clean up completed")
+        println("Last clean up completed")
       }
     }
   }
@@ -220,6 +223,7 @@ object AtomicRegister extends DistributedBenchmark {
   trait AtomicRegisterMessage
 
   case object RUN extends AtomicRegisterMessage
+  case object STOP extends AtomicRegisterMessage
   case class INIT(src: ClientRef, rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long) extends AtomicRegisterMessage
   case class READ(src: ClientRef, run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
   case class VALUE(src: ClientRef, run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends AtomicRegisterMessage
@@ -232,7 +236,7 @@ object AtomicRegister extends DistributedBenchmark {
 
   class AtomicRegisterActor(context: ActorContext[AtomicRegisterMessage], read_workload: Float, write_workload: Float) extends AbstractBehavior[AtomicRegisterMessage] {
     implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops = o.mkOrderingOps(x); // for tuple comparison
-    val logger = context.log
+//    val logger = context.log
 
     var nodes: List[ActorRef[AtomicRegisterMessage]] = _
     var n = 0
@@ -266,7 +270,6 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
-      //      logger.info(s"Invoking READ key=$key")
       bcast(nodes, READ(selfRef, current_run_id, key, register.rid))
     }
 
@@ -278,7 +281,6 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
-      //      logger.info(s"Invoking WRITE key=$key")
       bcast(nodes, READ(selfRef, current_run_id, key, register.rid))
     }
 
@@ -287,7 +289,6 @@ object AtomicRegister extends DistributedBenchmark {
       val num_reads = (num_keys * read_workload).toLong
       val num_writes = (num_keys * write_workload).toLong
 
-//      logger.info(s"Invoking operations: $num_reads reads and $num_writes writes. Keys: $min_key - $max_key. n=$n")
       read_count = num_reads
       write_count = num_writes
 
@@ -302,19 +303,13 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-//      logger.info(s"Read response key=$key read_count=$read_count")
-      if (read_count == 0 && write_count == 0) runFinished()
+      if (read_count == 0 && write_count == 0) master ! DONE
+
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-//      logger.info(s"Write response key=$key, write_count=$write_count")
-      if (read_count == 0 && write_count == 0) runFinished()
-    }
-
-    private def runFinished(): Unit = {
-      logger.info(s"Atomic register $selfRef is done!")
-      master ! DONE
+      if (read_count == 0 && write_count == 0) master ! DONE
     }
 
     override def onMessage(msg: AtomicRegisterMessage): Behavior[AtomicRegisterMessage] = {
@@ -335,15 +330,18 @@ object AtomicRegister extends DistributedBenchmark {
           }
           master = getActorRef[IterationMessage](i.src)
           master ! INIT_ACK(current_run_id)
-//          logger.info(s"Got INIT id=$current_run_id, master=$master")
         }
 
         case RUN => {
           invokeOperations()
         }
 
+        case STOP => {
+          context.log.info("Stopping atomic register")
+          return Behaviors.stopped
+        }
+
         case READ(src, current_run_id, key, readId) => {
-          //        logger.info(s"Responding to READ key=$key from $src")
           val current_state: AtomicRegisterState = register_state(key)
           getActorRef(src) ! VALUE(selfRef, current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)
         }
@@ -363,10 +361,8 @@ object AtomicRegister extends DistributedBenchmark {
               }
               val src = getActorRef[AtomicRegisterMessage](v.src)
               readlist(src) = (v.ts, v.wr, v.value)
-              //            logger.info("Got VALUE key=" + v.key + " from " + src + "readlist size=" + readlist.size)
               if (readlist.size > n / 2) {
                 if (current_register.reading && current_register.skip_impose) {
-                  //                logger.info(s"Skipped impose: key=${v.key}, ts=${v.ts}")
                   current_register.value = current_register.readval
                   register_readlist(v.key).clear()
                   readResponse(v.key, current_register.readval)
@@ -380,7 +376,6 @@ object AtomicRegister extends DistributedBenchmark {
                     maxts += 1
                     bcastvalue = current_register.writeval
                   }
-                  //                logger.info("Sending WRITE key=" + v.key)
                   bcast(nodes, WRITE(selfRef, v.run_id, v.key, v.rid, maxts, rr, bcastvalue))
                 }
               }
@@ -390,7 +385,6 @@ object AtomicRegister extends DistributedBenchmark {
 
         case w: WRITE => {
           if (w.run_id == current_run_id) {
-            //          logger.info(s"Responding to WRITE key=${w.key} from $src")
             val current_state = register_state(w.key)
             if ((w.ts, w.wr) > (current_state.ts, current_state.wr)) {
               current_state.ts = w.ts
@@ -406,7 +400,6 @@ object AtomicRegister extends DistributedBenchmark {
             val current_register = register_state(a.key)
             if (a.rid == current_register.rid) {
               current_register.acks += 1
-              //            logger.info("Got ack key=" + a.key + " from " + header.getSource() + ", count=" + current_register.acks)
               if (current_register.acks > n / 2) {
                 register_state(a.key).acks = 0
                 if (current_register.reading) {

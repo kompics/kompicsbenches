@@ -33,7 +33,7 @@ class TypedIterationActor(context: ActorContext[IterationMessage],
                           num_keys: Long,
                           partition_size: Int) extends AbstractBehavior[IterationMessage] {
 
-  val logger = context.log
+//  val logger = context.log
   var active_nodes = nodes
   var n = nodes.size
   var init_ack_count: Int = 0
@@ -50,31 +50,20 @@ class TypedIterationActor(context: ActorContext[IterationMessage],
   override def onMessage(msg: IterationMessage): Behavior[IterationMessage] = {
     msg match {
       case START => {
-        //      logger.info(s"IterationActor started: init_id=$init_id")
         if (partition_size < n) {
           active_nodes = nodes.slice(0, partition_size)
           n = active_nodes.size
         }
-//        logger.info(s"Active nodes $n/${nodes.size}: $active_nodes")
 
         for ((node, rank) <- active_nodes.zipWithIndex){
           val actorRef = getActorRef(node)
           actorRef ! INIT(selfRef, rank, init_id, active_nodes, min_key, max_key)
         }
-        /*
-        var rank = 0
-        for (node <- active_nodes) {
-          val actorRef = getActorRef(node)
-          actorRef ! INIT(selfRef, rank, init_id, active_nodes, min_key, max_key)
-          rank += 1
-        }*/
       }
 
       case INIT_ACK(init_id) => {
         init_ack_count += 1
-//        logger.info(s"Got INIT_ACK, remaining=$init_ack_count")
         if (init_ack_count == n) {
-//          logger.info("Got INIT_ACK from everybody")
           prepare_latch.countDown()
         }
       }
@@ -89,7 +78,6 @@ class TypedIterationActor(context: ActorContext[IterationMessage],
       case DONE => {
         done_count += 1
         if (done_count == n) {
-//          logger.info("Everybody is done")
           finished_latch.countDown()
         }
       }
