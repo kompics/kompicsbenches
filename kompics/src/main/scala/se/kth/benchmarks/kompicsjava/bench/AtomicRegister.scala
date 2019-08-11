@@ -64,12 +64,6 @@ object AtomicRegister extends DistributedBenchmark {
       val nodes = addr :: d
       val num_nodes = nodes.size
       assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
-      /*
-      if (num_nodes < partition_size || partition_size == 0) {
-        throw new FailedPreparationException(s"Bad partition arguments: N=$num_nodes, partition size=$partition_size")
-      }
-      if (read_workload + write_workload != 1) throw new FailedPreparationException(s"Sum of Workload arguments is not 1: read=$read_workload, write=$write_workload")
-      */
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
@@ -88,12 +82,8 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
     override def runIteration(): Unit = {
-      val timeout = 5
-      val timeunit = TimeUnit.MINUTES
       system.triggerComponent(RUN, iterationComp)
-      //startF.failed.foreach(e => eprintln(s"Could not start pinger: $e"));
-      val succesful_run = finished_latch.await(timeout, timeunit)
-      if (!succesful_run) println(s"Timeout in runIteration: num_keys=$num_keys, read=$read_workload, write=$write_workload (timeout=$timeout $timeunit)")
+      finished_latch.await()
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");

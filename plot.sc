@@ -65,6 +65,7 @@ private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 			fileName match {
 				case "PINGPONG"|"NETPINGPONG" => plotBenchPP(bench, meanGrouped, output, show)
 				case "TPPINGPONG"|"NETTPPINGPONG" => plotBenchTPPP(bench, meanGrouped, output, show)
+        case "ATOMICREGISTER" => plotBenchAtomicReg(bench, meanGrouped, output, show)
 				case symbol => println(s"Could not find instructions for '${symbol}'! Skipping plot.")
 			}
 		}
@@ -103,6 +104,51 @@ private def plotBenchPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]
 	p.plot();
 }
 
+private def plotBenchAtomicReg(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
+  val bench = b.asInstanceOf[BenchmarkWithSpace[AtomicRegisterRequest]];
+  val space = bench.space.asInstanceOf[ParameterSpacePB[AtomicRegisterRequest]];
+  val meanGroupedParamsTime = res.mapValues(_.mapParams(space.paramsFromCSV));
+  val meanGroupedParams = ImplResults.mapData(
+    meanGroupedParamsTime,
+    (req: AtomicRegisterRequest, meanTime: Double) => {
+      val totalMessages = req.numberOfKeys;
+      val throughput = (totalMessages.toDouble*1000.0)/meanTime; // msgs/s
+      throughput
+    }
+  );
+  {
+    val meanGroupedPipelining = ImplResults.slices(
+      meanGroupedParams,
+      (req: AtomicRegisterRequest) => (req.readWorkload, req.writeWorkload, req.partitionSize),
+      (req: AtomicRegisterRequest) => req.numberOfKeys
+    );
+    meanGroupedPipelining.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-read${params._1}-write${params._2}-partitionsize-${params._3}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      p.getAxis("x").setLabel("#operations");
+      p.getAxis("y").setLabel("throughput (operations/s)");
+      p.setTitle(s"${b.name} (read workload = ${params._1}, write workload = ${params._2}, partition size = ${params._3})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
+
+}
+
 private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
 	val bench = b.asInstanceOf[BenchmarkWithSpace[ThroughputPingPongRequest]];
 	val space = bench.space.asInstanceOf[ParameterSpacePB[ThroughputPingPongRequest]];
@@ -117,7 +163,7 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 	);
 	{
 		val meanGroupedPipelining = ImplResults.slices(
-			meanGroupedParams, 
+			meanGroupedParams,
 			(req: ThroughputPingPongRequest) => (req.messagesPerPair, req.pipelineSize, req.staticOnly),
 			(req: ThroughputPingPongRequest) => req.parallelism
 		);
@@ -147,7 +193,7 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 	}
 	{
 		val meanGroupedPipelining = ImplResults.slices(
-			meanGroupedParams, 
+			meanGroupedParams,
 			(req: ThroughputPingPongRequest) => (req.parallelism, req.pipelineSize, req.staticOnly),
 			(req: ThroughputPingPongRequest) => req.messagesPerPair
 		);
@@ -180,6 +226,7 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 // From here: http://javaplot.panayotis.com/doc/com/panayotis/gnuplot/style/NamedPlotColor.html
 private val colourMap: Map[String, style.PlotColor] = Map(
 	"AKKA" -> style.NamedPlotColor.SKYBLUE,
+  "AKKATYPED" -> style.NamedPlotColor.ROYALBLUE,
 	"KOMPACTAC" -> style.NamedPlotColor.SEA_GREEN,
 	"KOMPACTCO" -> style.NamedPlotColor.SPRING_GREEN,
 	"KOMPACTMIX" -> style.NamedPlotColor.FOREST_GREEN,
@@ -188,5 +235,5 @@ private val colourMap: Map[String, style.PlotColor] = Map(
 	"ACTIX" -> style.NamedPlotColor.DARK_BLUE
 );
 
-private val pointMap: Map[String, Int] = 
-	List("AKKA", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "ACTIX").zipWithIndex.toMap.mapValues(_ + 1);
+private val pointMap: Map[String, Int] =
+	List("AKKA", "AKKATYPED", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "ACTIX").zipWithIndex.toMap.mapValues(_ + 1);

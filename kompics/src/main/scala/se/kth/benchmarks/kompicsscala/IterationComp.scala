@@ -32,13 +32,11 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
         active_nodes = nodes.slice(0, partition_size)
         n = active_nodes.size
       }
-      //      logger.info(s"Active nodes: $n/${nodes.size}")
       for ((node, rank) <- active_nodes.zipWithIndex) {
         trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, active_nodes, min_key, max_key)) -> net)
       }
     }
     case RUN => handle {
-      logger.info("Sending RUN to everybody...")
       for (node <- active_nodes) {
         trigger(NetMessage.viaTCP(selfAddr, node)(RUN) -> net)
       }
@@ -49,12 +47,10 @@ class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
     case NetMessage(_, INIT_ACK(init_id)) => handle {
       init_ack_count += 1
       if (init_ack_count == n) {
-        logger.info("Got INIT_ACK from everybody")
         prepare_latch.countDown()
       }
     }
     case NetMessage(header, DONE) => handle{
-      logger.info("Got done from " + header.getSource())
       done_count += 1
       if (done_count == n) {
         logger.info("Everybody is done")
