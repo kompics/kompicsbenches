@@ -83,3 +83,5 @@ deps
 erl_crash.dump
 ebin/
 _rel/
+.erlang.mk/
+doc/

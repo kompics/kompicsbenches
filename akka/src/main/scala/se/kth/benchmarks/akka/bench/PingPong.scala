@@ -65,7 +65,7 @@ object PingPong extends Benchmark {
   case object Pong
 
   class Pinger(latch: CountDownLatch, count: Long, ponger: ActorRef) extends Actor {
-    var countDown = count;
+    private var countDown = count;
 
     override def receive = {
       case Start => {
@@ -73,7 +73,7 @@ object PingPong extends Benchmark {
       }
       case Pong => {
         if (countDown > 0) {
-          countDown -= 1;
+          countDown -= 1l;
           ponger ! Ping;
         } else {
           latch.countDown();
