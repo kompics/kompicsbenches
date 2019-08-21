@@ -11,9 +11,16 @@ SP = 4
 DOC_DEPS = edown
 EDOC_OPTS = {doclet, edown_doclet}
 
-DEPS = grpc grpc_client
-DEP_PLUGINS = grpc
+DEPS = grpc grpc_client gpb
+#dep_grpc = git https://github.com/Bathtor/grpc master
+dep_grpc = ln /Users/lkroll/Documents/Programming/grpc-erlang/grpc
+#DEP_PLUGINS = grpc
 
-BUILD_DEPS = gpb
+
+#BUILD_DEPS = gpb
+
+ERLC_OPTS = +debug_info +warn_export_vars +warn_shadow_vars +warn_obsolete_guard
+
+DIALYZER_OPTS = -Werror_handling -Wrace_conditions -Wunmatched_returns
 
 include erlang.mk

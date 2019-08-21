@@ -123,7 +123,7 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*"): Unit = {
 	val remoteDir = tmp.dir();
 	val nodes = (0 until withClients).map(45700 + _).map { p => 
 		val ip = "127.0.0.1";
@@ -135,7 +135,7 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impl, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -174,8 +174,8 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false): Unit = {
-	val runners = implementations.values.map(_.localRunner(runnerAddr));
+def local(testing: Boolean = false, impl: String = "*"): Unit = {
+	val runners = runnersForImpl(impl, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -212,6 +212,19 @@ def local(testing: Boolean = false): Unit = {
 	println("========");
 	println(s"Finished all runners in ${format(totalTime)}");
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
+}
+
+private def runnersForImpl(impl: String, mapper: BenchmarkImpl => BenchmarkRunner): List[BenchmarkRunner] = {
+	val runners = if (impl == "*") {
+			implementations.values.map(mapper).toList;
+	} else {
+			implementations.get(impl).map(i => List(mapper(i))).getOrElse(List.empty)
+	};
+	if (runners.isEmpty) {
+		Console.err.println(s"No benchmark found for '${impl}'");
+		System.exit(1);
+	}
+	runners
 }
 
 private def endSeparator(label: String, log: File): Unit = {

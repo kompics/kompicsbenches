@@ -103,4 +103,24 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("actix"), relp("actix/target/release/actix_benchmarks"), Seq(benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("actix"), relp("actix/target/release/actix_benchmarks"), Seq(benchMasterAddr, benchClientAddr))
 	),
+	"ERLANG" -> BenchmarkImpl(
+		symbol="ERLANG",
+		label="Erlang",
+		local = (benchRunnerAddr) => Runner(relp("erlang"), relp("erlang/run.sh"), Seq(s"erlang${benchRunnerAddr.port}@${benchRunnerAddr.address}", "-erlang_benchmarks", "runner", s""""${benchRunnerAddr}"""")),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("erlang"), relp("erlang/run.sh"), Seq(s"erlang${benchMasterAddr.port}@${benchMasterAddr.address}", "-erlang_benchmarks", "runner", s""""${benchRunnerAddr}"""", "master", s""""${benchMasterAddr}"""", "clients", numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("erlang"), relp("erlang/run.sh"), Seq(s"erlang${benchClientAddr.port}@${benchClientAddr.address}", "-erlang_benchmarks", "master", s""""${benchMasterAddr}"""", "client", s""""${benchClientAddr}""""))
+	)
 );
+
+implicit class AddressArgImpl(arg: AddressArg) {
+	private lazy val (first, second) = {
+		val split = arg.split(":");
+		assert(split.length == 2);
+		val addr = split(0);
+		val port = split(1).toInt;
+		(addr, port)
+	};
+
+	def address: String = first;
+	def port: Int = second;
+}
