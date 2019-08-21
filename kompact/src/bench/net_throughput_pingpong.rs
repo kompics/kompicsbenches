@@ -303,6 +303,127 @@ impl DistributedBenchmarkClient for PingPongClient {
     }
 }
 
+struct PingPongSer;
+const PING_PONG_SER: PingPongSer = PingPongSer {};
+const STATIC_PING_ID: u8 = 1;
+const STATIC_PONG_ID: u8 = 2;
+const PING_ID: u8 = 3;
+const PONG_ID: u8 = 4;
+impl Serialiser<StaticPing> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETTPPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(1)
+    }
+    fn serialise(&self, _v: &StaticPing, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_u8(STATIC_PING_ID);
+        Result::Ok(())
+    }
+}
+
+impl Serialiser<StaticPong> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETTPPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(1)
+    }
+    fn serialise(&self, _v: &StaticPong, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_u8(STATIC_PONG_ID);
+        Result::Ok(())
+    }
+}
+impl Serialiser<Ping> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETTPPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+    fn serialise(&self, v: &Ping, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_u8(PING_ID);
+        buf.put_u64_be(v.index);
+        Result::Ok(())
+    }
+}
+
+impl Serialiser<Pong> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETTPPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+    fn serialise(&self, v: &Pong, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_u8(PONG_ID);
+        buf.put_u64_be(v.index);
+        Result::Ok(())
+    }
+}
+impl Deserialiser<StaticPing> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<StaticPing, SerError> {
+        if buf.remaining() < 1 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 1byte but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_u8() {
+            STATIC_PING_ID => Ok(StaticPing),
+            x => Err(SerError::InvalidType(format!("Found unexpected id {}.", x))),
+        }
+    }
+}
+impl Deserialiser<StaticPong> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<StaticPong, SerError> {
+        if buf.remaining() < 1 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 1byte but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_u8() {
+            STATIC_PONG_ID => Ok(StaticPong),
+            x => Err(SerError::InvalidType(format!("Found unexpected id {}.", x))),
+        }
+    }
+}
+impl Deserialiser<Ping> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<Ping, SerError> {
+        if buf.remaining() < 9 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 9byte but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_u8() {
+            PING_ID => {
+                let index = buf.get_u64_be();
+                Ok(Ping::new(index))
+            }
+            x => Err(SerError::InvalidType(format!("Found unexpected id {}.", x))),
+        }
+    }
+}
+impl Deserialiser<Pong> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<Pong, SerError> {
+        if buf.remaining() < 9 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 9byte but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_u8() {
+            PONG_ID => {
+                let index = buf.get_u64_be();
+                Ok(Pong::new(index))
+            }
+            x => Err(SerError::InvalidType(format!("Found unexpected id {}.", x))),
+        }
+    }
+}
+
 /*****************
  * Static Pinger *
  *****************/

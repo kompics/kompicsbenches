@@ -372,19 +372,8 @@ pub trait BenchmarkFactory: Send + Sync {
     fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
-    fn atomic_register(&self)
-        -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
-    fn streaming_windows(
-        &self,
-    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
-    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
-    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
-    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
-}
-
-impl Clone for Box<dyn BenchmarkFactory> {
-    fn clone(&self) -> Box<dyn BenchmarkFactory> { self.box_clone() }
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 #[macro_export]

@@ -106,16 +106,22 @@ impl BenchmarkInstance for PingPongI {
 
 #[derive(Message)]
 struct Start;
+impl Message for Start {
+    type Result = ();
+}
 
-#[derive(Message)]
+#[derive(Clone)]
 struct Ping(Recipient<Pong>);
-// impl fmt::Debug for Ping {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "Ping(<pinger>)")
-//     }
-// }
+impl Message for Ping {
+    type Result = ();
+}
+impl fmt::Debug for Ping {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Ping(<pinger>)")
+    }
+}
 
-#[derive(Message)]
+#[derive(Clone, Debug)]
 struct Pong;
 
 struct Pinger {
@@ -143,8 +149,7 @@ impl Actor for Pinger {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        //println!("Pinger is alive");
-        self.self_rec = Some(ctx.address().recipient());
+        println!("Pinger is alive");
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
@@ -156,18 +161,20 @@ impl Actor for Pinger {
 impl Handler<Start> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
-        self.ponger.do_send(Ping(self.self_rec()));
+    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
+        let self_rec = ctx.address().recipient();
+        self.ponger.do_send(Ping(self_rec));
     }
 }
 
 impl Handler<Pong> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Pong, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Pong, ctx: &mut Context<Self>) -> Self::Result {
         if self.count_down > 0 {
             self.count_down -= 1;
-            self.ponger.do_send(Ping(self.self_rec()));
+            let self_rec = ctx.address().recipient();
+            self.ponger.do_send(Ping(self_rec));
         } else {
             let _ = self.latch.decrement();
         }
@@ -185,7 +192,7 @@ impl Handler<PoisonPill> for Pinger {
 struct Ponger;
 
 impl Ponger {
-    fn new() -> Ponger {
+    fn new() -> Ponger{
         Ponger
     }
 }
@@ -198,7 +205,7 @@ impl Actor for Ponger {
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        //println!("Ponger is stopped");
+        println!("Ponger is stopped");
     }
 }
 
@@ -207,7 +214,7 @@ impl Handler<Ping> for Ponger {
 
     fn handle(&mut self, msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
         let pinger = msg.0;
-        pinger.do_send(Pong).expect("Pong didn't send.");
+        pinger.do_send(Pong);
     }
 }
 

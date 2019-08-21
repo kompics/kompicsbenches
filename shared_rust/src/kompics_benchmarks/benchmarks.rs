@@ -458,8 +458,10 @@ impl ::protobuf::reflect::ProtobufValue for ThroughputPingPongRequest {
 #[derive(PartialEq,Clone,Default)]
 pub struct AtomicRegisterRequest {
     // message fields
-    pub number_of_reads: u64,
-    pub number_of_writes: u64,
+    pub read_workload: f32,
+    pub write_workload: f32,
+    pub partition_size: u32,
+    pub number_of_keys: u64,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
@@ -476,34 +478,64 @@ impl AtomicRegisterRequest {
         ::std::default::Default::default()
     }
 
-    // uint64 number_of_reads = 1;
+    // float read_workload = 1;
 
 
-    pub fn get_number_of_reads(&self) -> u64 {
-        self.number_of_reads
+    pub fn get_read_workload(&self) -> f32 {
+        self.read_workload
     }
-    pub fn clear_number_of_reads(&mut self) {
-        self.number_of_reads = 0;
-    }
-
-    // Param is passed by value, moved
-    pub fn set_number_of_reads(&mut self, v: u64) {
-        self.number_of_reads = v;
-    }
-
-    // uint64 number_of_writes = 2;
-
-
-    pub fn get_number_of_writes(&self) -> u64 {
-        self.number_of_writes
-    }
-    pub fn clear_number_of_writes(&mut self) {
-        self.number_of_writes = 0;
+    pub fn clear_read_workload(&mut self) {
+        self.read_workload = 0.;
     }
 
     // Param is passed by value, moved
-    pub fn set_number_of_writes(&mut self, v: u64) {
-        self.number_of_writes = v;
+    pub fn set_read_workload(&mut self, v: f32) {
+        self.read_workload = v;
+    }
+
+    // float write_workload = 2;
+
+
+    pub fn get_write_workload(&self) -> f32 {
+        self.write_workload
+    }
+    pub fn clear_write_workload(&mut self) {
+        self.write_workload = 0.;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_write_workload(&mut self, v: f32) {
+        self.write_workload = v;
+    }
+
+    // uint32 partition_size = 3;
+
+
+    pub fn get_partition_size(&self) -> u32 {
+        self.partition_size
+    }
+    pub fn clear_partition_size(&mut self) {
+        self.partition_size = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_partition_size(&mut self, v: u32) {
+        self.partition_size = v;
+    }
+
+    // uint64 number_of_keys = 4;
+
+
+    pub fn get_number_of_keys(&self) -> u64 {
+        self.number_of_keys
+    }
+    pub fn clear_number_of_keys(&mut self) {
+        self.number_of_keys = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_keys(&mut self, v: u64) {
+        self.number_of_keys = v;
     }
 }
 
@@ -517,18 +549,32 @@ impl ::protobuf::Message for AtomicRegisterRequest {
             let (field_number, wire_type) = is.read_tag_unpack()?;
             match field_number {
                 1 => {
-                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                    if wire_type != ::protobuf::wire_format::WireTypeFixed32 {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
-                    let tmp = is.read_uint64()?;
-                    self.number_of_reads = tmp;
+                    let tmp = is.read_float()?;
+                    self.read_workload = tmp;
                 },
                 2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeFixed32 {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_float()?;
+                    self.write_workload = tmp;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.partition_size = tmp;
+                },
+                4 => {
                     if wire_type != ::protobuf::wire_format::WireTypeVarint {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
                     let tmp = is.read_uint64()?;
-                    self.number_of_writes = tmp;
+                    self.number_of_keys = tmp;
                 },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
@@ -542,11 +588,17 @@ impl ::protobuf::Message for AtomicRegisterRequest {
     #[allow(unused_variables)]
     fn compute_size(&self) -> u32 {
         let mut my_size = 0;
-        if self.number_of_reads != 0 {
-            my_size += ::protobuf::rt::value_size(1, self.number_of_reads, ::protobuf::wire_format::WireTypeVarint);
+        if self.read_workload != 0. {
+            my_size += 5;
         }
-        if self.number_of_writes != 0 {
-            my_size += ::protobuf::rt::value_size(2, self.number_of_writes, ::protobuf::wire_format::WireTypeVarint);
+        if self.write_workload != 0. {
+            my_size += 5;
+        }
+        if self.partition_size != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.partition_size, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.number_of_keys != 0 {
+            my_size += ::protobuf::rt::value_size(4, self.number_of_keys, ::protobuf::wire_format::WireTypeVarint);
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
         self.cached_size.set(my_size);
@@ -554,11 +606,17 @@ impl ::protobuf::Message for AtomicRegisterRequest {
     }
 
     fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream) -> ::protobuf::ProtobufResult<()> {
-        if self.number_of_reads != 0 {
-            os.write_uint64(1, self.number_of_reads)?;
+        if self.read_workload != 0. {
+            os.write_float(1, self.read_workload)?;
         }
-        if self.number_of_writes != 0 {
-            os.write_uint64(2, self.number_of_writes)?;
+        if self.write_workload != 0. {
+            os.write_float(2, self.write_workload)?;
+        }
+        if self.partition_size != 0 {
+            os.write_uint32(3, self.partition_size)?;
+        }
+        if self.number_of_keys != 0 {
+            os.write_uint64(4, self.number_of_keys)?;
         }
         os.write_unknown_fields(self.get_unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -602,15 +660,25 @@ impl ::protobuf::Message for AtomicRegisterRequest {
         unsafe {
             descriptor.get(|| {
                 let mut fields = ::std::vec::Vec::new();
-                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
-                    "number_of_reads",
-                    |m: &AtomicRegisterRequest| { &m.number_of_reads },
-                    |m: &mut AtomicRegisterRequest| { &mut m.number_of_reads },
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeFloat>(
+                    "read_workload",
+                    |m: &AtomicRegisterRequest| { &m.read_workload },
+                    |m: &mut AtomicRegisterRequest| { &mut m.read_workload },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeFloat>(
+                    "write_workload",
+                    |m: &AtomicRegisterRequest| { &m.write_workload },
+                    |m: &mut AtomicRegisterRequest| { &mut m.write_workload },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "partition_size",
+                    |m: &AtomicRegisterRequest| { &m.partition_size },
+                    |m: &mut AtomicRegisterRequest| { &mut m.partition_size },
                 ));
                 fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
-                    "number_of_writes",
-                    |m: &AtomicRegisterRequest| { &m.number_of_writes },
-                    |m: &mut AtomicRegisterRequest| { &mut m.number_of_writes },
+                    "number_of_keys",
+                    |m: &AtomicRegisterRequest| { &m.number_of_keys },
+                    |m: &mut AtomicRegisterRequest| { &mut m.number_of_keys },
                 ));
                 ::protobuf::reflect::MessageDescriptor::new::<AtomicRegisterRequest>(
                     "AtomicRegisterRequest",
@@ -634,8 +702,10 @@ impl ::protobuf::Message for AtomicRegisterRequest {
 
 impl ::protobuf::Clear for AtomicRegisterRequest {
     fn clear(&mut self) {
-        self.number_of_reads = 0;
-        self.number_of_writes = 0;
+        self.read_workload = 0.;
+        self.write_workload = 0.;
+        self.partition_size = 0;
+        self.number_of_keys = 0;
         self.unknown_fields.clear();
     }
 }
@@ -659,20 +729,22 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     \x11messages_per_pair\x18\x01\x20\x01(\x04R\x0fmessagesPerPair\x12#\n\rp\
     ipeline_size\x18\x02\x20\x01(\x04R\x0cpipelineSize\x12\x20\n\x0bparallel\
     ism\x18\x03\x20\x01(\rR\x0bparallelism\x12\x1f\n\x0bstatic_only\x18\x04\
-    \x20\x01(\x08R\nstaticOnly\"i\n\x15AtomicRegisterRequest\x12&\n\x0fnumbe\
-    r_of_reads\x18\x01\x20\x01(\x04R\rnumberOfReads\x12(\n\x10number_of_writ\
-    es\x18\x02\x20\x01(\x04R\x0enumberOfWrites2\x80\x05\n\x0fBenchmarkRunner\
-    \x12L\n\x05Ready\x12\x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.be\
-    nchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.kompics.benchmarks.Shutdo\
-    wnRequest\x1a\x1f.kompics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#\
-    .kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResul\
-    t\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.\
-    kompics.benchmarks.TestResult\x12c\n\x12ThroughputPingPong\x12-.kompics.\
-    benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestResu\
-    lt\x12f\n\x15NetThroughputPingPong\x12-.kompics.benchmarks.ThroughputPin\
-    gPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12[\n\x0eAtomicRegis\
-    ter\x12).kompics.benchmarks.AtomicRegisterRequest\x1a\x1e.kompics.benchm\
-    arks.TestResultb\x06proto3\
+    \x20\x01(\x08R\nstaticOnly\"\xb0\x01\n\x15AtomicRegisterRequest\x12#\n\r\
+    read_workload\x18\x01\x20\x01(\x02R\x0creadWorkload\x12%\n\x0ewrite_work\
+    load\x18\x02\x20\x01(\x02R\rwriteWorkload\x12%\n\x0epartition_size\x18\
+    \x03\x20\x01(\rR\rpartitionSize\x12$\n\x0enumber_of_keys\x18\x04\x20\x01\
+    (\x04R\x0cnumberOfKeys2\x80\x05\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\
+    \x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.benchmarks.ReadyRespon\
+    se\x12P\n\x08Shutdown\x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.ko\
+    mpics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.\
+    PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingP\
+    ong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.T\
+    estResult\x12c\n\x12ThroughputPingPong\x12-.kompics.benchmarks.Throughpu\
+    tPingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12f\n\x15NetThro\
+    ughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e\
+    .kompics.benchmarks.TestResult\x12[\n\x0eAtomicRegister\x12).kompics.ben\
+    chmarks.AtomicRegisterRequest\x1a\x1e.kompics.benchmarks.TestResultb\x06\
+    proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

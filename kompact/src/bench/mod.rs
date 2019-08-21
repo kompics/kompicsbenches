@@ -12,6 +12,7 @@ pub mod netpingpong;
 pub mod pingpong;
 pub mod streaming_windows;
 pub mod throughput_pingpong;
+pub mod atomicregister;
 
 pub trait ReceiveRun {
     fn recipient(&self) -> kompact::prelude::Recipient<&'static messages::Run>;
@@ -68,8 +69,10 @@ impl BenchmarkFactory for ComponentFactory {
     fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
-    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(all_pairs_shortest_path::component_apsp::AllPairsShortestPath {}.into())
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
     }
 }
 
@@ -87,10 +90,7 @@ impl BenchmarkFactory for ActorFactory {
                 self.throughput_ping_pong().map_into()
             }
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
-            atomicregister::actor_atomicregister::AtomicRegister::LABEL => {
-                self.atomic_register().map_into()
-            }
-            streaming_windows::StreamingWindows::LABEL => self.streaming_windows().map_into(),
+            atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -115,25 +115,8 @@ impl BenchmarkFactory for ActorFactory {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
 
-    fn atomic_register(
-        &self,
-    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
-        Ok(atomicregister::actor_atomicregister::AtomicRegister {}.into())
-    }
-    fn streaming_windows(
-        &self,
-    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
-        Ok(streaming_windows::StreamingWindows {}.into())
-    }
-    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(fibonacci::Fibonacci {}.into())
-    }
-    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(chameneos::actor_chameneos::Chameneos {}.into())
-    }
-
-    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(all_pairs_shortest_path::actor_apsp::AllPairsShortestPath {}.into())
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(atomicregister::AtomicRegister {}.into())
     }
 }
 pub fn mixed() -> Box<dyn BenchmarkFactory> {
@@ -190,5 +173,9 @@ impl BenchmarkFactory for MixedFactory {
     }
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Err(NotImplementedError::FutureWork)
+    }
+
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        unimplemented!()
     }
 }

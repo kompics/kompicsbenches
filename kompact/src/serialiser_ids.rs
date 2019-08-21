@@ -1,19 +1,21 @@
-use kompact::prelude::SerId;
+pub const NETPP_ID: u64 = 42;
+pub const NETTPPP_ID: u64 = 43;
 
 /* serids for Partitioning Actor messages */
-pub const PARTITIONING_INIT_MSG: SerId = 44;
-pub const PARTITIONING_INIT_ACK_MSG: SerId = PARTITIONING_INIT_MSG;
-pub const PARTITIONING_RUN_MSG: SerId = 45;
-pub const PARTITIONING_DONE_MSG: SerId = PARTITIONING_RUN_MSG;
-pub const PARTITIONING_TESTDONE_MSG: SerId = 47;
+pub const PARTITIONING_INIT_MSG: u64 = 44;
+pub const PARTITIONING_INIT_ACK_MSG: u64 = PARTITIONING_INIT_MSG;
+pub const PARTITIONING_RUN_MSG: u64 = 45;
+pub const PARTITIONING_DONE_MSG: u64 = PARTITIONING_RUN_MSG;
 
-pub const ATOMICREG_ID: SerId = 46;
+/* serids for Atomic Register messages */
+pub const ATOMICREG_ID: u64 = 46;
+pub const ATOMICREG_READ: u64 = 46;
+pub const ATOMICREG_WRITE: u64 = 47;
+pub const ATOMICREG_VALUE: u64 = 48;
+pub const ATOMICREG_ACK: u64 = 49;
 
-pub const PING_ID: SerId = 50;
-pub const PONG_ID: SerId = 51;
-pub const STATIC_PING_ID: SerId = 52;
-pub const STATIC_PONG_ID: SerId = 53;
 
-pub const SW_SOURCE_ID: SerId = 54;
-pub const SW_SINK_ID: SerId = 55;
-pub const SW_WINDOWER_ID: SerId = 56;
+
+
+
+

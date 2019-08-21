@@ -224,6 +224,80 @@ impl DistributedBenchmarkClient for PingPongClient {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PingMsg;
+
+#[derive(Debug, Clone)]
+struct PongMsg;
+
+struct PingPongSer;
+const PING_PONG_SER: PingPongSer = PingPongSer {};
+const PING_ID: i8 = 1;
+const PONG_ID: i8 = 2;
+impl Serialiser<PingMsg> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+    fn serialise(&self, _v: &PingMsg, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_i8(PING_ID);
+        Result::Ok(())
+    }
+}
+
+impl Serialiser<PongMsg> for PingPongSer {
+    fn serid(&self) -> u64 {
+        serialiser_ids::NETPP_ID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+    fn serialise(&self, _v: &PongMsg, buf: &mut BufMut) -> Result<(), SerError> {
+        buf.put_i8(PONG_ID);
+        Result::Ok(())
+    }
+}
+impl Deserialiser<PingMsg> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<PingMsg, SerError> {
+        if buf.remaining() < 1 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 9bytes but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_i8() {
+            PING_ID => Ok(PingMsg),
+            PONG_ID => Err(SerError::InvalidType(
+                "Found PongMsg, but expected PingMsg.".into(),
+            )),
+            _ => Err(SerError::InvalidType(
+                "Found unkown id, but expected PingMsg.".into(),
+            )),
+        }
+    }
+}
+impl Deserialiser<PongMsg> for PingPongSer {
+    fn deserialise(buf: &mut Buf) -> Result<PongMsg, SerError> {
+        if buf.remaining() < 1 {
+            return Err(SerError::InvalidData(format!(
+                "Serialised typed has 9bytes but only {}bytes remain in buffer.",
+                buf.remaining()
+            )));
+        }
+        match buf.get_i8() {
+            PONG_ID => Ok(PongMsg),
+            PING_ID => Err(SerError::InvalidType(
+                "Found PingMsg, but expected PongMsg.".into(),
+            )),
+            _ => Err(SerError::InvalidType(
+                "Found unkown id, but expected PongMsg.".into(),
+            )),
+        }
+    }
+}
+
 #[derive(ComponentDefinition)]
 struct Pinger {
     ctx: ComponentContext<Pinger>,

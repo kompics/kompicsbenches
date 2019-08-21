@@ -9,28 +9,36 @@ use synchronoise::CountdownEvent;
 
 #[derive(Message)]
 pub struct Start;
+impl Message for Start {
+    type Result = ();
+}
 
-#[derive(Message)]
+#[derive(Clone)]
 struct StaticPing(Recipient<StaticPong>);
-// impl fmt::Debug for StaticPing {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "StaticPing(<pinger>)")
-//     }
-// }
+impl Message for StaticPing {
+    type Result = ();
+}
+impl fmt::Debug for StaticPing {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "StaticPing(<pinger>)")
+    }
+}
 
-#[derive(Message)]
+#[derive(Clone, Debug)]
 struct StaticPong;
-
-#[derive(Message)]
+impl Message for StaticPong {
+    type Result = ();
+}
+#[derive(Clone)]
 pub struct Ping {
     pub index: u64,
-    pub src: Recipient<Pong>,
+    pub src: Recipient<Pong>
 }
-// impl fmt::Debug for Ping {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "Ping(<pinger>)")
-//     }
-// }
+impl fmt::Debug for Ping {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Ping(<pinger>)")
+    }
+}
 
 impl Ping {
     pub fn new(index: u64, src: Recipient<Pong>) -> Ping {
@@ -318,7 +326,6 @@ impl Actor for StaticPinger {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Pinger is alive");
-        self.self_rec = Some(ctx.address().recipient());
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
@@ -330,10 +337,10 @@ impl Actor for StaticPinger {
 impl Handler<Start> for StaticPinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger.do_send(StaticPing(self.self_rec()));
+            self.ponger.do_send(StaticPing(ctx.address().recipient()));
             self.sent_count += 1;
             pipelined += 1;
         }
@@ -343,11 +350,11 @@ impl Handler<Start> for StaticPinger {
 impl Handler<StaticPong> for StaticPinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: StaticPong, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: StaticPong, ctx: &mut Context<Self>) -> Self::Result {
         self.recv_count += 1;
         if self.recv_count < self.count {
             if self.sent_count < self.count {
-                self.ponger.do_send(StaticPing(self.self_rec()));
+                self.ponger.do_send(StaticPing(ctx.address().recipient()));
                 self.sent_count += 1;
             }
         } else {
@@ -391,7 +398,7 @@ impl Handler<StaticPing> for StaticPonger {
 
     fn handle(&mut self, msg: StaticPing, _ctx: &mut Context<Self>) -> Self::Result {
         let pinger = msg.0;
-        pinger.do_send(StaticPong).expect("StaticPong didn't send.");
+        pinger.do_send(StaticPong);
     }
 }
 
@@ -440,7 +447,6 @@ impl Actor for Pinger {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Pinger is alive");
-        self.self_rec = Some(ctx.address().recipient());
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
@@ -452,11 +458,10 @@ impl Actor for Pinger {
 impl Handler<Start> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger
-                .do_send(Ping::new(self.sent_count, self.self_rec()));
+            self.ponger.do_send(Ping::new(self.sent_count, ctx.address().recipient()));
             self.sent_count += 1;
             pipelined += 1;
         }
@@ -466,12 +471,11 @@ impl Handler<Start> for Pinger {
 impl Handler<Pong> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Pong, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Pong, ctx: &mut Context<Self>) -> Self::Result {
         self.recv_count += 1;
         if self.recv_count < self.count {
             if self.sent_count < self.count {
-                self.ponger
-                    .do_send(Ping::new(self.sent_count, self.self_rec()));
+                self.ponger.do_send(Ping::new(self.sent_count, ctx.address().recipient()));
                 self.sent_count += 1;
             }
         } else {
@@ -515,9 +519,7 @@ impl Handler<Ping> for Ponger {
 
     fn handle(&mut self, msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
         let pinger = msg.src;
-        pinger
-            .do_send(Pong::new(msg.index))
-            .expect("Pong didn't send.");
+        pinger.do_send(Pong::new(msg.index));
     }
 }
 

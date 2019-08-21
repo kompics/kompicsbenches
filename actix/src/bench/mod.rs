@@ -53,14 +53,8 @@ impl BenchmarkFactory for Factory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
-    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(fibonacci::Fibonacci {}.into())
-    }
-    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(chameneos::Chameneos {}.into())
-    }
 
-    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(all_pairs_shortest_path::AllPairsShortestPath {}.into())
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
     }
 }
