@@ -44,6 +44,7 @@ impl Provide<ControlPort> for PartitioningActor {
             ControlEvent::Start => {
                 let min_key: u64 = 0;
                 let max_key = self.num_keys - 1;
+//                info!(self.ctx.log(), "Sending init to nodes");
                 for (r, node) in (&self.nodes).iter().enumerate(){
                     let rank = r as u32;
                     let init = Init{
@@ -55,7 +56,6 @@ impl Provide<ControlPort> for PartitioningActor {
                     };
                     node.tell((init, PARTITIONING_ACTOR_SER), self);
                 }
-//                info!(self.ctx.log(), "sent init to all nodes");
             }
             _ => {} // ignore
         }
@@ -129,7 +129,7 @@ const DONE_ID: i8 = 4;
 
 impl Serialiser<Init> for PartitioningActorSer {
     fn serid(&self) -> u64 {
-        serializer_ids::PARTITIONING_INIT_MSG
+        serialiser_ids::PARTITIONING_INIT_MSG
     }
     fn size_hint(&self) -> Option<usize> {
         Some(1000)
@@ -182,7 +182,7 @@ impl Deserialiser<Init> for PartitioningActorSer {
 
 impl Serialiser<InitAck> for PartitioningActorSer {
     fn serid(&self) -> u64 {
-        serializer_ids::PARTITIONING_INIT_ACK_MSG
+        serialiser_ids::PARTITIONING_INIT_ACK_MSG
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -211,7 +211,7 @@ impl Deserialiser<InitAck> for PartitioningActorSer {
 
 impl Serialiser<Run> for PartitioningActorSer{
     fn serid(&self) -> u64 {
-        serializer_ids::PARTITIONING_RUN_MSG
+        serialiser_ids::PARTITIONING_RUN_MSG
     }
     fn size_hint(&self) -> Option<usize> { Some(1) }
     fn serialise(&self, v: &Run, buf: &mut BufMut) -> Result<(), SerError> {
@@ -232,7 +232,7 @@ impl Deserialiser<Run> for PartitioningActorSer{
 }
 
 impl Serialiser<Done> for PartitioningActorSer{
-    fn serid(&self) -> u64 { serializer_ids::PARTITIONING_DONE_MSG }
+    fn serid(&self) -> u64 { serialiser_ids::PARTITIONING_DONE_MSG }
     fn size_hint(&self) -> Option<usize> { Some(1) }
 
     fn serialise(&self, v: &Done, buf: &mut BufMut) -> Result<(), SerError> {

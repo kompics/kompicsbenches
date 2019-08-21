@@ -10,6 +10,8 @@ use std::env;
 mod bench;
 mod benchmark_runner;
 pub mod kompact_system_provider;
+pub mod partitioning_actor;
+pub mod serialiser_ids;
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();

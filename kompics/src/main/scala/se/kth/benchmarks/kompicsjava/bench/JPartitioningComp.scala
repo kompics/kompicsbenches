@@ -11,33 +11,33 @@ import se.sics.kompics.sl.{ ComponentDefinition, Init, Start, handle }
 
 import scala.collection.mutable
 
-class JIterationComp(init: Init[JIterationComp]) extends ComponentDefinition {
+class JPartitioningComp(init: Init[JPartitioningComp]) extends ComponentDefinition {
   val net = requires[Network]
 
   val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
   val active_nodes = new util.LinkedList[JNetAddress]()
-  var n = nodes.size
+  for (i <- 0 until partition_size) {
+    active_nodes.add(nodes(i).asJava)
+  }
+  val n = active_nodes.size()
   var init_ack_count: Int = 0
   var done_count = 0
   var partitions = mutable.Map[Long, List[NetAddress]]()
-  val min_key: Long = 0l
-  val max_key: Long = num_keys - 1
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
     case _: Start => handle {
       assert(selfAddr != null)
-      for (i <- 0 until partition_size) {
-        active_nodes.add(nodes(i).asJava)
-      }
-      n = active_nodes.size()
+
+      val min_key: Long = 0l
+      val max_key: Long = num_keys - 1
       for (i <- 0 until partition_size) {
         trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), new JINIT(i, init_id, active_nodes, min_key, max_key)), net)
       }
     }
     case RUN => handle {
       val it = active_nodes.iterator()
-      while (it.hasNext()) {
+      while (it.hasNext) {
         trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRUN.event), net)
       }
     }

@@ -35,7 +35,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null;
-    private var iterationComp: UUID = null;
+    private var partitioningComp: UUID = null;
     private var prepare_latch: CountDownLatch = null;
     private var finished_latch: CountDownLatch = null;
     private var init_id: Int = -1;
@@ -43,7 +43,7 @@ object AtomicRegister extends DistributedBenchmark {
     override def setup(c: MasterConf): ClientConf = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       AtomicRegisterSerializer.register();
-      IterationCompSerializer.register();
+      PartitioningCompSerializer.register();
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
@@ -73,14 +73,14 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      val iterationCompF = system.createNotify[IterationComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for INIT_ACK from clients
-      iterationComp = Await.result(iterationCompF, 5.second)
-      val iterationComp_net_connF = system.connectNetwork(iterationComp)
-      Await.result(iterationComp_net_connF, 5.seconds)
-      assert(beb != null && iterationComp != null && atomicRegister != null);
+      val partitioningCompF = system.createNotify[PartitioningComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for INIT_ACK from clients
+      partitioningComp = Await.result(partitioningCompF, 5.second)
+      val partitioningComp_net_connF = system.connectNetwork(partitioningComp)
+      Await.result(partitioningComp_net_connF, 5.seconds)
+      assert(beb != null && partitioningComp != null && atomicRegister != null);
       system.startNotify(beb)
       system.startNotify(atomicRegister)
-      system.startNotify(iterationComp)
+      system.startNotify(partitioningComp)
       val timeout = 100
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
@@ -90,7 +90,7 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
     override def runIteration(): Unit = {
-      system.triggerComponent(RUN, iterationComp)
+      system.triggerComponent(RUN, partitioningComp)
       finished_latch.await()
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
@@ -103,11 +103,11 @@ object AtomicRegister extends DistributedBenchmark {
         Await.ready(killF, 5.seconds)
         val killBebF = system.killNotify(beb)
         Await.ready(killBebF, 5.seconds)
-        val killiterationCompF = system.killNotify(iterationComp)
-        Await.ready(killiterationCompF, 5.seconds)
+        val killpartitioningCompF = system.killNotify(partitioningComp)
+        Await.ready(killpartitioningCompF, 5.seconds)
         atomicRegister = null
         beb = null
-        iterationComp = null
+        partitioningComp = null
       }
       if (lastIteration) {
         println("Cleaning up Last iteration")
@@ -127,7 +127,7 @@ object AtomicRegister extends DistributedBenchmark {
     override def setup(c: ClientConf): ClientData = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       AtomicRegisterSerializer.register();
-      IterationCompSerializer.register();
+      PartitioningCompSerializer.register();
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
@@ -313,11 +313,11 @@ object AtomicRegister extends DistributedBenchmark {
 
       case BEBDeliver(w: WRITE, src) => handle {
         if (w.run_id == current_run_id) {
-          val current_state = register_state(w.key)
-          if ((w.ts, w.wr) > (current_state.ts, current_state.wr)) {
-            current_state.ts = w.ts
-            current_state.wr = w.wr
-            current_state.value = w.value
+          val current_register = register_state(w.key)
+          if ((w.ts, w.wr) > (current_register.ts, current_register.wr)) {
+            current_register.ts = w.ts
+            current_register.wr = w.wr
+            current_register.value = w.value
           }
         }
         trigger(NetMessage.viaTCP(selfAddr, src)(ACK(w.run_id, w.key, w.rid)) -> net)
@@ -352,7 +352,7 @@ object AtomicRegister extends DistributedBenchmark {
                 register_readlist(v.key).clear()
                 readResponse(v.key, current_register.readval)
               } else {
-                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)
+                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)  // TODO must check rank as well if same ts
                 current_register.readval = readvalue
                 register_readlist(v.key).clear()
                 var bcastvalue = readvalue

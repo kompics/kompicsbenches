@@ -10,10 +10,9 @@ import akka.util.{ByteString, Timeout}
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import scalapb.GeneratedMessage
 import se.kth.benchmarks.DistributedBenchmark
-import se.kth.benchmarks.akka.bench.NetThroughputPingPong.{Ping, PingPongSerializer, Pong, StaticPing, StaticPong}
 import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
-import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.ClientSystemSupervisor.{ClientShutdown, ClientSystemMessage, StartPongers}
-import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunIteration, StartPingers, StopPingers, SystemMessage}
+import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.ClientSystemSupervisor.StartPongers
+import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor.{OperationSucceeded, RunIteration, StartPingers, StopPingers, SystemMessage}
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
@@ -56,11 +55,12 @@ object NetThroughputPingPong extends DistributedBenchmark{
     }
 
     override def prepareIteration(d: List[ClientData]): Unit = {
+      println("Preparing NetPingPong Iteration")
       latch = new CountDownLatch(numPairs);
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
       val f: Future[OperationSucceeded.type] = system.ask(ref => StartPingers(ref, latch, numMsgs, pipeline, staticOnly, d.head))
-      implicit val ec = system.executionContext
+      implicit val ec = scala.concurrent.ExecutionContext.global;
       Await.result(f, 3 seconds)
     }
 
@@ -77,12 +77,11 @@ object NetThroughputPingPong extends DistributedBenchmark{
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
       val f: Future[OperationSucceeded.type] = system.ask(ref => StopPingers(ref))
-      implicit val ec = system.executionContext
+      implicit val ec = scala.concurrent.ExecutionContext.global;
       Await.result(f, 3 seconds)
       if (lastIteration){
         println("Cleaning up last iteration...")
-//        system.terminate()
-        system ! GracefulShutdown
+        system.terminate()
         Await.ready(system.whenTerminated, 5 seconds)
         system = null
         println("Last cleanup completed")
@@ -92,14 +91,14 @@ object NetThroughputPingPong extends DistributedBenchmark{
   }
 
   class ClientImpl extends Client{
-    private var system: ActorSystem[ClientSystemMessage] = null
+    private var system: ActorSystem[StartPongers] = null
 
     override def setup(c: ClientParams): ClientRefs = {
-      system = ActorSystemProvider.newRemoteTypedActorSystem[ClientSystemMessage](ClientSystemSupervisor(), "nettpingpong_clientsupervisor", 1, serializers)
+      system = ActorSystemProvider.newRemoteTypedActorSystem[StartPongers](ClientSystemSupervisor(), "nettpingpong_clientsupervisor", 1, serializers)
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
       val f: Future[ClientRefs] = system.ask(ref => StartPongers(ref, c.staticOnly, c.numPongers))
-      implicit val ec = system.executionContext
+      implicit val ec = scala.concurrent.ExecutionContext.global;
       val ready = Await.ready(f, 5 seconds)
       ready.value.get match {
         case Success(pongerPaths) => {
@@ -116,8 +115,7 @@ object NetThroughputPingPong extends DistributedBenchmark{
     override def cleanupIteration(lastIteration: Boolean): Unit = {
       println("Cleaning up ponger side");
       if (lastIteration) {
-//        system.terminate()
-        system ! ClientShutdown
+        system.terminate()
         Await.ready(system.whenTerminated, 5.second);
         system = null;
       }
@@ -152,35 +150,26 @@ object NetThroughputPingPong extends DistributedBenchmark{
 
 
   object ClientSystemSupervisor {
-    sealed trait ClientSystemMessage
-
-    case class StartPongers(replyTo: ActorRef[ClientRefs], staticOnly: Boolean, numPongers: Int) extends ClientSystemMessage
-    case object ClientShutdown extends ClientSystemMessage
-    def apply(): Behavior[ClientSystemMessage] = Behaviors.setup(context => new ClientSystemSupervisor(context))
+    case class StartPongers(replyTo: ActorRef[ClientRefs], staticOnly: Boolean, numPongers: Int)
+    def apply(): Behavior[StartPongers] = Behaviors.setup(context => new ClientSystemSupervisor(context))
   }
 
-  class ClientSystemSupervisor(context: ActorContext[ClientSystemMessage]) extends AbstractBehavior[ClientSystemMessage]{
+  class ClientSystemSupervisor(context: ActorContext[StartPongers]) extends AbstractBehavior[StartPongers]{
     val resolver = ActorRefResolver(context.system)
 
     private def getPongerPaths[T](refs: List[ActorRef[T]]): List[String] = {
       for (pongerRef <- refs) yield resolver.toSerializationFormat(pongerRef)
     }
 
-    override def onMessage(msg: ClientSystemMessage): Behavior[ClientSystemMessage] = {
-      msg match {
-        case s: StartPongers => {
-          if (s.staticOnly){
-            val static_pongers = (1 to s.numPongers).map(i => context.spawn(StaticPonger(), s"typed_ponger$i")).toList
-            s.replyTo ! ClientRefs(getPongerPaths[StaticPing](static_pongers))
-          } else {
-            val pongers = (1 to s.numPongers).map(i => context.spawn(Ponger(), s"typed_ponger$i")).toList
-            s.replyTo ! ClientRefs(getPongerPaths[Ping](pongers))
-          }
-          this
-        }
-        case ClientShutdown => Behaviors.stopped
+    override def onMessage(msg: StartPongers): Behavior[StartPongers] = {
+      if (msg.staticOnly){
+        val static_pongers = (1 to msg.numPongers).map(i => context.spawn(StaticPonger(), s"typed_ponger$i")).toList
+        msg.replyTo ! ClientRefs(getPongerPaths[StaticPing](static_pongers))
+      } else {
+        val pongers = (1 to msg.numPongers).map(i => context.spawn(Ponger(), s"typed_ponger$i")).toList
+        msg.replyTo ! ClientRefs(getPongerPaths[Ping](pongers))
       }
-
+      this
     }
   }
 
@@ -237,9 +226,6 @@ object NetThroughputPingPong extends DistributedBenchmark{
           }
           replyTo ! OperationSucceeded
           this
-        }
-        case GracefulShutdown => {
-          Behaviors.stopped
         }
       }
     }

@@ -4,7 +4,7 @@ import java.util.concurrent.CountDownLatch
 
 import akka.actor.typed.{ActorRef, ActorRefResolver, Behavior, Signal}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
-import TypedIterationActor._
+import TypedPartitioningActor._
 import akka.actor.TypedActor.PreStart
 import akka.serialization.Serializer
 import akka.util.ByteString
@@ -12,34 +12,33 @@ import se.kth.benchmarks.akka.typed_bench.AtomicRegister.{AtomicRegisterMessage,
 
 import scala.collection.mutable.ListBuffer
 
-object TypedIterationActor {
-  def apply(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int): Behavior[IterationMessage] =
-    Behaviors.setup(context => new TypedIterationActor(context, prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size))
+object TypedPartitioningActor {
+  def apply(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int): Behavior[PartitioningMessage] =
+    Behaviors.setup(context => new TypedPartitioningActor(context, prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size))
 
-  trait IterationMessage
+  trait PartitioningMessage
 
-  case object START extends IterationMessage
-  case object RUN extends IterationMessage
-  case object DONE extends IterationMessage
-  case class INIT_ACK(init_id: Int) extends IterationMessage
+  case object START extends PartitioningMessage
+  case object RUN extends PartitioningMessage
+  case object DONE extends PartitioningMessage
+  case class INIT_ACK(init_id: Int) extends PartitioningMessage
 }
 
 
-class TypedIterationActor(context: ActorContext[IterationMessage],
-                          prepare_latch: CountDownLatch,
-                          finished_latch: CountDownLatch,
-                          init_id: Int,
-                          nodes: List[ClientRef],
-                          num_keys: Long,
-                          partition_size: Int) extends AbstractBehavior[IterationMessage] {
+class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
+                             prepare_latch: CountDownLatch,
+                             finished_latch: CountDownLatch,
+                             init_id: Int,
+                             nodes: List[ClientRef],
+                             num_keys: Long,
+                             partition_size: Int) extends AbstractBehavior[PartitioningMessage] {
 
 //  val logger = context.log
-  var active_nodes = nodes
-  var n = nodes.size
+
+  val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes
+  val n = active_nodes.size
   var init_ack_count: Int = 0
   var done_count = 0
-  val min_key: Long = 0l
-  val max_key: Long = num_keys - 1
   val resolver = ActorRefResolver(context.system)
   val selfRef = ClientRef(resolver.toSerializationFormat(context.self))
 
@@ -47,14 +46,11 @@ class TypedIterationActor(context: ActorContext[IterationMessage],
     resolver.resolveActorRef(c.ref)
   }
 
-  override def onMessage(msg: IterationMessage): Behavior[IterationMessage] = {
+  override def onMessage(msg: PartitioningMessage): Behavior[PartitioningMessage] = {
     msg match {
       case START => {
-        if (partition_size < n) {
-          active_nodes = nodes.slice(0, partition_size)
-          n = active_nodes.size
-        }
-
+        val min_key: Long = 0l
+        val max_key: Long = num_keys - 1
         for ((node, rank) <- active_nodes.zipWithIndex){
           val actorRef = getActorRef(node)
           actorRef ! INIT(selfRef, rank, init_id, active_nodes, min_key, max_key)
@@ -86,8 +82,8 @@ class TypedIterationActor(context: ActorContext[IterationMessage],
   }
 }
 
-object TypedIterationActorSerializer {
-  val NAME = "typed_iterationactor"
+object TypedPartitioningActorSerializer {
+  val NAME = "typed_partitioningactor"
 
   private val INIT_FLAG: Byte = 1
   private val INIT_ACK_FLAG: Byte = 2
@@ -95,13 +91,13 @@ object TypedIterationActorSerializer {
   private val DONE_FLAG: Byte = 4
 }
 
-class TypedIterationActorSerializer extends Serializer {
-  import TypedIterationActorSerializer._
+class TypedPartitioningActorSerializer extends Serializer {
+  import TypedPartitioningActorSerializer._
   import java.nio.{ ByteBuffer, ByteOrder }
 
   implicit val order = ByteOrder.BIG_ENDIAN;
 
-  override def identifier: Int = SerializerIds.TYPEDITACTOR
+  override def identifier: Int = SerializerIds.TYPEDPARTITACTOR
   override def includeManifest: Boolean = false
 
 

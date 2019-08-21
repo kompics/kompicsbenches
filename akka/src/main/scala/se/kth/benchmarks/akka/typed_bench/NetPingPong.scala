@@ -11,7 +11,7 @@ import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 import akka.serialization.Serializer
 import akka.util.{ByteString, Timeout}
-import se.kth.benchmarks.akka.typed_bench.NetPingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunPinger, StartPinger, StopPinger, SystemMessage}
+import se.kth.benchmarks.akka.typed_bench.NetPingPong.SystemSupervisor.{OperationSucceeded, RunPinger, StartPinger, StopPinger, SystemMessage}
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
@@ -48,7 +48,7 @@ object NetPingPong extends DistributedBenchmark{
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
       val f: Future[OperationSucceeded.type] = system.ask(ref => StartPinger(ref, latch, num, ponger))
-      implicit val ec = system.executionContext
+      implicit val ec = scala.concurrent.ExecutionContext.global;
       Await.result(f, 3 seconds)
     }
 
@@ -65,13 +65,13 @@ object NetPingPong extends DistributedBenchmark{
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
       val f: Future[OperationSucceeded.type] = system.ask(ref => StopPinger(ref))
-      implicit val ec = system.executionContext
+      implicit val ec = scala.concurrent.ExecutionContext.global;
       Await.result(f, 3 seconds)
 //      system ! SystemSupervisor.StopPinger
       if (lastIteration){
         println("Cleaning up last iteration...")
-        system ! GracefulShutdown
-//        system.terminate()
+        system.terminate()
+//        implicit val ec = scala.concurrent.ExecutionContext.global;
         Await.ready(system.whenTerminated, 5 seconds)
         system = null
         println("Last cleanup completed")
@@ -80,11 +80,10 @@ object NetPingPong extends DistributedBenchmark{
   }
 
   class ClientImpl extends Client {
-
-    private var ponger: ActorSystem[MsgForPonger] = null
+    private var ponger: ActorSystem[Ping] = null
 
     override def setup(c: ClientConf): ClientRef = {
-      ponger = ActorSystemProvider.newRemoteTypedActorSystem[MsgForPonger](Ponger(), "netpingpong", 1, serializers)
+      ponger = ActorSystemProvider.newRemoteTypedActorSystem[Ping](Ponger(), "netpingpong", 1, serializers)
       val resolver = ActorRefResolver(ponger)
       val path = resolver.toSerializationFormat(ponger)
       println(s"Ponger path is $path")
@@ -114,7 +113,6 @@ object NetPingPong extends DistributedBenchmark{
     case class StartPinger(ref: ActorRef[OperationSucceeded.type], latch: CountDownLatch, num: Long, ponger: ClientRef) extends SystemMessage
     case object RunPinger extends SystemMessage
     case class StopPinger(ref: ActorRef[OperationSucceeded.type]) extends SystemMessage
-    case object GracefulShutdown extends SystemMessage
     case object OperationSucceeded
   }
 
@@ -142,9 +140,6 @@ object NetPingPong extends DistributedBenchmark{
           pinger ! Run
           this
         }
-        case GracefulShutdown => {
-          Behaviors.stopped
-        }
       }
     }
   }
@@ -166,10 +161,8 @@ object NetPingPong extends DistributedBenchmark{
   override def clientDataToString(d: ClientData): String = d.actorPath
 
   sealed trait MsgForPinger
-  sealed trait MsgForPonger
 
-  case object Stop extends MsgForPonger
-  case class Ping(src: ClientRef) extends MsgForPonger;
+  case class Ping(src: ClientRef);
   case object Pong extends MsgForPinger
   case object Run extends MsgForPinger
 
@@ -201,26 +194,19 @@ object NetPingPong extends DistributedBenchmark{
   }
 
   object Ponger{
-    def apply(): Behavior[MsgForPonger] = Behaviors.setup(context => new Ponger(context))
+    def apply(): Behavior[Ping] = Behaviors.setup(context => new Ponger(context))
   }
 
-  class Ponger(context: ActorContext[MsgForPonger]) extends AbstractBehavior[MsgForPonger]{
+  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping]{
     val resolver = ActorRefResolver(context.system)
 
     private def getPingerRef(c: ClientRef): ActorRef[MsgForPinger] = {
       resolver.resolveActorRef(c.actorPath)
     }
 
-    override def onMessage(msg: MsgForPonger): Behavior[MsgForPonger] = {
-      msg match {
-        case Ping(src) => {
-          getPingerRef(src) ! Pong
-          this
-        }
-        case Stop => {
-          Behaviors.stopped
-        }
-      }
+    override def onMessage(msg: Ping): Behavior[Ping] = {
+      getPingerRef(msg.src) ! Pong
+      this
     }
   }
 

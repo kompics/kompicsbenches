@@ -13,25 +13,21 @@ import se.sics.kompics.sl.{ ComponentDefinition, Init, KompicsEvent, Start, hand
 import scala.collection.mutable.ListBuffer
 
 // used to send topology and rank to nodes in atomic register
-class IterationComp(init: Init[IterationComp]) extends ComponentDefinition {
+class PartitioningComp(init: Init[PartitioningComp]) extends ComponentDefinition {
   val net = requires[Network]
 
   val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
-  var active_nodes = nodes
-  var n = nodes.size
+  val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes
+  val n = active_nodes.size
   var init_ack_count: Int = 0
   var done_count = 0
-  val min_key: Long = 0l
-  val max_key: Long = num_keys - 1
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
     case _: Start => handle {
       assert(selfAddr != null)
-      if (partition_size < n) {
-        active_nodes = nodes.slice(0, partition_size)
-        n = active_nodes.size
-      }
+      val min_key: Long = 0l
+      val max_key: Long = num_keys - 1
       for ((node, rank) <- active_nodes.zipWithIndex) {
         trigger(NetMessage.viaTCP(selfAddr, node)(INIT(rank, init_id, active_nodes, min_key, max_key)) -> net)
       }
@@ -64,19 +60,19 @@ case class INIT(rank: Int, init_id: Int, nodes: List[NetAddress], min: Long, max
 case class INIT_ACK(init_id: Int) extends KompicsEvent;
 case object RUN extends KompicsEvent;
 
-object IterationCompSerializer extends Serializer {
+object PartitioningCompSerializer extends Serializer {
   private val INIT_FLAG: Byte = 1
   private val INIT_ACK_FLAG: Byte = 2
   private val RUN_FLAG: Byte = 3
 
   def register(): Unit = {
-    Serializers.register(this, "iterationcomp")
-    Serializers.register(classOf[INIT], "iterationcomp")
-    Serializers.register(classOf[INIT_ACK], "iterationcomp")
-    Serializers.register(RUN.getClass, "iterationcomp")
+    Serializers.register(this, "partitioningcomp")
+    Serializers.register(classOf[INIT], "partitioningcomp")
+    Serializers.register(classOf[INIT_ACK], "partitioningcomp")
+    Serializers.register(RUN.getClass, "partitioningcomp")
   }
 
-  override def identifier(): Int = se.kth.benchmarks.kompics.SerializerIds.S_IT_COMP
+  override def identifier(): Int = se.kth.benchmarks.kompics.SerializerIds.S_PART_COMP
 
   override def toBinary(o: Any, buf: ByteBuf): Unit = {
     o match {

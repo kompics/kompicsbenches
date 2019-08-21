@@ -8,16 +8,17 @@ import se.kth.benchmarks.akka._
 import se.kth.benchmarks._
 
 import scala.util.{Failure, Success, Try}
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
-import java.util.concurrent.{CountDownLatch, TimeUnit}
+import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
 
-import IterationActor._
+import PartitioningActor._
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
+import java.util.UUID.randomUUID
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -38,10 +39,10 @@ object AtomicRegister extends DistributedBenchmark {
     .addBinding[WRITE](AtomicRegisterSerializer.NAME)
     .addBinding[ACK](AtomicRegisterSerializer.NAME)
     .addBinding[IDENTIFY.type](AtomicRegisterSerializer.NAME)
-    .addSerializer[IterationActorSerializer](IterationActorSerializer.NAME)
-    .addBinding[INIT](IterationActorSerializer.NAME)
-    .addBinding[INIT_ACK](IterationActorSerializer.NAME)
-    .addBinding[RUN.type](IterationActorSerializer.NAME)
+    .addSerializer[PartitioningActorSerializer](PartitioningActorSerializer.NAME)
+    .addBinding[INIT](PartitioningActorSerializer.NAME)
+    .addBinding[INIT_ACK](PartitioningActorSerializer.NAME)
+    .addBinding[RUN.type](PartitioningActorSerializer.NAME)
 
   class MasterImpl extends Master {
     private var read_workload = 0.0F;
@@ -50,7 +51,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var num_keys: Long = -1l;
     private var system: ActorSystem = null;
     private var atomicRegister: ActorRef = null;
-    private var iterationActor: ActorRef = null;
+    private var partitioningActor: ActorRef = null;
     private var prepare_latch: CountDownLatch = null;
     private var finished_latch: CountDownLatch = null;
     private var init_id: Int = -1;
@@ -70,7 +71,8 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
-      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), "atomicreg")
+//      val uuid =randomUUID()
+      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id")
       val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system)
       println(s"Atomic Register(Master) path is $atomicRegPath")
       val nodes = ClientRef(atomicRegPath) :: d
@@ -79,8 +81,8 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      iterationActor = system.actorOf(Props(new IterationActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), "itactor")
-      iterationActor ! START
+      partitioningActor = system.actorOf(Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), s"partitioningactor$init_id")
+      partitioningActor ! START
       val timeout = 100
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
@@ -91,26 +93,33 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def runIteration(): Unit = {
-      iterationActor ! RUN
+      partitioningActor ! RUN
       finished_latch.await()
+      println("Finished run") // TODO REMOVE FOR TEST
     };
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
       println("Cleaning up Atomic Register(Master) side");
       if (prepare_latch != null) prepare_latch = null
       if (finished_latch != null) finished_latch = null
-      if (atomicRegister != null) {
+      if (atomicRegister != null){
         system.stop(atomicRegister)
         atomicRegister = null
-        system.stop(iterationActor)
-        iterationActor = null
+      }
+      if (partitioningActor != null){
+        system.stop(partitioningActor)
+        partitioningActor = null
       }
       if (lastIteration) {
         println("Cleaning up Last iteration")
-        system.terminate();
-        Await.ready(system.whenTerminated, 5.second);
-        system = null;
-        println("Last cleanup completed!")
+        try {
+          val f = system.terminate();
+          Await.ready(f, 11.second);
+          system = null;
+          println("Last cleanup completed!")
+        } catch {
+          case ex: Exception => println(s"Failed to terminate ActorSystem: $ex")
+        }
       }
     }
   }
@@ -130,20 +139,19 @@ object AtomicRegister extends DistributedBenchmark {
       .addBinding[WRITE](AtomicRegisterSerializer.NAME)
       .addBinding[ACK](AtomicRegisterSerializer.NAME)
       .addBinding[IDENTIFY.type](AtomicRegisterSerializer.NAME)
-      .addSerializer[IterationActorSerializer](IterationActorSerializer.NAME)
-      .addBinding[INIT](IterationActorSerializer.NAME)
-      .addBinding[INIT_ACK](IterationActorSerializer.NAME)
-      .addBinding[RUN.type](IterationActorSerializer.NAME)
+      .addSerializer[PartitioningActorSerializer](PartitioningActorSerializer.NAME)
+      .addBinding[INIT](PartitioningActorSerializer.NAME)
+      .addBinding[INIT_ACK](PartitioningActorSerializer.NAME)
+      .addBinding[RUN.type](PartitioningActorSerializer.NAME)
 
     override def setup(c: ClientConf): ClientData = {
-      println("Atomic Register(Client) Setup!")
       system = ActorSystemProvider.newRemoteActorSystem(
         name = "atomicregister",
         threads = 1,
         serialization = serializers);
       this.read_workload = c.read_workload
       this.write_workload = c.write_workload
-      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), "atomicreg")
+      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg${randomUUID()}")
       val path = ActorSystemProvider.actorPathForRef(atomicRegister, system);
       println(s"Atomic Register Path is $path");
       ClientRef(path)
@@ -157,14 +165,15 @@ object AtomicRegister extends DistributedBenchmark {
       println("Cleaning up Atomic Register(Client) side")
       if (lastIteration) {
         println("Cleaning up Last iteration")
-        if (atomicRegister != null){
-          system.stop(atomicRegister)
-          atomicRegister = null;
+        atomicRegister = null
+        try {
+          val f = system.terminate();
+          Await.ready(f, 11.second);
+          system = null;
+          println("Last cleanup completed!")
+        } catch {
+          case ex: Exception => println(s"Failed to terminate ActorSystem: $ex")
         }
-        system.terminate();
-        Await.ready(system.whenTerminated, 5.second);
-        system = null;
-        println("Last cleanup completed!")
       }
     }
   }
@@ -228,16 +237,16 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def newIteration(i: INIT): Unit = {
       current_run_id = i.init_id
-//      nodes =
-        for (c: ClientRef <- i.nodes) yield {
-          val f = context.system.actorSelection(c.actorPath)
-          f ! IDENTIFY
-          /*  TODO: resolveOne doesn't work?
-          val f = context.system.actorSelection(c.actorPath).resolveOne(10 seconds)
-          val a_ref: ActorRef = Await.result(f, 30 seconds)
-          logger.info(s"RESOLVED PATH=$a_ref")
-          a_ref*/
-        }
+      /*implicit val ec = scala.concurrent.ExecutionContext.global;
+      val actorRefsF = Future.sequence(i.nodes.map(node => context.actorSelection(node.actorPath).resolveOne(5 seconds)))
+      actorRefsF.onComplete {
+        case Success(actorRefs) => self ! ResolvedActors(actorRefs)
+        case Failure(ex) => logger.info(s"Failed to resolve ActorPaths: $ex")
+      }*/
+      for (c: ClientRef <- i.nodes){
+        val f = context.system.actorSelection(c.actorPath)
+        f ! IDENTIFY
+      }
       n = i.nodes.size
       selfRank = i.rank
       min_key = i.min
@@ -301,6 +310,11 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def receive = {
+
+      /*case ResolvedActors(actorRefs) => {
+        nodes = actorRefs
+        master ! INIT_ACK(current_run_id)
+      }*/
 
       case IDENTIFY => {
         nodes_listBuffer += sender()
@@ -394,7 +408,8 @@ object AtomicRegister extends DistributedBenchmark {
     }
   }
 
-  trait AtomicRegisterMessage
+  sealed trait AtomicRegisterMessage
+  case class ResolvedActors(actorRefs: List[ActorRef])
   case object DONE extends AtomicRegisterMessage
   case object IDENTIFY extends AtomicRegisterMessage
   case class READ(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage

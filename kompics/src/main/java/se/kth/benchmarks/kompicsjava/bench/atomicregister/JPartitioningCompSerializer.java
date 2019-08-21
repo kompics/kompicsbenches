@@ -16,13 +16,13 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
 
-public class JIterationCompSerializer implements Serializer {
+public class JPartitioningCompSerializer implements Serializer {
 
     public static void register() {
-        Serializers.register(new JIterationCompSerializer(), "jiterationcomp");
-        Serializers.register(INIT.class, "jiterationcomp");
-        Serializers.register(INIT_ACK.class, "jiterationcomp");
-        Serializers.register(RUN.class, "jiterationcomp");
+        Serializers.register(new JPartitioningCompSerializer(), "partitioningcomp");
+        Serializers.register(INIT.class, "partitioningcomp");
+        Serializers.register(INIT_ACK.class, "partitioningcomp");
+        Serializers.register(RUN.class, "partitioningcomp");
     }
 
     private static final byte INIT_FLAG = 1;
@@ -31,7 +31,7 @@ public class JIterationCompSerializer implements Serializer {
 
     @Override
     public int identifier() {
-        return se.kth.benchmarks.kompics.SerializerIds.J_IT_COMP;
+        return se.kth.benchmarks.kompics.SerializerIds.J_PART_COMP;
     }
 
     @Override

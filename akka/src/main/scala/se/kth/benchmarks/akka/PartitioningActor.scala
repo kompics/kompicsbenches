@@ -9,42 +9,57 @@ import akka.util.ByteString
 import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef, DONE}
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
-import IterationActor._
+import PartitioningActor.{ResolvedNodes, _}
 
 import scala.util.{Failure, Success}
 
-class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int) extends Actor{
+class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int) extends Actor{
   val logger = Logging(context.system, this)
+  implicit val ec = scala.concurrent.ExecutionContext.global;
 
-  var active_nodes = nodes
-  var n = nodes.size
+  val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes
+  var resolved_active_nodes: List[ActorRef] = null
+  val n = active_nodes.size
   var init_ack_count: Int = 0
   var done_count = 0
-  val min_key: Long = 0l
-  val max_key: Long = num_keys - 1
 
   override def receive: Receive = {
     case START => {
-      if (partition_size < n) {
-        active_nodes = nodes.slice(0, partition_size)
-        n = active_nodes.size
+      val actorRefsF = Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
+      actorRefsF.onComplete{
+        case Success(actorRefs) => {
+          /*for ((node, rank) <- actorRefs.zipWithIndex){
+            node ! INIT(rank, init_id, active_nodes, min_key, max_key)
+          }*/
+          self ! ResolvedNodes(actorRefs)
+        }
+        case Failure(ex) => {
+          logger.info(s"Failed to resolve ActorPaths: $ex")
+        }
       }
-      for ((node, rank) <- active_nodes.zipWithIndex){
-        val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
-        val ready = Await.ready(f, 5 seconds)
-        ready.value.get match {
-          case Success(a_ref) => a_ref ! INIT(rank, init_id, active_nodes, min_key, max_key)
-          case Failure(_) => {
+      /*for ((node, rank) <- active_nodes.zipWithIndex){
+        try {
+          val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
+          val a_ref: ActorRef = Await.result(f, 5 seconds)
+          a_ref ! INIT(rank, init_id, active_nodes, min_key, max_key)
+        } catch {
+          case _ => {
             val a_path = context.actorSelection(node.actorPath)
             logger.info(s"Could not resolve ActorRef. Sending INIT to ActorPath instead: $a_path")
             a_path ! INIT(rank, init_id, active_nodes, min_key, max_key)
           }
-        }
-        /*Await.result(f, 5 seconds)
-        val a_ref: ActorRef = Await.result(f, 5 seconds)
-        a_ref ! INIT(rank, init_id, active_nodes, min_key, max_key)*/
+        }*/
+
+    }
+
+    case ResolvedNodes(resolvedRefs) => {
+      val min_key: Long = 0l
+      val max_key: Long = num_keys - 1
+      resolved_active_nodes = resolvedRefs
+      for ((node, rank) <- resolvedRefs.zipWithIndex){
+        node ! INIT(rank, init_id, active_nodes, min_key, max_key)
       }
     }
 
@@ -56,11 +71,12 @@ class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLat
     }
 
     case RUN => {
-      for (node <- active_nodes){
+      resolved_active_nodes.foreach(ref => ref ! RUN)
+      /*for (node <- active_nodes){
         val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
         val a_ref = Await.result(f, 5 seconds)
         a_ref ! RUN
-      }
+      }*/
     }
     case DONE => {
       done_count += 1
@@ -72,29 +88,30 @@ class IterationActor(prepare_latch: CountDownLatch, finished_latch: CountDownLat
   }
 }
 
-object IterationActor{
+object PartitioningActor{
   case object START
+  case class ResolvedNodes(actorRefs: List[ActorRef])
   case class INIT(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
   case class INIT_ACK(init_id: Int)
   case object RUN
 }
 
 
-object IterationActorSerializer {
-  val NAME = "iterationactor"
+object PartitioningActorSerializer {
+  val NAME = "partitioningactor"
 
   private val INIT_FLAG: Byte = 1
   private val INIT_ACK_FLAG: Byte = 2
   private val RUN_FLAG: Byte = 3
 }
 
-class IterationActorSerializer extends Serializer {
-  import IterationActorSerializer._
+class PartitioningActorSerializer extends Serializer {
+  import PartitioningActorSerializer._
   import java.nio.{ ByteBuffer, ByteOrder }
 
   implicit val order = ByteOrder.BIG_ENDIAN;
 
-  override def identifier: Int = SerializerIds.ITACTOR
+  override def identifier: Int = SerializerIds.PARTITACTOR
   override def includeManifest: Boolean = false
 
   override def toBinary(o: AnyRef): Array[Byte] = {

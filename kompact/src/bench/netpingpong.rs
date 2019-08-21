@@ -244,7 +244,7 @@ const PING_ID: i8 = 1;
 const PONG_ID: i8 = 2;
 impl Serialiser<PingMsg> for PingPongSer {
     fn serid(&self) -> u64 {
-        42 // because why not^^
+        serialiser_ids::NETPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(9)
@@ -257,7 +257,7 @@ impl Serialiser<PingMsg> for PingPongSer {
 
 impl Serialiser<PongMsg> for PingPongSer {
     fn serid(&self) -> u64 {
-        42 // because why not^^
+        serialiser_ids::NETPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(9)

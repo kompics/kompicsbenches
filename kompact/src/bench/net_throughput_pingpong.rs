@@ -302,10 +302,9 @@ const STATIC_PING_ID: u8 = 1;
 const STATIC_PONG_ID: u8 = 2;
 const PING_ID: u8 = 3;
 const PONG_ID: u8 = 4;
-const SER_ID: u64 = 43;
 impl Serialiser<StaticPing> for PingPongSer {
     fn serid(&self) -> u64 {
-        SER_ID
+        serialiser_ids::NETTPPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(1)
@@ -318,7 +317,7 @@ impl Serialiser<StaticPing> for PingPongSer {
 
 impl Serialiser<StaticPong> for PingPongSer {
     fn serid(&self) -> u64 {
-        SER_ID
+        serialiser_ids::NETTPPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(1)
@@ -330,7 +329,7 @@ impl Serialiser<StaticPong> for PingPongSer {
 }
 impl Serialiser<Ping> for PingPongSer {
     fn serid(&self) -> u64 {
-        SER_ID
+        serialiser_ids::NETTPPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(9)
@@ -344,7 +343,7 @@ impl Serialiser<Ping> for PingPongSer {
 
 impl Serialiser<Pong> for PingPongSer {
     fn serid(&self) -> u64 {
-        SER_ID
+        serialiser_ids::NETTPPP_ID
     }
     fn size_hint(&self) -> Option<usize> {
         Some(9)

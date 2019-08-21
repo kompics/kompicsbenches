@@ -171,7 +171,6 @@ impl DistributedBenchmarkMaster for AtomicRegisterMaster {
                 for i in 0..(self.partition_size.unwrap()-1) as usize{
                     nodes.push(d[i].clone());   // TODO: is this a good way to "slice" the vector?
                 }
-                println!("Setting up partitioning actor with nodes...{:?}", nodes);
                 /*** Setup partitioning actor ***/
                 let (partitioning_actor, unique_reg_f) = system.create_and_register(|| PartitioningActor::with(prepare_latch.clone(), finished_latch.clone(), self.init_id, nodes, self.num_keys.unwrap(), self.partition_size.unwrap()));
                 unique_reg_f
@@ -376,10 +375,7 @@ impl AtomicRegisterActor {
         register.reading = true;
         self.register_readlist.get_mut(&key).unwrap().clear();
         let read = Read{run_id: self.current_run_id, rid: register.rid, key};
-        let nodes = self.nodes.as_ref().unwrap();
-        for node in nodes {
-            node.tell((read.clone(), AtomicRegisterSer), self);
-        }
+        self.bcast(AtomicRegisterMessage::Read(read));
     }
 
     fn invoke_write(&mut self, key: u64) -> (){
@@ -391,10 +387,7 @@ impl AtomicRegisterActor {
         register.reading = false;
         self.register_readlist.get_mut(&key).unwrap().clear();
         let read = Read{run_id: self.current_run_id, rid: register.rid, key};
-        let nodes = self.nodes.as_ref().unwrap();
-        for node in nodes {
-            node.tell((read.clone(), AtomicRegisterSer), self);
-        }
+        self.bcast(AtomicRegisterMessage::Read(read));
     }
 
     fn invoke_operations(&mut self) -> (){
@@ -444,6 +437,13 @@ impl AtomicRegisterActor {
         }
     }
 
+    fn bcast(&self, msg: AtomicRegisterMessage) -> (){
+        let nodes = self.nodes.as_ref().unwrap();
+        for node in nodes {
+            node.tell((msg.clone(), AtomicRegisterSer), self);
+        }
+    }
+
 }
 
 impl Provide<ControlPort> for AtomicRegisterActor {
@@ -478,10 +478,10 @@ impl Actor for AtomicRegisterActor {
                 Err(e) => error!(self.ctx.log(), "Error deserialising Run: {:?}", e),
             }
         }
-        else if ser_id == Serialiser::<Read>::serid(&ATOMIC_REGISTER_SER){
-            let r: Result<Read, SerError> = AtomicRegisterSer::deserialise(buf);
+        else if ser_id == Serialiser::<AtomicRegisterMessage>::serid(&ATOMIC_REGISTER_SER){
+            let r: Result<AtomicRegisterMessage, SerError> = AtomicRegisterSer::deserialise(buf);
             match r {
-                Ok(read) => {
+                Ok(AtomicRegisterMessage::Read(read)) => {
                     if read.run_id == self.current_run_id{
 //                        info!(self.ctx.log(), "Read key={} from {:?}", &read.key, &sender);
                         let current_register = self.register_state.get(&read.key).unwrap();
@@ -494,16 +494,10 @@ impl Actor for AtomicRegisterActor {
                             value: current_register.value,
                             sender_rank: self.rank
                         };
-                        sender.tell((value, AtomicRegisterSer), self);
+                        sender.tell((AtomicRegisterMessage::Value(value), AtomicRegisterSer), self);
                     }
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Read: {:?}", e),
-            }
-        }
-        else if ser_id == Serialiser::<Value>::serid(&ATOMIC_REGISTER_SER){
-            let r: Result<Value, SerError> = AtomicRegisterSer::deserialise(buf);
-            match r {
-                Ok(v) => {
+                Ok(AtomicRegisterMessage::Value(v)) => {
                     if v.run_id == self.current_run_id {
 //                        info!(self.ctx.log(), "Value key={} from {:?}", &v.key, &sender);
                         let current_register = self.register_state.get_mut(&v.key).unwrap();
@@ -537,22 +531,13 @@ impl Actor for AtomicRegisterActor {
                                         }
                                     };
                                     readlist.clear();
-                                    let nodes = self.nodes.as_ref().unwrap();
-                                    for node in nodes {
-                                        node.tell((write.clone(), AtomicRegisterSer), self);
-                                    }
+                                    self.bcast(AtomicRegisterMessage::Write(write));
                                 }
                             }
                         }
                     }
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Value: {:?}", e),
-            }
-        }
-        else if ser_id == Serialiser::<Write>::serid(&ATOMIC_REGISTER_SER){
-            let r: Result<Write, SerError> = AtomicRegisterSer::deserialise(buf);
-            match r {
-                Ok(w) => {
+                Ok(AtomicRegisterMessage::Write(w)) => {
                     if w.run_id == self.current_run_id{
 //                        info!(self.ctx.log(), "Write key={} from {:?}", &w.key, &sender);
                         let current_register = self.register_state.get_mut(&w.key).unwrap();
@@ -562,15 +547,10 @@ impl Actor for AtomicRegisterActor {
                             current_register.value = w.value;
                         }
                     }
-                    sender.tell((Ack{run_id: w.run_id, key: w.key, rid: w.rid}, AtomicRegisterSer), self);
+                    let ack = Ack{run_id: w.run_id, key: w.key, rid: w.rid};
+                    sender.tell((AtomicRegisterMessage::Ack(ack), AtomicRegisterSer), self);
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Write: {:?}", e),
-            }
-        }
-        else if ser_id == Serialiser::<Ack>::serid(&ATOMIC_REGISTER_SER){
-            let r: Result<Ack, SerError> = AtomicRegisterSer::deserialise(buf);
-            match r {
-                Ok(a) => {
+                Ok(AtomicRegisterMessage::Ack(a)) => {
                     if a.run_id == self.current_run_id{
                         let current_register = self.register_state.get_mut(&a.key).unwrap();
                         if a.rid == current_register.rid{
@@ -588,7 +568,7 @@ impl Actor for AtomicRegisterActor {
                         }
                     }
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Ack: {:?}", e),
+                Err(e) => error!(self.ctx.log(), "Error deserialising AtomicRegisterMessage: {:?}", e),
             }
         }
     }
@@ -651,51 +631,73 @@ const WRITE_ID: i8 = 2;
 const VALUE_ID: i8 = 3;
 const ACK_ID: i8 = 4;
 
-impl Serialiser<Read> for AtomicRegisterSer {
-    fn serid(&self) -> u64 { serializer_ids::ATOMICREG_READ }
-    fn size_hint(&self) -> Option<usize> { Some(17) }
-    fn serialise(&self, r: &Read, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(READ_ID);
-        buf.put_u32_be(r.run_id);
-        buf.put_u64_be(r.key);
-        buf.put_u32_be(r.rid);
-        Ok(())
+#[derive(Clone, Debug)]
+enum AtomicRegisterMessage {
+    Read(Read),
+    Value(Value),
+    Write(Write),
+    Ack(Ack),
+}
+
+impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer{
+    fn serid(&self) -> u64 {
+        serialiser_ids::ATOMICREG_ID
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(33)    // TODO: Set it dynamically? 33 is for the largest message(Value)
+    }
+
+    fn serialise(&self, enm: &AtomicRegisterMessage, buf: &mut BufMut) -> Result<(), SerError> {
+        match enm {
+            AtomicRegisterMessage::Read(r) => {
+                buf.put_i8(READ_ID);
+                buf.put_u32_be(r.run_id);
+                buf.put_u64_be(r.key);
+                buf.put_u32_be(r.rid);
+                Ok(())
+            }
+            AtomicRegisterMessage::Value(v) => {
+                buf.put_i8(VALUE_ID);
+                buf.put_u32_be(v.run_id);
+                buf.put_u64_be(v.key);
+                buf.put_u32_be(v.rid);
+                buf.put_u32_be(v.ts);
+                buf.put_u32_be(v.wr);
+                buf.put_u32_be(v.value);
+                buf.put_u32_be(v.sender_rank);
+                Ok(())
+            }
+            AtomicRegisterMessage::Write(w) => {
+                buf.put_i8(WRITE_ID);
+                buf.put_u32_be(w.run_id);
+                buf.put_u64_be(w.key);
+                buf.put_u32_be(w.rid);
+                buf.put_u32_be(w.ts);
+                buf.put_u32_be(w.wr);
+                buf.put_u32_be(w.value);
+                Ok(())
+            }
+            AtomicRegisterMessage::Ack(a) => {
+                buf.put_i8(ACK_ID);
+                buf.put_u32_be(a.run_id);
+                buf.put_u64_be(a.key);
+                buf.put_u32_be(a.rid);
+                Ok(())
+            }
+        }
     }
 }
-impl Deserialiser<Read> for AtomicRegisterSer {
-    fn deserialise(buf: &mut Buf) -> Result<Read, SerError> {
+
+impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer{
+    fn deserialise(buf: &mut Buf) -> Result<AtomicRegisterMessage, SerError> {
         match buf.get_i8() {
             READ_ID=> {
                 let run_id = buf.get_u32_be();
                 let key = buf.get_u64_be();
                 let rid = buf.get_u32_be();
-                Ok(Read{run_id, key, rid})
+                Ok(AtomicRegisterMessage::Read(Read{run_id, key, rid}))
             }
-            _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected Read.".into(),
-            )),
-        }
-    }
-}
-
-impl Serialiser<Value> for AtomicRegisterSer {
-    fn serid(&self) -> u64 { serializer_ids::ATOMICREG_VALUE }
-    fn size_hint(&self) -> Option<usize> { Some(33) }
-    fn serialise(&self, v: &Value, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(VALUE_ID);
-        buf.put_u32_be(v.run_id);
-        buf.put_u64_be(v.key);
-        buf.put_u32_be(v.rid);
-        buf.put_u32_be(v.ts);
-        buf.put_u32_be(v.wr);
-        buf.put_u32_be(v.value);
-        buf.put_u32_be(v.sender_rank);
-        Ok(())
-    }
-}
-impl Deserialiser<Value> for AtomicRegisterSer {
-    fn deserialise(buf: &mut Buf) -> Result<Value, SerError> {
-        match buf.get_i8() {
             VALUE_ID => {
                 let run_id = buf.get_u32_be();
                 let key = buf.get_u64_be();
@@ -704,59 +706,8 @@ impl Deserialiser<Value> for AtomicRegisterSer {
                 let wr = buf.get_u32_be();
                 let value = buf.get_u32_be();
                 let sender_rank = buf.get_u32_be();
-                Ok(Value{run_id, key, rid, ts, wr, value, sender_rank})
+                Ok(AtomicRegisterMessage::Value(Value{run_id, key, rid, ts, wr, value, sender_rank}))
             }
-            _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected Value.".into(),
-            )),
-        }
-    }
-}
-
-impl Serialiser<Ack> for AtomicRegisterSer {
-    fn serid(&self) -> u64 { serializer_ids::ATOMICREG_ACK }
-    fn size_hint(&self) -> Option<usize> { Some(17) }
-    fn serialise(&self, a: &Ack, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(ACK_ID);
-        buf.put_u32_be(a.run_id);
-        buf.put_u64_be(a.key);
-        buf.put_u32_be(a.rid);
-        Ok(())
-    }
-}
-impl Deserialiser<Ack> for AtomicRegisterSer {
-    fn deserialise(buf: &mut Buf) -> Result<Ack, SerError> {
-        match buf.get_i8() {
-            ACK_ID=> {
-                let run_id = buf.get_u32_be();
-                let key = buf.get_u64_be();
-                let rid = buf.get_u32_be();
-                Ok(Ack{run_id, key, rid})
-            }
-            _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected Ack.".into(),
-            )),
-        }
-    }
-}
-
-impl Serialiser<Write> for AtomicRegisterSer {
-    fn serid(&self) -> u64 { serializer_ids::ATOMICREG_WRITE }
-    fn size_hint(&self) -> Option<usize> { Some(29) }
-    fn serialise(&self, w: &Write, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(WRITE_ID);
-        buf.put_u32_be(w.run_id);
-        buf.put_u64_be(w.key);
-        buf.put_u32_be(w.rid);
-        buf.put_u32_be(w.ts);
-        buf.put_u32_be(w.wr);
-        buf.put_u32_be(w.value);
-        Ok(())
-    }
-}
-impl Deserialiser<Write> for AtomicRegisterSer {
-    fn deserialise(buf: &mut Buf) -> Result<Write, SerError> {
-        match buf.get_i8() {
             WRITE_ID => {
                 let run_id = buf.get_u32_be();
                 let key = buf.get_u64_be();
@@ -764,10 +715,17 @@ impl Deserialiser<Write> for AtomicRegisterSer {
                 let ts = buf.get_u32_be();
                 let wr = buf.get_u32_be();
                 let value = buf.get_u32_be();
-                Ok(Write{run_id, key, rid, ts, wr, value})
+                Ok(AtomicRegisterMessage::Write(Write{run_id, key, rid, ts, wr, value}))
             }
+            ACK_ID=> {
+                let run_id = buf.get_u32_be();
+                let key = buf.get_u64_be();
+                let rid = buf.get_u32_be();
+                Ok(AtomicRegisterMessage::Ack(Ack{run_id, key, rid}))
+            }
+
             _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected Write.".into(),
+                "Found unkown id, but expected Read, Value, Write or Ack.".into(),
             )),
         }
     }
