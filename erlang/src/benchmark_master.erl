@@ -208,12 +208,15 @@ complete_benchmark(Request, Response) ->
 
 -spec run_local_benchmark(Request :: bench_request()) -> ok.
 run_local_benchmark(Request) ->
+	io:fwrite("Starting local benchmark ~w with params ~p.~n", [Request#bench_request.bench_module, Request#bench_request.params]),
 	Result = benchmark_runner:run(Request#bench_request.bench_module, Request#bench_request.params),
+	io:fwrite("Finished local benchmark ~w with result: ~p.~n", [Request#bench_request.bench_module, Result]),
 	complete_benchmark(Request, Result),
 	ok.
 
 -spec run_distributed_benchmark(Request :: bench_request(), Data :: state()) -> ok.
 run_distributed_benchmark(Request, Data) ->
+	io:fwrite("Starting distributed benchmark ~w with params ~p.~n", [Request#bench_request.bench_module, Request#bench_request.params]),
 	try run_distributed_benchmark_caught(Request, Data) of
 		{ok, ResultData} ->
 			io:fwrite("Benchmark ~w completed with ~b runs.~n", [Request#bench_request.bench_module, length(ResultData)]),

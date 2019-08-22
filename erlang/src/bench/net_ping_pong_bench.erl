@@ -68,8 +68,8 @@ master_prepare_iteration(Instance, ClientData) ->
 	[Ponger| _Rest] = ClientData,
 	Self = self(),
 	Pinger = spawn_link(fun() -> pinger(Ponger, Instance#master_state.num, Self) end),
-	Newnstance = Instance#master_state{pinger = Pinger, ponger = Ponger},
-	{ok, Newnstance}.
+	NewInstance = Instance#master_state{pinger = Pinger, ponger = Ponger},
+	{ok, NewInstance}.
 
 -spec master_run_iteration(Instance :: master_instance()) ->
 	{ok, NewInstance :: master_instance()}.

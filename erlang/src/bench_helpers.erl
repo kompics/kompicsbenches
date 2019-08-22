@@ -3,6 +3,7 @@
 -export([
 	await_exit/1,
 	await_exit_all/1,
+	await_all/2,
 	benchmark_type/1
 	]).
 
@@ -34,6 +35,23 @@ await_exit_all(Pids) ->
 			end;
 		X ->
 			{error, X}
+	end.
+
+-spec await_all(Pids :: [pid()], Token :: term()) ->
+	ok |
+	{error, term()}.
+await_all([], _Token) ->
+	ok;
+await_all(Pids, Token) ->
+	receive
+		{Token, Pid} ->
+			NewPids = lists:delete(Pid, Pids),
+			if
+				length(NewPids) == length(Pids) ->
+					{error, io_lib:fwrite("Process ~p sent token, but was not found in ~p.~n", [Pid, Pids])};
+				true ->
+					await_all(NewPids, Token)
+			end
 	end.
 
 -spec benchmark_type(Module :: module()) ->

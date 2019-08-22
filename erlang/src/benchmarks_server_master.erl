@@ -87,23 +87,25 @@ decoder() -> benchmarks.
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'NetPingPong'(Message, Stream, _State) ->
-    io:fwrite("Got NetPingPong request request.~n"),
+    io:fwrite("Got NetPingPong request.~n"),
     Response = await_benchmark_result(net_ping_pong_bench, Message),
     {Response, Stream}.
 
 -spec 'ThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'ThroughputPingPong'(_Message, Stream, _State) ->
-    io:fwrite("Got ThroughputPingPong request request.~n"),
-    {test_result:not_implemented(), Stream}.
+'ThroughputPingPong'(Message, Stream, _State) ->
+    io:fwrite("Got ThroughputPingPong request.~n"),
+    Response = await_benchmark_result(throughput_ping_pong_bench, Message),
+    {Response, Stream}.
 
 -spec 'NetThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'NetThroughputPingPong'(_Message, Stream, _State) ->
-    io:fwrite("Got NetThroughputPingPong request request.~n"),
-    {test_result:not_implemented(), Stream}.
+'NetThroughputPingPong'(Message, Stream, _State) ->
+    io:fwrite("Got NetThroughputPingPong request.~n"),
+    Response = await_benchmark_result(net_throughput_ping_pong_bench, Message),
+    {Response, Stream}.
 
 -spec await_benchmark_result(Benchmark :: module(), Params :: term()) -> 'TestResult'().
 await_benchmark_result(Benchmark, Params) ->
