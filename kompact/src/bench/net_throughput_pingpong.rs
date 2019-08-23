@@ -118,14 +118,14 @@ impl DistributedBenchmarkMaster for PingPongMaster {
     type ClientConf = ClientParams;
     type ClientData = ClientRefs;
 
-    fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
+    fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         let params = Params::from_req(&c);
         let system = crate::kompact_system_provider::global()
             .new_remote_system("throughputpingpong", num_cpus::get());
         self.system = Some(system);
         let client_conf = ClientParams::new(params.num_pairs, params.static_only);
         self.params = Some(params);
-        client_conf
+        Ok(client_conf)
     }
     fn prepare_iteration(&mut self, d: Vec<Self::ClientData>) -> () {
         self.pongers = d[0].0.clone();

@@ -157,7 +157,7 @@ mod distributed_benchmark {
         type ClientConf;
         type ClientData;
 
-        fn setup(&mut self, c: Self::MasterConf, meta: &DeploymentMetaData) -> Self::ClientConf;
+        fn setup(&mut self, c: Self::MasterConf, meta: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError>;
         fn prepare_iteration(&mut self, _d: Vec<Self::ClientData>) -> () {}
         fn run_iteration(&mut self) -> ();
         fn cleanup_iteration(&mut self, _last_iteration: bool, _exec_time_millis: f64) -> () {}
@@ -277,10 +277,11 @@ mod distributed_benchmark {
         ) -> Result<ClientConfHolder, BenchmarkError>
         {
             let res = B::msg_to_master_conf(msg);
-            res.map(|c| {
-                let cconf = self.bm.setup(c, meta);
-                let cconf_ser = B::client_conf_to_str(cconf);
-                ClientConfHolder(cconf_ser)
+            res.and_then(|c| {
+                self.bm.setup(c, meta).map(|cconf| {
+                    let cconf_ser = B::client_conf_to_str(cconf);
+                    ClientConfHolder(cconf_ser)
+                })
             })
         }
 
@@ -407,6 +408,7 @@ pub enum BenchmarkError {
     RPCError(grpc::Error),
     InvalidTest(String),
     NotImplemented(NotImplementedError),
+    InvalidDeployment(String),
 }
 
 impl From<grpc::Error> for BenchmarkError {
@@ -531,7 +533,9 @@ pub(crate) mod tests {
         type ClientData = String;
         type MasterConf = Test3Conf;
 
-        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf { "ok".into() }
+        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> { 
+            Ok("ok".into()) 
+        }
 
         fn prepare_iteration(&mut self, _d: Vec<Self::ClientData>) -> () {}
 
@@ -555,15 +559,15 @@ pub(crate) mod tests {
     fn instantiate_distributed_benchmark() -> () {
         let mut master = Test3B::new_master();
         let msg = PingPongRequest::new();
-        let mconf = Test3B::msg_to_master_conf(Box::new(msg)).unwrap();
-        let cconf = master.setup(mconf, &DeploymentMetaData::new(1));
+        let mconf = Test3B::msg_to_master_conf(Box::new(msg)).expect("Could not create master conf!");
+        let cconf = master.setup(mconf, &DeploymentMetaData::new(1)).expect("Could not setup master!");
         let cconf_ser = Test3B::client_conf_to_str(cconf);
         let mut client = Test3B::new_client();
-        let cconf_deser = Test3B::str_to_client_conf(cconf_ser).unwrap();
+        let cconf_deser = Test3B::str_to_client_conf(cconf_ser).expect("Could not create client conf");
         let cdata = client.setup(cconf_deser);
         let cdata_ser = Test3B::client_data_to_str(cdata);
         client.prepare_iteration();
-        let cdata_deser = Test3B::str_to_client_data(cdata_ser).unwrap();
+        let cdata_deser = Test3B::str_to_client_data(cdata_ser).expect("Could not create client data");
         let all_cdata = vec![cdata_deser];
         master.prepare_iteration(all_cdata);
         master.run_iteration();

@@ -129,7 +129,7 @@ pub mod actor_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
+        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
@@ -137,7 +137,8 @@ pub mod actor_atomicregister {
             self.num_keys = Some(c.number_of_keys);
             let system = crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
             self.system = Some(system);
-            ClientParams { read_workload: c.read_workload, write_workload: c.write_workload }
+            let params = ClientParams { read_workload: c.read_workload, write_workload: c.write_workload };
+            Ok(params)
         }
 
         fn prepare_iteration(&mut self, d: Vec<Self::ClientData>) -> () {
@@ -668,7 +669,7 @@ pub mod mixed_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
+        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
@@ -676,7 +677,8 @@ pub mod mixed_atomicregister {
             self.num_keys = Some(c.number_of_keys);
             let system = crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
             self.system = Some(system);
-            ClientParams { read_workload: c.read_workload, write_workload: c.write_workload }
+            let params = ClientParams { read_workload: c.read_workload, write_workload: c.write_workload };
+            Ok(params)
         }
 
         fn prepare_iteration(&mut self, d: Vec<Self::ClientData>) -> () {
