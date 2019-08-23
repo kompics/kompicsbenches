@@ -17,6 +17,8 @@ public class BEBDeliver implements KompicsEvent, PatternExtractor<Class<Object>,
         return this.payload;
     }
 
+    
+    @SuppressWarnings("unchecked")
     @Override
     public Class<Object> extractPattern() {
         Class<?> c = payload.getClass();

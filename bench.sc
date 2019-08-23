@@ -86,11 +86,9 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impl: String = "*"): Unit = {
 	val nodes = readNodes(withNodes);
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impl, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -127,51 +125,32 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*"): Unit = {
 	val remoteDir = tmp.dir();
-	val lowercaseUseOnly = useOnly.toLowerCase()
-	var copyDirectories:  ListBuffer[String] = ListBuffer("proto", "runner")
-	val copyFiles = List[String]("build.sc", "bench.sc", "benchmarks.sc", "plot.sc", "client.sh", "nodes.conf")
-	var useScala = false
-	var useRust = false
-	if (lowercaseUseOnly.contains("kompics")) {
-		copyDirectories += "kompics"
-		useScala = true
-	}
-	if (lowercaseUseOnly.contains("kompact")) {
-		copyDirectories += "kompact"
-		useRust = true
-	}
-	if (lowercaseUseOnly.contains("akka")){
-		copyDirectories += "akka"
-		useScala = true
-	}
-	if (lowercaseUseOnly.contains("actix")) {
-		copyDirectories += "actix"
-		useRust = true
-	}
-	if (useScala) copyDirectories += "shared_scala"
-	if (useRust) copyDirectories += "shared_rust"
+	val lowercaseUseOnly = impl.toLowerCase();
+	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
+	val masterBenches = runnersForImpl(impl, identity);
+	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
+		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
+	};
+	println(s"Going to copy files=${copyFiles.mkString("[", ",", "]")} and folders==${copyDirectories.mkString("[", ",", "]")}.");
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
 		val dirName = s"${ip}-port-${p}";
 		val dir = remoteDir / dirName;
 		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
-		if (copyDirectories.size == 0) cp(pwd, dir);
-		else {
-			for (d <- copyDirectories) {
-				mkdir(dir / d)
-				cp.over(pwd / d, dir / d);
-			}
-			for (file <- copyFiles) cp.into(pwd / file, dir)
+		for (d <- copyDirectories) {
+			mkdir(dir / d);
+			cp.over(pwd / d, dir / d);
+		}
+		for (file <- copyFiles) {
+			os.copy(pwd / file, dir / file, createFolders = true);
 		}
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = masterBenches.map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -210,10 +189,8 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, useOnly: String = ""): Unit = {
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val runners = use_impl.values.map(_.localRunner(runnerAddr));
+def local(testing: Boolean = false, impl: String = "*"): Unit = {
+	val runners = runnersForImpl(impl, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -250,6 +227,19 @@ def local(testing: Boolean = false, useOnly: String = ""): Unit = {
 	println("========");
 	println(s"Finished all runners in ${format(totalTime)}");
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
+}
+
+private def runnersForImpl[T](impl: String, mapper: BenchmarkImpl => T): List[T] = {
+	val runners = if (impl == "*") {
+			implementations.values.map(mapper).toList;
+	} else {
+			implementations.get(impl).map(i => List(mapper(i))).getOrElse(List.empty)
+	};
+	if (runners.isEmpty) {
+		Console.err.println(s"No benchmark found for '${impl}'");
+		System.exit(1);
+	}
+	runners
 }
 
 private def endSeparator(label: String, log: File): Unit = {

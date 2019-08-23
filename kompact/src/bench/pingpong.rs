@@ -5,12 +5,13 @@ use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-#[derive(Clone, Debug)]
-struct Start;
+
 #[derive(Clone, Debug)]
 struct Ping;
+const PING: Ping = Ping;
 #[derive(Clone, Debug)]
 struct Pong;
+const PONG: Pong = Pong;
 
 pub mod actor_pingpong {
     use super::*;
@@ -22,7 +23,7 @@ pub mod actor_pingpong {
         type Conf = PingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest)
         }
 
@@ -99,7 +100,7 @@ pub mod actor_pingpong {
                         let latch = self.latch.take().unwrap();
                         let pinger_ref = pinger.actor_ref();
 
-                        pinger_ref.tell(Box::new(Start), system);
+                        pinger_ref.tell(&START, system);
                         latch.wait();
                     }
                     None => unimplemented!(),
@@ -159,13 +160,13 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Pinger {
-        fn receive_local(&mut self, _sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Start>() {
-                self.ponger.tell(Box::new(Ping), &self.ctx);
+                self.ponger.tell(&PING, &self.ctx);
             } else if msg.is::<Pong>() {
                 if self.count_down > 0 {
                     self.count_down -= 1;
-                    self.ponger.tell(Box::new(Ping), &self.ctx);
+                    self.ponger.tell(&PING, &self.ctx);
                 } else {
                     let _ = self.latch.decrement();
                 }
@@ -174,7 +175,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -200,15 +201,15 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Ponger {
-        fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Ping>() {
-                sender.tell(Box::new(Pong), &self.ctx);
+                sender.tell(&PONG, &self.ctx);
             } else {
                 crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -232,7 +233,7 @@ pub mod component_pingpong {
         type Conf = PingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest)
         }
 

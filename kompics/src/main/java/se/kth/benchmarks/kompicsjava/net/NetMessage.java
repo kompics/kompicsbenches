@@ -35,16 +35,19 @@ public class NetMessage implements Msg<NetAddress, NetHeader>, PatternExtractor<
         return header;
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public NetAddress getSource() {
         return header.getSource();
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public NetAddress getDestination() {
         return header.getDestination();
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public Transport getProtocol() {
         return header.getProtocol();

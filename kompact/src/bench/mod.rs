@@ -8,7 +8,11 @@ pub mod pingpong;
 pub mod throughput_pingpong;
 pub mod atomicregister;
 
-pub fn component() -> Box<BenchmarkFactory> {
+#[derive(Clone, Debug)]
+pub struct Start;
+pub const START: Start = Start;
+
+pub fn component() -> Box<dyn BenchmarkFactory> {
     Box::new(ComponentFactory {})
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -24,19 +28,24 @@ impl BenchmarkFactory for ComponentFactory {
         }
     }
 
-    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::component_pingpong::PingPong {}.into())
     }
-    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 
-    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(throughput_pingpong::component_pingpong::PingPong {}.into())
     }
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
     fn atomic_register(
@@ -46,7 +55,7 @@ impl BenchmarkFactory for ComponentFactory {
     }
 }
 
-pub fn actor() -> Box<BenchmarkFactory> {
+pub fn actor() -> Box<dyn BenchmarkFactory> {
     Box::new(ActorFactory {})
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -63,27 +72,27 @@ impl BenchmarkFactory for ActorFactory {
         }
     }
 
-    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::actor_pingpong::PingPong {}.into())
     }
-    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(netpingpong::PingPong {}.into())
     }
 
-    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(throughput_pingpong::actor_pingpong::PingPong {}.into())
     }
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
 
-    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomicregister::actor_atomicregister::AtomicRegister {}.into())
     }
 }
-pub fn mixed() -> Box<BenchmarkFactory> {
+pub fn mixed() -> Box<dyn BenchmarkFactory> {
     Box::new(MixedFactory {})
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -102,23 +111,23 @@ impl BenchmarkFactory for MixedFactory {
         }
     }
 
-    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::component_pingpong::PingPong {}.into())
     }
-    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(netpingpong::PingPong {}.into())
     }
 
-    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(throughput_pingpong::component_pingpong::PingPong {}.into())
     }
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
 
-    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomicregister::mixed_atomicregister::AtomicRegister {}.into())
     }
 }

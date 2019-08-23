@@ -5,6 +5,21 @@ import scala.reflect._
 import scala.collection.mutable
 
 object ImplResults {
+  def paramsToImpl[Params](
+    input:  Map[String, ImplGroupedResult[Params]],
+    mapper: (String, Params) => String): Map[String, ImplGroupedResult[Params]] = {
+    val builder = mutable.HashMap.empty[String, ImplGroupedResult[Params]];
+    val mapped = input.mapValues(_.paramsToImpl(mapper));
+    mapped.foreach {
+      case (_, impls) =>
+        impls.foreach {
+          case (key, result) =>
+            builder += (key -> result);
+        }
+    }
+    builder.toMap
+  }
+
   def slices[Params, T](
     input:   Map[String, ImplGroupedResult[Params]],
     grouper: Params => T,
@@ -44,6 +59,53 @@ object ImplResults {
     f:     (Params, Double) => Double): Map[String, ImplGroupedResult[Params]] = {
     input.mapValues(_.mapMeans(f))
   }
+
+  def merge[Params](
+    input:       Map[String, ImplGroupedResult[Params]],
+    paramMapper: Params => Array[String]): ImplNDResult = {
+    val labels = mutable.ArrayBuffer.empty[String];
+    val preColumns = mutable.HashMap.empty[Params, mutable.ArrayBuffer[String]];
+    input.foreach {
+      case (impl, res) =>
+        labels += impl;
+        val indexedParams = res.params.zipWithIndex;
+        val meanArray = res.means.toArray;
+        indexedParams.foreach {
+          case (param, index) =>
+            val entry = preColumns.getOrElseUpdate(param, mutable.ArrayBuffer.empty);
+            entry += meanArray(index).toString;
+        }
+    }
+    var nParamColumns = 0;
+    val columns = preColumns.toArray.map {
+      case (p, c) =>
+        val paramColumns = paramMapper(p);
+        nParamColumns = paramColumns.length;
+        (paramColumns ++ c).toArray
+    };
+    ImplNDResult(labels.toArray, columns, nParamColumns)
+  }
+
+  def merge(input: Map[String, Impl2DResult]): ImplNDResult = {
+    val labels = mutable.ArrayBuffer.empty[String];
+    val preColumns = mutable.HashMap.empty[Long, mutable.ArrayBuffer[String]];
+    input.toList.sortBy(_._1).foreach {
+      case (impl, res) =>
+        labels += impl;
+        val indexedParams = res.params.zipWithIndex;
+        val meanArray = res.means.toArray;
+        indexedParams.foreach {
+          case (param, index) =>
+            val entry = preColumns.getOrElseUpdate(param, mutable.ArrayBuffer.empty);
+            entry += meanArray(index).toString;
+        }
+    }
+    val columns = preColumns.toArray.sortBy(_._1).map {
+      case (p, c) =>
+        (Array(p.toString) ++ c).toArray
+    };
+    ImplNDResult(labels.toArray, columns, 1)
+  }
 }
 
 case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[Params], means: List[Double]) {
@@ -63,6 +125,21 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
   def map3D(f: Params => (Long, Long)): Impl3DResult = {
     val (params1, params2) = this.params.map(f).unzip;
     Impl3DResult(implLabel, params1.toArray, params2.toArray, means.toArray)
+  }
+
+  def paramsToImpl(mapper: (String, Params) => String): Map[String, ImplGroupedResult[Params]] = {
+    val indexedParams = params.zipWithIndex;
+    val builder = mutable.HashMap.empty[String, (mutable.ListBuffer[Params], mutable.ListBuffer[Double])];
+    val meanArray = means.toArray;
+    indexedParams.foreach {
+      case (p, i) =>
+        val key = mapper(implLabel, p);
+        val entry = builder.getOrElseUpdate(key, (mutable.ListBuffer.empty, mutable.ListBuffer.empty));
+        val mean = meanArray(i);
+        entry._1 += p;
+        entry._2 += mean;
+    }
+    builder.map { case (label, t) => (label -> ImplGroupedResult(label, t._1.toList, t._2.toList)) }.toMap
   }
 
   def groupBy[T](grouper: Params => T): Map[T, ImplGroupedResult[Params]] = {
@@ -150,4 +227,22 @@ case class Impl3DResult(implLabel: String, params1: Array[Long], params2: Array[
     case _ => ???
   };
   override def size(): Int = means.size;
+}
+
+case class ImplNDResult(labels: Array[String], rows: Array[Array[String]], dataColumnOffset: Int) extends dataset.DataSet {
+  override def getDimensions(): Int = rows(0).length;
+  override def getPointValue(point: Int, dimension: Int): String = try {
+    rows(point)(dimension)
+  } catch {
+    case ex: Throwable => {
+      Console.err.println(s"Got error for col=$dimension, row=$point (of cols=${getDimensions()}, rows=${size()}): $ex");
+      ""
+    }
+  }
+  override def size(): Int = rows.length;
+
+  override def toString(): String = s"""ImplNDResult(
+  labels=${labels.mkString(",")},
+  rows=${rows.map(_.mkString(",")).mkString("	[\n		", "\n		", "\n	]")},
+)""";
 }

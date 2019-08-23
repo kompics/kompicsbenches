@@ -1,6 +1,6 @@
 use crate::{
     benchmark::*,
-    kompics_benchmarks::{benchmarks, benchmarks_grpc, distributed, distributed_grpc, messages},
+    kompics_benchmarks::{distributed, distributed_grpc, messages},
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
@@ -23,7 +23,7 @@ pub fn run(
     service_port: u16,
     master_address: IpAddr,
     master_port: u16,
-    benchmarks: Box<BenchmarkFactory>,
+    benchmarks: Box<dyn BenchmarkFactory>,
     logger: Logger,
 ) -> ()
 {
@@ -84,7 +84,7 @@ impl ClientCommand {
 struct BenchmarkClient {
     logger:           Logger,
     state:            StateHolder,
-    benchmarks:       Box<BenchmarkFactory>,
+    benchmarks:       Box<dyn BenchmarkFactory>,
     service_address:  IpAddr,
     service_port:     u16,
     master_address:   IpAddr,
@@ -96,7 +96,7 @@ struct BenchmarkClient {
 impl BenchmarkClient {
     fn new(
         logger: Logger,
-        benchmarks: Box<BenchmarkFactory>,
+        benchmarks: Box<dyn BenchmarkFactory>,
         service_address: IpAddr,
         service_port: u16,
         master_address: IpAddr,
@@ -117,6 +117,7 @@ impl BenchmarkClient {
         }
     }
 
+    #[allow(dead_code)]
     fn state(&self) -> StateHolder { self.state.clone() }
 
     fn start(&mut self) -> () {
@@ -310,6 +311,7 @@ struct StateHolder(Arc<Mutex<State>>);
 impl StateHolder {
     fn init() -> StateHolder { StateHolder(Arc::new(Mutex::new(State::CheckingIn))) }
 
+    #[allow(dead_code)]
     fn assign(&self, v: State) -> () {
         let mut state = self.0.lock().unwrap();
         *state = v;
@@ -355,11 +357,11 @@ enum StateError {
 }
 
 struct ActiveBench {
-    b:        Box<AbstractDistributedBenchmark>,
-    instance: Box<AbstractBenchmarkClient>,
+    b:        Box<dyn AbstractDistributedBenchmark>,
+    instance: Box<dyn AbstractBenchmarkClient>,
 }
 impl ActiveBench {
-    fn new(b: Box<AbstractDistributedBenchmark>) -> ActiveBench {
+    fn new(b: Box<dyn AbstractDistributedBenchmark>) -> ActiveBench {
         let instance = b.new_client();
         ActiveBench { b, instance }
     }
@@ -378,7 +380,7 @@ impl ActiveBench {
     fn label(&self) -> &'static str { self.b.label() }
 }
 impl fmt::Debug for ActiveBench {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ActiveBench({})", self.b.label())
     }
 }

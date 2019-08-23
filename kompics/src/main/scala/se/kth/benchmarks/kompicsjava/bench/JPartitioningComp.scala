@@ -15,15 +15,15 @@ import scala.collection.mutable
 class JPartitioningComp(init: Init[JPartitioningComp]) extends ComponentDefinition {
   val net = requires[Network]
 
-  val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
-  val active_nodes = new util.LinkedList[JNetAddress]()
+  val Init(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress] @unchecked, num_keys: Long, partition_size: Int) = init;
+  val active_nodes = new util.LinkedList[JNetAddress]();
   for (i <- 0 until partition_size) {
     active_nodes.add(nodes(i).asJava)
   }
-  val n = active_nodes.size()
-  var init_ack_count: Int = 0
-  var done_count = 0
-  var partitions = mutable.Map[Long, List[NetAddress]]()
+  val n = active_nodes.size();
+  var init_ack_count: Int = 0;
+  var done_count = 0;
+  var partitions = mutable.Map[Long, List[NetAddress]]();
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {

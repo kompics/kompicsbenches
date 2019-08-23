@@ -1,7 +1,7 @@
 use crate::{
     benchmark::{Benchmark, BenchmarkError, BenchmarkInstance, *},
     benchmark_master::ClientEntry,
-    kompics_benchmarks::{distributed, messages},
+    kompics_benchmarks::{messages},
 };
 use futures::future::{self, Future};
 //use slog::{crit, debug, error, info, o, warn, Drain, Logger};
@@ -154,7 +154,7 @@ impl<'a> Stats for &'a Vec<f64> {
 }
 
 pub(crate) struct DistributedIteration {
-    master:        Box<AbstractBenchmarkMaster>,
+    master:        Box<dyn AbstractBenchmarkMaster>,
     client_data_l: Vec<(ClientEntry, ClientDataHolder)>,
     n_runs:        usize,
     results:       Vec<f64>,
@@ -162,7 +162,7 @@ pub(crate) struct DistributedIteration {
 
 impl DistributedIteration {
     pub(crate) fn new(
-        master: Box<AbstractBenchmarkMaster>,
+        master: Box<dyn AbstractBenchmarkMaster>,
         client_data_l: Vec<(ClientEntry, ClientDataHolder)>,
     ) -> DistributedIteration
     {

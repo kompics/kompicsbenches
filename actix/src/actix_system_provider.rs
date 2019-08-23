@@ -114,13 +114,13 @@ pub enum SystemError {
 }
 
 enum SystemCommand {
-    Start(Box<FnOnce() + Send>),
+    Start(Box<dyn FnOnce() + Send>),
     //Stop,
     //Run,
     Shutdown,
 }
 impl fmt::Debug for SystemCommand {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SystemCommand::Start(_) => write!(f, "SystemCommand::Start(<fun>)"),
             //SystemCommand::Stop => write!(f, "SystemCommand::Stop"),
