@@ -38,10 +38,17 @@ val builders: List[Builder] = List(
 );
 
 @main
-def main(clean: Boolean = false): Unit = {
+def main(clean: Boolean = false, useOnly: String = ""): Unit = {
 	val totalStart = System.currentTimeMillis();
-	val nBuilders = builders.size;
-	builders.zipWithIndex.foreach { case (b, i) =>
+	var splitted = for (s <- useOnly.split(" ")) yield s.capitalize
+	for (i <- 0 until splitted.size){
+		if (splitted(i).equalsIgnoreCase("shared_scala")) splitted(i) = "Shared Library Scala"
+		else if (splitted(i).equalsIgnoreCase("runner")) splitted(i) = "Experiment Runner"
+	}
+	var useOnlyBuilders = for (b <- builders if splitted.contains(b.label)) yield b
+	if (useOnlyBuilders.size == 0) useOnlyBuilders = builders
+	val nBuilders = useOnlyBuilders.size;
+	useOnlyBuilders.zipWithIndex.foreach { case (b, i) =>
 		try {
 			println(s"Starting build [${i+1}/$nBuilders]: ${b.label}");
 			val start = System.currentTimeMillis();

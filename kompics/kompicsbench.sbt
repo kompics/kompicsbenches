@@ -21,7 +21,9 @@ libraryDependencies ++= Seq(
     "se.sics.kompics" % "kompics-core" % kompicsV,
     "se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV,
     "se.sics.kompics.basic" % "kompics-port-network" % kompicsV,
+    "se.sics.kompics.basic" % "kompics-component-java-timer" % kompicsV,
     "org.scalatest" %% "scalatest" % "3.0.5" % "test",
+    "org.scala-lang" % "scala-reflect" % "2.12.6",
 )
 
 fork := true; // needed for UDT tests to clean up properly after themselves

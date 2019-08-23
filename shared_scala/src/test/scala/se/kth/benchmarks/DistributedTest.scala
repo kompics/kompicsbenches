@@ -102,4 +102,5 @@ object TestFactory extends BenchmarkFactory {
   override def netPingPong(): DistributedBenchmark = TestDistributedBench;
   override def throughputPingPong(): Benchmark = TestLocalBench;
   override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
+  override def atomicRegister(): DistributedBenchmark = TestDistributedBench;
 }

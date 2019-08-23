@@ -1,7 +1,9 @@
 package se.kth.benchmarks.akka
 
 import akka.actor._
-import com.typesafe.config.{ Config, ConfigFactory }
+import akka.actor.typed.Behavior
+import com.typesafe.config.{Config, ConfigFactory}
+
 import scala.util.Properties._
 import scala.reflect.runtime.universe._
 import scala.reflect.ClassTag
@@ -186,6 +188,23 @@ object ActorSystemProvider {
       customSerializers = serialization));
     val conf = ConfigFactory.load(confStr);
     ActorSystem(name, conf)
+  }
+
+  def newTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int): typed.ActorSystem[T] = {
+    val confStr = ConfigFactory.parseString(customConfig(corePoolSize = threads, maxPoolSize = threads));
+    val conf = ConfigFactory.load(confStr);
+    typed.ActorSystem(behavior, name, conf)
+  }
+
+  def newRemoteTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int, serialization: SerializerBindings): typed.ActorSystem[T] = {
+    val confStr = ConfigFactory.parseString(remoteConfig(
+      corePoolSize = threads,
+      maxPoolSize = threads,
+      hostname = getPublicIf,
+      port = 0,
+      customSerializers = serialization));
+    val conf = ConfigFactory.load(confStr);
+    typed.ActorSystem[T](behavior, name, conf)
   }
 
   object ExternalAddress extends ExtensionId[ExternalAddressExt] with ExtensionIdProvider {

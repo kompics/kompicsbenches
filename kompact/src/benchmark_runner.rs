@@ -82,6 +82,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn atomic_register(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::AtomicRegisterRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 pub struct BenchmarkRunnerComponentImpl;
@@ -159,6 +167,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
         &self,
         _o: grpc::RequestOptions,
         _p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn atomic_register(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::AtomicRegisterRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

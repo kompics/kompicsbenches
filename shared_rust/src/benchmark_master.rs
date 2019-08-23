@@ -586,6 +586,17 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         let b_res = self.benchmarks.net_throughput_ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
+
+    fn atomic_register(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::AtomicRegisterRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got net req: {:?}", p);
+        let b_res = self.benchmarks.atomic_register();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
 }
 
 #[derive(Clone)]

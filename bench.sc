@@ -3,6 +3,8 @@
 import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 import scala.concurrent.duration._
+import scala.collection.mutable.ListBuffer
+import scala.collection.immutable.List
 //import scala.collection.JavaConverters._
 import scala.util.{Try, Success, Failure}
 //import java.lang.{Process, ProcessBuilder}
@@ -21,27 +23,27 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 	BenchmarkRunner(
 		bench = BenchmarkInfo(
 			"RUN",
-			"Experiment Runner"), 
+			"Experiment Runner"),
 		runner = Runner(
-			relp("runner"), 
-			javaBin, 
-			Seq("-jar", 
+			relp("runner"),
+			javaBin,
+			Seq("-jar",
 				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString,
-				"--testing") 
+				"--testing")
 		)
 	)
 } else {
 	BenchmarkRunner(
 		bench = BenchmarkInfo(
 			"RUN",
-			"Experiment Runner"), 
+			"Experiment Runner"),
 		runner = Runner(
-			relp("runner"), 
-			javaBin, 
-			Seq("-jar", 
+			relp("runner"),
+			javaBin,
+			Seq("-jar",
 				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
@@ -66,17 +68,17 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 			mkdir! logdir;
 			val clientRunner = impl.clientRunner(master, s"${publicIf}:${clientPort}");
 			val client = clientRunner.run(logdir);
-			Runtime.getRuntime().addShutdownHook(new Thread() { 
-		      override def run(): Unit = { 
-		        println("Got termination signal. Killing client."); 
+			Runtime.getRuntime().addShutdownHook(new Thread() {
+		      override def run(): Unit = {
+		        println("Got termination signal. Killing client.");
 		        client.destroy();
-		      } 
-		    }); 
+		      }
+		    });
 			client.waitFor();
 			Console.err.println("Client shut down!");
 		}
 		case None => {
-			Console.err.println(s"No Benchmark Implementation found for '${name}'"); 
+			Console.err.println(s"No Benchmark Implementation found for '${name}'");
 			System.exit(1);
 		}
 	}
@@ -84,9 +86,11 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -123,19 +127,51 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false): Unit = {
+def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val remoteDir = tmp.dir();
-	val nodes = (0 until withClients).map(45700 + _).map { p => 
+	val lowercaseUseOnly = useOnly.toLowerCase()
+	var copyDirectories:  ListBuffer[String] = ListBuffer("proto", "runner")
+	val copyFiles = List[String]("build.sc", "bench.sc", "benchmarks.sc", "plot.sc", "client.sh", "nodes.conf")
+	var useScala = false
+	var useRust = false
+	if (lowercaseUseOnly.contains("kompics")) {
+		copyDirectories += "kompics"
+		useScala = true
+	}
+	if (lowercaseUseOnly.contains("kompact")) {
+		copyDirectories += "kompact"
+		useRust = true
+	}
+	if (lowercaseUseOnly.contains("akka")){
+		copyDirectories += "akka"
+		useScala = true
+	}
+	if (lowercaseUseOnly.contains("actix")) {
+		copyDirectories += "actix"
+		useRust = true
+	}
+	if (useScala) copyDirectories += "shared_scala"
+	if (useRust) copyDirectories += "shared_rust"
+	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
 		val dirName = s"${ip}-port-${p}";
 		val dir = remoteDir / dirName;
 		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
-		cp(pwd, dir);
+		if (copyDirectories.size == 0) cp(pwd, dir);
+		else {
+			for (d <- copyDirectories) {
+				mkdir(dir / d)
+				cp.over(pwd / d, dir / d);
+			}
+			for (file <- copyFiles) cp.into(pwd / file, dir)
+		}
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	val masters = implementations.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -174,8 +210,10 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false): Unit = {
-	val runners = implementations.values.map(_.localRunner(runnerAddr));
+def local(testing: Boolean = false, useOnly: String = ""): Unit = {
+	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
+	if (use_impl.size == 0) use_impl = implementations
+	val runners = use_impl.values.map(_.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -229,7 +267,7 @@ private def endSeparator(label: String, log: File): Unit = {
 private def remoteExperiment(experimentRunner: BenchmarkRunner, master: BenchmarkRunner, runId: String, logDir: Path, nodes: List[NodeEntry]): Try[Unit] = {
 	Try {
 		val runner = master.run(logDir);
-		val pids = nodes.map { node => 
+		val pids = nodes.map { node =>
 			val pid = startClient(node, master.symbol, runId, masterAddr);
 			(node -> pid)
 		};
@@ -250,7 +288,7 @@ private def remoteExperiment(experimentRunner: BenchmarkRunner, master: Benchmar
 private def fakeRemoteExperiment(experimentRunner: BenchmarkRunner, master: BenchmarkRunner, runId: String, logDir: Path, nodes: List[NodeEntry]): Try[Unit] = {
 	Try {
 		val runner = master.run(logDir);
-		val pids = nodes.map { node => 
+		val pids = nodes.map { node =>
 			val pid = startFakeClient(node, master.symbol, runId, masterAddr);
 			(node -> pid)
 		};
@@ -275,7 +313,7 @@ private def readNodes(p: Path): List[NodeEntry] = {
 		println(s"Reading nodes from '${p}'");
 		val nodesS = read! p;
 		val nodeLines = nodesS.split("\n").filterNot(_.contains("#")).toList;
-		nodeLines.map { l => 
+		nodeLines.map { l =>
 			val ls = l.split("""\s\|\s""");
 			println(s"Got ${ls.mkString}");
 			assert(ls.size == 2);

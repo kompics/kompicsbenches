@@ -1,13 +1,18 @@
 package se.kth.benchmarks.kompicsjava.bench
 
+import java.util
+
 import org.scalatest._
-import scala.util.{ Success, Failure, Try }
+
+import scala.util.{ Failure, Success, Try }
 import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, NetAddress => SNetAddress }
 import se.kth.benchmarks.kompicsjava._
-import se.kth.benchmarks.kompicsjava.net._;
+import se.kth.benchmarks.kompicsjava.net._
 import java.util.concurrent.CountDownLatch
+
 import NetPingPong._
 import se.sics.kompics.sl._
+
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
@@ -18,12 +23,14 @@ class DistributedTest extends FunSuite with Matchers {
   test("Network Ser/Deser") {
 
     import se.kth.benchmarks.kompicsjava.bench.netpingpong._
+    import se.kth.benchmarks.kompicsjava.bench.atomicregister._
     import se.sics.kompics.network.netty.serialization.Serializers;
     import io.netty.buffer.{ Unpooled, ByteBuf };
-    import java.util.Optional;
+    import java.util.{ Optional, HashSet }
 
     BenchNetSerializer.register();
     NetPingPongSerializer.register();
+    AtomicRegisterSerializer.register();
 
     val noHint: Optional[Object] = Optional.empty();
 
@@ -63,6 +70,8 @@ class DistributedTest extends FunSuite with Matchers {
     pongDeserO shouldBe a[NetMessage];
     val pongDeser = pongDeserO.asInstanceOf[NetMessage];
     pongDeser should equal (pong);
+
+    buf.clear();
   }
 
   test("Throughput Network Ser/Deser") {

@@ -6,6 +6,7 @@ pub mod net_throughput_pingpong;
 pub mod netpingpong;
 pub mod pingpong;
 pub mod throughput_pingpong;
+pub mod atomicregister;
 
 pub fn component() -> Box<BenchmarkFactory> {
     Box::new(ComponentFactory {})
@@ -38,6 +39,11 @@ impl BenchmarkFactory for ComponentFactory {
     ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
 }
 
 pub fn actor() -> Box<BenchmarkFactory> {
@@ -50,10 +56,9 @@ impl BenchmarkFactory for ActorFactory {
         match label {
             pingpong::actor_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
             netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
-            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
-                self.throughput_ping_pong().map_into()
-            }
+            throughput_pingpong::actor_pingpong::PingPong::LABEL => self.throughput_ping_pong().map_into(),
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
+            atomicregister::actor_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -73,6 +78,10 @@ impl BenchmarkFactory for ActorFactory {
     ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
+
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(atomicregister::actor_atomicregister::AtomicRegister {}.into())
+    }
 }
 pub fn mixed() -> Box<BenchmarkFactory> {
     Box::new(MixedFactory {})
@@ -88,6 +97,7 @@ impl BenchmarkFactory for MixedFactory {
                 self.throughput_ping_pong().map_into()
             }
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
+            atomicregister::mixed_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -106,5 +116,9 @@ impl BenchmarkFactory for MixedFactory {
         &self,
     ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(net_throughput_pingpong::PingPong {}.into())
+    }
+
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(atomicregister::mixed_atomicregister::AtomicRegister {}.into())
     }
 }

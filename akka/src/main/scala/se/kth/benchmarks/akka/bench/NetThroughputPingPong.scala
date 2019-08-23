@@ -40,6 +40,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var system: ActorSystem = null;
     private var pingers: List[ActorRef] = List.empty;
     private var latch: CountDownLatch = null;
+    private var run_id = -1
 
     override def setup(c: MasterConf): ClientConf = {
       this.numMsgs = c.messagesPerPair;
@@ -57,13 +58,14 @@ object NetThroughputPingPong extends DistributedBenchmark {
       val pongers = Await.result(pongersF, 5 seconds);
       println(s"Resolved paths to ${pongers.mkString}");
       latch = new CountDownLatch(numPairs);
+      run_id += 1
       if (staticOnly) {
         pingers = pongers.zipWithIndex.map{
-          case (ponger, i) => system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger$i")
+          case (ponger, i) => system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       } else {
         pingers = pongers.zipWithIndex.map{
-          case (ponger, i) => system.actorOf(Props(new Pinger(latch, numMsgs, pipeline, ponger)), s"pinger$i")
+          case (ponger, i) => system.actorOf(Props(new Pinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       }
     }

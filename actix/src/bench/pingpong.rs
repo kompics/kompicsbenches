@@ -112,20 +112,14 @@ impl Message for Start {
 }
 
 #[derive(Clone)]
-struct CacheRecipient(Recipient<Pong>);
-impl Message for CacheRecipient {
-    type Result = ();
-}
-impl fmt::Debug for CacheRecipient {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "CacheRecipient(<pinger>)")
-    }
-}
-
-#[derive(Clone, Debug)]
-struct Ping;
+struct Ping(Recipient<Pong>);
 impl Message for Ping {
     type Result = ();
+}
+impl fmt::Debug for Ping {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Ping(<pinger>)")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -155,8 +149,6 @@ impl Actor for Pinger {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Pinger is alive");
-        let self_rec = ctx.address().recipient();
-        self.ponger.do_send(CacheRecipient(self_rec));
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
@@ -167,18 +159,20 @@ impl Actor for Pinger {
 impl Handler<Start> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
-        self.ponger.do_send(Ping);
+    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
+        let self_rec = ctx.address().recipient();
+        self.ponger.do_send(Ping(self_rec));
     }
 }
 
 impl Handler<Pong> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Pong, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Pong, ctx: &mut Context<Self>) -> Self::Result {
         if self.count_down > 0 {
             self.count_down -= 1;
-            self.ponger.do_send(Ping);
+            let self_rec = ctx.address().recipient();
+            self.ponger.do_send(Ping(self_rec));
         } else {
             let _ = self.latch.decrement();
         }
@@ -193,13 +187,11 @@ impl Handler<PoisonPill> for Pinger {
     }
 }
 
-struct Ponger {
-    pinger: Option<Recipient<Pong>>,
-}
+struct Ponger;
 
 impl Ponger {
-    fn new() -> Ponger {
-        Ponger { pinger: None }
+    fn new() -> Ponger{
+        Ponger
     }
 }
 
@@ -215,24 +207,12 @@ impl Actor for Ponger {
     }
 }
 
-impl Handler<CacheRecipient> for Ponger {
-    type Result = ();
-
-    fn handle(&mut self, msg: CacheRecipient, _ctx: &mut Context<Self>) -> Self::Result {
-        println!("Ponger has Pinger cached");
-        self.pinger = Some(msg.0);
-    }
-}
-
 impl Handler<Ping> for Ponger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
-        if let Some(ref pinger) = self.pinger {
-            pinger.do_send(Pong).expect("Should bloody work!");
-        } else {
-            panic!("Recipient should have been cached already!");
-        }
+    fn handle(&mut self, msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
+        let pinger = msg.0;
+        pinger.do_send(Pong);
     }
 }
 

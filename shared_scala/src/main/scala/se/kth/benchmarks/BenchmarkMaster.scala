@@ -92,6 +92,10 @@ class BenchmarkMaster(
       val b = benchmarks.throughputPingPong;
       runBenchmark(b, request)
     };
+    override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = queueIfNotReady {
+      val b = benchmarks.atomicRegister;
+      runBenchmark(b, request)
+    };
 
     override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
       logger.info(s"Got shutdown request with force=${request.force}");

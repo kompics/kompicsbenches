@@ -352,6 +352,7 @@ pub trait BenchmarkFactory: Send + Sync {
     fn net_throughput_ping_pong(
         &self,
     ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
+    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 #[macro_export]
