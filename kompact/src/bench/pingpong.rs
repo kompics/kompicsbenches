@@ -23,7 +23,7 @@ pub mod actor_pingpong {
         type Conf = PingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest)
         }
 
@@ -160,7 +160,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Pinger {
-        fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Start>() {
                 self.ponger.tell(&PING, &self.ctx);
             } else if msg.is::<Pong>() {
@@ -175,7 +175,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -201,7 +201,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Ponger {
-        fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Ping>() {
                 sender.tell(&PONG, &self.ctx);
             } else {
@@ -209,7 +209,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -233,7 +233,7 @@ pub mod component_pingpong {
         type Conf = PingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest)
         }
 

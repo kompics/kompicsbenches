@@ -15,7 +15,7 @@ impl Benchmark for PingPong {
     type Conf = PingPongRequest;
     type Instance = PingPongI;
 
-    fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+    fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
         downcast_msg!(msg; PingPongRequest)
     }
 
@@ -117,7 +117,7 @@ impl Message for Ping {
     type Result = ();
 }
 impl fmt::Debug for Ping {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Ping(<pinger>)")
     }
 }
@@ -147,7 +147,7 @@ impl Pinger {
 impl Actor for Pinger {
     type Context = Context<Self>;
 
-    fn started(&mut self, ctx: &mut Context<Self>) {
+    fn started(&mut self, _ctx: &mut Context<Self>) {
         println!("Pinger is alive");
     }
 
@@ -212,7 +212,7 @@ impl Handler<Ping> for Ponger {
 
     fn handle(&mut self, msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
         let pinger = msg.0;
-        pinger.do_send(Pong);
+        pinger.do_send(Pong).expect("Pong didn't send.");
     }
 }
 

@@ -143,7 +143,7 @@ pub mod actor_pingpong {
         type Conf = ThroughputPingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; ThroughputPingPongRequest)
         }
 
@@ -326,7 +326,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for StaticPinger {
-        fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Start>() {
                 let mut pipelined: u64 = 0;
                 while (pipelined < self.pipeline) && (self.sent_count < self.count) {
@@ -354,7 +354,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -384,7 +384,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for StaticPonger {
-        fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<StaticPing>() {
                 sender.tell(&PONG, &self.ctx);
             } else {
@@ -392,7 +392,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -434,7 +434,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Pinger {
-        fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Start>() {
                 let mut pipelined: u64 = 0;
                 while (pipelined < self.pipeline) && (self.sent_count < self.count) {
@@ -464,7 +464,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -494,7 +494,7 @@ pub mod actor_pingpong {
     }
 
     impl Actor for Ponger {
-        fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
+        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
             if let Some(msg) = msg.downcast_ref::<Ping>() {
                 sender.tell(Box::new(Pong::new(msg.index)), &self.ctx);
             } else {
@@ -502,7 +502,7 @@ pub mod actor_pingpong {
                 unimplemented!(); // shouldn't happen during the test
             }
         }
-        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             crit!(self.ctx.log(), "Got unexpected message from {}", sender);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -526,7 +526,7 @@ pub mod component_pingpong {
         type Conf = ThroughputPingPongRequest;
         type Instance = PingPongI;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; ThroughputPingPongRequest)
         }
 

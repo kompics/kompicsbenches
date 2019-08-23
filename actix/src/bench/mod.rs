@@ -4,7 +4,7 @@ use benchmark_suite_shared::benchmark::*;
 pub mod pingpong;
 pub mod throughput_pingpong;
 
-pub fn factory() -> Box<BenchmarkFactory> {
+pub fn factory() -> Box<dyn BenchmarkFactory> {
     Box::new(Factory {})
 }
 
@@ -19,23 +19,23 @@ impl BenchmarkFactory for Factory {
         }
     }
 
-    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::PingPong.into())
     }
-    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 
-    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+    fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(throughput_pingpong::PingPong.into())
     }
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 
-    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 }

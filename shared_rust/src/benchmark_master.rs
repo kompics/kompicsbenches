@@ -1,8 +1,7 @@
 use crate::{
     benchmark::*,
     benchmark_runner::{
-        measure, not_implemented, rse, run_async, DistributedIteration, MAX_RUNS, MIN_RUNS,
-        RSE_TARGET,
+        run_async, DistributedIteration,
     },
     kompics_benchmarks::{
         benchmarks, benchmarks_grpc, distributed,
@@ -26,7 +25,7 @@ pub fn run(
     runner_port: u16,
     master_port: u16,
     wait_for: usize,
-    benchmarks: Box<BenchmarkFactory>,
+    benchmarks: Box<dyn BenchmarkFactory>,
     logger: Logger,
 ) -> ()
 {
@@ -139,7 +138,7 @@ impl BenchRequest {
 
 struct BenchInvocation {
     benchmark: AbstractBench,
-    msg:       Box<::protobuf::Message + UnwindSafe>,
+    msg:       Box<dyn ::protobuf::Message + UnwindSafe>,
 }
 impl BenchInvocation {
     fn new<M: ::protobuf::Message + UnwindSafe>(
@@ -150,16 +149,18 @@ impl BenchInvocation {
         BenchInvocation { benchmark, msg: Box::new(msg) }
     }
 
+    #[allow(dead_code)]
     fn new_local<M: ::protobuf::Message + UnwindSafe>(
-        benchmark: Box<AbstractBenchmark>,
+        benchmark: Box<dyn AbstractBenchmark>,
         msg: M,
     ) -> BenchInvocation
     {
         BenchInvocation { benchmark: AbstractBench::Local(benchmark), msg: Box::new(msg) }
     }
 
+    #[allow(dead_code)]
     fn new_distributed<M: ::protobuf::Message + UnwindSafe>(
-        benchmark: Box<AbstractDistributedBenchmark>,
+        benchmark: Box<dyn AbstractDistributedBenchmark>,
         msg: M,
     ) -> BenchInvocation
     {
@@ -318,8 +319,8 @@ impl BenchmarkMaster {
 
     fn run_local_benchmark(
         &mut self,
-        b: Box<AbstractBenchmark>,
-        msg: Box<::protobuf::Message + UnwindSafe>,
+        b: Box<dyn AbstractBenchmark>,
+        msg: Box<dyn ::protobuf::Message + UnwindSafe>,
     ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
     {
         self.state.cas(State::READY, State::RUN).expect("Wasn't ready to run!");
@@ -336,8 +337,8 @@ impl BenchmarkMaster {
 
     fn run_distributed_benchmark(
         &mut self,
-        b: Box<AbstractDistributedBenchmark>,
-        msg: Box<::protobuf::Message + UnwindSafe>,
+        b: Box<dyn AbstractDistributedBenchmark>,
+        msg: Box<dyn ::protobuf::Message + UnwindSafe>,
     ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
     {
         let blogger = self.logger.new(o!("benchmark" => b.label()));
@@ -349,7 +350,7 @@ impl BenchmarkMaster {
         self.state.cas(State::READY, State::SETUP).expect("Wasn't ready to setup!");
         info!(blogger, "Starting distributed test {}", bench_label);
 
-        let master_f: future::FutureResult<Box<AbstractBenchmarkMaster>, BenchmarkError> =
+        let master_f: future::FutureResult<Box<dyn AbstractBenchmarkMaster>, BenchmarkError> =
             future::ok(b.new_master());
         let master_cconf_f = master_f.and_then(|mut master| {
             future::result(master.setup(msg)).map(|client_conf| (master, client_conf))
@@ -455,7 +456,7 @@ impl distributed_grpc::BenchmarkMaster for MasterHandler {
 
 struct RunnerHandler {
     logger:      Logger,
-    benchmarks:  Box<BenchmarkFactory>,
+    benchmarks:  Box<dyn BenchmarkFactory>,
     bench_queue: cbchannel::Sender<BenchRequest>,
     state:       StateHolder,
 }
@@ -463,7 +464,7 @@ struct RunnerHandler {
 impl RunnerHandler {
     fn new(
         logger: Logger,
-        benchmarks: Box<BenchmarkFactory>,
+        benchmarks: Box<dyn BenchmarkFactory>,
         bench_queue: cbchannel::Sender<BenchRequest>,
         state: StateHolder,
     ) -> RunnerHandler
@@ -648,8 +649,8 @@ enum StateError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::benchmark::tests::TestFactory;
+    
+    
 
     // #[test]
     // fn logging() {

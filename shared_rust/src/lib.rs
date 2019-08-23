@@ -18,14 +18,14 @@ use std::{
     time::Duration,
 };
 
-pub(crate) type BenchLogger = Logger;
+//pub(crate) type BenchLogger = Logger;
 
 pub struct BenchmarkMain;
 impl BenchmarkMain {
     pub fn run_with<H, F>(
         args: Vec<String>,
         runner: H,
-        benchmarks: Box<BenchmarkFactory>,
+        benchmarks: Box<dyn BenchmarkFactory>,
         set_public_if: F,
     ) -> ()
     where
@@ -329,7 +329,7 @@ mod tests {
 
         const LABEL: &'static str = "TestBench";
 
-        fn msg_to_conf(_msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(_msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             Ok(())
         }
 
@@ -385,7 +385,7 @@ mod tests {
         fn new_master() -> Self::Master { TestDistributedBenchMaster {} }
 
         fn msg_to_master_conf(
-            _msg: Box<::protobuf::Message>,
+            _msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<Self::MasterConf, BenchmarkError> {
             //downcast_msg!(msg; benchmarks::PingPongRequest; |_ppr| ())
             //downcast_msg!(msg; M; |_ppr| ())
@@ -456,22 +456,26 @@ mod tests {
             }
         }
 
-        fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
             Ok(TestLocalBench {}.into())
         }
 
-        fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(TestDistributedBench::new().into())
         }
 
-        fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
             Ok(TestLocalBench {}.into())
         }
 
         fn net_throughput_ping_pong(
             &self,
-        ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(TestDistributedBench::new().into())
+        }
+
+        fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Err(NotImplementedError::FutureWork)
         }
     }
 

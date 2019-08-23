@@ -9,7 +9,7 @@ mod local_benchmark {
         type Conf;
         type Instance: BenchmarkInstance<Conf = Self::Conf>;
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError>;
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError>;
         fn new_instance() -> Self::Instance;
 
         const LABEL: &'static str;
@@ -25,12 +25,12 @@ mod local_benchmark {
     }
 
     pub trait AbstractBenchmark: Send + Sync + UnwindSafe {
-        fn new_instance(&self) -> Box<AbstractBenchmarkInstance>;
-        fn run(&self, msg: Box<::protobuf::Message>) -> Result<Vec<f64>, BenchmarkError>;
+        fn new_instance(&self) -> Box<dyn AbstractBenchmarkInstance>;
+        fn run(&self, msg: Box<dyn (::protobuf::Message)>) -> Result<Vec<f64>, BenchmarkError>;
         fn label(&self) -> &'static str;
     }
     pub trait AbstractBenchmarkInstance {
-        fn setup(&mut self, msg: Box<::protobuf::Message>) -> Result<(), BenchmarkError>;
+        fn setup(&mut self, msg: Box<dyn (::protobuf::Message)>) -> Result<(), BenchmarkError>;
         fn prepare_iteration(&mut self) -> () {}
         fn run_iteration(&mut self) -> ();
         fn cleanup_iteration(&mut self, _last_iteration: bool, _exec_time_millis: f64) -> () {}
@@ -51,13 +51,13 @@ mod local_benchmark {
     }
 
     impl<B: Benchmark + Default + UnwindSafe> AbstractBenchmark for BenchmarkObject<B> {
-        fn new_instance(&self) -> Box<AbstractBenchmarkInstance> {
+        fn new_instance(&self) -> Box<dyn AbstractBenchmarkInstance> {
             let bi = B::new_instance();
             let bio: BenchmarkInstanceObject<B> = BenchmarkInstanceObject::new(bi);
             Box::new(bio)
         }
 
-        fn run(&self, msg: Box<::protobuf::Message>) -> Result<Vec<f64>, BenchmarkError> {
+        fn run(&self, msg: Box<dyn (::protobuf::Message)>) -> Result<Vec<f64>, BenchmarkError> {
             let conf_res = B::msg_to_conf(msg);
             let b = B::default();
             let res = conf_res.and_then(|conf| crate::benchmark_runner::run(&b, &conf).into());
@@ -71,9 +71,9 @@ mod local_benchmark {
         fn from(item: B) -> Self { BenchmarkObject::with_benchmark(item) }
     }
 
-    impl<B: Benchmark + Default + 'static> From<B> for Box<AbstractBenchmark> {
+    impl<B: Benchmark + Default + 'static> From<B> for Box<dyn AbstractBenchmark> {
         fn from(item: B) -> Self {
-            Box::new(BenchmarkObject::with_benchmark(item)) as Box<AbstractBenchmark>
+            Box::new(BenchmarkObject::with_benchmark(item)) as Box<dyn AbstractBenchmark>
         }
     }
 
@@ -88,7 +88,7 @@ mod local_benchmark {
     }
 
     impl<B: Benchmark> AbstractBenchmarkInstance for BenchmarkInstanceObject<B> {
-        fn setup(&mut self, msg: Box<::protobuf::Message>) -> Result<(), BenchmarkError> {
+        fn setup(&mut self, msg: Box<dyn (::protobuf::Message)>) -> Result<(), BenchmarkError> {
             self.bi = B::new_instance();
             B::msg_to_conf(msg).map(|c| self.bi.setup(&c))
         }
@@ -125,7 +125,7 @@ mod distributed_benchmark {
 
         fn new_master() -> Self::Master;
         fn msg_to_master_conf(
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<Self::MasterConf, BenchmarkError>;
 
         fn new_client() -> Self::Client;
@@ -157,8 +157,8 @@ mod distributed_benchmark {
     }
 
     pub trait AbstractDistributedBenchmark: Send + Sync {
-        fn new_master(&self) -> Box<AbstractBenchmarkMaster>;
-        fn new_client(&self) -> Box<AbstractBenchmarkClient>;
+        fn new_master(&self) -> Box<dyn AbstractBenchmarkMaster>;
+        fn new_client(&self) -> Box<dyn AbstractBenchmarkClient>;
         fn label(&self) -> &'static str;
     }
 
@@ -183,7 +183,7 @@ mod distributed_benchmark {
     pub trait AbstractBenchmarkMaster {
         fn setup(
             &mut self,
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<ClientConfHolder, BenchmarkError>;
         fn prepare_iteration(&mut self, _d: Vec<ClientDataHolder>) -> Result<(), BenchmarkError> {
             Ok(())
@@ -216,13 +216,13 @@ mod distributed_benchmark {
     }
 
     impl<B: DistributedBenchmark> AbstractDistributedBenchmark for DistributedBenchmarkObject<B> {
-        fn new_master(&self) -> Box<AbstractBenchmarkMaster> {
+        fn new_master(&self) -> Box<dyn AbstractBenchmarkMaster> {
             let bm = B::new_master();
             let bmo: BenchmarkMasterObject<B> = BenchmarkMasterObject::new(bm);
             Box::new(bmo)
         }
 
-        fn new_client(&self) -> Box<AbstractBenchmarkClient> {
+        fn new_client(&self) -> Box<dyn AbstractBenchmarkClient> {
             let bc = B::new_client();
             let bco: BenchmarkClientObject<B> = BenchmarkClientObject::new(bc);
             Box::new(bco)
@@ -235,10 +235,10 @@ mod distributed_benchmark {
         fn from(item: B) -> Self { DistributedBenchmarkObject::with_benchmark(item) }
     }
 
-    impl<B: DistributedBenchmark + 'static> From<B> for Box<AbstractDistributedBenchmark> {
+    impl<B: DistributedBenchmark + 'static> From<B> for Box<dyn AbstractDistributedBenchmark> {
         fn from(item: B) -> Self {
             Box::new(DistributedBenchmarkObject::with_benchmark(item))
-                as Box<AbstractDistributedBenchmark>
+                as Box<dyn AbstractDistributedBenchmark>
         }
     }
 
@@ -255,7 +255,7 @@ mod distributed_benchmark {
     impl<B: DistributedBenchmark + 'static> AbstractBenchmarkMaster for BenchmarkMasterObject<B> {
         fn setup(
             &mut self,
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<ClientConfHolder, BenchmarkError>
         {
             let res = B::msg_to_master_conf(msg);
@@ -308,16 +308,16 @@ mod distributed_benchmark {
 }
 
 pub enum AbstractBench {
-    Local(Box<AbstractBenchmark>),
-    Distributed(Box<AbstractDistributedBenchmark>),
+    Local(Box<dyn AbstractBenchmark>),
+    Distributed(Box<dyn AbstractDistributedBenchmark>),
 }
 
-impl From<Box<AbstractBenchmark>> for AbstractBench {
-    fn from(item: Box<AbstractBenchmark>) -> Self { AbstractBench::Local(item) }
+impl From<Box<dyn AbstractBenchmark>> for AbstractBench {
+    fn from(item: Box<dyn AbstractBenchmark>) -> Self { AbstractBench::Local(item) }
 }
 
-impl From<Box<AbstractDistributedBenchmark>> for AbstractBench {
-    fn from(item: Box<AbstractDistributedBenchmark>) -> Self { AbstractBench::Distributed(item) }
+impl From<Box<dyn AbstractDistributedBenchmark>> for AbstractBench {
+    fn from(item: Box<dyn AbstractDistributedBenchmark>) -> Self { AbstractBench::Distributed(item) }
 }
 
 pub trait ResultInto<O, E> {
@@ -346,13 +346,13 @@ pub enum NotImplementedError {
 pub trait BenchmarkFactory: Send + Sync {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError>;
 
-    fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
-    fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
-    fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError>;
+    fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
+    fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+    fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
     fn net_throughput_ping_pong(
         &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
-    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError>;
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 #[macro_export]
@@ -418,7 +418,7 @@ pub(crate) mod tests {
 
         const LABEL: &'static str = "TestB";
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest)
         }
 
@@ -452,7 +452,7 @@ pub(crate) mod tests {
 
         const LABEL: &'static str = "Test2B";
 
-        fn msg_to_conf(msg: Box<::protobuf::Message>) -> Result<Self::Conf, BenchmarkError> {
+        fn msg_to_conf(msg: Box<dyn (::protobuf::Message)>) -> Result<Self::Conf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest; |_ppr| Test2Conf{})
         }
 
@@ -492,7 +492,7 @@ pub(crate) mod tests {
         fn new_master() -> Self::Master { Test3BM {} }
 
         fn msg_to_master_conf(
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<Self::MasterConf, BenchmarkError> {
             downcast_msg!(msg; PingPongRequest; |_ppr| Test3Conf{})
         }
@@ -556,7 +556,7 @@ pub(crate) mod tests {
     pub(crate) struct TestFactory;
 
     impl TestFactory {
-        pub(crate) fn boxed() -> Box<BenchmarkFactory> {
+        pub(crate) fn boxed() -> Box<dyn BenchmarkFactory> {
             let tf = TestFactory {};
             Box::new(tf)
         }
@@ -571,21 +571,25 @@ pub(crate) mod tests {
             }
         }
 
-        fn ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
             Ok(Test2B {}.into())
         }
 
-        fn net_ping_pong(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())
         }
 
-        fn throughput_ping_pong(&self) -> Result<Box<AbstractBenchmark>, NotImplementedError> {
+        fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
             Ok(Test2B {}.into())
         }
 
         fn net_throughput_ping_pong(
             &self,
-        ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(Test3B {}.into())
+        }
+
+        fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())
         }
     }

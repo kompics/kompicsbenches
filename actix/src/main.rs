@@ -1,4 +1,4 @@
-extern crate benchmark_suite_shared;
+use benchmark_suite_shared;
 
 use benchmark_suite_shared::downcast_msg;
 use benchmark_suite_shared::BenchmarkMain;

@@ -28,7 +28,7 @@ impl DistributedBenchmark for PingPong {
         PingPongMaster::new()
     }
     fn msg_to_master_conf(
-        msg: Box<::protobuf::Message>,
+        msg: Box<dyn (::protobuf::Message)>,
     ) -> Result<Self::MasterConf, BenchmarkError> {
         downcast_msg!(msg; PingPongRequest)
     }
@@ -247,7 +247,7 @@ impl Serialiser<PingMsg> for PingPongSer {
     fn size_hint(&self) -> Option<usize> {
         Some(9)
     }
-    fn serialise(&self, _v: &PingMsg, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, _v: &PingMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(PING_ID);
         Result::Ok(())
     }
@@ -260,13 +260,13 @@ impl Serialiser<PongMsg> for PingPongSer {
     fn size_hint(&self) -> Option<usize> {
         Some(9)
     }
-    fn serialise(&self, _v: &PongMsg, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, _v: &PongMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(PONG_ID);
         Result::Ok(())
     }
 }
 impl Deserialiser<PingMsg> for PingPongSer {
-    fn deserialise(buf: &mut Buf) -> Result<PingMsg, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<PingMsg, SerError> {
         if buf.remaining() < 1 {
             return Err(SerError::InvalidData(format!(
                 "Serialised typed has 9bytes but only {}bytes remain in buffer.",
@@ -285,7 +285,7 @@ impl Deserialiser<PingMsg> for PingPongSer {
     }
 }
 impl Deserialiser<PongMsg> for PingPongSer {
-    fn deserialise(buf: &mut Buf) -> Result<PongMsg, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<PongMsg, SerError> {
         if buf.remaining() < 1 {
             return Err(SerError::InvalidData(format!(
                 "Serialised typed has 9bytes but only {}bytes remain in buffer.",
@@ -330,7 +330,7 @@ impl Provide<ControlPort> for Pinger {
 }
 
 impl Actor for Pinger {
-    fn receive_local(&mut self, sender: ActorRef, msg: &Any) -> () {
+    fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
         if msg.is::<Start>() {
             self.ponger.tell((PingMsg, PING_PONG_SER), self);
         } else {
@@ -338,7 +338,7 @@ impl Actor for Pinger {
             unimplemented!(); // shouldn't happen during the test
         }
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
         if ser_id == Serialiser::<PongMsg>::serid(&PING_PONG_SER) {
             let r: Result<PongMsg, SerError> = PingPongSer::deserialise(buf);
             match r {
@@ -386,11 +386,11 @@ impl Provide<ControlPort> for Ponger {
 }
 
 impl Actor for Ponger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: &Any) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
         crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
         unimplemented!(); // shouldn't happen during the test
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
         if ser_id == Serialiser::<PingMsg>::serid(&PING_PONG_SER) {
             let r: Result<PingMsg, SerError> = PingPongSer::deserialise(buf);
             match r {
