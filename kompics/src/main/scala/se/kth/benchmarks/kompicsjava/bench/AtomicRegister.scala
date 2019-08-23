@@ -1,15 +1,17 @@
 package se.kth.benchmarks.kompicsjava.bench
 
-import java.util.{ UUID }
+import java.util.UUID
 import java.util.concurrent.{ CountDownLatch, TimeUnit }
 
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import se.kth.benchmarks.{ ClientEntry, DistributedBenchmark }
 import se.kth.benchmarks.kompicsjava.broadcast.{ BEBComp, BestEffortBroadcast => JBestEffortBroadcast }
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister, AtomicRegisterSerializer, JPartitioningCompSerializer }
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister, AtomicRegisterSerializer }
+import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
 import se.kth.benchmarks.kompicsscala._
 import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.{ ClientParams, FailedPreparationException }
 import se.sics.kompics.sl.Init
+import se.kth.benchmarks.kompicsjava.bench.JPartitioningComp.Run
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
@@ -75,14 +77,15 @@ object AtomicRegister extends DistributedBenchmark {
       system.startNotify(beb)
       system.startNotify(atomicRegister)
       system.startNotify(partitioning_comp)
-      val successful_prep = prepare_latch.await(100, TimeUnit.SECONDS)
+      prepare_latch.await()
+      /*val successful_prep = prepare_latch.await(100, TimeUnit.SECONDS)
       if (!successful_prep) {
-        println("Timeout on INIT_ACK in prepareIteration")
-        throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
-      }
+        println("Timeout on InitAck in prepareIteration")
+        throw new FailedPreparationException("Timeout waiting for Init Ack from all nodes")
+      }*/
     }
     override def runIteration(): Unit = {
-      system.triggerComponent(RUN, partitioning_comp)
+      system.triggerComponent(Run, partitioning_comp)
       finished_latch.await()
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {

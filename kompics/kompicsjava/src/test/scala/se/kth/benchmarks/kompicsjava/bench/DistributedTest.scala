@@ -11,7 +11,6 @@ import se.kth.benchmarks.kompicsjava.net._
 import java.util.concurrent.CountDownLatch
 
 import NetPingPong._
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events._
 import se.sics.kompics.sl._
 
 import scala.concurrent.Await
@@ -74,89 +73,6 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     pongDeser should equal (pong);
 
     buf.clear();
-    /*
-    // Atomic Register events
-    val rid = 123
-    val ts = 1
-    val wr = 2
-    val v = 3
-    val rank = 4
-    val init_id = -1
-    var nodes: java.util.HashSet[NetAddress] = new java.util.HashSet[NetAddress]()
-    nodes.add(addr)
-    nodes.add(addr2)
-    val init = NetMessage.viaTCP(addr, addr, new INIT(rank, init_id, nodes))
-    val read = NetMessage.viaTCP(addr, addr, new READ(rid))
-    val ack = NetMessage.viaTCP(addr, addr, new ACK(rid))
-    val write = NetMessage.viaTCP(addr, addr, new WRITE(rid, ts, wr, v))
-    val value = NetMessage.viaTCP(addr, addr, new VALUE(rid, ts, wr, v))
-    val done = NetMessage.viaTCP(addr, addr, DONE.event);
-
-    Serializers.toBinary(done, buf)
-    val doneDeserO = Serializers.fromBinary(buf, noHint);
-    doneDeserO shouldBe a[NetMessage];
-    val doneDeser = doneDeserO.asInstanceOf[NetMessage];
-    doneDeser should equal (done);
-
-    buf.clear()
-
-    Serializers.toBinary(init, buf)
-    val initDeserN = Serializers.fromBinary(buf, noHint)
-    initDeserN shouldBe a[NetMessage]
-    val initDeserO = initDeserN.asInstanceOf[NetMessage].extractValue()
-    initDeserO shouldBe a[INIT]
-    val initDeser = initDeserO.asInstanceOf[INIT]
-    val rankDeser = initDeser.rank
-    rankDeser should be (rank)
-    val idDeser = initDeser.id;
-    idDeser should be (init_id)
-    val nodesDeser = initDeser.nodes
-    nodesDeser should equal (nodes)
-
-    buf.clear()
-
-    Serializers.toBinary(read, buf)
-    val readDeserN = Serializers.fromBinary(buf, noHint)
-    readDeserN shouldBe a[NetMessage]
-    val readDeser = readDeserN.asInstanceOf[NetMessage].extractValue()
-    readDeser shouldBe a[READ]
-    readDeser.asInstanceOf[READ].rid should be (rid)
-
-    buf.clear()
-
-    Serializers.toBinary(ack, buf)
-    val ackDeserN = Serializers.fromBinary(buf, noHint)
-    ackDeserN shouldBe a[NetMessage]
-    val ackDeser = ackDeserN.asInstanceOf[NetMessage].extractValue()
-    ackDeser shouldBe a[ACK]
-    ackDeser.asInstanceOf[ACK].rid should be (rid)
-
-    buf.clear()
-
-    Serializers.toBinary(write, buf)
-    val writeDeserN = Serializers.fromBinary(buf, noHint)
-    writeDeserN shouldBe a[NetMessage]
-    val writeDeserO = writeDeserN.asInstanceOf[NetMessage].extractValue()
-    writeDeserO shouldBe a[WRITE]
-    val writeDeser = writeDeserO.asInstanceOf[WRITE]
-    writeDeser.rid should be (rid)
-    writeDeser.ts should be (ts)
-    writeDeser.value should be (v)
-    writeDeser.wr should be (wr)
-
-    buf.clear()
-
-    Serializers.toBinary(value, buf);
-    val valueDeserN = Serializers.fromBinary(buf, noHint)
-    valueDeserN shouldBe a[NetMessage]
-    val valueDeserO = valueDeserN.asInstanceOf[NetMessage].extractValue()
-    valueDeserO shouldBe a[VALUE]
-    val valueDeser = valueDeserO.asInstanceOf[VALUE]
-    valueDeser.rid should be (rid)
-    valueDeser.ts should be (ts)
-    valueDeser.value should be (v)
-    valueDeser.wr should be (wr)
-    */
   }
 
   test("Throughput Network Ser/Deser") {

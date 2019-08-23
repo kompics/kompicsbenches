@@ -5,9 +5,10 @@ import java.util.concurrent.CountDownLatch
 
 import se.kth.benchmarks.kompicsscala._
 import se.kth.benchmarks.kompicsjava.net.{ NetAddress => JNetAddress, NetMessage => JNetMessage }
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.{ INIT => JINIT, INIT_ACK => JINIT_ACK, RUN => JRUN, DONE => JDONE }
+import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.{ Done, InitAck, Init => JInit, Run => JRun }
 import se.sics.kompics.network.Network
-import se.sics.kompics.sl.{ ComponentDefinition, Init, Start, handle }
+import se.sics.kompics.sl.{ ComponentDefinition, Init, KompicsEvent, Start, handle }
+import JPartitioningComp.Run
 
 import scala.collection.mutable
 
@@ -32,20 +33,20 @@ class JPartitioningComp(init: Init[JPartitioningComp]) extends ComponentDefiniti
       val min_key: Long = 0l
       val max_key: Long = num_keys - 1
       for (i <- 0 until partition_size) {
-        trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), new JINIT(i, init_id, active_nodes, min_key, max_key)), net)
+        trigger(JNetMessage.viaTCP(selfAddr.asJava, active_nodes.get(i), new JInit(i, init_id, active_nodes, min_key, max_key)), net)
       }
     }
-    case RUN => handle {
+    case Run => handle {
       val it = active_nodes.iterator()
       while (it.hasNext) {
-        trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRUN.event), net)
+        trigger(JNetMessage.viaTCP(selfAddr.asJava, it.next(), JRun.event), net)
       }
     }
 
   }
 
   net uponEvent {
-    case NetMessage(header, init_ack: JINIT_ACK) => handle {
+    case NetMessage(header, init_ack: InitAck) => handle {
       if (init_ack.init_id == init_id) {
         init_ack_count += 1
         if (init_ack_count == n) {
@@ -54,7 +55,7 @@ class JPartitioningComp(init: Init[JPartitioningComp]) extends ComponentDefiniti
       }
     }
 
-    case NetMessage(header, _: JDONE) => handle{
+    case NetMessage(header, _: Done) => handle{
       done_count += 1
       if (done_count == n) {
         finished_latch.countDown()
@@ -62,4 +63,8 @@ class JPartitioningComp(init: Init[JPartitioningComp]) extends ComponentDefiniti
     }
 
   }
+}
+
+object JPartitioningComp {
+  case object Run extends KompicsEvent;
 }
