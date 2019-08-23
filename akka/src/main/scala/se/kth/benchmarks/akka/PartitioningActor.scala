@@ -6,12 +6,12 @@ import akka.actor.{Actor, ActorRef}
 import akka.event.Logging
 import akka.serialization.Serializer
 import akka.util.ByteString
-import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef, DONE}
+import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef}
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
-import PartitioningActor.{ResolvedNodes, _}
+import PartitioningActor.{Start, Done, ResolvedNodes, _}
 
 import scala.util.{Failure, Success}
 
@@ -26,19 +26,17 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
   var done_count = 0
 
   override def receive: Receive = {
-    case START => {
+    case Start => {
       val actorRefsF = Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
       actorRefsF.onComplete{
         case Success(actorRefs) => {
-          /*for ((node, rank) <- actorRefs.zipWithIndex){
-            node ! INIT(rank, init_id, active_nodes, min_key, max_key)
-          }*/
           self ! ResolvedNodes(actorRefs)
         }
         case Failure(ex) => {
           logger.info(s"Failed to resolve ActorPaths: $ex")
         }
       }
+      // TODO: The following should work but sometimes fails to solve actorpath :(
       /*for ((node, rank) <- active_nodes.zipWithIndex){
         try {
           val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
@@ -51,7 +49,6 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
             a_path ! INIT(rank, init_id, active_nodes, min_key, max_key)
           }
         }*/
-
     }
 
     case ResolvedNodes(resolvedRefs) => {
@@ -59,26 +56,21 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
       val max_key: Long = num_keys - 1
       resolved_active_nodes = resolvedRefs
       for ((node, rank) <- resolvedRefs.zipWithIndex){
-        node ! INIT(rank, init_id, active_nodes, min_key, max_key)
+        node ! Init(rank, init_id, active_nodes, min_key, max_key)
       }
     }
 
-    case INIT_ACK(init_id) => {
+    case InitAck(init_id) => {
       init_ack_count += 1
       if (init_ack_count == n) {
         prepare_latch.countDown()
       }
     }
 
-    case RUN => {
-      resolved_active_nodes.foreach(ref => ref ! RUN)
-      /*for (node <- active_nodes){
-        val f = context.actorSelection(node.actorPath).resolveOne(5 seconds)
-        val a_ref = Await.result(f, 5 seconds)
-        a_ref ! RUN
-      }*/
+    case Run => {
+      resolved_active_nodes.foreach(ref => ref ! Run)
     }
-    case DONE => {
+    case Done => {
       done_count += 1
       if (done_count == n) {
         finished_latch.countDown()
@@ -89,11 +81,13 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
 }
 
 object PartitioningActor{
-  case object START
+  case object Start
   case class ResolvedNodes(actorRefs: List[ActorRef])
-  case class INIT(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
-  case class INIT_ACK(init_id: Int)
-  case object RUN
+  case class Init(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
+  case class InitAck(init_id: Int)
+  case object Run
+  case object Done
+  case object Identify
 }
 
 
@@ -103,6 +97,8 @@ object PartitioningActorSerializer {
   private val INIT_FLAG: Byte = 1
   private val INIT_ACK_FLAG: Byte = 2
   private val RUN_FLAG: Byte = 3
+  private val DONE_FLAG: Byte = 4
+  private val IDENTIFY_FLAG: Byte = 5
 }
 
 class PartitioningActorSerializer extends Serializer {
@@ -116,7 +112,7 @@ class PartitioningActorSerializer extends Serializer {
 
   override def toBinary(o: AnyRef): Array[Byte] = {
     o match {
-      case i: INIT => {
+      case i: Init => {
         val bs = ByteString.createBuilder.putByte(INIT_FLAG)
         bs.putInt(i.rank)
         bs.putInt(i.init_id)
@@ -124,17 +120,18 @@ class PartitioningActorSerializer extends Serializer {
         bs.putLong(i.max)
         bs.putInt(i.nodes.size)
         for (c_ref <- i.nodes){
-//          println(s"Serializing path ${c_ref.actorPath}")
           val bytes = c_ref.actorPath.getBytes
           bs.putShort(bytes.size)
           bs.putBytes(bytes)
         }
         bs.result().toArray
       }
-      case ack: INIT_ACK => {
+      case ack: InitAck => {
         ByteString.createBuilder.putByte(INIT_ACK_FLAG).putInt(ack.init_id).result().toArray
       }
-      case RUN => Array(RUN_FLAG)
+      case Run => Array(RUN_FLAG)
+      case Done => Array(DONE_FLAG)
+      case Identify => Array(IDENTIFY_FLAG)
     }
 
   }
@@ -158,10 +155,12 @@ class PartitioningActorSerializer extends Serializer {
           val c_ref = ClientRef(bytes.map(_.toChar).mkString)
           nodes += c_ref
         }
-        INIT(rank, init_id, nodes.toList, min, max)
+        Init(rank, init_id, nodes.toList, min, max)
       }
-      case INIT_ACK_FLAG => INIT_ACK(buf.getInt)
-      case RUN_FLAG => RUN
+      case INIT_ACK_FLAG => InitAck(buf.getInt)
+      case RUN_FLAG => Run
+      case DONE_FLAG => Done
+      case IDENTIFY_FLAG => Identify
     }
   }
 }
