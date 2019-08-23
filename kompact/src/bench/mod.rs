@@ -56,11 +56,9 @@ impl BenchmarkFactory for ActorFactory {
         match label {
             pingpong::actor_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
             netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
-            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
-                self.throughput_ping_pong().map_into()
-            }
+            throughput_pingpong::actor_pingpong::PingPong::LABEL => self.throughput_ping_pong().map_into(),
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
-            atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
+            atomicregister::actor_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -82,7 +80,7 @@ impl BenchmarkFactory for ActorFactory {
     }
 
     fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-        Ok(atomicregister::AtomicRegister {}.into())
+        Ok(atomicregister::actor_atomicregister::AtomicRegister {}.into())
     }
 }
 pub fn mixed() -> Box<BenchmarkFactory> {
@@ -99,6 +97,7 @@ impl BenchmarkFactory for MixedFactory {
                 self.throughput_ping_pong().map_into()
             }
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
+            atomicregister::mixed_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -120,6 +119,6 @@ impl BenchmarkFactory for MixedFactory {
     }
 
     fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-        unimplemented!()
+        Ok(atomicregister::mixed_atomicregister::AtomicRegister {}.into())
     }
 }

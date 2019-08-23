@@ -65,7 +65,7 @@ impl Provide<ControlPort> for PartitioningActor {
 impl Actor for PartitioningActor{
     fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
         if msg.is::<Run>() {
-            info!(self.ctx.log(), "Telling nodes to run");
+//            info!(self.ctx.log(), "Telling nodes to run");
             for node in &self.nodes{
                 node.tell((Run, PARTITIONING_ACTOR_SER), self);
             }
