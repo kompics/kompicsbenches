@@ -13,6 +13,8 @@ import se.kth.benchmarks.kompicsscala._
 import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
 import se.sics.kompics.sl._
+import se.sics.kompics.sl.{ Init => KompicsInit }
+import se.kth.benchmarks.kompicsscala.PartitioningComp.{ Init, InitAck, Run, Done }
 
 import scala.collection.mutable
 import scala.concurrent.Await
@@ -57,13 +59,13 @@ object AtomicRegister extends DistributedBenchmark {
       val nodes = addr :: d
       val num_nodes = nodes.size
       assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
-      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](Init(read_workload, write_workload)) // TODO parallelism
+      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)) // TODO parallelism
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](Init(addr))
+      val bebF = system.createNotify[BEBComp](KompicsInit(addr))
       beb = Await.result(bebF, 5.second)
       val beb_net_connF = system.connectNetwork(beb)
       Await.result(beb_net_connF, 5.second)
@@ -73,7 +75,7 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      val partitioningCompF = system.createNotify[PartitioningComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for INIT_ACK from clients
+      val partitioningCompF = system.createNotify[PartitioningComp](KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for InitAck from clients
       partitioningComp = Await.result(partitioningCompF, 5.second)
       val partitioningComp_net_connF = system.connectNetwork(partitioningComp)
       Await.result(partitioningComp_net_connF, 5.seconds)
@@ -81,16 +83,17 @@ object AtomicRegister extends DistributedBenchmark {
       system.startNotify(beb)
       system.startNotify(atomicRegister)
       system.startNotify(partitioningComp)
-      val timeout = 100
+      prepare_latch.await()
+      /*val timeout = 100
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
       if (!successful_prep) {
-        println("Timeout on INIT_ACK in prepareIteration")
-        throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
-      }
+        println("Timeout on InitAck in prepareIteration")
+        throw new FailedPreparationException("Timeout waiting for Init Ack from all nodes")
+      }*/
     }
     override def runIteration(): Unit = {
-      system.triggerComponent(RUN, partitioningComp)
+      system.triggerComponent(Run, partitioningComp)
       finished_latch.await()
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
@@ -132,13 +135,13 @@ object AtomicRegister extends DistributedBenchmark {
       println(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
-      val atomicRegisterF = system.createNotify[AtomicRegisterComp](Init(read_workload, write_workload))
+      val atomicRegisterF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterF, 5.seconds)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](Init(addr))
+      val bebF = system.createNotify[BEBComp](KompicsInit(addr))
       beb = Await.result(bebF, 5.second)
       val beb_net_connF = system.connectNetwork(beb)
       Await.result(beb_net_connF, 5.second)
@@ -207,13 +210,13 @@ object AtomicRegister extends DistributedBenchmark {
     var skip_impose = true
   }
 
-  class AtomicRegisterComp(init: Init[AtomicRegisterComp]) extends ComponentDefinition {
+  class AtomicRegisterComp(init: KompicsInit[AtomicRegisterComp]) extends ComponentDefinition {
     implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops = o.mkOrderingOps(x); // for tuple comparison
 
     val net = requires[Network]
     val beb = requires[BestEffortBroadcast]
 
-    val Init(read_workload: Float, write_workload: Float) = init
+    val KompicsInit(read_workload: Float, write_workload: Float) = init
     var nodes: List[NetAddress] = _
     var n = 0
     val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
@@ -231,7 +234,7 @@ object AtomicRegister extends DistributedBenchmark {
     var master: NetAddress = _
     var current_run_id: Int = -1
 
-    private def newIteration(i: INIT): Unit = {
+    private def newIteration(i: Init): Unit = {
       current_run_id = i.init_id
       nodes = i.nodes
       n = nodes.size
@@ -253,8 +256,8 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
-      //      logger.info(s"Invoking READ key=$key")
-      trigger(BEBRequest(nodes, READ(current_run_id, key, register.rid)) -> beb)
+      //      logger.info(s"Invoking Read key=$key")
+      trigger(BEBRequest(nodes, Read(current_run_id, key, register.rid)) -> beb)
     }
 
     private def invokeWrite(key: Long): Unit = {
@@ -265,8 +268,8 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
-      //      logger.info(s"Invoking WRITE key=$key")
-      trigger(BEBRequest(nodes, READ(current_run_id, key, register.rid)) -> beb)
+      //      logger.info(s"Invoking Write key=$key")
+      trigger(BEBRequest(nodes, Read(current_run_id, key, register.rid)) -> beb)
     }
 
     private def invokeOperations(): Unit = {
@@ -289,13 +292,13 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
+      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
 
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(DONE) -> net)
+      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
 
     }
 
@@ -306,12 +309,12 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     beb uponEvent {
-      case BEBDeliver(READ(current_run_id, key, readId), src) => handle {
+      case BEBDeliver(Read(current_run_id, key, readId), src) => handle {
         val current_state: AtomicRegisterState = register_state(key)
-        trigger(NetMessage.viaTCP(selfAddr, src)(VALUE(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)) -> net)
+        trigger(NetMessage.viaTCP(selfAddr, src)(Value(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)) -> net)
       };
 
-      case BEBDeliver(w: WRITE, src) => handle {
+      case BEBDeliver(w: Write, src) => handle {
         if (w.run_id == current_run_id) {
           val current_register = register_state(w.key)
           if ((w.ts, w.wr) > (current_register.ts, current_register.wr)) {
@@ -320,18 +323,18 @@ object AtomicRegister extends DistributedBenchmark {
             current_register.value = w.value
           }
         }
-        trigger(NetMessage.viaTCP(selfAddr, src)(ACK(w.run_id, w.key, w.rid)) -> net)
+        trigger(NetMessage.viaTCP(selfAddr, src)(Ack(w.run_id, w.key, w.rid)) -> net)
       };
     }
 
     net uponEvent {
-      case context @ NetMessage(header, i: INIT) => handle{
+      case context @ NetMessage(header, i: Init) => handle{
         newIteration(i)
         master = header.getSource()
-        trigger(context.reply(selfAddr)(INIT_ACK(i.init_id)) -> net)
+        trigger(context.reply(selfAddr)(InitAck(i.init_id)) -> net)
       }
 
-      case NetMessage(header, v: VALUE) => handle {
+      case NetMessage(header, v: Value) => handle {
         if (v.run_id == current_run_id) {
           val current_register = register_state(v.key)
           if (v.rid == current_register.rid) {
@@ -352,7 +355,7 @@ object AtomicRegister extends DistributedBenchmark {
                 register_readlist(v.key).clear()
                 readResponse(v.key, current_register.readval)
               } else {
-                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)  // TODO must check rank as well if same ts
+                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1) // TODO must check rank as well if same ts
                 current_register.readval = readvalue
                 register_readlist(v.key).clear()
                 var bcastvalue = readvalue
@@ -361,14 +364,14 @@ object AtomicRegister extends DistributedBenchmark {
                   maxts += 1
                   bcastvalue = current_register.writeval
                 }
-                trigger(BEBRequest(nodes, WRITE(v.run_id, v.key, v.rid, maxts, rr, bcastvalue)) -> beb)
+                trigger(BEBRequest(nodes, Write(v.run_id, v.key, v.rid, maxts, rr, bcastvalue)) -> beb)
               }
             }
           }
         }
       }
 
-      case NetMessage(header, a: ACK) => handle {
+      case NetMessage(header, a: Ack) => handle {
         if (a.run_id == current_run_id) {
           val current_register = register_state(a.key)
           if (a.rid == current_register.rid) {
@@ -386,48 +389,42 @@ object AtomicRegister extends DistributedBenchmark {
 
       }
 
-      case NetMessage(_, RUN) => handle{
+      case NetMessage(_, Run) => handle{
         invokeOperations()
       }
     }
   }
 
-  case object DONE extends KompicsEvent;
-  case class READ(run_id: Int, key: Long, rid: Int) extends KompicsEvent;
-  case class ACK(run_id: Int, key: Long, rid: Int) extends KompicsEvent;
-  case class VALUE(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends KompicsEvent;
-  case class WRITE(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends KompicsEvent;
+  case class Read(run_id: Int, key: Long, rid: Int) extends KompicsEvent;
+  case class Ack(run_id: Int, key: Long, rid: Int) extends KompicsEvent;
+  case class Value(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends KompicsEvent;
+  case class Write(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends KompicsEvent;
 
   object AtomicRegisterSerializer extends Serializer {
     private val READ_FLAG: Byte = 1
     private val WRITE_FLAG: Byte = 2
     private val ACK_FLAG: Byte = 3
     private val VALUE_FLAG: Byte = 4
-    private val DONE_FLAG: Byte = 5
 
     override def identifier(): Int = se.kth.benchmarks.kompics.SerializerIds.S_ATOMIC_REG
 
     def register(): Unit = {
       Serializers.register(this, "atomicregister");
-      Serializers.register(classOf[READ], "atomicregister");
-      Serializers.register(classOf[ACK], "atomicregister");
-      Serializers.register(classOf[WRITE], "atomicregister");
-      Serializers.register(classOf[VALUE], "atomicregister");
-      Serializers.register(DONE.getClass, "atomicregister")
+      Serializers.register(classOf[Read], "atomicregister");
+      Serializers.register(classOf[Ack], "atomicregister");
+      Serializers.register(classOf[Write], "atomicregister");
+      Serializers.register(classOf[Value], "atomicregister");
     }
 
     override def toBinary(o: Any, buf: ByteBuf): Unit = {
       o match {
-        case DONE => {
-          buf.writeByte(DONE_FLAG)
-        }
-        case r: READ => {
+        case r: Read => {
           buf.writeByte(READ_FLAG)
           buf.writeInt(r.run_id)
           buf.writeLong(r.key)
           buf.writeInt(r.rid)
         }
-        case w: WRITE => {
+        case w: Write => {
           buf.writeByte(WRITE_FLAG)
           buf.writeInt(w.run_id)
           buf.writeLong(w.key)
@@ -436,13 +433,13 @@ object AtomicRegister extends DistributedBenchmark {
           buf.writeInt(w.wr)
           buf.writeInt(w.value)
         }
-        case a: ACK => {
+        case a: Ack => {
           buf.writeByte(ACK_FLAG)
           buf.writeInt(a.run_id)
           buf.writeLong(a.key)
           buf.writeInt(a.rid)
         }
-        case v: VALUE => {
+        case v: Value => {
           buf.writeByte(VALUE_FLAG)
           buf.writeInt(v.run_id)
           buf.writeLong(v.key)
@@ -457,18 +454,17 @@ object AtomicRegister extends DistributedBenchmark {
     override def fromBinary(buf: ByteBuf, optional: Optional[AnyRef]): AnyRef = {
       val flag = buf.readByte()
       flag match {
-        case DONE_FLAG => DONE
         case READ_FLAG => {
           val run_id = buf.readInt()
           val key = buf.readLong()
           val rid = buf.readInt()
-          READ(run_id, key, rid)
+          Read(run_id, key, rid)
         }
         case ACK_FLAG => {
           val run_id = buf.readInt()
           val key = buf.readLong()
           val rid = buf.readInt()
-          ACK(run_id, key, rid)
+          Ack(run_id, key, rid)
         }
         case WRITE_FLAG => {
           val run_id = buf.readInt()
@@ -477,7 +473,7 @@ object AtomicRegister extends DistributedBenchmark {
           val ts = buf.readInt()
           val wr = buf.readInt()
           val value = buf.readInt()
-          WRITE(run_id, key, rid, ts, wr, value)
+          Write(run_id, key, rid, ts, wr, value)
         }
         case VALUE_FLAG => {
           val run_id = buf.readInt()
@@ -486,7 +482,7 @@ object AtomicRegister extends DistributedBenchmark {
           val ts = buf.readInt()
           val wr = buf.readInt()
           val value = buf.readInt()
-          VALUE(run_id, key, rid, ts, wr, value)
+          Value(run_id, key, rid, ts, wr, value)
         }
         case _ => {
           Console.err.print(s"Got invalid ser flag: $flag");

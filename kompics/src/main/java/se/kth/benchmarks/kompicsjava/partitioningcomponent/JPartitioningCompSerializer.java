@@ -1,11 +1,9 @@
-package se.kth.benchmarks.kompicsjava.bench.atomicregister;
+package se.kth.benchmarks.kompicsjava.partitioningcomponent;
 
 import io.netty.buffer.ByteBuf;
 import se.kth.benchmarks.kompics.SerializerHelper;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.INIT;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.INIT_ACK;
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.RUN;
 import se.kth.benchmarks.kompicsjava.net.NetAddress;
+import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.*;
 import se.sics.kompics.network.netty.serialization.Serializer;
 import se.sics.kompics.network.netty.serialization.Serializers;
 
@@ -20,14 +18,17 @@ public class JPartitioningCompSerializer implements Serializer {
 
     public static void register() {
         Serializers.register(new JPartitioningCompSerializer(), "partitioningcomp");
-        Serializers.register(INIT.class, "partitioningcomp");
-        Serializers.register(INIT_ACK.class, "partitioningcomp");
-        Serializers.register(RUN.class, "partitioningcomp");
+        Serializers.register(Init.class, "partitioningcomp");
+        Serializers.register(InitAck.class, "partitioningcomp");
+        Serializers.register(Run.class, "partitioningcomp");
+        Serializers.register(Done.class, "partitioningcomp");
     }
 
     private static final byte INIT_FLAG = 1;
     private static final byte INIT_ACK_FLAG = 2;
     private static final byte RUN_FLAG = 3;
+    private static final byte DONE_FLAG = 4;
+
 
     @Override
     public int identifier() {
@@ -36,8 +37,8 @@ public class JPartitioningCompSerializer implements Serializer {
 
     @Override
     public void toBinary(Object o, ByteBuf buf) {
-        if (o instanceof INIT){
-            INIT i = (INIT) o;
+        if (o instanceof Init){
+            Init i = (Init) o;
             buf.writeByte(INIT_FLAG);
             buf.writeInt(i.rank);
             buf.writeInt(i.id);
@@ -49,14 +50,18 @@ public class JPartitioningCompSerializer implements Serializer {
                 buf.writeShort(node.getPort());
             }
         }
-        else if (o instanceof INIT_ACK){
-            INIT_ACK ack = (INIT_ACK) o;
+        else if (o instanceof InitAck){
+            InitAck ack = (InitAck) o;
             buf.writeByte(INIT_ACK_FLAG);
             buf.writeInt(ack.init_id);
         }
-        else if (o instanceof RUN){
+        else if (o instanceof Run){
             buf.writeByte(RUN_FLAG);
-        } else {
+        }
+        else if (o instanceof Done){
+            buf.writeByte(DONE_FLAG);
+        }
+        else {
             throw SerializerHelper.notSerializable(o.getClass().getName());
         }
     }
@@ -83,12 +88,13 @@ public class JPartitioningCompSerializer implements Serializer {
                         throw SerializerHelper.notSerializable("UnknownHostException when trying to create InetAddress from bytes");
                     }
                 }
-                return new INIT(rank, id, nodes, min, max);
+                return new Init(rank, id, nodes, min, max);
             }
             case INIT_ACK_FLAG: {
-                return new INIT_ACK(buf.readInt());
+                return new InitAck(buf.readInt());
             }
-            case RUN_FLAG: return RUN.event;
+            case RUN_FLAG: return Run.event;
+            case DONE_FLAG: return Done.event;
             default: {
                 throw SerializerHelper.notSerializable("Invalid flag: " + flag);
             }

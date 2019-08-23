@@ -1,5 +1,6 @@
 package se.kth.benchmarks.kompicsjava.bench.atomicregister;
 
+import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.*;
 import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.*;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBDeliver;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBRequest;
@@ -37,7 +38,7 @@ public class AtomicRegister extends ComponentDefinition {
     private int selfRank;
     private final NetAddress selfAddr;
     private List<NetAddress> nodes;
-    private int N;
+    private int n;
     private long min_key = -1;
     private long max_key = -1;
     private HashMap<Long, AtomicRegisterState> register_state = new HashMap<>();
@@ -64,10 +65,10 @@ public class AtomicRegister extends ComponentDefinition {
         subscribe(runHandler, net);
     }
 
-    private void newIteration(INIT i){
+    private void newIteration(se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Init i){
         current_run_id = i.id;
         nodes = i.nodes;
-        N = nodes.size();
+        n = nodes.size();
         selfRank = i.rank;
         min_key = i.min;
         max_key = i.max;
@@ -85,7 +86,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register_readList.get(key).clear();
         register.reading = true;
-        trigger(new BEBRequest(nodes, new READ(current_run_id, key, register.rid)), beb);
+        trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
     private void invokeWrite(long key){
@@ -96,7 +97,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register.reading = false;
         register_readList.get(key).clear();
-        trigger(new BEBRequest(nodes, new READ(current_run_id, key, register.rid)), beb);
+        trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
     private void invokeOperations(){
@@ -117,12 +118,12 @@ public class AtomicRegister extends ComponentDefinition {
 
     private void readResponse(long key, int read_value){
         read_count--;
-        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
+        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Done.event), net);
     }
 
     private void writeResponse(long key){
         write_count--;
-        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), DONE.event), net);
+        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Done.event), net);
     }
 
     private Handler<Start> startHandler = new Handler<Start>() {
@@ -134,19 +135,19 @@ public class AtomicRegister extends ComponentDefinition {
 
     };
 
-    private ClassMatchedHandler<READ, BEBDeliver> readRequestHandler = new ClassMatchedHandler<READ, BEBDeliver>() {
+    private ClassMatchedHandler<Read, BEBDeliver> readRequestHandler = new ClassMatchedHandler<Read, BEBDeliver>() {
         @Override
-        public void handle(READ read, BEBDeliver bebDeliver) {
+        public void handle(Read read, BEBDeliver bebDeliver) {
             if (read.run_id == current_run_id) {
                 AtomicRegisterState current_state = register_state.get(read.key);
-                trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new VALUE(read.run_id, read.key, read.rid, current_state.ts, current_state.wr, current_state.value)), net);
+                trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new Value(read.run_id, read.key, read.rid, current_state.ts, current_state.wr, current_state.value)), net);
             }
         }
     };
 
-    private ClassMatchedHandler<WRITE, BEBDeliver> writeRequestHandler = new ClassMatchedHandler<WRITE, BEBDeliver>() {
+    private ClassMatchedHandler<Write, BEBDeliver> writeRequestHandler = new ClassMatchedHandler<Write, BEBDeliver>() {
         @Override
-        public void handle(WRITE write, BEBDeliver bebDeliver) {
+        public void handle(Write write, BEBDeliver bebDeliver) {
             if (write.run_id == current_run_id){
                 AtomicRegisterState current_state = register_state.get(write.key);
                 if (write.ts > current_state.ts || (write.ts == current_state.ts && write.wr > current_state.wr)) {
@@ -155,22 +156,22 @@ public class AtomicRegister extends ComponentDefinition {
                     current_state.value = write.value;
                 }
             }
-            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new ACK(write.run_id, write.key, write.rid)), net);
+            trigger(NetMessage.viaTCP(selfAddr, bebDeliver.src, new Ack(write.run_id, write.key, write.rid)), net);
         }
     };
 
-    private ClassMatchedHandler<INIT, NetMessage> initHandler = new ClassMatchedHandler<INIT, NetMessage>() {
+    private ClassMatchedHandler<se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Init, NetMessage> initHandler = new ClassMatchedHandler<se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Init, NetMessage>() {
         @Override
-        public void handle(INIT init, NetMessage netMessage) {
+        public void handle(se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Init init, NetMessage netMessage) {
             newIteration(init);
             master = netMessage.getSource();
-            trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), netMessage.getSource().asScala(), new INIT_ACK(init.id)), net);
+            trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), netMessage.getSource().asScala(), new InitAck(init.id)), net);
         }
     };
 
-    private ClassMatchedHandler<VALUE, NetMessage> readResponseHandler = new ClassMatchedHandler<VALUE, NetMessage>() {
+    private ClassMatchedHandler<Value, NetMessage> readResponseHandler = new ClassMatchedHandler<Value, NetMessage>() {
         @Override
-        public void handle(VALUE v, NetMessage msg) {
+        public void handle(Value v, NetMessage msg) {
             if (v.run_id == current_run_id) {
                 AtomicRegisterState current_register = register_state.get(v.key);
                 if (v.rid == current_register.rid) {
@@ -184,7 +185,7 @@ public class AtomicRegister extends ComponentDefinition {
                         }
                     }
                     readList.put(msg.getSource(), new Tuple(v.ts, v.wr, v.value));
-                    if (readList.size() > N / 2) {
+                    if (readList.size() > n / 2) {
                         if (current_register.reading && current_register.skip_impose) {
                             current_register.value = current_register.readval;
                             readList.clear();
@@ -203,7 +204,7 @@ public class AtomicRegister extends ComponentDefinition {
                                 maxts++;
                                 bcastval = current_register.writeval;
                             }
-                            trigger(new BEBRequest(nodes, new WRITE(v.run_id, v.key, v.rid, maxts, rr, bcastval)), beb);
+                            trigger(new BEBRequest(nodes, new Write(v.run_id, v.key, v.rid, maxts, rr, bcastval)), beb);
                         }
                     }
                 }
@@ -211,14 +212,14 @@ public class AtomicRegister extends ComponentDefinition {
         }
     };
 
-    private ClassMatchedHandler<ACK, NetMessage> ackHandler = new ClassMatchedHandler<ACK, NetMessage>() {
+    private ClassMatchedHandler<Ack, NetMessage> ackHandler = new ClassMatchedHandler<Ack, NetMessage>() {
         @Override
-        public void handle(ACK a, NetMessage msg) {
+        public void handle(Ack a, NetMessage msg) {
             if (a.run_id == current_run_id) {  // avoid redundant acks from previous runs
                 AtomicRegisterState current_register = register_state.get(a.key);
                 if (a.rid == current_register.rid) {
                     current_register.acks++;
-                    if (current_register.acks > N / 2) {
+                    if (current_register.acks > n / 2) {
                         current_register.acks = 0;
                         if (current_register.reading) readResponse(a.key, current_register.readval);
                         else writeResponse(a.key);
@@ -228,9 +229,9 @@ public class AtomicRegister extends ComponentDefinition {
         }
     };
 
-    private ClassMatchedHandler<RUN, NetMessage> runHandler = new ClassMatchedHandler<RUN, NetMessage>() {
+    private ClassMatchedHandler<Run, NetMessage> runHandler = new ClassMatchedHandler<Run, NetMessage>() {
         @Override
-        public void handle(RUN run, NetMessage netMessage) {
+        public void handle(Run run, NetMessage netMessage) {
             invokeOperations();
         }
     };
