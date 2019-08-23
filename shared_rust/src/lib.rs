@@ -408,8 +408,9 @@ mod tests {
         type ClientData = ();
         type MasterConf = ();
 
-        fn setup(&mut self, _c: Self::MasterConf) -> Self::ClientConf {
+        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
             println!("Master setting up");
+            Ok(())
         }
 
         fn prepare_iteration(&mut self, _d: Vec<Self::ClientData>) -> () {
