@@ -1,6 +1,6 @@
 package se.kth.benchmarks.akka.bench
 
-import akka.actor._
+import akka.actor.{ActorSystem, ActorRef, Actor, Props}
 import akka.serialization.Serializer
 import akka.util.ByteString
 import akka.event.Logging
@@ -33,16 +33,16 @@ object AtomicRegister extends DistributedBenchmark {
   val serializers = SerializerBindings
     .empty()
     .addSerializer[AtomicRegisterSerializer](AtomicRegisterSerializer.NAME)
-    .addBinding[DONE.type](AtomicRegisterSerializer.NAME)
-    .addBinding[READ](AtomicRegisterSerializer.NAME)
-    .addBinding[VALUE](AtomicRegisterSerializer.NAME)
-    .addBinding[WRITE](AtomicRegisterSerializer.NAME)
-    .addBinding[ACK](AtomicRegisterSerializer.NAME)
-    .addBinding[IDENTIFY.type](AtomicRegisterSerializer.NAME)
+    .addBinding[Read](AtomicRegisterSerializer.NAME)
+    .addBinding[Value](AtomicRegisterSerializer.NAME)
+    .addBinding[Write](AtomicRegisterSerializer.NAME)
+    .addBinding[Ack](AtomicRegisterSerializer.NAME)
     .addSerializer[PartitioningActorSerializer](PartitioningActorSerializer.NAME)
-    .addBinding[INIT](PartitioningActorSerializer.NAME)
-    .addBinding[INIT_ACK](PartitioningActorSerializer.NAME)
-    .addBinding[RUN.type](PartitioningActorSerializer.NAME)
+    .addBinding[Init](PartitioningActorSerializer.NAME)
+    .addBinding[InitAck](PartitioningActorSerializer.NAME)
+    .addBinding[Run.type](PartitioningActorSerializer.NAME)
+    .addBinding[Done.type](PartitioningActorSerializer.NAME)
+    .addBinding[Identify.type](PartitioningActorSerializer.NAME)
 
   class MasterImpl extends Master {
     private var read_workload = 0.0F;
@@ -82,18 +82,19 @@ object AtomicRegister extends DistributedBenchmark {
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
       partitioningActor = system.actorOf(Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), s"partitioningactor$init_id")
-      partitioningActor ! START
-      val timeout = 100
+      partitioningActor ! Start
+      prepare_latch.await()
+      /*val timeout = 100
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
       if (!successful_prep) {
         println("Timeout in prepareIteration for INIT_ACK")
         throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
-      }
+      }*/
     }
 
     override def runIteration(): Unit = {
-      partitioningActor ! RUN
+      partitioningActor ! Run
       finished_latch.await()
       println("Finished run") // TODO REMOVE FOR TEST
     };
@@ -133,16 +134,16 @@ object AtomicRegister extends DistributedBenchmark {
     val serializers = SerializerBindings
       .empty()
       .addSerializer[AtomicRegisterSerializer](AtomicRegisterSerializer.NAME)
-      .addBinding[DONE.type](AtomicRegisterSerializer.NAME)
-      .addBinding[READ](AtomicRegisterSerializer.NAME)
-      .addBinding[VALUE](AtomicRegisterSerializer.NAME)
-      .addBinding[WRITE](AtomicRegisterSerializer.NAME)
-      .addBinding[ACK](AtomicRegisterSerializer.NAME)
-      .addBinding[IDENTIFY.type](AtomicRegisterSerializer.NAME)
+      .addBinding[Read](AtomicRegisterSerializer.NAME)
+      .addBinding[Value](AtomicRegisterSerializer.NAME)
+      .addBinding[Write](AtomicRegisterSerializer.NAME)
+      .addBinding[Ack](AtomicRegisterSerializer.NAME)
       .addSerializer[PartitioningActorSerializer](PartitioningActorSerializer.NAME)
-      .addBinding[INIT](PartitioningActorSerializer.NAME)
-      .addBinding[INIT_ACK](PartitioningActorSerializer.NAME)
-      .addBinding[RUN.type](PartitioningActorSerializer.NAME)
+      .addBinding[Init](PartitioningActorSerializer.NAME)
+      .addBinding[InitAck](PartitioningActorSerializer.NAME)
+      .addBinding[Run.type](PartitioningActorSerializer.NAME)
+      .addBinding[Done.type](PartitioningActorSerializer.NAME)
+      .addBinding[Identify.type](PartitioningActorSerializer.NAME)
 
     override def setup(c: ClientConf): ClientData = {
       system = ActorSystemProvider.newRemoteActorSystem(
@@ -235,17 +236,11 @@ object AtomicRegister extends DistributedBenchmark {
       for (node <- receivers) node ! msg
     }
 
-    private def newIteration(i: INIT): Unit = {
+    private def newIteration(i: Init): Unit = {
       current_run_id = i.init_id
-      /*implicit val ec = scala.concurrent.ExecutionContext.global;
-      val actorRefsF = Future.sequence(i.nodes.map(node => context.actorSelection(node.actorPath).resolveOne(5 seconds)))
-      actorRefsF.onComplete {
-        case Success(actorRefs) => self ! ResolvedActors(actorRefs)
-        case Failure(ex) => logger.info(s"Failed to resolve ActorPaths: $ex")
-      }*/
       for (c: ClientRef <- i.nodes){
         val f = context.system.actorSelection(c.actorPath)
-        f ! IDENTIFY
+        f ! Identify
       }
       n = i.nodes.size
       selfRank = i.rank
@@ -261,14 +256,13 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
 
-
     private def invokeRead(key: Long): Unit = {
       val register = register_state(key)
       register.rid += 1;
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
-      bcast(nodes, READ(current_run_id, key, register.rid))
+      bcast(nodes, Read(current_run_id, key, register.rid))
     }
 
     private def invokeWrite(key: Long): Unit = {
@@ -279,7 +273,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
-      bcast(nodes, READ(current_run_id, key, register.rid))
+      bcast(nodes, Read(current_run_id, key, register.rid))
     }
 
     private def invokeOperations(): Unit = {
@@ -301,45 +295,40 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) master ! DONE
+      if (read_count == 0 && write_count == 0) master ! Done
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) master ! DONE
+      if (read_count == 0 && write_count == 0) master ! Done
     }
 
     override def receive = {
 
-      /*case ResolvedActors(actorRefs) => {
-        nodes = actorRefs
-        master ! INIT_ACK(current_run_id)
-      }*/
-
-      case IDENTIFY => {
+      case Identify => {
         nodes_listBuffer += sender()
         if (nodes_listBuffer.size == n) {
-          master ! INIT_ACK(current_run_id)
+          master ! InitAck(current_run_id)
           nodes = nodes_listBuffer.toList
           nodes_listBuffer.clear()
         }
       }
 
-      case i: INIT => {
+      case i: Init => {
         newIteration(i)
         master = sender()
       }
 
-      case RUN => {
+      case Run => {
         invokeOperations()
       }
 
-      case READ(current_run_id, key, readId) => {
+      case Read(current_run_id, key, readId) => {
         val current_state: AtomicRegisterState = register_state(key)
-        sender() ! VALUE(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)
+        sender() ! Value(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)
       }
 
-      case v: VALUE => {
+      case v: Value => {
         if (v.run_id == current_run_id) {
           val current_register = register_state(v.key)
           if (v.rid == current_register.rid) {
@@ -369,7 +358,7 @@ object AtomicRegister extends DistributedBenchmark {
                   maxts += 1
                   bcastvalue = current_register.writeval
                 }
-                bcast(nodes, WRITE(v.run_id, v.key, v.rid, maxts, rr, bcastvalue))
+                bcast(nodes, Write(v.run_id, v.key, v.rid, maxts, rr, bcastvalue))
               }
             }
           }
@@ -377,7 +366,7 @@ object AtomicRegister extends DistributedBenchmark {
 
       }
 
-      case w: WRITE => {
+      case w: Write => {
         if (w.run_id == current_run_id) {
           val current_state = register_state(w.key)
           if ((w.ts, w.wr) > (current_state.ts, current_state.wr)) {
@@ -386,10 +375,10 @@ object AtomicRegister extends DistributedBenchmark {
             current_state.value = w.value
           }
         }
-        sender() ! ACK(w.run_id, w.key, w.rid)
+        sender() ! Ack(w.run_id, w.key, w.rid)
       }
 
-      case a: ACK => {
+      case a: Ack => {
         if (a.run_id == current_run_id) {
           val current_register = register_state(a.key)
           if (a.rid == current_register.rid) {
@@ -410,12 +399,10 @@ object AtomicRegister extends DistributedBenchmark {
 
   sealed trait AtomicRegisterMessage
   case class ResolvedActors(actorRefs: List[ActorRef])
-  case object DONE extends AtomicRegisterMessage
-  case object IDENTIFY extends AtomicRegisterMessage
-  case class READ(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
-  case class ACK(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
-  case class VALUE(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends AtomicRegisterMessage
-  case class WRITE(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends AtomicRegisterMessage
+  case class Read(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
+  case class Ack(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
+  case class Value(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends AtomicRegisterMessage
+  case class Write(run_id: Int, key: Long, rid: Int, ts: Int, wr: Int, value: Int) extends AtomicRegisterMessage
 
   object AtomicRegisterSerializer {
     val NAME = "atomicregister"
@@ -424,8 +411,6 @@ object AtomicRegister extends DistributedBenchmark {
     private val WRITE_FLAG: Byte = 2
     private val ACK_FLAG: Byte = 3
     private val VALUE_FLAG: Byte = 4
-    private val DONE_FLAG: Byte = 5
-    private val IDENTIFY_FLAG: Byte = 6
   }
 
   class AtomicRegisterSerializer extends Serializer {
@@ -439,12 +424,10 @@ object AtomicRegister extends DistributedBenchmark {
 
     override def toBinary(o: AnyRef): Array[Byte] = {
       o match {
-        case DONE => Array(DONE_FLAG)
-        case IDENTIFY => Array(IDENTIFY_FLAG)
-        case r: READ => ByteString.createBuilder.putByte(READ_FLAG).putInt(r.run_id).putLong(r.key).putInt(r.rid).result().toArray
-        case w: WRITE => ByteString.createBuilder.putByte(WRITE_FLAG).putInt(w.run_id).putLong(w.key).putInt(w.rid).putInt(w.ts).putInt(w.wr).putInt(w.value).result().toArray
-        case v: VALUE => ByteString.createBuilder.putByte(VALUE_FLAG).putInt(v.run_id).putLong(v.key).putInt(v.rid).putInt(v.ts).putInt(v.wr).putInt(v.value).result().toArray
-        case a: ACK => ByteString.createBuilder.putByte(ACK_FLAG).putInt(a.run_id).putLong(a.key).putInt(a.rid).result().toArray
+        case r: Read => ByteString.createBuilder.putByte(READ_FLAG).putInt(r.run_id).putLong(r.key).putInt(r.rid).result().toArray
+        case w: Write => ByteString.createBuilder.putByte(WRITE_FLAG).putInt(w.run_id).putLong(w.key).putInt(w.rid).putInt(w.ts).putInt(w.wr).putInt(w.value).result().toArray
+        case v: Value => ByteString.createBuilder.putByte(VALUE_FLAG).putInt(v.run_id).putLong(v.key).putInt(v.rid).putInt(v.ts).putInt(v.wr).putInt(v.value).result().toArray
+        case a: Ack => ByteString.createBuilder.putByte(ACK_FLAG).putInt(a.run_id).putLong(a.key).putInt(a.rid).result().toArray
       }
     }
 
@@ -452,19 +435,17 @@ object AtomicRegister extends DistributedBenchmark {
       val buf = ByteBuffer.wrap(bytes).order(order);
       val flag = buf.get;
       flag match {
-        case DONE_FLAG => DONE
-        case IDENTIFY_FLAG => IDENTIFY
         case READ_FLAG => {
           val run_id = buf.getInt
           val key = buf.getLong
           val rid = buf.getInt
-          READ(run_id, key, rid)
+          Read(run_id, key, rid)
         }
         case ACK_FLAG => {
           val run_id = buf.getInt
           val key = buf.getLong
           val rid = buf.getInt
-          ACK(run_id, key, rid)
+          Ack(run_id, key, rid)
         }
         case WRITE_FLAG => {
           val run_id = buf.getInt
@@ -473,7 +454,7 @@ object AtomicRegister extends DistributedBenchmark {
           val ts = buf.getInt
           val wr = buf.getInt
           val value = buf.getInt
-          WRITE(run_id, key, rid, ts, wr, value)
+          Write(run_id, key, rid, ts, wr, value)
         }
         case VALUE_FLAG => {
           val run_id = buf.getInt
@@ -482,7 +463,7 @@ object AtomicRegister extends DistributedBenchmark {
           val ts = buf.getInt
           val wr = buf.getInt
           val value = buf.getInt
-          VALUE(run_id, key, rid, ts, wr, value)
+          Value(run_id, key, rid, ts, wr, value)
         }
       }
     }

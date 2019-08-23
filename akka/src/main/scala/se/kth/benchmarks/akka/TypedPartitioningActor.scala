@@ -8,7 +8,7 @@ import TypedPartitioningActor._
 import akka.actor.TypedActor.PreStart
 import akka.serialization.Serializer
 import akka.util.ByteString
-import se.kth.benchmarks.akka.typed_bench.AtomicRegister.{AtomicRegisterMessage, ClientRef, INIT, RUN => ATOMICREG_RUN}
+import se.kth.benchmarks.akka.typed_bench.AtomicRegister.{AtomicRegisterMessage, ClientRef, Init, Run => ATOMICREG_RUN}
 
 import scala.collection.mutable.ListBuffer
 
@@ -18,10 +18,10 @@ object TypedPartitioningActor {
 
   trait PartitioningMessage
 
-  case object START extends PartitioningMessage
-  case object RUN extends PartitioningMessage
-  case object DONE extends PartitioningMessage
-  case class INIT_ACK(init_id: Int) extends PartitioningMessage
+  case object Start extends PartitioningMessage
+  case object Run extends PartitioningMessage
+  case object Done extends PartitioningMessage
+  case class InitAck(init_id: Int) extends PartitioningMessage
 }
 
 
@@ -48,30 +48,30 @@ class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
 
   override def onMessage(msg: PartitioningMessage): Behavior[PartitioningMessage] = {
     msg match {
-      case START => {
+      case Start => {
         val min_key: Long = 0l
         val max_key: Long = num_keys - 1
         for ((node, rank) <- active_nodes.zipWithIndex){
           val actorRef = getActorRef(node)
-          actorRef ! INIT(selfRef, rank, init_id, active_nodes, min_key, max_key)
+          actorRef ! Init(selfRef, rank, init_id, active_nodes, min_key, max_key)
         }
       }
 
-      case INIT_ACK(init_id) => {
+      case InitAck(init_id) => {
         init_ack_count += 1
         if (init_ack_count == n) {
           prepare_latch.countDown()
         }
       }
 
-      case RUN => {
+      case Run => {
         for (node <- active_nodes){
           val actorRef = getActorRef(node)
           actorRef ! ATOMICREG_RUN
         }
       }
 
-      case DONE => {
+      case Done => {
         done_count += 1
         if (done_count == n) {
           finished_latch.countDown()
@@ -103,7 +103,7 @@ class TypedPartitioningActorSerializer extends Serializer {
 
   override def toBinary(o: AnyRef): Array[Byte] = {
     o match {
-      case i: INIT => {
+      case i: Init => {
         val bs = ByteString.createBuilder.putByte(INIT_FLAG)
         val src_bytes = i.src.ref.getBytes
         bs.putShort(src_bytes.size)
@@ -120,11 +120,11 @@ class TypedPartitioningActorSerializer extends Serializer {
         }
         bs.result().toArray
       }
-      case ack: INIT_ACK => {
+      case ack: InitAck => {
         ByteString.createBuilder.putByte(INIT_ACK_FLAG).putInt(ack.init_id).result().toArray
       }
-      case RUN => Array(RUN_FLAG)
-      case DONE => Array(DONE_FLAG)
+      case Run => Array(RUN_FLAG)
+      case Done => Array(DONE_FLAG)
     }
   }
 
@@ -151,11 +151,11 @@ class TypedPartitioningActorSerializer extends Serializer {
           nodes += clientRef
 
         }
-        INIT(src, rank, init_id, nodes.toList, min, max)
+        Init(src, rank, init_id, nodes.toList, min, max)
       }
-      case INIT_ACK_FLAG => INIT_ACK(buf.getInt)
-      case RUN_FLAG => RUN
-      case DONE_FLAG => DONE
+      case INIT_ACK_FLAG => InitAck(buf.getInt)
+      case RUN_FLAG => Run
+      case DONE_FLAG => Done
     }
   }
 }

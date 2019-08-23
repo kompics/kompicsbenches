@@ -254,7 +254,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     testSpace = ParameterSpacePB.cross(
       List( (0.5f, 0.5f), (0.95f, 0.05f) ),
       List(3, 5),
-      List(500l, 1000l, 2000l)).msg[AtomicRegisterRequest] {
+      List(500, 1000, 2000)).msg[AtomicRegisterRequest] {
       case ((rwl, wwl), p, k) =>
         AtomicRegisterRequest(
           readWorkload = rwl,
