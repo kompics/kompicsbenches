@@ -3,8 +3,6 @@ use kompact::prelude::*;
 use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::io::Read;
-use protobuf::descriptor::FieldOptions_CType::STRING;
 use kompact::helpers::deserialise_actor_path;
 
 #[derive(ComponentDefinition)]
@@ -16,13 +14,12 @@ pub struct PartitioningActor {
     n: u32,
     nodes: Vec<ActorPath>,
     num_keys: u64,
-    partition_size: u32,
     init_ack_count: u32,
     done_count: u32,
 }
 
 impl PartitioningActor {
-    pub fn with(prepare_latch: Arc<CountdownEvent>, finished_latch: Arc<CountdownEvent>, init_id: u32, nodes: Vec<ActorPath>, num_keys: u64, partition_size: u32) -> PartitioningActor {
+    pub fn with(prepare_latch: Arc<CountdownEvent>, finished_latch: Arc<CountdownEvent>, init_id: u32, nodes: Vec<ActorPath>, num_keys: u64) -> PartitioningActor {
         PartitioningActor{
             ctx: ComponentContext::new(),
             prepare_latch,
@@ -31,7 +28,6 @@ impl PartitioningActor {
             n: nodes.len() as u32,
             nodes,
             num_keys,
-            partition_size,
             init_ack_count: 0,
             done_count: 0,
         }
@@ -63,7 +59,7 @@ impl Provide<ControlPort> for PartitioningActor {
 }
 
 impl Actor for PartitioningActor{
-    fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
         if msg.is::<Run>() {
 //            info!(self.ctx.log(), "Telling nodes to run");
             for node in &self.nodes{
@@ -72,16 +68,16 @@ impl Actor for PartitioningActor{
         }
     }
 
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+    fn receive_message(&mut self, _sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
         if ser_id == Serialiser::<InitAck>::serid(&PARTITIONING_ACTOR_SER){
             let r: Result<InitAck, SerError> = PartitioningActorSer::deserialise(buf);
             match r {
-                Ok(init_ack) => {
+                Ok(_) => {
                     self.init_ack_count += 1;
 //                    info!(self.ctx.log(), "Got init ack {}/{} from {}", &self.init_ack_count, &self.n, sender);
                     if self.init_ack_count == self.n{
                         info!(self.ctx.log(), "Got init_ack from everybody!");
-                        self.prepare_latch.decrement();
+                        self.prepare_latch.decrement().expect("Latch didn't decrement!");
                     }
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising InitAck: {:?}", e),
@@ -94,7 +90,7 @@ impl Actor for PartitioningActor{
                     self.done_count += 1;
                     if self.done_count == self.n {
                         info!(self.ctx.log(), "Everybody is done");
-                        self.finished_latch.decrement();
+                        self.finished_latch.decrement().expect("Latch didn't decrement!");
                     }
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising Done: {:?}", e),
@@ -135,7 +131,7 @@ impl Serialiser<Init> for PartitioningActorSer {
         Some(1000)
     }   // TODO dynamic buffer
 
-    fn serialise(&self, i: &Init, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, i: &Init, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INIT_ID);
         buf.put_u32_be(i.rank);
         buf.put_u32_be(i.init_id);
@@ -143,13 +139,13 @@ impl Serialiser<Init> for PartitioningActorSer {
         buf.put_u64_be(i.max_key);
         buf.put_u32_be(i.nodes.len() as u32);
         for node in i.nodes.iter(){
-            node.serialise(buf);
+            node.serialise(buf).expect("Node didn't serialise.");
         }
         Ok(())
     }
 }
 impl Deserialiser<Init> for PartitioningActorSer {
-    fn deserialise(buf: &mut Buf) -> Result<Init, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<Init, SerError> {
         match buf.get_i8() {
             INIT_ID => {
                 let rank: u32 = buf.get_u32_be();
@@ -189,14 +185,14 @@ impl Serialiser<InitAck> for PartitioningActorSer {
         Some(5)
     }
 
-    fn serialise(&self, init_ack: &InitAck, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, init_ack: &InitAck, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INITACK_ID);
         buf.put_u32_be(init_ack.0);
         Ok(())
     }
 }
 impl Deserialiser<InitAck> for PartitioningActorSer {
-    fn deserialise(buf: &mut Buf) -> Result<InitAck, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<InitAck, SerError> {
         match buf.get_i8(){
             INITACK_ID => {
                 let init_id = buf.get_u32_be();
@@ -214,14 +210,14 @@ impl Serialiser<Run> for PartitioningActorSer{
         serialiser_ids::PARTITIONING_RUN_MSG
     }
     fn size_hint(&self) -> Option<usize> { Some(1) }
-    fn serialise(&self, v: &Run, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, _v: &Run, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(RUN_ID);
         Ok(())
     }
 }
 
 impl Deserialiser<Run> for PartitioningActorSer{
-    fn deserialise(buf: &mut Buf) -> Result<Run, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<Run, SerError> {
        match buf.get_i8(){
            RUN_ID => { Ok(Run) }
            _ => Err(SerError::InvalidType(
@@ -235,14 +231,14 @@ impl Serialiser<Done> for PartitioningActorSer{
     fn serid(&self) -> u64 { serialiser_ids::PARTITIONING_DONE_MSG }
     fn size_hint(&self) -> Option<usize> { Some(1) }
 
-    fn serialise(&self, v: &Done, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, _v: &Done, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(DONE_ID);
         Ok(())
     }
 }
 
 impl Deserialiser<Done> for PartitioningActorSer{
-    fn deserialise(buf: &mut Buf) -> Result<Done, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<Done, SerError> {
         match buf.get_i8(){
             DONE_ID => { Ok(Done) }
             _ => Err(SerError::InvalidType(

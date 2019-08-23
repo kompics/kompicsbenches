@@ -44,7 +44,7 @@ pub mod actor_atomicregister {
         }
 
         fn msg_to_master_conf(
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<Self::MasterConf, BenchmarkError> {
             downcast_msg!(msg; AtomicRegisterRequest)
         }
@@ -156,6 +156,11 @@ pub mod actor_atomicregister {
                         .expect("AtomicRegisterComp never registered!")
                         .expect("AtomicRegisterComp to register!");
 
+                    named_reg_f
+                        .wait_timeout(Duration::from_millis(1000))
+                        .expect("AtomicRegisterComp never registered!")
+                        .expect("AtomicRegisterComp to register!");
+
                     let atomic_register_f = system.start_notify(&atomic_register);
                     atomic_register_f
                         .wait_timeout(Duration::from_millis(1000))
@@ -172,7 +177,7 @@ pub mod actor_atomicregister {
                         nodes.push(d[i].clone());
                     }
                     /*** Setup partitioning actor ***/
-                    let (partitioning_actor, unique_reg_f) = system.create_and_register(|| PartitioningActor::with(prepare_latch.clone(), finished_latch.clone(), self.init_id, nodes, self.num_keys.unwrap(), self.partition_size.unwrap()));
+                    let (partitioning_actor, unique_reg_f) = system.create_and_register(|| PartitioningActor::with(prepare_latch.clone(), finished_latch.clone(), self.init_id, nodes, self.num_keys.unwrap()));
                     unique_reg_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never registered!")
@@ -408,14 +413,14 @@ pub mod actor_atomicregister {
             }
         }
 
-        fn read_response(&mut self, key: u64, _read_value: u32) -> () {
+        fn read_response(&mut self, _key: u64, _read_value: u32) -> () {
             self.read_count -= 1;
             if self.read_count == 0 && self.write_count == 0 {
                 self.master.as_ref().unwrap().tell((Done, PartitioningActorSer), self);
             }
         }
 
-        fn write_response(&mut self, key: u64) -> () {
+        fn write_response(&mut self, _key: u64) -> () {
             self.write_count -= 1;
             if self.read_count == 0 && self.write_count == 0 {
                 self.master.as_ref().unwrap().tell((Done, PartitioningActorSer), self);
@@ -438,11 +443,11 @@ pub mod actor_atomicregister {
     }
 
     impl Actor for AtomicRegisterActor {
-        fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, _msg: &dyn Any) -> () {
             // ignore
         }
 
-        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
             if ser_id == Serialiser::<Init>::serid(&PARTITIONING_ACTOR_SER){
                 let r: Result<Init, SerError> = PartitioningActorSer::deserialise(buf);
                 match r {
@@ -577,7 +582,7 @@ pub mod mixed_atomicregister {
         }
 
         fn msg_to_master_conf(
-            msg: Box<::protobuf::Message>,
+            msg: Box<dyn (::protobuf::Message)>,
         ) -> Result<Self::MasterConf, BenchmarkError> {
             downcast_msg!(msg; AtomicRegisterRequest)
         }
@@ -687,12 +692,22 @@ pub mod mixed_atomicregister {
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("BroadcastComp never started!");
 
+                    unique_reg_f
+                        .wait_timeout(Duration::from_millis(1000))
+                        .expect("BroadcastComp never registered!")
+                        .expect("BroadcastComp to register!");
+
                     /*** Setup atomic register ***/
                     let (atomic_register, unique_reg_f) =
                         system.create_and_register(|| AtomicRegisterComp::with(self.read_workload.unwrap(), self.write_workload.unwrap(), bcast_comp.actor_ref()));
                     let named_reg_f = system.register_by_alias(&atomic_register, format!("atomicreg_comp{}", &self.init_id));
 
                     unique_reg_f
+                        .wait_timeout(Duration::from_millis(1000))
+                        .expect("AtomicRegisterComp never registered!")
+                        .expect("AtomicRegisterComp to register!");
+
+                    named_reg_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("AtomicRegisterComp never registered!")
                         .expect("AtomicRegisterComp to register!");
@@ -718,7 +733,7 @@ pub mod mixed_atomicregister {
                     } ).expect("Could not connect components!");
 
                     /*** Setup partitioning actor ***/
-                    let (partitioning_actor, unique_reg_f) = system.create_and_register(|| PartitioningActor::with(prepare_latch.clone(), finished_latch.clone(), self.init_id, nodes, self.num_keys.unwrap(), self.partition_size.unwrap()));
+                    let (partitioning_actor, unique_reg_f) = system.create_and_register(|| PartitioningActor::with(prepare_latch.clone(), finished_latch.clone(), self.init_id, nodes, self.num_keys.unwrap()));
                     unique_reg_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never registered!")
@@ -823,6 +838,10 @@ pub mod mixed_atomicregister {
             bcast_comp_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("BroadcastComp never started!");
+            unique_reg_f
+                .wait_timeout(Duration::from_millis(1000))
+                .expect("BroadcastComp actor never registered!")
+                .expect("BroadcastComp actor failed to register!");
 
             /*** Setup atomic register ***/
             let (atomic_register, unique_reg_f) = system.create_and_register(|| AtomicRegisterComp::with(c.read_workload, c.write_workload, bcast_comp.actor_ref()));
@@ -933,7 +952,7 @@ pub mod mixed_atomicregister {
     }
 
     impl Provide<ControlPort> for BroadcastComp {
-        fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
             // ignore
         }
     }
@@ -951,10 +970,10 @@ pub mod mixed_atomicregister {
     }
 
     impl Actor for BroadcastComp {
-        fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
-            if let Ok(c) = msg.downcast::<CacheInfo>(){
-                self.nodes = Some(c.nodes);
-                self.sender = Some(c.sender);
+        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
+            if let Some(ref c) = msg.downcast_ref::<CacheInfo>(){
+                self.nodes = Some(c.nodes.clone());
+                self.sender = Some(c.sender.clone());
                 sender.tell(Box::new(CacheNodesAck), self);
             }
             else {
@@ -962,7 +981,7 @@ pub mod mixed_atomicregister {
             }
         }
 
-        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+        fn receive_message(&mut self, _sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
             // ignore
         }
     }
@@ -1068,39 +1087,35 @@ pub mod mixed_atomicregister {
             }
         }
 
-        fn read_response(&mut self, key: u64, _read_value: u32) -> () {
+        fn read_response(&mut self, _key: u64, _read_value: u32) -> () {
             self.read_count -= 1;
             if self.read_count == 0 && self.write_count == 0 {
                 self.master.as_ref().unwrap().tell((Done, PartitioningActorSer), self);
-            } else if self.read_count < 0 {
-                error!(self.ctx.log(), "GOT NEGATIVE READ COUNT={}: key={}", &self.read_count, &key);
             }
         }
 
-        fn write_response(&mut self, key: u64) -> () {
+        fn write_response(&mut self, _key: u64) -> () {
             self.write_count -= 1;
             if self.read_count == 0 && self.write_count == 0 {
                 self.master.as_ref().unwrap().tell((Done, PartitioningActorSer), self);
-            } else if self.write_count < 0 {
-                error!(self.ctx.log(), "GOT NEGATIVE WRITE COUNT={}: key={}", &self.write_count, &key);
             }
         }
     }
 
     impl Provide<ControlPort> for AtomicRegisterComp {
-        fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
             // ignore
         }
     }
 
     impl Require<BroadcastPort> for AtomicRegisterComp {
-        fn handle(&mut self, event: <BroadcastPort as Port>::Indication) -> () {
+        fn handle(&mut self, _event: <BroadcastPort as Port>::Indication) -> () {
             // ignore
         }
     }
 
     impl Actor for AtomicRegisterComp {
-        fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
+        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<CacheNodesAck>(){
                 let master = self.master.as_ref().unwrap();
                 let init_ack = InitAck(self.current_run_id);
@@ -1108,7 +1123,7 @@ pub mod mixed_atomicregister {
             }
         }
 
-        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
+        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
             if ser_id == Serialiser::<Init>::serid(&PARTITIONING_ACTOR_SER) {
                 let r: Result<Init, SerError> = PartitioningActorSer::deserialise(buf);
                 match r {
@@ -1307,7 +1322,7 @@ impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer{
         Some(33)    // TODO: Set it dynamically? 33 is for the largest message(Value)
     }
 
-    fn serialise(&self, enm: &AtomicRegisterMessage, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, enm: &AtomicRegisterMessage, buf: &mut dyn BufMut) -> Result<(), SerError> {
         match enm {
             AtomicRegisterMessage::Read(r) => {
                 buf.put_i8(READ_ID);
@@ -1349,7 +1364,7 @@ impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer{
 }
 
 impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer{
-    fn deserialise(buf: &mut Buf) -> Result<AtomicRegisterMessage, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<AtomicRegisterMessage, SerError> {
         match buf.get_i8() {
             READ_ID=> {
                 let run_id = buf.get_u32_be();

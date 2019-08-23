@@ -27,6 +27,7 @@ def binp(s: Symbol): Path = {
 //val sbt = root / 'usr / 'local / 'bin / 'sbt;
 val sbt = binp('sbt); //root / 'usr / 'bin / 'sbt;
 val cargo = binp('cargo); //root / 'home / 'sario / ".cargo" / 'bin / 'cargo;
+val make = binp('make);
 
 val builders: List[Builder] = List(
 	Builder("Shared Library Scala", relp("shared_scala"), sbt, Seq("publishLocal"), Seq("clean")),
@@ -34,7 +35,8 @@ val builders: List[Builder] = List(
 	Builder("Akka", relp("akka"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Kompics", relp("kompics"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean")),
-	Builder("Actix", relp("actix"), cargo, Seq("build", "--release"), Seq("clean"))
+	Builder("Actix", relp("actix"), cargo, Seq("build", "--release"), Seq("clean")),
+	Builder("Erlang", relp("erlang"), make, Seq("rel"), Seq("clean"))
 );
 
 @main

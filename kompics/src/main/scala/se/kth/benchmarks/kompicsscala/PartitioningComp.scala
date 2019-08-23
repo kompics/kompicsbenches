@@ -13,13 +13,13 @@ import PartitioningComp.{ Init, InitAck, Run, Done }
 import scala.collection.mutable.ListBuffer
 
 class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDefinition {
-  val net = requires[Network]
+  val net = requires[Network];
 
-  val KompicsInit(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress], num_keys: Long, partition_size: Int) = init
-  val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes
-  val n = active_nodes.size
-  var init_ack_count: Int = 0
-  var done_count = 0
+  val KompicsInit(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress] @unchecked, num_keys: Long, partition_size: Int) = init;
+  val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes;
+  val n = active_nodes.size;
+  var init_ack_count: Int = 0;
+  var done_count = 0;
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {

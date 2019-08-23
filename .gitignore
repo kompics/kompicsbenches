@@ -76,3 +76,16 @@ kompics_rust/src/kompics_benchmark/benchmarks_grpc.rs
 
 # IntelliJ
 *.iml
+
+# Erlang
+.eunit
+deps
+*.o
+*.beam
+*.plt
+erl_crash.dump
+ebin/
+_rel/
+.erlang.mk/
+doc/
+erlang_benchmarks.d

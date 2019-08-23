@@ -8,6 +8,10 @@ pub mod pingpong;
 pub mod throughput_pingpong;
 pub mod atomicregister;
 
+#[derive(Clone, Debug)]
+pub struct Start;
+pub const START: Start = Start;
+
 pub fn component() -> Box<BenchmarkFactory> {
     Box::new(ComponentFactory {})
 }

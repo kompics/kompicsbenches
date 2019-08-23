@@ -1,4 +1,4 @@
-package se.kth.benchmarks.kompicsjava.bench
+package se.kth.benchmarks.kompicsjava.bench;
 
 import java.util.UUID
 import java.util.concurrent.{ CountDownLatch, TimeUnit }
@@ -6,7 +6,7 @@ import java.util.concurrent.{ CountDownLatch, TimeUnit }
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import se.kth.benchmarks.{ ClientEntry, DistributedBenchmark }
 import se.kth.benchmarks.kompicsjava.broadcast.{ BEBComp, BestEffortBroadcast => JBestEffortBroadcast }
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister, AtomicRegisterSerializer }
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister => JAtomicRegister, AtomicRegisterSerializer }
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
 import se.kth.benchmarks.kompicsscala._
 import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.{ ClientParams, FailedPreparationException }
@@ -50,7 +50,7 @@ object AtomicRegister extends DistributedBenchmark {
       assert(system != null);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(read_workload, write_workload))
+      val atomicRegisterIdF = system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -127,7 +127,7 @@ object AtomicRegister extends DistributedBenchmark {
       println(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
-      val atomicRegisterIdF = system.createNotify[AtomicRegister](new atomicregister.AtomicRegister.Init(read_workload, write_workload))
+      val atomicRegisterIdF = system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
