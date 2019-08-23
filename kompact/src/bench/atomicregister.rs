@@ -129,7 +129,7 @@ pub mod actor_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf) -> Self::ClientConf {
+        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
             println!("Setting up Atomic Register(Master)");
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
@@ -668,7 +668,7 @@ pub mod mixed_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf) -> Self::ClientConf {
+        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
             println!("Setting up Atomic Register(Master)");
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);

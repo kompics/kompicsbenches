@@ -408,7 +408,7 @@ mod tests {
         type ClientData = ();
         type MasterConf = ();
 
-        fn setup(&mut self, _c: Self::MasterConf) -> Self::ClientConf {
+        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
             println!("Master setting up");
         }
 

@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     thread,
     time::Duration,
+    convert::TryInto,
 };
 
 pub fn run(
@@ -176,6 +177,7 @@ struct BenchmarkMaster {
     wait_for:       usize,
     clients:        Vec<ClientEntry>,
     state:          StateHolder,
+    meta:           DeploymentMetaData,
     check_in_queue: cbchannel::Receiver<distributed::ClientInfo>,
     bench_queue:    cbchannel::Receiver<BenchRequest>,
 }
@@ -193,6 +195,7 @@ impl BenchmarkMaster {
             wait_for,
             clients: Vec::new(),
             state: StateHolder::init(),
+            meta: DeploymentMetaData::new(0),
             check_in_queue,
             bench_queue,
         }
@@ -206,7 +209,7 @@ impl BenchmarkMaster {
             let ci = self.check_in_queue.recv().expect("Queue to MasterHandler broke!");
             self.check_in_handler(ci);
         }
-
+        self.meta = DeploymentMetaData::new(self.clients.len().try_into().expect("Too many clients to fit metadata!"));
         loop {
             match self.state.get() {
                 State::READY => {
@@ -349,11 +352,12 @@ impl BenchmarkMaster {
         let bench_label = b.label();
         self.state.cas(State::READY, State::SETUP).expect("Wasn't ready to setup!");
         info!(blogger, "Starting distributed test {}", bench_label);
-
+        let meta = self.meta.clone();
         let master_f: future::FutureResult<Box<dyn AbstractBenchmarkMaster>, BenchmarkError> =
             future::ok(b.new_master());
         let master_cconf_f = master_f.and_then(|mut master| {
-            future::result(master.setup(msg)).map(|client_conf| (master, client_conf))
+            let my_meta = meta;
+            future::result(master.setup(msg, &my_meta)).map(|client_conf| (master, client_conf))
         });
         let data_logger = blogger.clone();
         let client_data_f = master_cconf_f.and_then(move |(master, client_conf)| {

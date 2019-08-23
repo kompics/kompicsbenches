@@ -118,7 +118,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
     type ClientConf = ClientParams;
     type ClientData = ClientRefs;
 
-    fn setup(&mut self, c: Self::MasterConf) -> Self::ClientConf {
+    fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Self::ClientConf {
         let params = Params::from_req(&c);
         let system = crate::kompact_system_provider::global()
             .new_remote_system("throughputpingpong", num_cpus::get());
