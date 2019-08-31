@@ -9,13 +9,7 @@
          'NetPingPong'/3,
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
-         'AtomicRegister'/3,
-         'StreamingWindows'/3,
-         'Fibonacci'/3,
-         'Chameneos'/3,
-         'AllPairsShortestPath'/3]).
-
--export([await_benchmark_result/3]).
+         'AtomicRegister'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -31,24 +25,6 @@
       write_workload => float() | infinity | '-infinity' | nan,
       partition_size => integer(),
       number_of_keys => integer()}.
-
--type 'StreamingWindowsRequest'() ::
-    #{number_of_partitions => integer(),
-      batch_size => integer(),
-      window_size => string(),
-      number_of_windows => integer(),
-      window_size_amplification => integer()}.
-
--type 'FibonacciRequest'() ::
-    #{fib_number => integer()}.
-
--type 'ChameneosRequest'() ::
-    #{number_of_chameneos => integer(),
-      number_of_meetings => integer()}.
-
--type 'APSPRequest'() ::
-    #{number_of_nodes => integer(),
-      block_size => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -133,45 +109,5 @@ decoder() -> benchmarks.
   {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'AtomicRegister'(_Message, Stream, _State) ->
-  io:fwrite("Got AtomicRegister request.~n"),
+  io:fwrite("Got AtomicRegister request request.~n"),
   {test_result:not_implemented(), Stream}.
-
--spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
-    {'TestResult'(), grpc:stream()} | grpc:error_response().
-%% This is a unary RPC
-'StreamingWindows'(_Message, Stream, _State) ->
-    io:fwrite("Got StreamingWindows request.~n"),
-  {test_result:not_implemented(), Stream}.
-
--spec 'Fibonacci'(Message::'FibonacciRequest'(), Stream::grpc:stream(), State::any()) ->
-    {'TestResult'(), grpc:stream()} | grpc:error_response().
-%% This is a unary RPC
-'Fibonacci'(Message, Stream, _State) ->
-    io:fwrite("Got Fibonacci request.~n"),
-    {ok, Response} = await_benchmark_result(fibonacci_bench, Message, "Fibonacci"),
-    {Response, Stream}.
-
--spec 'Chameneos'(Message::'ChameneosRequest'(), Stream::grpc:stream(), State::any()) ->
-    {'TestResult'(), grpc:stream()} | grpc:error_response().
-%% This is a unary RPC
-'Chameneos'(Message, Stream, _State) ->
-    io:fwrite("Got Chameneos request.~n"),
-    {ok, Response} = await_benchmark_result(chameneos_bench, Message, "Chameneos"),
-    {Response, Stream}.
-
--spec 'AllPairsShortestPath'(Message::'APSPRequest'(), Stream::grpc:stream(), State::any()) ->
-    {'TestResult'(), grpc:stream()} | grpc:error_response().
-%% This is a unary RPC
-'AllPairsShortestPath'(Message, Stream, _State) ->
-    io:fwrite("Got APSP request.~n"),
-    {ok, Response} = await_benchmark_result(all_pairs_shortest_path_bench, Message, "AllPairsShortestPath"),
-    {Response, Stream}.
-
--spec await_benchmark_result(Bench :: module(), Message :: any(), Label :: string()) -> {ok, benchmarks:'TestResult'()}.
-await_benchmark_result(Bench, Message, Label) ->
-  io:fwrite("Got ~s request.~n", [Label]),
-  Res = bench_helpers:isolate(fun() -> benchmark_runner:run(Bench,Message) end),
-  io:fwrite("Finished ~s run with ~p.~n", [Label, Res]),
-  Response = test_result:from_result(Res),
-  io:fwrite("Sending ~s response ~p.~n", [Label, Response]),
-  {ok, Response}.

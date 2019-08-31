@@ -4,12 +4,11 @@
 
 %% API
 -import(lists, [sublist/2]).
--include_lib("eunit/include/eunit.hrl").
 -export([
   msg_to_master_conf/1,
   new_master/0,
   new_client/0,
-  master_setup/3,
+  master_setup/2,
   master_prepare_iteration/2,
   master_run_iteration/1,
   master_cleanup_iteration/3,
@@ -28,7 +27,7 @@
   read_workload = 0.0 :: float(),
   write_workload = 0.0 :: float()}).
 -type client_conf() :: #client_conf{}.
--type client_data() :: pid().
+-type client_data() :: [pid()].
 
 -record(master_state, {
   config = #master_conf{} :: master_conf(),
@@ -100,42 +99,32 @@ new_client() ->
 -record(atomicreg_state, {
   read_workload :: float(),
   write_workload :: float(),
-  n = 0 :: integer(),
-  nodes :: [pid()] | 'undefined',
+  n :: integer(),
+  nodes :: [pid()],
   rank = -1 :: integer(),
-  min_key = -1 :: integer(),
-  max_key = -1 :: integer(),
-  run_id = -1 :: integer() | 'undefined',
+  min_key :: integer(),
+  max_key :: integer(),
+  run_id :: integer(),
   master :: pid() | 'undefined',
-  read_count :: integer() | 'undefined',
-  write_count :: integer() | 'undefined',
+  read_count :: integer(),
+  write_count :: integer(),
   register_state = maps:new() :: map(),
-  register_readlist = maps:new() :: map(),
-  testing = false :: boolean()
+  register_readlist = maps:new() :: map()
 }).
 
 -type atomicreg_instance() :: #atomicreg_state{}.
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf(), Meta :: distributed_benchmark:deployment_metadata()) ->
-  {ok, Newinstance :: master_instance(), ClientConf :: client_conf()} |
-  {error, Reason :: string()}.
-master_setup(Instance, Conf, Meta) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf()) ->
+  {ok, Newinstance :: master_instance(), ClientConf :: client_conf()}.
+master_setup(Instance, Conf) ->
   io:fwrite("Setting up Atomic Register(Master)"),
-  NumClients = distributed_benchmark:meta_num_clients(Meta),
-  %logger:set_primary_config(level, error), % should be set globally
-  PartitionSize = Conf#master_conf.partition_size,
-  case NumClients of
-    N when N < PartitionSize - 1 ->
-      logger:error("Not enough clients, partitionsize=~w, clients=~w", [PartitionSize, N]),
-      {error, "Not enough clients"};
-    _ ->
-      NewInstance = Instance#master_state{config = Conf},
-      process_flag(trap_exit, true),
-      ClientConf = #client_conf{read_workload = get_read_workload(master, NewInstance), write_workload = get_write_workload(master, NewInstance) },
-      {ok, NewInstance, ClientConf}
-  end.
+  logger:set_primary_config(level, all),
+  NewInstance = Instance#master_state{config = Conf},
+  process_flag(trap_exit, true),
+  ClientConf = #client_conf{read_workload = get_read_workload(master, NewInstance), write_workload = get_write_workload(master, NewInstance) },
+  {ok, NewInstance, ClientConf}.
 
 -spec master_prepare_iteration(Instance :: master_instance(), ClientData :: [client_data()]) ->
   {ok, NewInstance :: master_instance()}.
@@ -144,8 +133,7 @@ master_prepare_iteration(Instance, ClientData) ->
   State = #atomicreg_state{read_workload = get_read_workload(master, Instance), write_workload = get_write_workload(master, Instance)},
   AtomicRegister = spawn_link(fun() -> atomic_register(State) end),
   ActiveNodes = [AtomicRegister | sublist(ClientData, NumClients = get_partition_size(Instance) - 1)],
-  NumKeys = get_num_keys(Instance),
-  send_init(ActiveNodes, 0, InitId = Instance#master_state.init_id, ActiveNodes, 0, NumKeys - 1),
+  send_init(ActiveNodes, 0, InitId = Instance#master_state.init_id, ActiveNodes, 0, get_num_keys(Instance) - 1),
   wait_for_init_acks(NumClients + 1, InitId),
   NewInstance = Instance#master_state{atomic_register = AtomicRegister, active_nodes = ActiveNodes, init_id = InitId + 1},
   io:fwrite("Preparation completed"),
@@ -197,10 +185,7 @@ wait_for_done(Remaining) when Remaining > 0 ->
   {ok, NewInstance :: client_instance(), ClientData :: client_data()}.
 client_setup(Instance, Conf) ->
   io:fwrite("Atomic Register(Client) Setup"),
-  case logger:set_primary_config(level, all) of
-    ok -> ok;
-    {error, _} -> io:fwrite("Failed to set logger level~n")
-  end,
+  logger:set_primary_config(level, all),
   ConfInstance = Instance#client_state{config = Conf},
   process_flag(trap_exit, true),
   State = #atomicreg_state{read_workload = get_read_workload(client, ConfInstance), write_workload = get_write_workload(client, ConfInstance)},
@@ -236,11 +221,11 @@ client_cleanup_iteration(Instance, LastIteration) ->
   wr = 0 :: integer(),
   value = 0 :: integer(),
   acks = 0 :: integer(),
-  readval = 0 :: integer(),
-  writeval = 0 :: integer(),
+  readval  :: integer(),
+  writeval :: integer(),
   rid = 0 :: integer(),
-  reading = false :: boolean(),
-  first_received_ts = -1 :: integer(),
+  reading :: boolean(),
+  first_received_ts :: integer(),
   skip_impose = true :: boolean()
 }).
 
@@ -249,7 +234,7 @@ atomic_register(State) ->
   CurrentRunId = State#atomicreg_state.run_id,
   receive
     {init, Rank, InitId, Nodes, Master, MinKey, MaxKey} ->
-      NewState = State#atomicreg_state{rank = Rank, run_id = InitId, nodes = Nodes, n = length(Nodes), master = Master, min_key = MinKey, max_key = MaxKey, register_readlist = maps:new(), register_state = maps:new()},
+      NewState = State#atomicreg_state{rank = Rank, run_id = InitId, nodes = Nodes, n = length(Nodes), master = Master, min_key = MinKey, max_key = MaxKey},
       Master ! {init_ack, InitId},
       atomic_register(NewState);
 
@@ -258,6 +243,7 @@ atomic_register(State) ->
       atomic_register(NewState);
 
     {read, Sender, RunId, Key, Rid} when RunId == CurrentRunId ->
+%%      logger:info("Got Read, key=~w from ~p", [Key, Sender]),
       CurrentRegister = maps:get(Key, State#atomicreg_state.register_state, #register_state{}),
       Sender ! {value, self(), CurrentRunId, Key, Rid, CurrentRegister#register_state.ts, CurrentRegister#register_state.wr, CurrentRegister#register_state.value},
       atomic_register(State);
@@ -265,18 +251,19 @@ atomic_register(State) ->
     {read, _, RunId, _, _} when RunId /= CurrentRunId -> atomic_register(State);
 
     {value, Sender, RunId, Key, Rid, Ts, Wr, Value} when RunId == CurrentRunId ->
+%%      logger:info("Got Value, key=~w, value=~w from ~p", [Key, Value, Sender]),
       CurrentRegister = maps:get(Key, State#atomicreg_state.register_state, #register_state{}),
-      case Rid of
-        _ when Rid == CurrentRegister#register_state.rid ->
+      if
+        Rid == CurrentRegister#register_state.rid ->
           ReadList = maps:get(Key, State#atomicreg_state.register_readlist, maps:new()),
           UpdatedCurrentRegister =
             case CurrentRegister#register_state.reading of
               true ->
-                ReadListSize = maps:size(ReadList),
                   if
-                    ReadListSize == 0 ->
+                    map_size(ReadList) == 0 ->
+%%                      logger:info("First value for key=~w is ~w", [Key, Value]),
                       CurrentRegister#register_state{first_received_ts = Ts, readval = Value};
-                    (CurrentRegister#register_state.skip_impose) andalso (CurrentRegister#register_state.first_received_ts /= Ts) ->
+                    CurrentRegister#register_state.skip_impose and CurrentRegister#register_state.first_received_ts /= Ts ->
                       CurrentRegister#register_state{skip_impose = false};
                     true ->
                       CurrentRegister
@@ -284,11 +271,10 @@ atomic_register(State) ->
               false -> CurrentRegister
             end,
           NewReadList = maps:put(Sender, {Ts, Wr, Value}, ReadList),
-          NewReadListSize = maps:size(NewReadList),
-          case NewReadListSize of
-            _ when NewReadListSize > (State#atomicreg_state.n / 2) ->
+          if
+            map_size(NewReadList) > (State#atomicreg_state.n / 2) ->
               if
-                (UpdatedCurrentRegister#register_state.reading) andalso (UpdatedCurrentRegister#register_state.skip_impose) ->
+                UpdatedCurrentRegister#register_state.reading and UpdatedCurrentRegister#register_state.skip_impose ->
                   ReadVal = UpdatedCurrentRegister#register_state.readval,
                   NewRegisterState = UpdatedCurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
@@ -300,6 +286,7 @@ atomic_register(State) ->
                   NewRegisterState = CurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
                   NewReadListMap = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
+%%                  logger:info("Sending Write key=~w", [Key]),
                   case NewRegisterState#register_state.reading of
                     true ->
                       bcast(State#atomicreg_state.nodes, {write, self(), CurrentRunId, Key, Rid, MaxTs, RR, ReadVal});
@@ -308,17 +295,18 @@ atomic_register(State) ->
                   end,
                   atomic_register(State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadListMap})
               end;
-            _ -> % haven't got majority yet
+            true -> % haven't got majority yet
               NewReadListMap = maps:put(Key, NewReadList, State#atomicreg_state.register_readlist),
               NewRegisterStateMap = maps:put(Key, UpdatedCurrentRegister, State#atomicreg_state.register_state),
               atomic_register(State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadListMap})
           end;
-        _ -> atomic_register(State)  % don't care about msg with less rid
+        true -> atomic_register(State)  % don't care about msg with less rid
       end;
 
     {value, _, RunId, _, _, _, _, _} when RunId /= CurrentRunId -> atomic_register(State);
 
     {write, Sender, RunId, Key, Rid, Ts, Wr, Value} ->
+%%      logger:info("Got Write, key=~w from ~p", [Key, Sender]),
       NewState =
         case RunId of
           CurrentRunId ->
@@ -330,16 +318,15 @@ atomic_register(State) ->
                   State#atomicreg_state{register_state = maps:put(Key, NewRegisterState, RegisterStateMap)};
                 true -> State
               end;
-          _ ->
-            io:fwrite("ignoring write key=~w value=~w~n", [Key, Value]),
-            State
+          _ -> State
         end,
       Sender ! {ack, RunId, Key, Rid},
       atomic_register(NewState);
 
     {ack, RunId, Key, Rid} when RunId == CurrentRunId ->
+%%        logger:info("Got Ack, key=~w", [Key]),
       RegisterStateMap = State#atomicreg_state.register_state,
-      CurrentRegister = maps:get(Key, RegisterStateMap),
+      CurrentRegister = maps:get(Key, RegisterStateMap, #register_state{}),
       if
         Rid == CurrentRegister#register_state.rid ->
           Acks = CurrentRegister#register_state.acks + 1,
@@ -384,13 +371,6 @@ invoke_read(Key, StopKey, State) when Key < StopKey ->
   NewReadList = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
   NewState = State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadList},
   Msg = {read, self(), NewState#atomicreg_state.run_id, Key, NewRid},
-  case State#atomicreg_state.testing of
-    true ->
-      Ts = erlang:unique_integer([monotonic]),
-      SelfRank = State#atomicreg_state.rank,
-      State#atomicreg_state.master ! {read_invocation, Key, none, Ts, SelfRank};
-    false -> ok
-  end,
   bcast(NewState#atomicreg_state.nodes, Msg),
   invoke_read(Key + 1, StopKey, NewState).
 
@@ -405,13 +385,6 @@ invoke_write(Key, StopKey, State) when Key < StopKey ->
   NewReadList = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
   NewState = State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadList},
   Msg = {read, self(), NewState#atomicreg_state.run_id, Key, NewRid},
-  case State#atomicreg_state.testing of
-    true ->
-      Ts = erlang:unique_integer([monotonic]),
-      SelfRank = State#atomicreg_state.rank,
-      State#atomicreg_state.master ! {write_invocation, Key, SelfRank, Ts, SelfRank};
-    false -> ok
-  end,
   bcast(NewState#atomicreg_state.nodes, Msg),
   invoke_write(Key + 1, StopKey, NewState).
 
@@ -424,7 +397,7 @@ invoke_operations(State) ->
   NumReads = trunc(State#atomicreg_state.read_workload * NumKeys),
   NumWrites = trunc(State#atomicreg_state.write_workload * NumKeys),
   NewState = State#atomicreg_state{read_count = NumReads, write_count = NumWrites},
-%%  logger:info("Invoking operations #reads=~w, #writes=~w, selfRank=~w", [NumReads, NumWrites, SelfRank]),
+  logger:info("Invoking operations #reads=~w, #writes=~w, selfRank=~w", [NumReads, NumWrites, SelfRank]),
   case SelfRank rem 2 of
     0 ->
       UpdatedState = invoke_read(MinKey, MinKey + NumReads, NewState),
@@ -438,153 +411,31 @@ invoke_operations(State) ->
 read_response(State, Key, Value) ->
   ReadCount = State#atomicreg_state.read_count - 1,
   WriteCount = State#atomicreg_state.write_count,
-  NewState =  State#atomicreg_state{read_count = ReadCount},
-  case State#atomicreg_state.testing of
-    false -> ok;
-    true ->
-      Ts = erlang:unique_integer([monotonic]),
-      SelfRank = State#atomicreg_state.rank,
-      State#atomicreg_state.master ! {read_response, Key, Value, Ts, SelfRank}
-  end,
+  logger:info("Got ReadResponse, key=~w, value=~w", [Key, Value]),
+  NewState = State#atomicreg_state{read_count = ReadCount},
   if
-    (ReadCount == 0) andalso (WriteCount == 0) ->
-      State#atomicreg_state.master ! done;
-    true -> ok
-  end,
-  NewState.
+    (ReadCount == 0) and (WriteCount == 0) ->
+      logger:info("DONE!!!"),
+      State#atomicreg_state.master ! done,
+      NewState;
+    true ->
+      NewState
+  end.
 
 -spec write_response(State :: atomicreg_instance(), Key :: integer()) -> atomicreg_instance().
-write_response(State, Key) ->
+write_response(State, _Key) ->
   WriteCount = State#atomicreg_state.write_count - 1,
   ReadCount = State#atomicreg_state.read_count,
+%%  logger:info("Got WriteResponse, key=~w, ReadCount=~w, WriteCount=~w", [Key, ReadCount, WriteCount]),
   NewState = State#atomicreg_state{write_count = WriteCount},
-  case State#atomicreg_state.testing of
-    false -> ok;
-    true ->
-      SelfRank = State#atomicreg_state.rank,
-      Ts = erlang:unique_integer([monotonic]),
-      State#atomicreg_state.master ! {write_response, Key, SelfRank, Ts, SelfRank}
-    end,
   if
-    (WriteCount == 0) andalso (ReadCount == 0) ->
-      State#atomicreg_state.master ! done;
-    true -> ok
-  end,
-  NewState.
-
-% Linearizabilty test
-create_atomic_registers(0, _, Nodes) -> Nodes;
-create_atomic_registers(N, {RW, WW}, ActiveNodes) ->
-  State = #atomicreg_state{read_workload = RW, write_workload = WW, testing = true},
-  AtomicRegister = spawn_link(fun() -> atomic_register(State) end),
-  Nodes = [AtomicRegister | ActiveNodes],
-  create_atomic_registers(N-1, {RW, WW}, Nodes).
-
-wait_for_testdone(0, TestResults) -> TestResults;
-wait_for_testdone(N, TestResults) ->
-  receive
-    {Op, Key, Value, Ts, Sender} ->
-      OldTimestamps = maps:get(Key, TestResults, []),
-      UpdatedTimestamps = [{Op, Value, Ts, Sender} | OldTimestamps],
-      UpdatedTestResults = maps:put(Key, UpdatedTimestamps, TestResults),
-      wait_for_testdone(N, UpdatedTestResults);
-
-    done -> wait_for_testdone(N-1, TestResults)
-  end.
-
-is_linearizable(Trace) ->
-  SortedTrace = lists:keysort(3, Trace),
-  wing_gong(SortedTrace, [0]).
-
-all_linearizable([]) -> true;
-all_linearizable([H|T]) ->
-  case is_linearizable(H) of
+    (WriteCount == 0) and (ReadCount == 0) ->
+      logger:info("DONE!!!"),
+      State#atomicreg_state.master ! done,
+      NewState;
     true ->
-      all_linearizable(T);
-    false ->
-      false
+      NewState
   end.
 
-linearizability_test({RW, WW}, NumNodes, NumKeys) ->
-  AtomicRegisters = create_atomic_registers(NumNodes, {RW, WW}, []),
-  send_init(AtomicRegisters, 0, InitId = 1, AtomicRegisters, 0, NumKeys),
-  wait_for_init_acks(NumNodes, InitId),
-  lists:foreach(fun(Node) -> Node ! run end, AtomicRegisters),
-  TestResults = wait_for_testdone(NumNodes, maps:new()),
-  lists:foreach(fun(X) -> X ! stop end, AtomicRegisters),
-  all_linearizable(maps:values(TestResults)).
-linearizability_test_() ->
-  N1 = rand:uniform(7) + 2,
-  N2 = rand:uniform(7) + 2,
-  NumNodes1 =
-    case N1 of
-      _ when N1 rem 2 == 0 -> N1 + 1;
-      _ -> N1
-    end,
-  NumNodes2 =
-    case N2 of
-      _ when N2 rem 2 == 0 -> N2 + 1;
-      _ -> N2
-    end,
-  NumKeys1 = rand:uniform(3000) + 1000,
-  NumKeys2 = rand:uniform(3000) + 1000,
-  io:format("Atomic Register Linearizability test 50-50: NumNodes=~w, NumKeys= ~w~n", [NumNodes1, NumKeys1]),
-  io:format("Atomic Register Linearizability test 95-5: NumNodes=~w, NumKeys= ~w~n", [NumNodes2, NumKeys2]),
-  [?_assertEqual(true, linearizability_test({0.5, 0.5}, NumNodes1, NumKeys1)),
-    ?_assertEqual(true, linearizability_test({0.95, 0.05}, NumNodes2, NumKeys2))
-  ].
 
-wing_gong_loop([], _, _) -> false;
-wing_gong_loop([H|T], FullOpsHist, S = [Latest|_]) ->
-  {Op, Value, _Ts, _Sender} =  H,
-  case Op of
-    Read when Read =:= read_response; Read =:= read_invocation ->
-      ResponseValue = get_response_value(H, FullOpsHist), % get corresponding response value
-      case Latest of
-        ResponseValue ->
-          case wing_gong(remove_op(H, FullOpsHist), S) of
-            true -> true;
-            false -> wing_gong_loop(T, FullOpsHist, S) %% try other minimal op
-          end;
-        _ ->
-          wing_gong_loop(T, FullOpsHist, S)  %% try other minimal op
-      end;
-    Write when Write =:= write_response; Write =:= write_invocation ->
-      case wing_gong(remove_op(H, FullOpsHist), [Value|S]) of
-        true -> true;
-        false -> wing_gong_loop(T, FullOpsHist, S)  %% try other minimal op
-      end
-  end.
 
-wing_gong([], _) -> true;
-wing_gong(OpsHist, S) ->
-  MinimalOps = find_minimal_ops(OpsHist),
-  wing_gong_loop(MinimalOps, OpsHist, S).
-
-find_minimal_ops([H|T], MinimalOps) ->
-  {Op, _, _, _} = H,
-  case Op of
-    read_response -> MinimalOps;
-    write_response -> MinimalOps;
-    _ -> find_minimal_ops(T, [H | MinimalOps])
-  end.
-find_minimal_ops(Trace) -> find_minimal_ops(Trace, []).
-
-get_response_value(Operation, Trace) ->
-  {Op, Value, _, Sender} = Operation,
-  case Op of
-    read_invocation -> get_read_value(Sender, Trace);
-    _ -> Value
-  end.
-
-get_read_value(_ , []) -> none;
-get_read_value(Sender, [H|T]) ->
-  case H of
-    {read_response, Value, _, Sender} -> Value;
-    _ -> get_read_value(Sender, T)
-  end.
-
-remove_op(Op, Trace) ->
-  {_, _, _, Sender} = Op,
-  RemovedInvoke = lists:keydelete(Sender, 4, Trace),
-  lists:keydelete(Sender, 4, RemovedInvoke).
