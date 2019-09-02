@@ -6,34 +6,14 @@ matrix:
   include:
     - language: scala
       os: linux
-      jdk: oraclejdk8
+      dist: trusty
+      jdk: oraclejdk9
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
 
     - language: scala
       os: osx
-      jdk: oraclejdk8
-      scala: 2.12.8
-      script:
-        - ./scripts/run-scala-tests.sh
-
-    - language: scala
-      os: linux
-      jdk: openjdk8
-      scala: 2.12.8
-      script:
-        - ./scripts/run-scala-tests.sh
-
-    - language: scala
-      os: osx
-      jdk: openjdk8
-      scala: 2.12.8
-      script:
-        - ./scripts/run-scala-tests.sh
-
-    - language: scala
-      os: linux
       jdk: oraclejdk9
       scala: 2.12.8
       script:
@@ -41,7 +21,31 @@ matrix:
 
     - language: scala
       os: linux
-      jdk: oraclejdk12
+      dist: trusty
+      jdk: openjdk9
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      jdk: openjdk9
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk11
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk14
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
