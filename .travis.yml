@@ -3,7 +3,25 @@ before_install:
   - ./scripts/travis_install_protobuf.sh
 
 matrix:
+  fast_finish: true
+
   include:
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: openjdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
     - language: scala
       os: linux
       dist: trusty
@@ -63,11 +81,10 @@ matrix:
         - cd ..
 
   allow_failures:
-    # because it's not supported by SBT, apparently
     - language: scala
       os: linux
       dist: trusty
-      jdk: oraclejdk14
+      jdk: oraclejdk14 # because it's not supported by SBT, apparently
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
