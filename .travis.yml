@@ -1,0 +1,67 @@
+# make sure protobuf library is installed for build to succeed
+before_install:
+  - ./scripts/travis_install_protobuf.sh
+
+matrix:
+  include:
+    - language: scala
+      os: linux
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      jdk: openjdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      jdk: openjdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      jdk: oraclejdk9
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      jdk: oraclejdk12
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: rust
+      os: linux
+      rust: nightly
+      script:
+          - ./scripts/run-rust-tests.sh
+
+    - language: rust
+      os: osx
+      rust: nightly
+      script:
+          - ./scripts/run-rust-tests.sh
+
+    - language: erlang
+      os: linux
+      otp_release: 22.0
+      script:
+        - cd erlang
+        - make
+        - cd ..
