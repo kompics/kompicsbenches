@@ -365,6 +365,7 @@ pub enum NotImplementedError {
 
 pub trait BenchmarkFactory: Send + Sync {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError>;
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory>;
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
     fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
@@ -374,6 +375,10 @@ pub trait BenchmarkFactory: Send + Sync {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
     fn atomic_register(&self)
         -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+}
+
+impl Clone for Box<dyn BenchmarkFactory> {
+    fn clone(&self) -> Box<dyn BenchmarkFactory> { self.box_clone() }
 }
 
 #[macro_export]
@@ -596,6 +601,8 @@ pub(crate) mod tests {
     }
 
     impl BenchmarkFactory for TestFactory {
+        fn box_clone(&self) -> Box<dyn BenchmarkFactory> { TestFactory::boxed() }
+
         fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
             match label {
                 Test2B::LABEL => self.ping_pong().map_into(),

@@ -8,9 +8,3 @@ pub const PARTITIONING_RUN_MSG: u64 = 45;
 pub const PARTITIONING_DONE_MSG: u64 = PARTITIONING_RUN_MSG;
 
 pub const ATOMICREG_ID: u64 = 46;
-
-
-
-
-
-

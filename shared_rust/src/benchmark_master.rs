@@ -10,6 +10,7 @@ use crate::{
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
 use grpc::ClientStubExt;
+use retry::{delay::Fixed, retry, OperationResult};
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
@@ -40,36 +41,74 @@ pub fn run(
     );
 
     // MASTER HANDLER
-    let master_handler = MasterHandler::new(
-        logger.new(o!("master-port" => master_port, "ty" => "MasterHandler")),
-        inst.state(),
-        check_in_sender,
-    );
-    let master_address = format!("0.0.0.0:{}", master_port);
-    let mut serverb = grpc::ServerBuilder::new_plain();
-    serverb
-        .http
-        .set_addr(master_address.clone())
-        .expect(&format!("Could not use address: {}.", master_address));
-    serverb.add_service(distributed_grpc::BenchmarkMasterServer::new_service_def(master_handler));
-    let master_server = serverb.build().expect("master server");
+
+    let master_server_result = retry(Fixed::from_millis(500).take(10), || {
+        let master_handler = MasterHandler::new(
+            logger.new(o!("master-port" => master_port, "ty" => "MasterHandler")),
+            inst.state(),
+            check_in_sender.clone(),
+        );
+        let master_address = format!("0.0.0.0:{}", master_port);
+        let mut serverb = grpc::ServerBuilder::new_plain();
+        let res: OperationResult<grpc::Server, String> =
+            match serverb.http.set_addr(master_address.clone()) {
+                Ok(_) => {
+                    let service_def =
+                        distributed_grpc::BenchmarkMasterServer::new_service_def(master_handler);
+                    serverb.add_service(service_def);
+                    match serverb.build() {
+                        Ok(server) => OperationResult::Ok(server),
+                        Err(e) => OperationResult::Retry(format!(
+                            "Could not start master on {}: {}.",
+                            master_address, e
+                        )),
+                    }
+                },
+                Err(e) => OperationResult::Err(format!(
+                    "Could not read master address {}: {}",
+                    master_address, e
+                )),
+            };
+        res
+    });
+
+    let master_server = master_server_result.expect("master server");
     info!(logger, "MasterServer running on {}", master_server.local_addr());
 
     // RUNNER HANDLER
-    let runner_handler = RunnerHandler::new(
-        logger.new(o!("runner-port" => runner_port, "ty" => "RunnerHandler")),
-        benchmarks,
-        bench_sender,
-        inst.state(),
-    );
-    let runner_address = format!("0.0.0.0:{}", runner_port);
-    let mut serverb = grpc::ServerBuilder::new_plain();
-    serverb
-        .http
-        .set_addr(runner_address.clone())
-        .expect(&format!("Could not use address: {}.", runner_address));
-    serverb.add_service(benchmarks_grpc::BenchmarkRunnerServer::new_service_def(runner_handler));
-    let runner_server = serverb.build().expect("runner server");
+    let runner_server_result = retry(Fixed::from_millis(500).take(10), || {
+        let runner_handler = RunnerHandler::new(
+            logger.new(o!("runner-port" => runner_port, "ty" => "RunnerHandler")),
+            benchmarks.clone(),
+            bench_sender.clone(),
+            inst.state(),
+        );
+        let runner_address = format!("0.0.0.0:{}", runner_port);
+        let mut serverb = grpc::ServerBuilder::new_plain();
+        let res: OperationResult<grpc::Server, String> =
+            match serverb.http.set_addr(runner_address.clone()) {
+                Ok(_) => {
+                    let service_def =
+                        benchmarks_grpc::BenchmarkRunnerServer::new_service_def(runner_handler);
+                    serverb.add_service(service_def);
+                    match serverb.build() {
+                        Ok(server) => OperationResult::Ok(server),
+                        Err(e) => OperationResult::Retry(format!(
+                            "Could not start runner on {}: {}.",
+                            runner_address, e
+                        )),
+                    }
+                },
+                Err(e) => OperationResult::Err(format!(
+                    "Could not read runner address {}: {}",
+                    runner_address, e
+                )),
+            };
+        res
+    });
+
+    let runner_server = runner_server_result.expect("runner server");
+
     info!(logger, "RunnerServer running on {}", runner_server.local_addr());
 
     inst.start();

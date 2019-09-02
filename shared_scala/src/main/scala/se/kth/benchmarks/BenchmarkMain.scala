@@ -4,11 +4,10 @@ import kompics.benchmarks.benchmarks.BenchmarkRunnerGrpc
 import scala.util.Try
 
 object BenchmarkMain {
-  def runWith(
-    args:            Array[String],
-    benchFactory:    BenchmarkFactory,
-    runnerImpl:      => BenchmarkRunnerGrpc.BenchmarkRunner,
-    globalConfigure: (String) => Unit): Unit = {
+  def runWith(args: Array[String],
+              benchFactory: BenchmarkFactory,
+              runnerImpl: => BenchmarkRunnerGrpc.BenchmarkRunner,
+              globalConfigure: (String) => Unit): Unit = {
     if (args.length == 1) {
       // local mode
       BenchmarkRunnerServer.runWith(args, runnerImpl);

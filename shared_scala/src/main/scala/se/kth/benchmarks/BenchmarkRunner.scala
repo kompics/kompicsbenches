@@ -2,25 +2,40 @@ package se.kth.benchmarks
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
-import scala.concurrent.{ ExecutionContext, Future }
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
-import scala.util.{ Try, Success, Failure }
-import io.grpc.{ Server, ServerBuilder }
+import scala.util.{Failure, Success, Try}
+import io.grpc.{Server, ServerBuilder}
 
 import com.typesafe.scalalogging.StrictLogging
 import java.util.concurrent.Executors
 
-class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext, runner: BenchmarkRunnerGrpc.BenchmarkRunner) extends StrictLogging { self =>
+class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext, runner: BenchmarkRunnerGrpc.BenchmarkRunner)
+    extends StrictLogging { self =>
 
   private[this] var server: Server = null;
 
   private[benchmarks] def start(): Unit = {
-    server = ServerBuilder.forPort(port).addService(
-      BenchmarkRunnerGrpc.bindService(runner, executionContext))
-      .build
-      .start;
+    import util.retry.blocking.{Failure, Retry, RetryStrategy, Success}
 
-    logger.info("Server started, listening on " + port)
+    implicit val retryStrategy = RetryStrategy.fixedBackOff(retryDuration = 500.milliseconds, maxAttempts = 10);
+
+    server = Retry {
+      ServerBuilder
+        .forPort(port)
+        .addService(BenchmarkRunnerGrpc.bindService(runner, executionContext))
+        .build()
+        .start();
+    } match {
+      case Success(server) => {
+        logger.info("Server started, listening on " + port);
+        server
+      }
+      case Failure(ex) => {
+        logger.error(s"Could not start BenchmarkRunnerServer: $ex");
+        throw ex;
+      }
+    };
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC server since JVM is shutting down")
       self.stop()
@@ -49,8 +64,15 @@ object BenchmarkRunnerServer {
 
   def runWith(args: Array[String], runner: BenchmarkRunnerGrpc.BenchmarkRunner): Unit = {
     val runnerAddr = Util.argToAddr(args(0)).get;
+    run(runnerAddr, runner, Promise());
+  }
+
+  def run(runnerAddr: GrpcAddress,
+          runner: BenchmarkRunnerGrpc.BenchmarkRunner,
+          p: Promise[BenchmarkRunnerServer]): Unit = {
     val server = new BenchmarkRunnerServer(runnerAddr.port, serverPool, runner);
     server.start();
+    p.success(server);
     server.blockUntilShutdown();
   }
 }
@@ -88,7 +110,8 @@ object BenchmarkRunner extends StrictLogging {
       bi.cleanupIteration(true, results.head);
       val resultRSE = rse(results);
       if (resultRSE > RSE_TARGET) {
-        val msg = s"RSE target of ${RSE_TARGET * 100.0}% was not met by value ${resultRSE * 100.0}% after ${nRuns} runs!";
+        val msg =
+          s"RSE target of ${RSE_TARGET * 100.0}% was not met by value ${resultRSE * 100.0}% after ${nRuns} runs!";
         logger.warn(msg);
         throw new BenchmarkException(msg);
       } else {

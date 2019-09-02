@@ -3,19 +3,17 @@ package se.kth.benchmarks
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import kompics.benchmarks.distributed._
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
-import scala.util.{ Try, Success, Failure }
-import io.grpc.{ Server, ServerBuilder, ManagedChannelBuilder }
+import scala.util.{Failure, Success, Try}
+import io.grpc.{ManagedChannelBuilder, Server, ServerBuilder}
 import java.util.concurrent.Executors
 import com.typesafe.scalalogging.StrictLogging
 
-class BenchmarkClient(
-  val address:       String,
-  val masterAddress: String,
-  val masterPort:    Int) extends StrictLogging { self =>
+class BenchmarkClient(val address: String, val masterAddress: String, val masterPort: Int) extends StrictLogging {
+  self =>
 
-  import BenchmarkClient.{ State, StateType, ActiveBench, MAX_ATTEMPTS };
+  import BenchmarkClient.{ActiveBench, MAX_ATTEMPTS, State, StateType};
 
   implicit val benchmarkPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
@@ -89,14 +87,28 @@ class BenchmarkClient(
   private[this] var checkInAttempts: Int = 0;
 
   private[benchmarks] def start(): Unit = {
-    checkInAttempts += 1;
-    server = ServerBuilder.forPort(0).addService(
-      BenchmarkClientGrpc.bindService(ClientService, serverPool))
-      .build
-      .start;
+    import util.retry.blocking.{Failure, Retry, RetryStrategy, Success}
 
-    val port = server.getPort;
-    logger.info(s"Client Server started, listening on $port");
+    implicit val retryStrategy = RetryStrategy.fixedBackOff(retryDuration = 500.milliseconds, maxAttempts = 10);
+
+    server = Retry {
+      ServerBuilder
+        .forPort(0)
+        .addService(BenchmarkClientGrpc.bindService(ClientService, serverPool))
+        .build()
+        .start();
+    } match {
+      case Success(server) => {
+        val port = server.getPort;
+        logger.info(s"Client Server started, listening on $port");
+        server
+      }
+      case Failure(ex) => {
+        logger.error(s"Could not start ClientService: $ex");
+        throw ex;
+      }
+    };
+
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC server since JVM is shutting down")
       self.stop()
@@ -106,12 +118,11 @@ class BenchmarkClient(
   }
 
   private[benchmarks] def checkin(): Unit = {
+    checkInAttempts += 1;
     val port = server.getPort;
-    val master = {
-      val channel = ManagedChannelBuilder.forAddress(masterAddress, masterPort).usePlaintext().build;
-      val stub = BenchmarkMasterGrpc.stub(channel);
-      stub
-    };
+    val channel = ManagedChannelBuilder.forAddress(masterAddress, masterPort).usePlaintext().build();
+    val master = BenchmarkMasterGrpc.stub(channel);
+
     val f = master.checkIn(ClientInfo(address, port));
     f.onComplete {
       case Success(_) => {
@@ -125,6 +136,8 @@ class BenchmarkClient(
           System.exit(1);
         } else {
           logger.info("Retrying connection establishment.");
+          channel.shutdownNow();
+          channel.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
           Thread.sleep(500);
           this.checkin();
         }
@@ -157,9 +170,7 @@ object BenchmarkClient {
   }
 
   class ActiveBench(b: DistributedBenchmark) {
-    private class ActiveInstance(val bi: b.Client) {
-
-    }
+    private class ActiveInstance(val bi: b.Client) {}
     private val instance = new ActiveInstance(b.newClient());
 
     def setup(sc: SetupConfig): Try[String] = {

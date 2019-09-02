@@ -1,17 +1,17 @@
 package se.kth.benchmarks.kompicsjava.bench
 
 import se.kth.benchmarks._
-import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, KompicsSystem, NetAddress }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider, NetAddress}
 import _root_.kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import se.kth.benchmarks.kompicsjava.bench.netthroughputpingpong._;
 import se.sics.kompics.network.Network
 import se.sics.kompics.sl.Init
-import scala.util.{ Try, Success, Failure }
-import scala.concurrent.{ Future, Await }
+import scala.util.{Failure, Success, Try}
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
 
@@ -26,9 +26,9 @@ object NetThroughputPingPong extends DistributedBenchmark {
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: KompicsSystem = null;
     private var pingers: List[UUID] = List.empty;
@@ -39,8 +39,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = KompicsSystemProvider.newRemoteKompicsSystem(
-        Runtime.getRuntime.availableProcessors());
+      system = KompicsSystemProvider.newRemoteKompicsSystem(Runtime.getRuntime.availableProcessors());
       NetPingPongSerializer.register();
       ClientParams(numPairs, staticOnly)
     };
@@ -94,7 +93,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       NetPingPongSerializer.register();
 
-      val lf = (0 to c.numPongers).map{ index =>
+      val lf = (0 to c.numPongers).map { index =>
         for {
           pongerId <- if (c.staticOnly) {
             system.createNotify[StaticPonger](new StaticPonger.Init(index))

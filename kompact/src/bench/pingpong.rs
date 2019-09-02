@@ -5,7 +5,6 @@ use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-
 #[derive(Clone, Debug)]
 struct Ping;
 const PING: Ping = Ping;

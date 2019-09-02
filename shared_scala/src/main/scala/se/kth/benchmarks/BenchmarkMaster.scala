@@ -3,10 +3,10 @@ package se.kth.benchmarks
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import kompics.benchmarks.distributed._
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
-import scala.util.{ Try, Success, Failure }
-import io.grpc.{ Server, ServerBuilder, ManagedChannelBuilder }
+import scala.util.{Failure, Success, Try}
+import io.grpc.{ManagedChannelBuilder, Server, ServerBuilder}
 import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentLinkedQueue
 import com.typesafe.scalalogging.StrictLogging
@@ -15,14 +15,11 @@ case class ClientEntry(address: String, port: Int, stub: BenchmarkClientGrpc.Ben
 
 case class BenchRequest(f: () => Future[TestResult])
 
-class BenchmarkMaster(
-  val runnerPort: Int,
-  val masterPort: Int,
-  val waitFor:    Int,
-  val benchmarks: BenchmarkFactory) extends StrictLogging { self =>
-  import BenchmarkRunner.{ MIN_RUNS, MAX_RUNS, RSE_TARGET, measure, resultToTestResult, rse };
+class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int, val benchmarks: BenchmarkFactory)
+    extends StrictLogging { self =>
+  import BenchmarkRunner.{MAX_RUNS, MIN_RUNS, RSE_TARGET, measure, resultToTestResult, rse};
 
-  import BenchmarkMaster.{ State, IterationData };
+  import BenchmarkMaster.{IterationData, State};
 
   implicit val benchmarkPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
   val serverPool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
@@ -40,12 +37,14 @@ class BenchmarkMaster(
     override def checkIn(request: ClientInfo): Future[CheckinResponse] = {
       if (state() == State.INIT) {
         logger.info(s"Got Check-In from ${request.address}:${request.port}");
-        clients ::= clientInfoToEntry(request);
-        if (clients.size == waitFor) {
-          logger.info(s"Got all ${clients.size} Check-Ins: Ready!");
-          goReady();
-        } else {
-          logger.debug(s"Got ${clients.size}/${waitFor} Check-Ins.");
+        BenchmarkMaster.synchronized {
+          clients ::= clientInfoToEntry(request);
+          if (clients.size == waitFor) {
+            logger.info(s"Got all ${clients.size} Check-Ins: Ready!");
+            goReady();
+          } else {
+            logger.debug(s"Got ${clients.size}/${waitFor} Check-Ins.");
+          }
         }
       } else {
         logger.warn(s"Ignoring late Check-In: $request");
@@ -125,12 +124,13 @@ class BenchmarkMaster(
     }
 
     private def queueIfNotReady(f: => Future[TestResult]): Future[TestResult] = {
-      val handledF = () => try {
-        f
-      } catch {
-        case _: scala.NotImplementedError => Future.successful(NotImplemented())
-        case e: Throwable                 => Future.failed(e)
-      };
+      val handledF = () =>
+        try {
+          f
+        } catch {
+          case _: scala.NotImplementedError => Future.successful(NotImplemented())
+          case e: Throwable                 => Future.failed(e)
+        };
       if (state() == State.READY) {
         handledF()
       } else {
@@ -149,16 +149,44 @@ class BenchmarkMaster(
   private[this] var runnerServer: Server = null;
 
   private[benchmarks] def start(): Unit = {
-    masterServer = ServerBuilder.forPort(masterPort).addService(
-      BenchmarkMasterGrpc.bindService(MasterService, serverPool))
-      .build
-      .start;
-    logger.info(s"Master Server started, listening on $masterPort");
-    runnerServer = ServerBuilder.forPort(runnerPort).addService(
-      BenchmarkRunnerGrpc.bindService(RunnerService, serverPool))
-      .build
-      .start;
-    logger.info(s"Runner Server started, listening on $runnerPort");
+    import util.retry.blocking.{Failure, Retry, RetryStrategy, Success}
+
+    implicit val retryStrategy = RetryStrategy.fixedBackOff(retryDuration = 500.milliseconds, maxAttempts = 10);
+
+    masterServer = Retry {
+      ServerBuilder
+        .forPort(masterPort)
+        .addService(BenchmarkMasterGrpc.bindService(MasterService, serverPool))
+        .build()
+        .start();
+    } match {
+      case Success(server) => {
+        logger.info(s"Master Server started, listening on $masterPort");
+        server
+      }
+      case Failure(ex) => {
+        logger.error(s"Could not start BenchmarkMaster: $ex");
+        throw ex;
+      }
+    };
+
+    runnerServer = Retry {
+      ServerBuilder
+        .forPort(runnerPort)
+        .addService(BenchmarkRunnerGrpc.bindService(RunnerService, serverPool))
+        .build()
+        .start();
+    } match {
+      case Success(server) => {
+        logger.info(s"Runner Server started, listening on $runnerPort");
+        server
+      }
+      case Failure(ex) => {
+        logger.error(s"Could not start RunnerService: $ex");
+        throw ex;
+      }
+    }
+
     sys.addShutdownHook {
       System.err.println("*** shutting down gRPC server since JVM is shutting down")
       self.stop()
@@ -320,7 +348,8 @@ object BenchmarkMaster {
   }
 
   class State(initial: Int) {
-    private val _inner: java.util.concurrent.atomic.AtomicInteger = new java.util.concurrent.atomic.AtomicInteger(initial);
+    private val _inner: java.util.concurrent.atomic.AtomicInteger =
+      new java.util.concurrent.atomic.AtomicInteger(initial);
 
     def :=(v: Int): Unit = _inner.set(v);
     def cas(oldValue: Int, newValue: Int): Unit = if (!_inner.compareAndSet(oldValue, newValue)) {

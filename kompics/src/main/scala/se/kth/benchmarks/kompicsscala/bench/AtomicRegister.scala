@@ -1,24 +1,24 @@
 package se.kth.benchmarks.kompicsscala.bench
 
-import java.util.{ NoSuchElementException, Optional, UUID }
-import java.util.concurrent.{ CountDownLatch, TimeUnit }
+import java.util.{NoSuchElementException, Optional, UUID}
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import io.netty.buffer.ByteBuf
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import scalapb.GeneratedMessage
-import se.kth.benchmarks.{ DistributedBenchmark, kompicsscala }
+import se.kth.benchmarks.{DistributedBenchmark, kompicsscala}
 
 import scala.concurrent.duration._
 import se.kth.benchmarks.kompicsscala._
 import se.sics.kompics.network.Network
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import se.sics.kompics.sl._
-import se.sics.kompics.sl.{ Init => KompicsInit }
-import se.kth.benchmarks.kompicsscala.PartitioningComp.{ Init, InitAck, Run, Done }
+import se.sics.kompics.sl.{Init => KompicsInit}
+import se.kth.benchmarks.kompicsscala.PartitioningComp.{Done, Init, InitAck, Run}
 
 import scala.collection.mutable
 import scala.concurrent.Await
-import scala.util.{ Random, Success, Try }
+import scala.util.{Random, Success, Try}
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -30,10 +30,10 @@ object AtomicRegister extends DistributedBenchmark {
   override type ClientData = NetAddress
 
   class MasterImpl extends Master {
-    private var read_workload = 0.0F;
-    private var write_workload = 0.0F;
+    private var read_workload = 0.0f;
+    private var write_workload = 0.0f;
     private var partition_size: Int = -1;
-    private var num_keys: Long = -1l;
+    private var num_keys: Long = -1L;
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null;
@@ -75,7 +75,9 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      val partitioningCompF = system.createNotify[PartitioningComp](KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)) // only wait for InitAck from clients
+      val partitioningCompF = system.createNotify[PartitioningComp](
+        KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+      ) // only wait for InitAck from clients
       partitioningComp = Await.result(partitioningCompF, 5.second)
       val partitioningComp_net_connF = system.connectNetwork(partitioningComp)
       Await.result(partitioningComp_net_connF, 5.seconds)
@@ -124,8 +126,8 @@ object AtomicRegister extends DistributedBenchmark {
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null
-    private var read_workload = 0.0F
-    private var write_workload = 0.0F
+    private var read_workload = 0.0f
+    private var write_workload = 0.0f
 
     override def setup(c: ClientConf): ClientData = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
@@ -183,14 +185,15 @@ object AtomicRegister extends DistributedBenchmark {
     ClientParams(split(0).toFloat, split(1).toFloat)
   };
 
-  override def strToClientData(str: String): Try[ClientData] = Try {
-    val split = str.split(":");
-    assert(split.length == 2);
-    val ipStr = split(0); //.replaceAll("""/""", "");
-    val portStr = split(1);
-    val port = portStr.toInt;
-    NetAddress.from(ipStr, port)
-  }.flatten;
+  override def strToClientData(str: String): Try[ClientData] =
+    Try {
+      val split = str.split(":");
+      assert(split.length == 2);
+      val ipStr = split(0); //.replaceAll("""/""", "");
+      val portStr = split(1);
+      val port = portStr.toInt;
+      NetAddress.from(ipStr, port)
+    }.flatten;
 
   override def clientConfToString(c: ClientConf): String = s"${c.read_workload}:${c.write_workload}";
 
@@ -211,7 +214,8 @@ object AtomicRegister extends DistributedBenchmark {
   }
 
   class AtomicRegisterComp(init: KompicsInit[AtomicRegisterComp]) extends ComponentDefinition {
-    implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops = o.mkOrderingOps(x); // for tuple comparison
+    implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
+      o.mkOrderingOps(x); // for tuple comparison
 
     val net = requires[Network]
     val beb = requires[BestEffortBroadcast]
@@ -282,11 +286,11 @@ object AtomicRegister extends DistributedBenchmark {
       write_count = num_writes
 
       if (selfRank % 2 == 0) {
-        for (i <- 0l until num_reads) invokeRead(min_key + i)
-        for (i <- 0l until num_writes) invokeWrite(min_key + num_reads + i)
+        for (i <- 0L until num_reads) invokeRead(min_key + i)
+        for (i <- 0L until num_writes) invokeWrite(min_key + num_reads + i)
       } else {
-        for (i <- 0l until num_writes) invokeWrite(min_key + i)
-        for (i <- 0l until num_reads) invokeRead(min_key + num_writes + i)
+        for (i <- 0L until num_writes) invokeWrite(min_key + i)
+        for (i <- 0L until num_reads) invokeRead(min_key + num_writes + i)
       }
     }
 
@@ -303,95 +307,106 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null)
-      }
+      case _: Start =>
+        handle {
+          assert(selfAddr != null)
+        }
     }
 
     beb uponEvent {
-      case BEBDeliver(Read(current_run_id, key, readId), src) => handle {
-        val current_state: AtomicRegisterState = register_state(key)
-        trigger(NetMessage.viaTCP(selfAddr, src)(Value(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)) -> net)
-      };
+      case BEBDeliver(Read(current_run_id, key, readId), src) =>
+        handle {
+          val current_state: AtomicRegisterState = register_state(key)
+          trigger(
+            NetMessage.viaTCP(selfAddr, src)(
+              Value(current_run_id, key, readId, current_state.ts, current_state.wr, current_state.value)
+            ) -> net
+          )
+        };
 
-      case BEBDeliver(w: Write, src) => handle {
-        if (w.run_id == current_run_id) {
-          val current_register = register_state(w.key)
-          if ((w.ts, w.wr) > (current_register.ts, current_register.wr)) {
-            current_register.ts = w.ts
-            current_register.wr = w.wr
-            current_register.value = w.value
+      case BEBDeliver(w: Write, src) =>
+        handle {
+          if (w.run_id == current_run_id) {
+            val current_register = register_state(w.key)
+            if ((w.ts, w.wr) > (current_register.ts, current_register.wr)) {
+              current_register.ts = w.ts
+              current_register.wr = w.wr
+              current_register.value = w.value
+            }
           }
-        }
-        trigger(NetMessage.viaTCP(selfAddr, src)(Ack(w.run_id, w.key, w.rid)) -> net)
-      };
+          trigger(NetMessage.viaTCP(selfAddr, src)(Ack(w.run_id, w.key, w.rid)) -> net)
+        };
     }
 
     net uponEvent {
-      case context @ NetMessage(header, i: Init) => handle{
-        newIteration(i)
-        master = header.getSource()
-        trigger(context.reply(selfAddr)(InitAck(i.init_id)) -> net)
-      }
-
-      case NetMessage(header, v: Value) => handle {
-        if (v.run_id == current_run_id) {
-          val current_register = register_state(v.key)
-          if (v.rid == current_register.rid) {
-            var readlist = register_readlist(v.key)
-            if (current_register.reading) {
-              if (readlist.isEmpty) {
-                current_register.first_received_ts = v.ts
-                current_register.readval = v.value
-              } else if (current_register.skip_impose) {
-                if (current_register.first_received_ts != v.ts) current_register.skip_impose = false
-              }
-            }
-            val src = header.getSource()
-            readlist(src) = (v.ts, v.wr, v.value)
-            if (readlist.size > n / 2) {
-              if (current_register.reading && current_register.skip_impose) {
-                current_register.value = current_register.readval
-                register_readlist(v.key).clear()
-                readResponse(v.key, current_register.readval)
-              } else {
-                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1) // TODO must check rank as well if same ts
-                current_register.readval = readvalue
-                register_readlist(v.key).clear()
-                var bcastvalue = readvalue
-                if (!current_register.reading) {
-                  rr = selfRank
-                  maxts += 1
-                  bcastvalue = current_register.writeval
-                }
-                trigger(BEBRequest(nodes, Write(v.run_id, v.key, v.rid, maxts, rr, bcastvalue)) -> beb)
-              }
-            }
-          }
+      case context @ NetMessage(header, i: Init) =>
+        handle {
+          newIteration(i)
+          master = header.getSource()
+          trigger(context.reply(selfAddr)(InitAck(i.init_id)) -> net)
         }
-      }
 
-      case NetMessage(header, a: Ack) => handle {
-        if (a.run_id == current_run_id) {
-          val current_register = register_state(a.key)
-          if (a.rid == current_register.rid) {
-            current_register.acks += 1
-            if (current_register.acks > n / 2) {
-              register_state(a.key).acks = 0
+      case NetMessage(header, v: Value) =>
+        handle {
+          if (v.run_id == current_run_id) {
+            val current_register = register_state(v.key)
+            if (v.rid == current_register.rid) {
+              var readlist = register_readlist(v.key)
               if (current_register.reading) {
-                readResponse(a.key, current_register.readval)
-              } else {
-                writeResponse(a.key)
+                if (readlist.isEmpty) {
+                  current_register.first_received_ts = v.ts
+                  current_register.readval = v.value
+                } else if (current_register.skip_impose) {
+                  if (current_register.first_received_ts != v.ts) current_register.skip_impose = false
+                }
+              }
+              val src = header.getSource()
+              readlist(src) = (v.ts, v.wr, v.value)
+              if (readlist.size > n / 2) {
+                if (current_register.reading && current_register.skip_impose) {
+                  current_register.value = current_register.readval
+                  register_readlist(v.key).clear()
+                  readResponse(v.key, current_register.readval)
+                } else {
+                  var (maxts, rr, readvalue) = readlist.values.maxBy(_._1) // TODO must check rank as well if same ts
+                  current_register.readval = readvalue
+                  register_readlist(v.key).clear()
+                  var bcastvalue = readvalue
+                  if (!current_register.reading) {
+                    rr = selfRank
+                    maxts += 1
+                    bcastvalue = current_register.writeval
+                  }
+                  trigger(BEBRequest(nodes, Write(v.run_id, v.key, v.rid, maxts, rr, bcastvalue)) -> beb)
+                }
               }
             }
           }
         }
 
-      }
+      case NetMessage(header, a: Ack) =>
+        handle {
+          if (a.run_id == current_run_id) {
+            val current_register = register_state(a.key)
+            if (a.rid == current_register.rid) {
+              current_register.acks += 1
+              if (current_register.acks > n / 2) {
+                register_state(a.key).acks = 0
+                if (current_register.reading) {
+                  readResponse(a.key, current_register.readval)
+                } else {
+                  writeResponse(a.key)
+                }
+              }
+            }
+          }
 
-      case NetMessage(_, Run) => handle{
-        invokeOperations()
-      }
+        }
+
+      case NetMessage(_, Run) =>
+        handle {
+          invokeOperations()
+        }
     }
   }
 
@@ -493,4 +508,3 @@ object AtomicRegister extends DistributedBenchmark {
     }
   }
 }
-

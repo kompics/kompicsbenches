@@ -5,6 +5,7 @@ use crate::{
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
 use grpc::ClientStubExt;
+use retry::{delay::Fixed, retry, OperationResult};
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
@@ -41,21 +42,41 @@ pub fn run(
     );
 
     // Client HANDLER
-    let client_handler = ClientHandler::new(
-        logger.new(o!("service-address" => format!("{}",service_address), "service-port" => service_port, "ty" => "ClientHandler")),
-        command_sender,
-    );
-    let client_address = format!("{}:{}", service_address, service_port);
-    let mut serverb = grpc::ServerBuilder::new_plain();
-    serverb
-        .http
-        .set_addr(client_address.clone())
-        .expect(&format!("Could not use address: {}.", client_address));
-    serverb.add_service(distributed_grpc::BenchmarkClientServer::new_service_def(client_handler));
-    let client_server = serverb.build().expect("client server");
+
+    let client_server_result = retry(Fixed::from_millis(500).take(10), || {
+        let client_handler = ClientHandler::new(
+            logger.new(o!("service-address" => format!("{}",service_address), "service-port" => service_port, "ty" => "ClientHandler")),
+            command_sender.clone(),
+        );
+        let client_address = format!("{}:{}", service_address, service_port);
+        let mut serverb = grpc::ServerBuilder::new_plain();
+        let res: OperationResult<grpc::Server, String> =
+            match serverb.http.set_addr(client_address.clone()) {
+                Ok(_) => {
+                    let service_def =
+                        distributed_grpc::BenchmarkClientServer::new_service_def(client_handler);
+                    serverb.add_service(service_def);
+                    match serverb.build() {
+                        Ok(server) => OperationResult::Ok(server),
+                        Err(e) => OperationResult::Retry(format!(
+                            "Could not start client on {}: {}.",
+                            client_address, e
+                        )),
+                    }
+                },
+                Err(e) => OperationResult::Err(format!(
+                    "Could not read client address {}: {}",
+                    client_address, e
+                )),
+            };
+        res
+    });
+
+    let client_server = client_server_result.expect("client server");
+
     info!(logger, "ClientServer running on {}", client_server.local_addr());
 
-    inst.start();
+    inst.start()
 }
 
 enum ClientCommand {

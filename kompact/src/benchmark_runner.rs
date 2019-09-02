@@ -3,6 +3,7 @@ use benchmark_suite_shared::benchmark_runner::{not_implemented, run, run_async};
 use benchmark_suite_shared::kompics_benchmarks::{benchmarks, benchmarks_grpc, messages};
 use futures::future::Future;
 
+#[derive(Clone)]
 pub struct BenchmarkRunnerActorImpl;
 
 impl BenchmarkRunnerActorImpl {
@@ -92,6 +93,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     }
 }
 
+#[derive(Clone)]
 pub struct BenchmarkRunnerComponentImpl;
 
 impl BenchmarkRunnerComponentImpl {

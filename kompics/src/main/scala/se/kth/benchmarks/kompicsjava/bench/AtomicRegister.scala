@@ -1,21 +1,21 @@
 package se.kth.benchmarks.kompicsjava.bench;
 
 import java.util.UUID
-import java.util.concurrent.{ CountDownLatch, TimeUnit }
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
-import se.kth.benchmarks.{ ClientEntry, DistributedBenchmark }
-import se.kth.benchmarks.kompicsjava.broadcast.{ BEBComp, BestEffortBroadcast => JBestEffortBroadcast }
-import se.kth.benchmarks.kompicsjava.bench.atomicregister.{ AtomicRegister => JAtomicRegister, AtomicRegisterSerializer }
+import se.kth.benchmarks.{ClientEntry, DistributedBenchmark}
+import se.kth.benchmarks.kompicsjava.broadcast.{BEBComp, BestEffortBroadcast => JBestEffortBroadcast}
+import se.kth.benchmarks.kompicsjava.bench.atomicregister.{AtomicRegister => JAtomicRegister, AtomicRegisterSerializer}
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
 import se.kth.benchmarks.kompicsscala._
-import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.{ ClientParams, FailedPreparationException }
+import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.{ClientParams, FailedPreparationException}
 import se.sics.kompics.sl.Init
 import se.kth.benchmarks.kompicsjava.bench.JPartitioningComp.Run
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
-import scala.util.{ Success, Try }
+import scala.util.{Success, Try}
 
 object AtomicRegister extends DistributedBenchmark {
   override type MasterConf = AtomicRegisterRequest;
@@ -23,10 +23,10 @@ object AtomicRegister extends DistributedBenchmark {
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var read_workload = 0.0F;
-    private var write_workload = 0.0F;
+    private var read_workload = 0.0f;
+    private var write_workload = 0.0f;
     private var partition_size: Int = -1;
-    private var num_keys: Long = -1l;
+    private var num_keys: Long = -1L;
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null;
@@ -50,7 +50,8 @@ object AtomicRegister extends DistributedBenchmark {
       assert(system != null);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-      val atomicRegisterIdF = system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
+      val atomicRegisterIdF =
+        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -69,7 +70,9 @@ object AtomicRegister extends DistributedBenchmark {
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      val partitioningCompF = system.createNotify[JPartitioningComp](Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size))
+      val partitioningCompF = system.createNotify[JPartitioningComp](
+        Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+      )
       partitioning_comp = Await.result(partitioningCompF, 5.second)
       val partitioningComp_net_connF = system.connectNetwork(partitioning_comp)
       Await.result(partitioningComp_net_connF, 5.seconds)
@@ -116,8 +119,8 @@ object AtomicRegister extends DistributedBenchmark {
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null
-    private var read_workload = 0.0F
-    private var write_workload = 0.0F
+    private var read_workload = 0.0f
+    private var write_workload = 0.0f
 
     override def setup(c: ClientConf): ClientData = {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
@@ -127,7 +130,8 @@ object AtomicRegister extends DistributedBenchmark {
       println(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
-      val atomicRegisterIdF = system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
+      val atomicRegisterIdF =
+        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -175,14 +179,15 @@ object AtomicRegister extends DistributedBenchmark {
     ClientParams(split(0).toFloat, split(1).toFloat)
   };
 
-  override def strToClientData(str: String): Try[ClientData] = Try {
-    val split = str.split(":");
-    assert(split.length == 2);
-    val ipStr = split(0); //.replaceAll("""/""", "");
-    val portStr = split(1);
-    val port = portStr.toInt;
-    NetAddress.from(ipStr, port)
-  }.flatten;
+  override def strToClientData(str: String): Try[ClientData] =
+    Try {
+      val split = str.split(":");
+      assert(split.length == 2);
+      val ipStr = split(0); //.replaceAll("""/""", "");
+      val portStr = split(1);
+      val port = portStr.toInt;
+      NetAddress.from(ipStr, port)
+    }.flatten;
 
   override def clientConfToString(c: ClientConf): String = s"${c.read_workload}:${c.write_workload}";
 

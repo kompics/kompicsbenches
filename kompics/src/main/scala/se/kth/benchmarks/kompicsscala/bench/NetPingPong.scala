@@ -4,14 +4,14 @@ import se.kth.benchmarks._
 import se.kth.benchmarks.kompicsscala._
 import _root_.kompics.benchmarks.benchmarks.PingPongRequest
 import se.sics.kompics.sl._
-import se.sics.kompics.{ KompicsEvent, Start }
+import se.sics.kompics.{KompicsEvent, Start}
 import se.sics.kompics.network.Network
-import scala.util.{ Try, Success, Failure }
+import scala.util.{Failure, Success, Try}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
 
@@ -24,7 +24,7 @@ object NetPingPong extends DistributedBenchmark {
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var num = -1l;
+    private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
     private var latch: CountDownLatch = null;
@@ -111,14 +111,15 @@ object NetPingPong extends DistributedBenchmark {
 
   override def newClient(): Client = new ClientImpl();
   override def strToClientConf(str: String): Try[ClientConf] = Success(());
-  override def strToClientData(str: String): Try[ClientData] = Try {
-    val split = str.split(":");
-    assert(split.length == 2);
-    val ipStr = split(0); //.replaceAll("""/""", "");
-    val portStr = split(1);
-    val port = portStr.toInt;
-    NetAddress.from(ipStr, port)
-  }.flatten;
+  override def strToClientData(str: String): Try[ClientData] =
+    Try {
+      val split = str.split(":");
+      assert(split.length == 2);
+      val ipStr = split(0); //.replaceAll("""/""", "");
+      val portStr = split(1);
+      val port = portStr.toInt;
+      NetAddress.from(ipStr, port)
+    }.flatten;
 
   override def clientConfToString(c: ClientConf): String = "";
   override def clientDataToString(d: ClientData): String = {
@@ -174,20 +175,22 @@ object NetPingPong extends DistributedBenchmark {
     var countDown = count;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-        trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
-      }
+      case _: Start =>
+        handle {
+          assert(selfAddr != null);
+          trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
+        }
     }
     net uponEvent {
-      case context @ NetMessage(_, Pong) => handle {
-        if (countDown > 0) {
-          countDown -= 1;
-          trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
-        } else {
-          latch.countDown();
+      case context @ NetMessage(_, Pong) =>
+        handle {
+          if (countDown > 0) {
+            countDown -= 1;
+            trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping) -> net);
+          } else {
+            latch.countDown();
+          }
         }
-      }
     }
   }
 
@@ -198,15 +201,17 @@ object NetPingPong extends DistributedBenchmark {
     lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-      }
+      case _: Start =>
+        handle {
+          assert(selfAddr != null);
+        }
     }
 
     net uponEvent {
-      case context @ NetMessage(_, Ping) => handle {
-        trigger(context.reply(selfAddr)(Pong) -> net);
-      }
+      case context @ NetMessage(_, Ping) =>
+        handle {
+          trigger(context.reply(selfAddr)(Pong) -> net);
+        }
     }
   }
 }

@@ -3,7 +3,7 @@ package se.kth.benchmarks.kompicsjava
 import se.kth.benchmarks.BenchmarkRunner
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
-import scala.concurrent.{ ExecutionContext, Future }
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 
 import java.util.logging.Logger

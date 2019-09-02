@@ -190,7 +190,7 @@ impl Handler<PoisonPill> for Pinger {
 struct Ponger;
 
 impl Ponger {
-    fn new() -> Ponger{
+    fn new() -> Ponger {
         Ponger
     }
 }

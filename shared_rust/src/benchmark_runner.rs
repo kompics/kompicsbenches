@@ -1,11 +1,69 @@
 use crate::{
     benchmark::{Benchmark, BenchmarkError, BenchmarkInstance, *},
     benchmark_master::ClientEntry,
-    kompics_benchmarks::messages,
+    kompics_benchmarks::*,
 };
 use futures::future::{self, Future};
 //use slog::{crit, debug, error, info, o, warn, Drain, Logger};
+use retry::{delay::Fixed, retry, OperationResult};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use time;
+
+pub fn run_server<H>(
+    runner: H,
+    bench_runner_addr: String,
+    shutdown_opt: Option<Arc<AtomicBool>>,
+) -> ()
+where
+    H: benchmarks_grpc::BenchmarkRunner + Clone + Sync + Send + 'static,
+{
+    let server_result = retry(Fixed::from_millis(500).take(10), || {
+        let local_runner = runner.clone(); // no other way to get it back on failed builds -.-
+        let mut serverb = grpc::ServerBuilder::new_plain();
+        let res: OperationResult<grpc::Server, String> =
+            match serverb.http.set_addr(bench_runner_addr.clone()) {
+                Ok(_) => {
+                    let service_def =
+                        benchmarks_grpc::BenchmarkRunnerServer::new_service_def(local_runner);
+                    serverb.add_service(service_def);
+                    match serverb.build() {
+                        Ok(server) => OperationResult::Ok(server),
+                        Err(e) => OperationResult::Retry(format!(
+                            "Could not start server on {}: {}.",
+                            bench_runner_addr, e
+                        )),
+                    }
+                },
+                Err(e) => OperationResult::Err(format!(
+                    "Could not read server address {}: {}",
+                    bench_runner_addr, e
+                )),
+            };
+        res
+    });
+
+    let server = server_result.expect("server");
+    println!("Running in local mode with runner={}", server.local_addr());
+    loop {
+        std::thread::park();
+        match shutdown_opt {
+            Some(ref shutdown) if shutdown.load(Ordering::Relaxed) => {
+                return;
+            },
+            Some(_) | None => {
+                if server.is_alive() {
+                    println!("Still running {}", server.local_addr());
+                } else {
+                    println!("Server died.");
+                    std::process::exit(1);
+                }
+            },
+        }
+    }
+}
 
 pub fn run_async<F>(f: F) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
 where F: FnOnce() -> messages::TestResult + std::panic::UnwindSafe {

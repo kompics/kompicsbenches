@@ -1,11 +1,11 @@
 package se.kth.benchmarks.kompicsjava.bench
 
 import se.kth.benchmarks.Benchmark
-import se.kth.benchmarks.kompicsscala.{ KompicsSystem, KompicsSystemProvider }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider}
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import se.kth.benchmarks.kompicsjava.bench.throughputpingpong._;
 import se.sics.kompics.sl.Init;
-import scala.concurrent.{ Future, Await }
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.CountDownLatch
@@ -22,9 +22,9 @@ object ThroughputPingPong extends Benchmark {
   override def newInstance(): Instance = new PingPongI;
 
   class PingPongI extends Instance {
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: KompicsSystem = null;
     private var pingers: List[UUID] = List.empty;
@@ -41,7 +41,7 @@ object ThroughputPingPong extends Benchmark {
     override def prepareIteration(): Unit = {
       assert(system != null);
       latch = new CountDownLatch(numPairs);
-      val lf = (0 to numPairs).map{ _i =>
+      val lf = (0 to numPairs).map { _i =>
         for {
           pongerId <- if (staticOnly) {
             system.createNotify[StaticPonger](Init.none[StaticPonger])

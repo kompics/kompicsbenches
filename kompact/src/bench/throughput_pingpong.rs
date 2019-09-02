@@ -235,10 +235,10 @@ pub mod actor_pingpong {
 
                         pongers
                             .start_all(system)
-                            .expect("Pongers did not start correctly!");;
+                            .expect("Pongers did not start correctly!");
                         pingers
                             .start_all(system)
-                            .expect("Pingers did not start correctly!");;
+                            .expect("Pingers did not start correctly!");
 
                         self.pongers = pongers;
                         self.pingers = pingers;
@@ -268,11 +268,11 @@ pub mod actor_pingpong {
             self.pingers
                 .take()
                 .kill_all(&system)
-                .expect("Pingers did not shut down correctly!");;
+                .expect("Pingers did not shut down correctly!");
             self.pongers
                 .take()
                 .kill_all(&system)
-                .expect("Pongers did not shut down correctly!");;
+                .expect("Pongers did not shut down correctly!");
 
             if last_iteration {
                 system
@@ -619,7 +619,7 @@ pub mod component_pingpong {
 
                         pongers
                             .start_all(system)
-                            .expect("Pongers did not start correctly!");;
+                            .expect("Pongers did not start correctly!");
 
                         self.pongers = pongers;
                         self.pingers = pingers;
@@ -638,7 +638,7 @@ pub mod component_pingpong {
 
                     self.pingers
                         .start_all(system)
-                        .expect("Pingers did not start correctly!");;
+                        .expect("Pingers did not start correctly!");
 
                     latch.wait();
                 }

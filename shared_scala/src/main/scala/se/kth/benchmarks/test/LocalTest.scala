@@ -2,7 +2,7 @@ package se.kth.benchmarks.test
 
 import org.scalatest._
 import scala.util.{Failure, Success, Try}
-import scala.concurrent.{Await, Future}
+import scala.concurrent.{Await, Future, Promise}
 import scala.concurrent.duration._
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
@@ -11,51 +11,31 @@ import io.grpc.{ManagedChannelBuilder, Server, ServerBuilder}
 import se.kth.benchmarks._
 import com.typesafe.scalalogging.StrictLogging
 
-class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with StrictLogging {
+class LocalTest(val runnerImpl: BenchmarkRunnerGrpc.BenchmarkRunner) extends Matchers with StrictLogging {
 
   private var implemented: List[String] = Nil;
   private var notImplemented: List[String] = Nil;
 
   def test(): Unit = {
-    val runnerPort = 45678;
+    val runnerPort = 45677;
     val runnerAddrS = s"127.0.0.1:$runnerPort";
-    val masterPort = 45679;
-    val masterAddrS = s"127.0.0.1:$masterPort";
-    val clientPorts = Array(45680, 45681, 45682, 45683);
-    val clientAddrs = clientPorts.map(clientPort => s"127.0.0.1:$clientPort");
-
-    val numClients = 4;
+    val runnerAddr = Util.argToAddr(runnerAddrS).get;
 
     /*
      * Setup
      */
-
-    val masterThread = new Thread("BenchmarkMaster") {
+    val serverPromise: Promise[BenchmarkRunnerServer] = Promise();
+    val runnerThread = new Thread("BenchmarkRunner") {
       override def run(): Unit = {
-        println("Starting master");
-        val runnerAddr = Util.argToAddr(runnerAddrS).get;
-        val masterAddr = Util.argToAddr(masterAddrS).get;
-        BenchmarkMaster.run(numClients, masterAddr.port, runnerAddr.port, benchFactory);
-        println("Finished master");
+        println("Starting runner");
+        BenchmarkRunnerServer.run(runnerAddr, runnerImpl, serverPromise);
+        println("Finished runner");
       }
     };
-    masterThread.start();
+    runnerThread.start();
 
-    val clientThreads = clientAddrs.map { clientAddrS =>
-      val clientThread = new Thread(s"BenchmarkClient-$clientAddrS") {
-        override def run(): Unit = {
-          println(s"Starting client $clientAddrS");
-          val masterAddr = Util.argToAddr(masterAddrS).get;
-          val clientAddr = Util.argToAddr(clientAddrS).get;
-          BenchmarkClient.run(clientAddr.addr, masterAddr.addr, masterAddr.port);
-          println(s"Finished client $clientAddrS");
-        }
-      };
-      clientThread.start();
-      clientThread
-    };
+    val server = Await.result(serverPromise.future, 1.second);
 
-    val runnerAddr = Util.argToAddr(runnerAddrS).get;
     val benchStub = {
       val channel = ManagedChannelBuilder.forAddress(runnerAddr.addr, runnerAddr.port).usePlaintext().build;
       val stub = BenchmarkRunnerGrpc.stub(channel);
@@ -87,10 +67,6 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val pprRes = Await.result(pprResF, 30.seconds);
     checkResult("PingPong", pprRes);
 
-    val npprResF = benchStub.netPingPong(ppr);
-    val npprRes = Await.result(npprResF, 30.seconds);
-    checkResult("NetPingPong", npprRes);
-
     /*
      * Throughput Ping Pong
      */
@@ -99,10 +75,6 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val tpprResF = benchStub.throughputPingPong(tppr);
     val tpprRes = Await.result(tpprResF, 30.seconds);
     checkResult("ThroughputPingPong (static)", tpprRes);
-
-    val tnpprResF = benchStub.netThroughputPingPong(tppr);
-    val tnpprRes = Await.result(tnpprResF, 30.seconds);
-    checkResult("NetThroughputPingPong (static)", tnpprRes);
 
     val tppr2 = ThroughputPingPongRequest()
       .withMessagesPerPair(100)
@@ -113,37 +85,20 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val tpprRes2 = Await.result(tpprResF2, 30.seconds);
     checkResult("ThroughputPingPong (gc)", tpprRes2);
 
-    val tnpprResF2 = benchStub.netThroughputPingPong(tppr2);
-    val tnpprRes2 = Await.result(tnpprResF2, 30.seconds);
-    checkResult("NetThroughputPingPong (gc)", tnpprRes2);
-
-    val nnarr = AtomicRegisterRequest()
-      .withReadWorkload(0.5f)
-      .withReadWorkload(0.5f)
-      .withPartitionSize(3)
-      .withNumberOfKeys(500);
-    val nnarResF = benchStub.atomicRegister(nnarr);
-    val nnarRes = Await.result(nnarResF, 30.seconds);
-    checkResult("Atomic Register", nnarRes);
-
     /*
      * Clean Up
      */
-    println("Sending shutdown request to master");
-    val sreq = ShutdownRequest().withForce(false);
-    val shutdownResF = benchStub.shutdown(sreq);
+    println("Sending shutdown request to runner");
+    server.stop();
 
-    println("Waiting for master to finish...");
-    masterThread.join();
-    println("Master is done.");
-    println("Waiting for all clients to finish...");
-    clientThreads.foreach(t => t.join());
-    println("All clients are done.");
+    println("Waiting for runner to finish...");
+    runnerThread.join();
+    println("Runner is done.");
 
     println(s"""
-%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% MASTER-CLIENT SUMMARY %%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%
+%% LOCAL SUMMARY %%
+%%%%%%%%%%%%%%%%%%%
 ${implemented.size} tests implemented: ${implemented.mkString(",")}
 ${notImplemented.size} tests not implemented: ${notImplemented.mkString(",")}
 """)

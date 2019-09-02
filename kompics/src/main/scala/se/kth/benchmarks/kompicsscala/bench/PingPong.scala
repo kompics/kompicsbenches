@@ -1,11 +1,11 @@
 package se.kth.benchmarks.kompicsscala.bench
 
 import se.kth.benchmarks.Benchmark
-import se.kth.benchmarks.kompicsscala.{ KompicsSystem, KompicsSystemProvider }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider}
 import kompics.benchmarks.benchmarks.PingPongRequest
-import se.sics.kompics.{ Start, Started, Kill, Killed, Kompics, KompicsEvent, Component }
+import se.sics.kompics.{Component, Kill, Killed, Kompics, KompicsEvent, Start, Started}
 import se.sics.kompics.sl._
-import scala.concurrent.{ Future, Await }
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.CountDownLatch
@@ -22,7 +22,7 @@ object PingPong extends Benchmark {
   override def newInstance(): Instance = new PingPongI;
 
   class PingPongI extends Instance {
-    private var num = -1l;
+    private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
     private var ponger: UUID = null;
@@ -104,20 +104,22 @@ object PingPong extends Benchmark {
     var countDown = count;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        trigger (Ping -> ppp);
-      }
+      case _: Start =>
+        handle {
+          trigger(Ping -> ppp);
+        }
     }
 
     ppp uponEvent {
-      case Pong => handle {
-        if (countDown > 0) {
-          countDown -= 1;
-          trigger (Ping -> ppp);
-        } else {
-          latch.countDown();
+      case Pong =>
+        handle {
+          if (countDown > 0) {
+            countDown -= 1;
+            trigger(Ping -> ppp);
+          } else {
+            latch.countDown();
+          }
         }
-      }
     }
   }
 
@@ -126,9 +128,10 @@ object PingPong extends Benchmark {
     val ppp = provides(PingPongPort);
 
     ppp uponEvent {
-      case Ping => handle {
-        trigger (Pong -> ppp);
-      }
+      case Ping =>
+        handle {
+          trigger(Pong -> ppp);
+        }
     }
   }
 }

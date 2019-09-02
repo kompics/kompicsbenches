@@ -1,10 +1,10 @@
 package se.kth.benchmarks.kompicsscala.bench
 
 import se.kth.benchmarks.Benchmark
-import se.kth.benchmarks.kompicsscala.{ KompicsSystem, KompicsSystemProvider }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider}
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import se.sics.kompics.sl._
-import scala.concurrent.{ Future, Await }
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.CountDownLatch
@@ -21,9 +21,9 @@ object ThroughputPingPong extends Benchmark {
   override def newInstance(): Instance = new PingPongI;
 
   class PingPongI extends Instance {
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: KompicsSystem = null;
     private var pingers: List[UUID] = List.empty;
@@ -40,7 +40,7 @@ object ThroughputPingPong extends Benchmark {
     override def prepareIteration(): Unit = {
       assert(system != null);
       latch = new CountDownLatch(numPairs);
-      val lf = (0 to numPairs).map{ _i =>
+      val lf = (0 to numPairs).map { _i =>
         for {
           pongerId <- if (staticOnly) {
             system.createNotify[StaticPonger](Init.none[StaticPonger])
@@ -107,32 +107,34 @@ object ThroughputPingPong extends Benchmark {
 
     val ppp = requires(PingPongPort);
 
-    private var sentCount = 0l;
-    private var recvCount = 0l;
+    private var sentCount = 0L;
+    private var recvCount = 0L;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        var pipelined = 0l;
-        while (pipelined < pipeline && sentCount < count) {
-          trigger (StaticPing -> ppp);
-          pipelined += 1l;
-          sentCount += 1l;
+      case _: Start =>
+        handle {
+          var pipelined = 0L;
+          while (pipelined < pipeline && sentCount < count) {
+            trigger(StaticPing -> ppp);
+            pipelined += 1L;
+            sentCount += 1L;
+          }
         }
-      }
     }
 
     ppp uponEvent {
-      case StaticPong => handle {
-        recvCount += 1l;
-        if (recvCount < count) {
-          if (sentCount < count) {
-            trigger (StaticPing -> ppp);
-            sentCount += 1l;
+      case StaticPong =>
+        handle {
+          recvCount += 1L;
+          if (recvCount < count) {
+            if (sentCount < count) {
+              trigger(StaticPing -> ppp);
+              sentCount += 1L;
+            }
+          } else {
+            latch.countDown();
           }
-        } else {
-          latch.countDown();
         }
-      }
     }
   }
 
@@ -141,9 +143,10 @@ object ThroughputPingPong extends Benchmark {
     val ppp = provides(PingPongPort);
 
     ppp uponEvent {
-      case StaticPing => handle {
-        trigger (StaticPong -> ppp);
-      }
+      case StaticPing =>
+        handle {
+          trigger(StaticPong -> ppp);
+        }
     }
   }
 
@@ -153,32 +156,34 @@ object ThroughputPingPong extends Benchmark {
 
     val ppp = requires(PingPongPort);
 
-    private var sentCount = 0l;
-    private var recvCount = 0l;
+    private var sentCount = 0L;
+    private var recvCount = 0L;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        var pipelined = 0l;
-        while (pipelined < pipeline && sentCount < count) {
-          trigger (Ping(sentCount) -> ppp);
-          pipelined += 1l;
-          sentCount += 1l;
+      case _: Start =>
+        handle {
+          var pipelined = 0L;
+          while (pipelined < pipeline && sentCount < count) {
+            trigger(Ping(sentCount) -> ppp);
+            pipelined += 1L;
+            sentCount += 1L;
+          }
         }
-      }
     }
 
     ppp uponEvent {
-      case Pong(_) => handle {
-        recvCount += 1l;
-        if (recvCount < count) {
-          if (sentCount < count) {
-            trigger (Ping(sentCount) -> ppp);
-            sentCount += 1l;
+      case Pong(_) =>
+        handle {
+          recvCount += 1L;
+          if (recvCount < count) {
+            if (sentCount < count) {
+              trigger(Ping(sentCount) -> ppp);
+              sentCount += 1L;
+            }
+          } else {
+            latch.countDown();
           }
-        } else {
-          latch.countDown();
         }
-      }
     }
   }
 
@@ -187,9 +192,10 @@ object ThroughputPingPong extends Benchmark {
     val ppp = provides(PingPongPort);
 
     ppp uponEvent {
-      case Ping(i) => handle {
-        trigger (Pong(i) -> ppp);
-      }
+      case Ping(i) =>
+        handle {
+          trigger(Pong(i) -> ppp);
+        }
     }
   }
 }
