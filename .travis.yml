@@ -42,14 +42,6 @@ matrix:
       script:
         - ./scripts/run-scala-tests.sh
 
-    - language: scala
-      os: linux
-      dist: trusty
-      jdk: oraclejdk14
-      scala: 2.12.8
-      script:
-        - ./scripts/run-scala-tests.sh
-
     - language: rust
       os: linux
       rust: nightly
@@ -69,3 +61,13 @@ matrix:
         - cd erlang
         - make
         - cd ..
+
+  allow_failures:
+    # because it's not supported by SBT, apparently
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk14
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
