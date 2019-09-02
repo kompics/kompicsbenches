@@ -211,13 +211,20 @@ pub mod test_utils {
             info!(logger, "Checking if ready, attempt #{}", attempts);
             let ready_f =
                 bench_stub.ready(grpc::RequestOptions::default(), messages::ReadyRequest::new());
-            let res = ready_f.drop_metadata().wait().expect("ready result");
-            if res.status {
-                info!(logger, "Was ready.");
-                break;
-            } else {
-                info!(logger, "Wasn't ready, yet.");
-                std::thread::sleep(Duration::from_millis(500));
+            match ready_f.drop_metadata().wait() {
+                Ok(res) => {
+                    if res.status {
+                        info!(logger, "Was ready.");
+                        break;
+                    } else {
+                        info!(logger, "Wasn't ready, yet.");
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                },
+                Err(e) => {
+                    info!(logger, "Couldn't connect, yet: {}", e);
+                    std::thread::sleep(Duration::from_millis(500));
+                },
             }
         }
 
@@ -395,13 +402,20 @@ pub mod test_utils {
             info!(logger, "Checking if ready, attempt #{}", attempts);
             let ready_f =
                 bench_stub.ready(grpc::RequestOptions::default(), messages::ReadyRequest::new());
-            let res = ready_f.drop_metadata().wait().expect("ready result");
-            if res.status {
-                info!(logger, "Was ready.");
-                break;
-            } else {
-                info!(logger, "Wasn't ready, yet.");
-                std::thread::sleep(Duration::from_millis(500));
+            match ready_f.drop_metadata().wait() {
+                Ok(res) => {
+                    if res.status {
+                        info!(logger, "Was ready.");
+                        break;
+                    } else {
+                        info!(logger, "Wasn't ready, yet.");
+                        std::thread::sleep(Duration::from_millis(500));
+                    }
+                },
+                Err(e) => {
+                    info!(logger, "Couldn't connect, yet: {}", e);
+                    std::thread::sleep(Duration::from_millis(500));
+                },
             }
         }
 

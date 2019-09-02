@@ -16,6 +16,8 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
   private var implemented: List[String] = Nil;
   private var notImplemented: List[String] = Nil;
 
+  val timeout = 60.seconds;
+
   def test(): Unit = {
     val runnerPort = 45678;
     val runnerAddrS = s"127.0.0.1:$runnerPort";
@@ -84,11 +86,11 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
      */
     val ppr = PingPongRequest().withNumberOfMessages(100);
     val pprResF = benchStub.pingPong(ppr);
-    val pprRes = Await.result(pprResF, 30.seconds);
+    val pprRes = Await.result(pprResF, timeout);
     checkResult("PingPong", pprRes);
 
     val npprResF = benchStub.netPingPong(ppr);
-    val npprRes = Await.result(npprResF, 30.seconds);
+    val npprRes = Await.result(npprResF, timeout);
     checkResult("NetPingPong", npprRes);
 
     /*
@@ -97,11 +99,11 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val tppr =
       ThroughputPingPongRequest().withMessagesPerPair(100).withParallelism(2).withPipelineSize(20).withStaticOnly(true);
     val tpprResF = benchStub.throughputPingPong(tppr);
-    val tpprRes = Await.result(tpprResF, 30.seconds);
+    val tpprRes = Await.result(tpprResF, timeout);
     checkResult("ThroughputPingPong (static)", tpprRes);
 
     val tnpprResF = benchStub.netThroughputPingPong(tppr);
-    val tnpprRes = Await.result(tnpprResF, 30.seconds);
+    val tnpprRes = Await.result(tnpprResF, timeout);
     checkResult("NetThroughputPingPong (static)", tnpprRes);
 
     val tppr2 = ThroughputPingPongRequest()
@@ -110,11 +112,11 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       .withPipelineSize(20)
       .withStaticOnly(false);
     val tpprResF2 = benchStub.throughputPingPong(tppr2);
-    val tpprRes2 = Await.result(tpprResF2, 30.seconds);
+    val tpprRes2 = Await.result(tpprResF2, timeout);
     checkResult("ThroughputPingPong (gc)", tpprRes2);
 
     val tnpprResF2 = benchStub.netThroughputPingPong(tppr2);
-    val tnpprRes2 = Await.result(tnpprResF2, 30.seconds);
+    val tnpprRes2 = Await.result(tnpprResF2, timeout);
     checkResult("NetThroughputPingPong (gc)", tnpprRes2);
 
     val nnarr = AtomicRegisterRequest()
@@ -123,7 +125,7 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       .withPartitionSize(3)
       .withNumberOfKeys(500);
     val nnarResF = benchStub.atomicRegister(nnarr);
-    val nnarRes = Await.result(nnarResF, 30.seconds);
+    val nnarRes = Await.result(nnarResF, timeout);
     checkResult("Atomic Register", nnarRes);
 
     /*

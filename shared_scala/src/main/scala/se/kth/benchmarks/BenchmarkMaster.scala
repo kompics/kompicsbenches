@@ -120,7 +120,7 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       if (request.force) {
         Util.forceShutdown();
       }
-      Future.successful(ShutdownAck())
+      shutdownF.map(_ => ShutdownAck())
     }
 
     private def queueIfNotReady(f: => Future[TestResult]): Future[TestResult] = {

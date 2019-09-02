@@ -18,7 +18,7 @@ If you want to make changes, you also need **Rustfmt** to properly format code b
 
 Java
 ----
-Any **JDK** should do, but usually **Oracle JDK** behaves in the most expected manner. For actual experiments, it may be wise to run on **JDK 8** instead of the newer ones, as many libraris rely on unsafe functions to be available for performance.
+Any **JDK** should do, but usually **Oracle JDK** behaves in the most expected manner. For actual experiments, it may be wise to run on **JDK 8** instead of the newer ones, as many libraries rely on unsafe functions to be available for performance.
 
 SBT
 ---

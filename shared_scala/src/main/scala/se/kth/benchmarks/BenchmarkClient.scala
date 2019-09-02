@@ -127,17 +127,20 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
     f.onComplete {
       case Success(_) => {
         logger.info(s"Check-In successful");
-        state cas (StateType.CheckingIn -> StateType.Ready)
+        state cas (StateType.CheckingIn -> StateType.Ready);
+        // always clean up
+        channel.shutdownNow();
+        channel.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
       }
       case Failure(ex) => {
         logger.error("Check-In failed!", ex);
+        channel.shutdownNow();
+        channel.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
         if (checkInAttempts > MAX_ATTEMPTS) {
           logger.warn("Giving up on Master and shutting down.");
           System.exit(1);
         } else {
           logger.info("Retrying connection establishment.");
-          channel.shutdownNow();
-          channel.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
           Thread.sleep(500);
           this.checkin();
         }
