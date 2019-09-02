@@ -23,6 +23,14 @@ matrix:
         - ./scripts/run-scala-tests.sh
 
     - language: scala
+      os: osx
+      osx_image: xcode9.3
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
       os: linux
       dist: trusty
       jdk: oraclejdk9
@@ -32,6 +40,7 @@ matrix:
 
     - language: scala
       os: osx
+      osx_image: xcode11
       jdk: oraclejdk9
       scala: 2.12.8
       script:
@@ -47,7 +56,8 @@ matrix:
 
     - language: scala
       os: osx
-      jdk: openjdk9
+      osx_image: xcode11
+      jdk: oraclejdk12
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
@@ -79,6 +89,14 @@ matrix:
         - cd erlang
         - make
         - cd ..
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk14 # because it's not supported by SBT, apparently
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
 
   allow_failures:
     - language: scala
