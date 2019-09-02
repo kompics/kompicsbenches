@@ -88,7 +88,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 @main
 def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impl: String = "*"): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = runnersForImpl(impl, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impl.toUpperCase(), _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -127,9 +127,9 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 @main
 def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*"): Unit = {
 	val remoteDir = tmp.dir();
-	val lowercaseUseOnly = impl.toLowerCase();
+	val implUpperCase = impl.toUpperCase();
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
-	val masterBenches = runnersForImpl(impl, identity);
+	val masterBenches = runnersForImpl(implUpperCase, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
 	};
@@ -190,7 +190,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*
 @doc("Run local benchmarks only.")
 @main
 def local(testing: Boolean = false, impl: String = "*"): Unit = {
-	val runners = runnersForImpl(impl, _.localRunner(runnerAddr));
+	val runners = runnersForImpl(impl.toUpperCase(), _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -233,7 +233,7 @@ private def runnersForImpl[T](impl: String, mapper: BenchmarkImpl => T): List[T]
 	val runners = if (impl == "*") {
 			implementations.values.map(mapper).toList;
 	} else {
-			implementations.get(impl).map(i => List(mapper(i))).getOrElse(List.empty)
+			implementations.get(impl.toUpperCase()).map(i => List(mapper(i))).getOrElse(List.empty)
 	};
 	if (runners.isEmpty) {
 		Console.err.println(s"No benchmark found for '${impl}'");

@@ -239,21 +239,26 @@ run_distributed_benchmark_caught(Request, Data) ->
 	case Benchmark:msg_to_master_conf(ConfigMsg) of
 		{ok, MasterConfig} ->
 			EmptyMaster = Benchmark:new_master(),
-			{ok, SetupMaster, ClientConf} = Benchmark:master_setup(EmptyMaster, MasterConfig),
-			SetupConf = distributed_native:new_setup_config(Benchmark, ClientConf),
-			ClientDataRes = benchmark_client:setup_all(get_clients(Data), SetupConf),
-			io:fwrite("Got client data response:~p.~n", [ClientDataRes]),
-			case ClientDataRes of
-				{ok, ClientData} ->
-					case loop_distributed_iteration(get_clients(Data), Benchmark, SetupMaster, ClientData, []) of
-						{ok, _CleanedMaster, ResultData} ->
-							io:fwrite("Finished ~w iterations.~n", [Benchmark]),
-							{ok, ResultData};
+			NumClients = length(Data#state.clients),
+			case Benchmark:master_setup(EmptyMaster, MasterConfig, NumClients) of
+				{ok, SetupMaster, ClientConf} ->
+					SetupConf = distributed_native:new_setup_config(Benchmark, ClientConf),
+					ClientDataRes = benchmark_client:setup_all(get_clients(Data), SetupConf),
+					io:fwrite("Got client data response:~p.~n", [ClientDataRes]),
+					case ClientDataRes of
+						{ok, ClientData} ->
+							case loop_distributed_iteration(get_clients(Data), Benchmark, SetupMaster, ClientData, []) of
+								{ok, _CleanedMaster, ResultData} ->
+									io:fwrite("Finished ~w iterations.~n", [Benchmark]),
+									{ok, ResultData};
+								{error, Reason} ->
+									{error, Reason}
+							end;
 						{error, Reason} ->
 							{error, Reason}
 					end;
-				{error, Reason} ->
-					{error, Reason}
+
+				{error, Reason} -> {error, Reason}
 			end;
 		Other ->
 			{error, Other}

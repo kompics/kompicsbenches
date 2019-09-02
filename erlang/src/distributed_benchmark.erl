@@ -13,7 +13,8 @@
 %%%% On Master Instance %%%%%
 
 -callback master_setup(MasterInstance :: term(), MasterConf :: term()) -> 
-	{ok, NewMasterInstance :: term(), ClientConf :: term()}.
+	{ok, NewMasterInstance :: term(), ClientConf :: term()} |
+	{error, Reason :: string()}.
 
 -callback master_prepare_iteration(MasterInstance :: term(), ClientData :: [term()]) ->
 	{ok, NewMasterInstance :: term()}.

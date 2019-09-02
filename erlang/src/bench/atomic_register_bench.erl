@@ -8,7 +8,7 @@
   msg_to_master_conf/1,
   new_master/0,
   new_client/0,
-  master_setup/2,
+  master_setup/3,
   master_prepare_iteration/2,
   master_run_iteration/1,
   master_cleanup_iteration/3,
@@ -116,15 +116,23 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf()) ->
-  {ok, Newinstance :: master_instance(), ClientConf :: client_conf()}.
-master_setup(Instance, Conf) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
+  {ok, Newinstance :: master_instance(), ClientConf :: client_conf()} |
+  {error, Reason :: string()}.
+master_setup(Instance, Conf, NumClients) ->
   io:fwrite("Setting up Atomic Register(Master)"),
-  logger:set_primary_config(level, all),
-  NewInstance = Instance#master_state{config = Conf},
-  process_flag(trap_exit, true),
-  ClientConf = #client_conf{read_workload = get_read_workload(master, NewInstance), write_workload = get_write_workload(master, NewInstance) },
-  {ok, NewInstance, ClientConf}.
+  logger:set_primary_config(level, error),
+  PartitionSize = Conf#master_conf.partition_size,
+  case NumClients of
+    N when N < PartitionSize - 1 ->
+      logger:error("Not enough clients, partitionsize=~w, clients=~w", [PartitionSize, N]),
+      {error, "Not enough clients"};
+    _ ->
+      NewInstance = Instance#master_state{config = Conf},
+      process_flag(trap_exit, true),
+      ClientConf = #client_conf{read_workload = get_read_workload(master, NewInstance), write_workload = get_write_workload(master, NewInstance) },
+      {ok, NewInstance, ClientConf}
+  end.
 
 -spec master_prepare_iteration(Instance :: master_instance(), ClientData :: [client_data()]) ->
   {ok, NewInstance :: master_instance()}.
@@ -264,6 +272,8 @@ atomic_register(State) ->
 %%                      logger:info("First value for key=~w is ~w", [Key, Value]),
                       CurrentRegister#register_state{first_received_ts = Ts, readval = Value};
                     CurrentRegister#register_state.skip_impose and CurrentRegister#register_state.first_received_ts /= Ts ->
+                      FirstTs = CurrentRegister#register_state.first_received_ts,
+%%                      logger:info("Will not skip impose key=~w, first ts=~w, ts=~w", [Key, FirstTs, Ts]),
                       CurrentRegister#register_state{skip_impose = false};
                     true ->
                       CurrentRegister
@@ -279,6 +289,7 @@ atomic_register(State) ->
                   NewRegisterState = UpdatedCurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
                   NewReadListMap = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
+%%                  logger:info("skipped impose key=~w", [Key]),
                   NewState = read_response(State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadListMap}, Key, ReadVal),
                   atomic_register(NewState);
                 true ->
@@ -411,7 +422,7 @@ invoke_operations(State) ->
 read_response(State, Key, Value) ->
   ReadCount = State#atomicreg_state.read_count - 1,
   WriteCount = State#atomicreg_state.write_count,
-  logger:info("Got ReadResponse, key=~w, value=~w", [Key, Value]),
+%%  logger:info("Got ReadResponse, key=~w, value=~w", [Key, Value]),
   NewState = State#atomicreg_state{read_count = ReadCount},
   if
     (ReadCount == 0) and (WriteCount == 0) ->

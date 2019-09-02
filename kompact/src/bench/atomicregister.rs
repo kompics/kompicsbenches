@@ -129,8 +129,11 @@ pub mod actor_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
+        fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
+            if m.number_of_clients() < c.partition_size - 1 {
+                return Err(BenchmarkError::InvalidTest(format!("Not enough clients: {}, Partition size: {}", &m.number_of_clients(), &c.partition_size)));
+            }
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
             self.partition_size = Some(c.partition_size);
@@ -669,8 +672,11 @@ pub mod mixed_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
+        fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
+            if m.number_of_clients() < c.partition_size - 1 {
+                return Err(BenchmarkError::InvalidTest(format!("Not enough clients: {}, Partition size: {}", &m.number_of_clients(), &c.partition_size)));
+            }
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
             self.partition_size = Some(c.partition_size);

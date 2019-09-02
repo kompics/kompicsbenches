@@ -9,7 +9,7 @@
 	]).
 
 -define(MIN_RUNS, 20).
--define(MAX_RUNS, 100).
+-define(MAX_RUNS, 150).
 -define(RSE_TARGET, 0.1). % 10% RSE
 
 -spec min_runs() -> integer().

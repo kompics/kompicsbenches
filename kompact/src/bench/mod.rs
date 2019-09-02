@@ -48,11 +48,6 @@ impl BenchmarkFactory for ComponentFactory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
-    fn atomic_register(
-        &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
 }
 
 pub fn actor() -> Box<dyn BenchmarkFactory> {
