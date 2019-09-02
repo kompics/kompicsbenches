@@ -128,7 +128,7 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*"): Unit = {
 	val remoteDir = tmp.dir();
 	val lowercaseUseOnly = impl.toLowerCase();
-	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("client.sh"));
+	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
 	val masterBenches = runnersForImpl(impl, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
