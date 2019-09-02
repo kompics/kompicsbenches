@@ -1,7 +1,7 @@
 use crate::{
     benchmark::{Benchmark, BenchmarkError, BenchmarkInstance, *},
     benchmark_master::ClientEntry,
-    kompics_benchmarks::{messages},
+    kompics_benchmarks::messages,
 };
 use futures::future::{self, Future};
 //use slog::{crit, debug, error, info, o, warn, Drain, Logger};

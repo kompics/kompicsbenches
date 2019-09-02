@@ -408,7 +408,12 @@ mod tests {
         type ClientData = ();
         type MasterConf = ();
 
-        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
+        fn setup(
+            &mut self,
+            _c: Self::MasterConf,
+            _m: &DeploymentMetaData,
+        ) -> Result<Self::ClientConf, BenchmarkError>
+        {
             println!("Master setting up");
             Ok(())
         }
@@ -461,7 +466,9 @@ mod tests {
             Ok(TestLocalBench {}.into())
         }
 
-        fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        fn net_ping_pong(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(TestDistributedBench::new().into())
         }
 
@@ -475,7 +482,9 @@ mod tests {
             Ok(TestDistributedBench::new().into())
         }
 
-        fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        fn atomic_register(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Err(NotImplementedError::FutureWork)
         }
     }

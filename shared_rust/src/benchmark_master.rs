@@ -1,8 +1,6 @@
 use crate::{
     benchmark::*,
-    benchmark_runner::{
-        run_async, DistributedIteration,
-    },
+    benchmark_runner::{run_async, DistributedIteration},
     kompics_benchmarks::{
         benchmarks, benchmarks_grpc, distributed,
         distributed_grpc::{self, BenchmarkClient},
@@ -15,11 +13,11 @@ use grpc::ClientStubExt;
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
 use std::{
+    convert::TryInto,
     panic::UnwindSafe,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
-    convert::TryInto,
 };
 
 pub fn run(
@@ -209,7 +207,9 @@ impl BenchmarkMaster {
             let ci = self.check_in_queue.recv().expect("Queue to MasterHandler broke!");
             self.check_in_handler(ci);
         }
-        self.meta = DeploymentMetaData::new(self.clients.len().try_into().expect("Too many clients to fit metadata!"));
+        self.meta = DeploymentMetaData::new(
+            self.clients.len().try_into().expect("Too many clients to fit metadata!"),
+        );
         loop {
             match self.state.get() {
                 State::READY => {
@@ -653,8 +653,6 @@ enum StateError {
 
 #[cfg(test)]
 mod tests {
-    
-    
 
     // #[test]
     // fn logging() {
