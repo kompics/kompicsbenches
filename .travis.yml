@@ -106,3 +106,11 @@ matrix:
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      osx_image: xcode9.3
+      jdk: oraclejdk8 # fails with a strange error I can't debug
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
