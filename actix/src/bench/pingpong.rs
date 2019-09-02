@@ -132,6 +132,7 @@ struct Pinger {
     latch: Arc<CountdownEvent>,
     ponger: Addr<Ponger>,
     count_down: u64,
+    self_rec: Option<Recipient<Pong>>,
 }
 
 impl Pinger {
@@ -140,39 +141,43 @@ impl Pinger {
             latch,
             ponger,
             count_down: count,
+            self_rec: None
         }
+    }
+    fn self_rec(&self) -> Recipient<Pong> {
+        self.self_rec.clone().unwrap()
     }
 }
 
 impl Actor for Pinger {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Context<Self>) {
+    fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Pinger is alive");
+        self.self_rec = Some(ctx.address().recipient());
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
         println!("Pinger is stopped");
+        self.self_rec = None;
     }
 }
 
 impl Handler<Start> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
-        let self_rec = ctx.address().recipient();
-        self.ponger.do_send(Ping(self_rec));
+    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
+        self.ponger.do_send(Ping(self.self_rec()));
     }
 }
 
 impl Handler<Pong> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Pong, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Pong, _ctx: &mut Context<Self>) -> Self::Result {
         if self.count_down > 0 {
             self.count_down -= 1;
-            let self_rec = ctx.address().recipient();
-            self.ponger.do_send(Ping(self_rec));
+            self.ponger.do_send(Ping(self.self_rec()));
         } else {
             let _ = self.latch.decrement();
         }
