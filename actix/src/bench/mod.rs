@@ -53,8 +53,4 @@ impl BenchmarkFactory for Factory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
-
-    fn atomic_register(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
 }

@@ -101,9 +101,9 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf(), Meta :: distributed_benchmark:deployment_metadata()) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
 	{ok, Newnstance :: master_instance(), ClientConf :: client_conf()}.
-master_setup(Instance, Conf, _Meta) ->
+master_setup(Instance, Conf, _NumClients) ->
 	NewInstance = Instance#master_state{config = Conf},
 	process_flag(trap_exit, true),
 	ClientConf = #client_conf{num_pairs = get_num_pairs(NewInstance), static_only = is_static_only(NewInstance) },

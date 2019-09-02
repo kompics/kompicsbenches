@@ -58,22 +58,6 @@ impl BenchmarkFactory for ComponentFactory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
-    fn streaming_windows(
-        &self,
-    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
-    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
-    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
-    fn atomic_register(
-        &self,
-    ) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
-        Err(NotImplementedError::NotImplementable)
-    }
 }
 
 pub fn actor() -> Box<dyn BenchmarkFactory> {

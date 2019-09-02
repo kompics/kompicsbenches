@@ -88,9 +88,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 @main
 def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impl.toUpperCase(), _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -129,29 +127,13 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 @main
 def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
 	val remoteDir = tmp.dir();
-	val lowercaseUseOnly = useOnly.toLowerCase()
-	var copyDirectories:  ListBuffer[String] = ListBuffer("proto", "runner")
-	val copyFiles = List[String]("build.sc", "bench.sc", "benchmarks.sc", "plot.sc", "client.sh", "nodes.conf")
-	var useScala = false
-	var useRust = false
-	if (lowercaseUseOnly.contains("kompics")) {
-		copyDirectories += "kompics"
-		useScala = true
-	}
-	if (lowercaseUseOnly.contains("kompact")) {
-		copyDirectories += "kompact"
-		useRust = true
-	}
-	if (lowercaseUseOnly.contains("akka")){
-		copyDirectories += "akka"
-		useScala = true
-	}
-	if (lowercaseUseOnly.contains("actix")) {
-		copyDirectories += "actix"
-		useRust = true
-	}
-	if (useScala) copyDirectories += "shared_scala"
-	if (useRust) copyDirectories += "shared_rust"
+	val implUpperCase = impl.toUpperCase();
+	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
+	val masterBenches = runnersForImpl(implUpperCase, identity);
+	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
+		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
+	};
+	println(s"Going to copy files=${copyFiles.mkString("[", ",", "]")} and folders==${copyDirectories.mkString("[", ",", "]")}.");
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
@@ -210,10 +192,8 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, useOnly: String = ""): Unit = {
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val runners = use_impl.values.map(_.localRunner(runnerAddr));
+def local(testing: Boolean = false, impl: String = "*"): Unit = {
+	val runners = runnersForImpl(impl.toUpperCase(), _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -256,13 +236,7 @@ private def runnersForImpl[T](impls: Seq[String], mapper: BenchmarkImpl => T): L
 	val runners: List[T] = if (impls.isEmpty) {
 		implementations.values.map(mapper).toList;
 	} else {
-		impls.map(_.toUpperCase).flatMap(impl => {
-			val res: Option[BenchmarkImpl] = implementations.get(impl);
-			if (res.isEmpty) {
-				Console.err.println(s"No benchmark found for impl ${impl}!");
-			}
-			res.map(mapper)
-		}).toList
+			implementations.get(impl.toUpperCase()).map(i => List(mapper(i))).getOrElse(List.empty)
 	};
 	if (runners.isEmpty) {
 		Console.err.println(s"No benchmarks found!");
