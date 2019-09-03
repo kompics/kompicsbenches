@@ -7,8 +7,7 @@ URL="https://github.com/protocolbuffers/protobuf/releases/download/v$VERSION/$NA
 
 if [ $TRAVIS_OS_NAME = 'osx' ]; then
     # Install protobuf on macOS
-    brew install protobuf@$OSX_VERSION
-    brew link --force --overwrite protobuf@$OSX_VERSION
+    (brew install protobuf@$OSX_VERSION && brew link --force --overwrite protobuf@$OSX_VERSION) || brew upgrade protobuf
 else
     # Install protobuf on Linux
 
