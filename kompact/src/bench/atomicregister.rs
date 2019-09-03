@@ -949,7 +949,10 @@ pub mod mixed_atomicregister {
             let nodes = self.nodes.as_ref().unwrap();
             let sender = self.sender.as_ref().unwrap();
             let payload = request.0;
-            let fake_path = RegisteredPath {actor_path: sender, ctx: &self.ctx};
+            let fake_path = RegisteredPath {    // TODO: Fix this
+                actor_path: sender,
+                ctx: &self.ctx,
+            };
             for node in nodes {
                 node.tell((payload.clone(), AtomicRegisterSer), &fake_path);
             }
