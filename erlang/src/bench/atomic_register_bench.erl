@@ -251,7 +251,6 @@ atomic_register(State) ->
       atomic_register(NewState);
 
     {read, Sender, RunId, Key, Rid} when RunId == CurrentRunId ->
-%%      logger:info("Got Read, key=~w from ~p", [Key, Sender]),
       CurrentRegister = maps:get(Key, State#atomicreg_state.register_state, #register_state{}),
       Sender ! {value, self(), CurrentRunId, Key, Rid, CurrentRegister#register_state.ts, CurrentRegister#register_state.wr, CurrentRegister#register_state.value},
       atomic_register(State);
@@ -259,7 +258,6 @@ atomic_register(State) ->
     {read, _, RunId, _, _} when RunId /= CurrentRunId -> atomic_register(State);
 
     {value, Sender, RunId, Key, Rid, Ts, Wr, Value} when RunId == CurrentRunId ->
-%%      logger:info("Got Value, key=~w, value=~w from ~p", [Key, Value, Sender]),
       CurrentRegister = maps:get(Key, State#atomicreg_state.register_state, #register_state{}),
       if
         Rid == CurrentRegister#register_state.rid ->
@@ -269,11 +267,8 @@ atomic_register(State) ->
               true ->
                   if
                     map_size(ReadList) == 0 ->
-%%                      logger:info("First value for key=~w is ~w", [Key, Value]),
                       CurrentRegister#register_state{first_received_ts = Ts, readval = Value};
                     CurrentRegister#register_state.skip_impose and CurrentRegister#register_state.first_received_ts /= Ts ->
-                      FirstTs = CurrentRegister#register_state.first_received_ts,
-%%                      logger:info("Will not skip impose key=~w, first ts=~w, ts=~w", [Key, FirstTs, Ts]),
                       CurrentRegister#register_state{skip_impose = false};
                     true ->
                       CurrentRegister
@@ -289,7 +284,6 @@ atomic_register(State) ->
                   NewRegisterState = UpdatedCurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
                   NewReadListMap = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
-%%                  logger:info("skipped impose key=~w", [Key]),
                   NewState = read_response(State#atomicreg_state{register_state = NewRegisterStateMap, register_readlist = NewReadListMap}, Key, ReadVal),
                   atomic_register(NewState);
                 true ->
@@ -297,7 +291,6 @@ atomic_register(State) ->
                   NewRegisterState = CurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
                   NewReadListMap = maps:put(Key, maps:new(), State#atomicreg_state.register_readlist),
-%%                  logger:info("Sending Write key=~w", [Key]),
                   case NewRegisterState#register_state.reading of
                     true ->
                       bcast(State#atomicreg_state.nodes, {write, self(), CurrentRunId, Key, Rid, MaxTs, RR, ReadVal});
@@ -317,7 +310,6 @@ atomic_register(State) ->
     {value, _, RunId, _, _, _, _, _} when RunId /= CurrentRunId -> atomic_register(State);
 
     {write, Sender, RunId, Key, Rid, Ts, Wr, Value} ->
-%%      logger:info("Got Write, key=~w from ~p", [Key, Sender]),
       NewState =
         case RunId of
           CurrentRunId ->
@@ -335,7 +327,6 @@ atomic_register(State) ->
       atomic_register(NewState);
 
     {ack, RunId, Key, Rid} when RunId == CurrentRunId ->
-%%        logger:info("Got Ack, key=~w", [Key]),
       RegisterStateMap = State#atomicreg_state.register_state,
       CurrentRegister = maps:get(Key, RegisterStateMap, #register_state{}),
       if
@@ -422,7 +413,6 @@ invoke_operations(State) ->
 read_response(State, Key, Value) ->
   ReadCount = State#atomicreg_state.read_count - 1,
   WriteCount = State#atomicreg_state.write_count,
-%%  logger:info("Got ReadResponse, key=~w, value=~w", [Key, Value]),
   NewState = State#atomicreg_state{read_count = ReadCount},
   if
     (ReadCount == 0) and (WriteCount == 0) ->
@@ -437,7 +427,6 @@ read_response(State, Key, Value) ->
 write_response(State, _Key) ->
   WriteCount = State#atomicreg_state.write_count - 1,
   ReadCount = State#atomicreg_state.read_count,
-%%  logger:info("Got WriteResponse, key=~w, ReadCount=~w, WriteCount=~w", [Key, ReadCount, WriteCount]),
   NewState = State#atomicreg_state{write_count = WriteCount},
   if
     (WriteCount == 0) and (ReadCount == 0) ->
