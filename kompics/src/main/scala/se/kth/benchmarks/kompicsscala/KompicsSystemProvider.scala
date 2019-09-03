@@ -1,20 +1,29 @@
 package se.kth.benchmarks.kompicsscala
 
 import se.kth.benchmarks.BenchmarkException
-import se.sics.kompics.{ Channel, Component, Fault, FaultHandler, LoopbackPort, PortType, ComponentDefinition => JComponentDefinition, Init => JInit }
+import se.sics.kompics.{
+  Channel,
+  Component,
+  Fault,
+  FaultHandler,
+  LoopbackPort,
+  PortType,
+  ComponentDefinition => JComponentDefinition,
+  Init => JInit
+}
 import se.sics.kompics.config.Conversions
 import se.sics.kompics.sl._
-import se.sics.kompics.network.{ ListeningStatus, Network, NetworkControl, Transport }
-import se.sics.kompics.network.netty.{ NettyInit, NettyNetwork }
+import se.sics.kompics.network.{ListeningStatus, Network, NetworkControl, Transport}
+import se.sics.kompics.network.netty.{NettyInit, NettyNetwork}
 
-import scala.concurrent.{ Await, Future, Promise }
+import scala.concurrent.{Await, Future, Promise}
 import scala.concurrent.duration.Duration
 import java.util.UUID
 import java.net.ServerSocket
 
 import scala.reflect._
 import scala.collection.mutable
-import scala.util.{ Failure, Success, Try }
+import scala.util.{Failure, Success, Try}
 import com.google.common.collect.ImmutableSet
 
 import scala.compat.java8.OptionConverters._
@@ -39,7 +48,7 @@ object KompicsSystemProvider {
   val SELF_ADDR_KEY = "self-address";
 
   private var publicIf = "127.0.0.1";
-  def setPublicIf(pif: String): Unit = this.synchronized{ publicIf = pif; };
+  def setPublicIf(pif: String): Unit = this.synchronized { publicIf = pif; };
   def getPublicIf(): String = this.synchronized { publicIf };
 
   def newKompicsSystem(): KompicsSystem = {
@@ -97,7 +106,8 @@ object KompicsSystemProvider {
 case class NewComponent[C <: JComponentDefinition](c: Class[C], init: JInit[C], p: Promise[UUID]) extends KompicsEvent;
 case class StartComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
-case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
+case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit])
+    extends KompicsEvent;
 case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent
 
 class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
@@ -132,120 +142,129 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   }
 
   ctrl uponEvent {
-    case _: Start => handle {
-      log.info("KompicsSystem started.");
-      networkAddrO match {
-        case Some(_) => log.debug("Waiting for Network to start...");
-        case None => {
-          startPromise.success(this);
-          startPromise = null;
+    case _: Start =>
+      handle {
+        log.info("KompicsSystem started.");
+        networkAddrO match {
+          case Some(_) => log.debug("Waiting for Network to start...");
+          case None => {
+            startPromise.success(this);
+            startPromise = null;
+          }
         }
       }
-    }
-    case s: Started => handle {
-      val cid = s.component.id();
-      log.debug(s"Got Started for $cid");
-      if ((networkC != null) && (cid == networkC.id())) {
-        log.info(s"Network started! (cid = $cid)");
-        children += (networkC.id() -> networkC);
-        netStarted = true;
-        replyPromise();
-      } else {
-        awaitingStarted.get(cid) match {
-          case Some(p) => p.success()
-          case None    => log.error(s"Could not find starting component with id=$cid")
+    case s: Started =>
+      handle {
+        val cid = s.component.id();
+        log.debug(s"Got Started for $cid");
+        if ((networkC != null) && (cid == networkC.id())) {
+          log.info(s"Network started! (cid = $cid)");
+          children += (networkC.id() -> networkC);
+          netStarted = true;
+          replyPromise();
+        } else {
+          awaitingStarted.get(cid) match {
+            case Some(p) => p.success()
+            case None    => log.error(s"Could not find starting component with id=$cid")
+          }
         }
       }
-    }
-    case s: Killed => handle {
-      val cid = s.component.id();
-      log.debug(s"Got Killed for $cid");
-      if ((networkC != null) && (cid == networkC.id())) {
-        logger.info("Network component is killed.");
-      } else {
-        awaitingKilled.remove(cid) match {
-          case Some(p) => p.success()
-          case None    => log.error(s"Could not find dying component with id=$cid")
+    case s: Killed =>
+      handle {
+        val cid = s.component.id();
+        log.debug(s"Got Killed for $cid");
+        if ((networkC != null) && (cid == networkC.id())) {
+          logger.info("Network component is killed.");
+        } else {
+          awaitingKilled.remove(cid) match {
+            case Some(p) => p.success()
+            case None    => log.error(s"Could not find dying component with id=$cid")
+          }
         }
       }
-    }
   }
 
   netC uponEvent {
-    case status: ListeningStatus => handle {
-      val netAddrOJ = status.address(Transport.TCP, isa => NetAddress(isa));
-      networkAddrO = netAddrOJ.asScala;
-      netListening = true;
+    case status: ListeningStatus =>
+      handle {
+        val netAddrOJ = status.address(Transport.TCP, isa => NetAddress(isa));
+        networkAddrO = netAddrOJ.asScala;
+        netListening = true;
 
-      networkAddrO match {
-        case Some(addr) => {
+        networkAddrO match {
+          case Some(addr) => {
 
-          val conf = this.config(); // Java config
-          val cb = conf.modify(this.id());
-          cb.setValue(KompicsSystemProvider.SELF_ADDR_KEY, addr);
-          val cu = cb.finalise();
-          updateConfig(cu);
+            val conf = this.config(); // Java config
+            val cb = conf.modify(this.id());
+            cb.setValue(KompicsSystemProvider.SELF_ADDR_KEY, addr);
+            val cu = cb.finalise();
+            updateConfig(cu);
+          }
+          case None => () // ignore...if the port binding fails the starting should fail, too
         }
-        case None => () // ignore...if the port binding fails the starting should fail, too
-      }
 
-      replyPromise();
-    }
+        replyPromise();
+      }
   }
 
   loopbck uponEvent {
-    case NewComponent(c, i, p) => handle {
-      val comp = create(c, i);
-      children += (comp.id() -> comp);
-      p.success(comp.id());
-    }
-    case StartComponent(cid, p) => handle {
-      children.get(cid) match {
-        case Some(c) => {
-          logger.debug(s"Sending Start for component ${cid}");
-          trigger(Start -> c.control());
-          awaitingStarted += (cid -> p);
+    case NewComponent(c, i, p) =>
+      handle {
+        val comp = create(c, i);
+        children += (comp.id() -> comp);
+        p.success(comp.id());
+      }
+    case StartComponent(cid, p) =>
+      handle {
+        children.get(cid) match {
+          case Some(c) => {
+            logger.debug(s"Sending Start for component ${cid}");
+            trigger(Start -> c.control());
+            awaitingStarted += (cid -> p);
+          }
+          case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to start"))
         }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to start"))
       }
-    }
-    case KillComponent(cid, p) => handle {
-      channels.remove(cid) match {
-        case Some(cs) => cs.foreach(c => c.disconnect())
-        case None     => () // ok, no channels connected
-      }
-      children.get(cid) match {
-        case Some(c) => {
-          logger.debug(s"Sending Kill for component ${cid}");
-          trigger(Kill -> c.control());
-          awaitingKilled += (cid -> p);
+    case KillComponent(cid, p) =>
+      handle {
+        channels.remove(cid) match {
+          case Some(cs) => cs.foreach(c => c.disconnect())
+          case None     => () // ok, no channels connected
         }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to kill"))
-      }
-    }
-    case ConnectComponents(port, req, prov, p) => handle {
-      val res = for {
-        reqC <- Try(children(req));
-        provC <- Try(children(prov))
-      } yield {
-        val c = connect(reqC.required(port), provC.provided(port), Channel.TWO_WAY);
-        val entry1 = channels.getOrElseUpdate(req, List.empty);
-        val entry2 = channels.getOrElseUpdate(prov, List.empty);
-        channels.put(req, c :: entry1);
-        channels.put(prov, c :: entry2);
-        ()
-      };
-      p.complete(res)
-    }
-    case TriggerComponent(cid, event, p) => handle {
-      children.get(cid) match {
-        case Some(c) => {
-          trigger(event -> c.control())
-          p.success()
+        children.get(cid) match {
+          case Some(c) => {
+            logger.debug(s"Sending Kill for component ${cid}");
+            trigger(Kill -> c.control());
+            awaitingKilled += (cid -> p);
+          }
+          case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to kill"))
         }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on"))
       }
-    }
+    case ConnectComponents(port, req, prov, p) =>
+      handle {
+        val res = for {
+          reqC <- Try(children(req));
+          provC <- Try(children(prov))
+        } yield {
+          val c = connect(reqC.required(port), provC.provided(port), Channel.TWO_WAY);
+          val entry1 = channels.getOrElseUpdate(req, List.empty);
+          val entry2 = channels.getOrElseUpdate(prov, List.empty);
+          channels.put(req, c :: entry1);
+          channels.put(prov, c :: entry2);
+          ()
+        };
+        p.complete(res)
+      }
+    case TriggerComponent(cid, event, p) =>
+      handle {
+        children.get(cid) match {
+          case Some(c) => {
+            trigger(event -> c.control())
+            p.success()
+          }
+          case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on"))
+        }
+      }
   }
 
   //  override def handleFault(fault: Fault): Fault.ResolveAction = {
@@ -260,19 +279,19 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   def createNotify[C <: JComponentDefinition: ClassTag](init: JInit[C]): Future[UUID] = {
     val ct = classTag[C].runtimeClass.asInstanceOf[Class[C]];
     val p = Promise[UUID];
-    trigger (NewComponent(ct, init, p) -> onSelf);
+    trigger(NewComponent(ct, init, p) -> onSelf);
     p.future
   }
 
   def startNotify(id: UUID): Future[Unit] = {
     val p = Promise[Unit];
-    trigger (StartComponent(id, p) -> onSelf);
+    trigger(StartComponent(id, p) -> onSelf);
     p.future
   }
 
   def killNotify(id: UUID): Future[Unit] = {
     val p = Promise[Unit];
-    trigger (KillComponent(id, p) -> onSelf);
+    trigger(KillComponent(id, p) -> onSelf);
     p.future
   }
 
@@ -280,7 +299,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
     val p = Promise[Unit];
     val port = classTag[P].runtimeClass.asInstanceOf[Class[P]];
     assert(!port.getName.equals("scala.runtime.Nothing$"));
-    trigger (ConnectComponents(port, requirer, provider, p) -> onSelf);
+    trigger(ConnectComponents(port, requirer, provider, p) -> onSelf);
     p.future
   }
 

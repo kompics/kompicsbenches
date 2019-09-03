@@ -1,7 +1,7 @@
 package se.kth.benchmarks.kompicsscala
 
 import se.sics.kompics.network.Network
-import se.sics.kompics.sl.{ ComponentDefinition, Init, KompicsEvent, Port, Start, handle }
+import se.sics.kompics.sl.{ComponentDefinition, Init, KompicsEvent, Port, Start, handle}
 
 class BestEffortBroadcast extends Port {
   request[BEBRequest]
@@ -17,23 +17,26 @@ class BEBComp(init: Init[BEBComp]) extends ComponentDefinition {
   val Init(selfAddr: NetAddress) = init
 
   ctrl uponEvent {
-    case _: Start => handle {
-      assert(selfAddr != null)
-    }
+    case _: Start =>
+      handle {
+        assert(selfAddr != null)
+      }
   }
 
   net uponEvent {
-    case NetMessage(src, payLoad) => handle {
-      trigger(BEBDeliver(payLoad, src.getSource()) -> beb)
-    }
+    case NetMessage(src, payLoad) =>
+      handle {
+        trigger(BEBDeliver(payLoad, src.getSource()) -> beb)
+      }
   }
 
   beb uponEvent {
-    case BEBRequest(nodes, payLoad) => handle {
-      for (addr: NetAddress <- nodes) {
-        trigger(NetMessage.viaTCP(selfAddr, addr)(payLoad) -> net)
+    case BEBRequest(nodes, payLoad) =>
+      handle {
+        for (addr: NetAddress <- nodes) {
+          trigger(NetMessage.viaTCP(selfAddr, addr)(payLoad) -> net)
+        }
       }
-    }
   }
 
 }

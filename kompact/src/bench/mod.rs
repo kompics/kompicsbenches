@@ -2,11 +2,11 @@ use super::*;
 use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
+pub mod atomicregister;
 pub mod net_throughput_pingpong;
 pub mod netpingpong;
 pub mod pingpong;
 pub mod throughput_pingpong;
-pub mod atomicregister;
 
 #[derive(Clone, Debug)]
 pub struct Start;
@@ -26,6 +26,10 @@ impl BenchmarkFactory for ComponentFactory {
             }
             _ => Err(NotImplementedError::NotFound),
         }
+    }
+
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory> {
+        Box::new(ComponentFactory {})
     }
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
@@ -60,11 +64,19 @@ impl BenchmarkFactory for ActorFactory {
         match label {
             pingpong::actor_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
             netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
-            throughput_pingpong::actor_pingpong::PingPong::LABEL => self.throughput_ping_pong().map_into(),
+            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
+                self.throughput_ping_pong().map_into()
+            }
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
-            atomicregister::actor_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
+            atomicregister::actor_atomicregister::AtomicRegister::LABEL => {
+                self.atomic_register().map_into()
+            }
             _ => Err(NotImplementedError::NotFound),
         }
+    }
+
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory> {
+        Box::new(ActorFactory {})
     }
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
@@ -83,7 +95,9 @@ impl BenchmarkFactory for ActorFactory {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
 
-    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomicregister::actor_atomicregister::AtomicRegister {}.into())
     }
 }
@@ -101,9 +115,15 @@ impl BenchmarkFactory for MixedFactory {
                 self.throughput_ping_pong().map_into()
             }
             net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
-            atomicregister::mixed_atomicregister::AtomicRegister::LABEL => self.atomic_register().map_into(),
+            atomicregister::mixed_atomicregister::AtomicRegister::LABEL => {
+                self.atomic_register().map_into()
+            }
             _ => Err(NotImplementedError::NotFound),
         }
+    }
+
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory> {
+        Box::new(MixedFactory {})
     }
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
@@ -122,7 +142,9 @@ impl BenchmarkFactory for MixedFactory {
         Ok(net_throughput_pingpong::PingPong {}.into())
     }
 
-    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomicregister::mixed_atomicregister::AtomicRegister {}.into())
     }
 }

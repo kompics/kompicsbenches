@@ -1,13 +1,13 @@
 package se.kth.benchmarks.kompicsscala
 
-import java.net.{ InetAddress, InetSocketAddress }
-import se.sics.kompics.network.{ Address, Header, Msg, Transport }
+import java.net.{InetAddress, InetSocketAddress}
+import se.sics.kompics.network.{Address, Header, Msg, Transport}
 import se.sics.kompics.KompicsEvent
-import scala.util.{ Failure, Try, Success }
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import scala.util.{Failure, Success, Try}
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
-import se.kth.benchmarks.kompicsjava.net.{ NetAddress => JNetAddress }
+import se.kth.benchmarks.kompicsjava.net.{NetAddress => JNetAddress}
 
 object BenchNet {
   def registerSerializers(): Unit = {
@@ -36,14 +36,15 @@ object NetAddress {
     NetAddress(isa)
   };
 
-  def fromString(str: String): Try[NetAddress] = Try {
-    val split = str.split(":");
-    assert(split.length == 2);
-    val ipStr = split(0); //.replaceAll("""/""", "");
-    val portStr = split(1);
-    val port = portStr.toInt;
-    NetAddress.from(ipStr, port)
-  }.flatten;
+  def fromString(str: String): Try[NetAddress] =
+    Try {
+      val split = str.split(":");
+      assert(split.length == 2);
+      val ipStr = split(0); //.replaceAll("""/""", "");
+      val portStr = split(1);
+      val port = portStr.toInt;
+      NetAddress.from(ipStr, port)
+    }.flatten;
 }
 
 final case class NetHeader(src: NetAddress, dst: NetAddress, proto: Transport) extends Header[NetAddress] {
@@ -58,11 +59,13 @@ final case class NetMessage[C <: KompicsEvent](header: NetHeader, payload: C) ex
   override def getProtocol(): Transport = header.proto;
   override def getSource(): NetAddress = header.src;
 
-  def reply[C2 <: KompicsEvent](rsrc: NetAddress)(payload: C2) = NetMessage(NetHeader(rsrc, header.src, header.proto), payload);
+  def reply[C2 <: KompicsEvent](rsrc: NetAddress)(payload: C2) =
+    NetMessage(NetHeader(rsrc, header.src, header.proto), payload);
 }
 
 object NetMessage {
-  def viaTCP[C <: KompicsEvent](src: NetAddress, dst: NetAddress)(payload: C) = NetMessage(NetHeader(src, dst, Transport.TCP), payload);
+  def viaTCP[C <: KompicsEvent](src: NetAddress, dst: NetAddress)(payload: C) =
+    NetMessage(NetHeader(src, dst, Transport.TCP), payload);
 }
 
 object BenchNetSerializer extends Serializer {

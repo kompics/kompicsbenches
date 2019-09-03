@@ -1,15 +1,15 @@
-package se.kth.benchmarks.kompicsscala
+package se.kth.benchmarks.akka
 
-import se.kth.benchmarks.BenchmarkRunner
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
+import se.kth.benchmarks.{BenchmarkRunner, Util}
 
 import java.util.logging.Logger
 import java.util.concurrent.Executors
 
-class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
+class TypedBenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   implicit val futurePool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
 
   override def ready(request: ReadyRequest): Future[ReadyResponse] = {
@@ -21,7 +21,7 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
 
   override def pingPong(request: PingPongRequest): Future[TestResult] = {
     Future {
-      val res = BenchmarkRunner.run(bench.PingPong)(request);
+      val res = BenchmarkRunner.run(typed_bench.PingPong)(request);
       val msg = BenchmarkRunner.resultToTestResult(res);
       msg
     }
@@ -33,7 +33,7 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
 
   override def throughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
     Future {
-      val res = BenchmarkRunner.run(bench.ThroughputPingPong)(request);
+      val res = BenchmarkRunner.run(typed_bench.ThroughputPingPong)(request);
       val msg = BenchmarkRunner.resultToTestResult(res);
       msg
     }
@@ -46,5 +46,4 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
   override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = {
     Future.successful(NotImplemented())
   }
-
 }

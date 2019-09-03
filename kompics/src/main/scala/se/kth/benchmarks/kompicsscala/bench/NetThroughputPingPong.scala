@@ -5,12 +5,12 @@ import se.kth.benchmarks.kompicsscala._
 import _root_.kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import se.sics.kompics.network.Network
 import se.sics.kompics.sl._
-import scala.util.{ Try, Success, Failure }
-import scala.concurrent.{ Future, Await }
+import scala.util.{Failure, Success, Try}
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
 
@@ -25,9 +25,9 @@ object NetThroughputPingPong extends DistributedBenchmark {
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: KompicsSystem = null;
     private var pingers: List[UUID] = List.empty;
@@ -38,8 +38,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = KompicsSystemProvider.newRemoteKompicsSystem(
-        Runtime.getRuntime.availableProcessors());
+      system = KompicsSystemProvider.newRemoteKompicsSystem(Runtime.getRuntime.availableProcessors());
       NetPingPongSerializer.register();
       ClientParams(numPairs, staticOnly)
     };
@@ -93,7 +92,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       NetPingPongSerializer.register();
 
-      val lf = (0 to c.numPongers).map{ index =>
+      val lf = (0 to c.numPongers).map { index =>
         for {
           pongerId <- if (c.staticOnly) {
             system.createNotify[StaticPonger](Init[StaticPonger](index))
@@ -212,44 +211,41 @@ object NetThroughputPingPong extends DistributedBenchmark {
 
   class StaticPinger(init: Init[StaticPinger]) extends ComponentDefinition {
 
-    val Init(
-      selfId: Int,
-      latch: CountDownLatch,
-      count: Long,
-      pipeline: Long,
-      ponger: NetAddress) = init;
+    val Init(selfId: Int, latch: CountDownLatch, count: Long, pipeline: Long, ponger: NetAddress) = init;
 
     val net = requires[Network];
 
     lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
-    private var sentCount = 0l;
-    private var recvCount = 0l;
+    private var sentCount = 0L;
+    private var recvCount = 0L;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-        var pipelined = 0l;
-        while (pipelined < pipeline && sentCount < count) {
-          trigger(NetMessage.viaTCP(selfAddr, ponger)(StaticPing(selfId)) -> net);
-          pipelined += 1l;
-          sentCount += 1l;
+      case _: Start =>
+        handle {
+          assert(selfAddr != null);
+          var pipelined = 0L;
+          while (pipelined < pipeline && sentCount < count) {
+            trigger(NetMessage.viaTCP(selfAddr, ponger)(StaticPing(selfId)) -> net);
+            pipelined += 1L;
+            sentCount += 1L;
+          }
         }
-      }
     }
 
     net uponEvent {
-      case context @ NetMessage(_, StaticPong(this.selfId)) => handle {
-        recvCount += 1l;
-        if (recvCount < count) {
-          if (sentCount < count) {
-            trigger(NetMessage.viaTCP(selfAddr, ponger)(StaticPing(selfId)) -> net);
-            sentCount += 1l;
+      case context @ NetMessage(_, StaticPong(this.selfId)) =>
+        handle {
+          recvCount += 1L;
+          if (recvCount < count) {
+            if (sentCount < count) {
+              trigger(NetMessage.viaTCP(selfAddr, ponger)(StaticPing(selfId)) -> net);
+              sentCount += 1L;
+            }
+          } else {
+            latch.countDown();
           }
-        } else {
-          latch.countDown();
         }
-      }
     }
   }
 
@@ -262,57 +258,56 @@ object NetThroughputPingPong extends DistributedBenchmark {
     lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-      }
+      case _: Start =>
+        handle {
+          assert(selfAddr != null);
+        }
     }
 
     net uponEvent {
-      case context @ NetMessage(_, StaticPing(this.selfId)) => handle {
-        trigger(context.reply(selfAddr)(StaticPong(selfId)) -> net);
-      }
+      case context @ NetMessage(_, StaticPing(this.selfId)) =>
+        handle {
+          trigger(context.reply(selfAddr)(StaticPong(selfId)) -> net);
+        }
     }
   }
 
   class Pinger(init: Init[Pinger]) extends ComponentDefinition {
 
-    val Init(
-      selfId: Int,
-      latch: CountDownLatch,
-      count: Long,
-      pipeline: Long,
-      ponger: NetAddress) = init;
+    val Init(selfId: Int, latch: CountDownLatch, count: Long, pipeline: Long, ponger: NetAddress) = init;
 
     val net = requires[Network];
 
     lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
-    private var sentCount = 0l;
-    private var recvCount = 0l;
+    private var sentCount = 0L;
+    private var recvCount = 0L;
 
     ctrl uponEvent {
-      case _: Start => handle {
-        var pipelined = 0l;
-        while (pipelined < pipeline && sentCount < count) {
-          trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping(sentCount, selfId)) -> net);
-          pipelined += 1l;
-          sentCount += 1l;
+      case _: Start =>
+        handle {
+          var pipelined = 0L;
+          while (pipelined < pipeline && sentCount < count) {
+            trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping(sentCount, selfId)) -> net);
+            pipelined += 1L;
+            sentCount += 1L;
+          }
         }
-      }
     }
 
     net uponEvent {
-      case context @ NetMessage(_, Pong(_, this.selfId)) => handle {
-        recvCount += 1l;
-        if (recvCount < count) {
-          if (sentCount < count) {
-            trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping(sentCount, selfId)) -> net);
-            sentCount += 1l;
+      case context @ NetMessage(_, Pong(_, this.selfId)) =>
+        handle {
+          recvCount += 1L;
+          if (recvCount < count) {
+            if (sentCount < count) {
+              trigger(NetMessage.viaTCP(selfAddr, ponger)(Ping(sentCount, selfId)) -> net);
+              sentCount += 1L;
+            }
+          } else {
+            latch.countDown();
           }
-        } else {
-          latch.countDown();
         }
-      }
     }
   }
 
@@ -325,15 +320,17 @@ object NetThroughputPingPong extends DistributedBenchmark {
     lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
     ctrl uponEvent {
-      case _: Start => handle {
-        assert(selfAddr != null);
-      }
+      case _: Start =>
+        handle {
+          assert(selfAddr != null);
+        }
     }
 
     net uponEvent {
-      case context @ NetMessage(_, Ping(index, this.selfId)) => handle {
-        trigger(context.reply(selfAddr)(Pong(index, selfId)) -> net);
-      }
+      case context @ NetMessage(_, Ping(index, this.selfId)) =>
+        handle {
+          trigger(context.reply(selfAddr)(Pong(index, selfId)) -> net);
+        }
     }
   }
 }

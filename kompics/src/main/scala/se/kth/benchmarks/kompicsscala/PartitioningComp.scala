@@ -1,21 +1,26 @@
 package se.kth.benchmarks.kompicsscala
 
-import java.net.{ InetAddress, InetSocketAddress }
+import java.net.{InetAddress, InetSocketAddress}
 import java.util.Optional
 import java.util.concurrent.CountDownLatch
 
 import io.netty.buffer.ByteBuf
 import se.sics.kompics.network.Network
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
-import se.sics.kompics.sl.{ ComponentDefinition, Init => KompicsInit, KompicsEvent, Start, handle }
-import PartitioningComp.{ Init, InitAck, Run, Done }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
+import se.sics.kompics.sl.{ComponentDefinition, Init => KompicsInit, KompicsEvent, Start, handle}
+import PartitioningComp.{Done, Init, InitAck, Run}
 
 import scala.collection.mutable.ListBuffer
 
 class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDefinition {
   val net = requires[Network];
 
-  val KompicsInit(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[NetAddress] @unchecked, num_keys: Long, partition_size: Int) = init;
+  val KompicsInit(prepare_latch: CountDownLatch,
+                  finished_latch: CountDownLatch,
+                  init_id: Int,
+                  nodes: List[NetAddress] @unchecked,
+                  num_keys: Long,
+                  partition_size: Int) = init;
   val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes;
   val n = active_nodes.size;
   var init_ack_count: Int = 0;
@@ -23,35 +28,39 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
   lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
 
   ctrl uponEvent {
-    case _: Start => handle {
-      assert(selfAddr != null)
-      val min_key: Long = 0l
-      val max_key: Long = num_keys - 1
-      for ((node, rank) <- active_nodes.zipWithIndex) {
-        trigger(NetMessage.viaTCP(selfAddr, node)(Init(rank, init_id, active_nodes, min_key, max_key)) -> net)
+    case _: Start =>
+      handle {
+        assert(selfAddr != null)
+        val min_key: Long = 0L
+        val max_key: Long = num_keys - 1
+        for ((node, rank) <- active_nodes.zipWithIndex) {
+          trigger(NetMessage.viaTCP(selfAddr, node)(Init(rank, init_id, active_nodes, min_key, max_key)) -> net)
+        }
       }
-    }
-    case Run => handle {
-      for (node <- active_nodes) {
-        trigger(NetMessage.viaTCP(selfAddr, node)(Run) -> net)
+    case Run =>
+      handle {
+        for (node <- active_nodes) {
+          trigger(NetMessage.viaTCP(selfAddr, node)(Run) -> net)
+        }
       }
-    }
   }
 
   net uponEvent {
-    case NetMessage(_, InitAck(init_id)) => handle {
-      init_ack_count += 1
-      if (init_ack_count == n) {
-        prepare_latch.countDown()
+    case NetMessage(_, InitAck(init_id)) =>
+      handle {
+        init_ack_count += 1
+        if (init_ack_count == n) {
+          prepare_latch.countDown()
+        }
       }
-    }
-    case NetMessage(header, Done) => handle{
-      done_count += 1
-      if (done_count == n) {
-        logger.info("Everybody is done")
-        finished_latch.countDown()
+    case NetMessage(header, Done) =>
+      handle {
+        done_count += 1
+        if (done_count == n) {
+          logger.info("Everybody is done")
+          finished_latch.countDown()
+        }
       }
-    }
   }
 }
 

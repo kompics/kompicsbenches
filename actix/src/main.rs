@@ -24,11 +24,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benchmark_suite_shared::test_utils::test_implementation;
+    use benchmark_suite_shared::test_utils::{test_implementation, test_local_implementation};
 
     #[test]
-    fn test_mixed() {
+    fn test_master_client() {
         let benchmarks = Box::new(bench::Factory {});
         test_implementation(benchmarks);
+    }
+
+    #[test]
+    fn test_local() {
+        let runner = benchmark_runner::BenchmarkRunnerImpl::new();
+        test_local_implementation(runner);
     }
 }

@@ -101,7 +101,6 @@ mod local_benchmark {
             self.bi.cleanup_iteration(last_iteration, exec_time_millis)
         }
     }
-
 }
 
 mod distributed_benchmark {
@@ -109,18 +108,14 @@ mod distributed_benchmark {
 
     #[derive(Debug, Clone)]
     pub struct DeploymentMetaData {
-        number_of_clients: u32
+        number_of_clients: u32,
     }
     impl DeploymentMetaData {
         pub fn new(number_of_clients: u32) -> DeploymentMetaData {
-            DeploymentMetaData {
-                number_of_clients
-            }
+            DeploymentMetaData { number_of_clients }
         }
 
-        pub fn number_of_clients(&self) -> u32 {
-            self.number_of_clients
-        }
+        pub fn number_of_clients(&self) -> u32 { self.number_of_clients }
     }
 
     pub trait DistributedBenchmark: Send + Sync {
@@ -157,7 +152,11 @@ mod distributed_benchmark {
         type ClientConf;
         type ClientData;
 
-        fn setup(&mut self, c: Self::MasterConf, meta: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError>;
+        fn setup(
+            &mut self,
+            c: Self::MasterConf,
+            meta: &DeploymentMetaData,
+        ) -> Result<Self::ClientConf, BenchmarkError>;
         fn prepare_iteration(&mut self, _d: Vec<Self::ClientData>) -> () {}
         fn run_iteration(&mut self) -> ();
         fn cleanup_iteration(&mut self, _last_iteration: bool, _exec_time_millis: f64) -> () {}
@@ -336,7 +335,9 @@ impl From<Box<dyn AbstractBenchmark>> for AbstractBench {
 }
 
 impl From<Box<dyn AbstractDistributedBenchmark>> for AbstractBench {
-    fn from(item: Box<dyn AbstractDistributedBenchmark>) -> Self { AbstractBench::Distributed(item) }
+    fn from(item: Box<dyn AbstractDistributedBenchmark>) -> Self {
+        AbstractBench::Distributed(item)
+    }
 }
 
 pub trait ResultInto<O, E> {
@@ -364,6 +365,7 @@ pub enum NotImplementedError {
 
 pub trait BenchmarkFactory: Send + Sync {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError>;
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory>;
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError>;
     fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
@@ -371,7 +373,12 @@ pub trait BenchmarkFactory: Send + Sync {
     fn net_throughput_ping_pong(
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
-    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+    fn atomic_register(&self)
+        -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+}
+
+impl Clone for Box<dyn BenchmarkFactory> {
+    fn clone(&self) -> Box<dyn BenchmarkFactory> { self.box_clone() }
 }
 
 #[macro_export]
@@ -533,8 +540,13 @@ pub(crate) mod tests {
         type ClientData = String;
         type MasterConf = Test3Conf;
 
-        fn setup(&mut self, _c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> { 
-            Ok("ok".into()) 
+        fn setup(
+            &mut self,
+            _c: Self::MasterConf,
+            _m: &DeploymentMetaData,
+        ) -> Result<Self::ClientConf, BenchmarkError>
+        {
+            Ok("ok".into())
         }
 
         fn prepare_iteration(&mut self, _d: Vec<Self::ClientData>) -> () {}
@@ -559,15 +571,19 @@ pub(crate) mod tests {
     fn instantiate_distributed_benchmark() -> () {
         let mut master = Test3B::new_master();
         let msg = PingPongRequest::new();
-        let mconf = Test3B::msg_to_master_conf(Box::new(msg)).expect("Could not create master conf!");
-        let cconf = master.setup(mconf, &DeploymentMetaData::new(1)).expect("Could not setup master!");
+        let mconf =
+            Test3B::msg_to_master_conf(Box::new(msg)).expect("Could not create master conf!");
+        let cconf =
+            master.setup(mconf, &DeploymentMetaData::new(1)).expect("Could not setup master!");
         let cconf_ser = Test3B::client_conf_to_str(cconf);
         let mut client = Test3B::new_client();
-        let cconf_deser = Test3B::str_to_client_conf(cconf_ser).expect("Could not create client conf");
+        let cconf_deser =
+            Test3B::str_to_client_conf(cconf_ser).expect("Could not create client conf");
         let cdata = client.setup(cconf_deser);
         let cdata_ser = Test3B::client_data_to_str(cdata);
         client.prepare_iteration();
-        let cdata_deser = Test3B::str_to_client_data(cdata_ser).expect("Could not create client data");
+        let cdata_deser =
+            Test3B::str_to_client_data(cdata_ser).expect("Could not create client data");
         let all_cdata = vec![cdata_deser];
         master.prepare_iteration(all_cdata);
         master.run_iteration();
@@ -585,6 +601,8 @@ pub(crate) mod tests {
     }
 
     impl BenchmarkFactory for TestFactory {
+        fn box_clone(&self) -> Box<dyn BenchmarkFactory> { TestFactory::boxed() }
+
         fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
             match label {
                 Test2B::LABEL => self.ping_pong().map_into(),
@@ -597,7 +615,9 @@ pub(crate) mod tests {
             Ok(Test2B {}.into())
         }
 
-        fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        fn net_ping_pong(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())
         }
 
@@ -611,7 +631,9 @@ pub(crate) mod tests {
             Ok(Test3B {}.into())
         }
 
-        fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        fn atomic_register(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())
         }
     }

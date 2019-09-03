@@ -89,3 +89,9 @@ _rel/
 .erlang.mk/
 doc/
 erlang_benchmarks.d
+
+# Metals / VSC
+out/
+.bloop/
+.metals/
+*.code-workspace

@@ -1,11 +1,11 @@
 package se.kth.benchmarks.kompicsjava.bench
 
 import se.kth.benchmarks.Benchmark
-import se.kth.benchmarks.kompicsscala.{ KompicsSystem, KompicsSystemProvider }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider}
 import kompics.benchmarks.benchmarks.PingPongRequest
 import se.kth.benchmarks.kompicsjava.bench.pingpong._;
 import se.sics.kompics.sl.Init;
-import scala.concurrent.{ Future, Await }
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.CountDownLatch
@@ -22,7 +22,7 @@ object PingPong extends Benchmark {
   override def newInstance(): Instance = new PingPongI;
 
   class PingPongI extends Instance {
-    private var num = -1l;
+    private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
     private var ponger: UUID = null;

@@ -19,6 +19,10 @@ impl BenchmarkFactory for Factory {
         }
     }
 
+    fn box_clone(&self) -> Box<dyn BenchmarkFactory> {
+        Box::new(Factory {})
+    }
+
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(pingpong::PingPong.into())
     }
@@ -35,7 +39,9 @@ impl BenchmarkFactory for Factory {
         Err(NotImplementedError::NotImplementable)
     }
 
-    fn atomic_register(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_register(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 }

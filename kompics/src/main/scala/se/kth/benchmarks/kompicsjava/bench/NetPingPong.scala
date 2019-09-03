@@ -1,17 +1,17 @@
 package se.kth.benchmarks.kompicsjava.bench
 
 import se.kth.benchmarks._
-import se.kth.benchmarks.kompicsscala.{ KompicsSystemProvider, KompicsSystem, NetAddress }
+import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider, NetAddress}
 import _root_.kompics.benchmarks.benchmarks.PingPongRequest
 import se.kth.benchmarks.kompicsjava.bench.netpingpong._;
 import se.sics.kompics.network.Network
 import se.sics.kompics.sl.Init
-import scala.util.{ Try, Success, Failure }
+import scala.util.{Failure, Success, Try}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
-import se.sics.kompics.network.netty.serialization.{ Serializer, Serializers }
+import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
 
@@ -22,7 +22,7 @@ object NetPingPong extends DistributedBenchmark {
   override type ClientData = NetAddress;
 
   class MasterImpl extends Master {
-    private var num = -1l;
+    private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
     private var latch: CountDownLatch = null;

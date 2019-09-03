@@ -79,7 +79,11 @@ impl DistributedBenchmarkMaster for PingPongMaster {
     type ClientConf = ();
     type ClientData = ActorPath;
 
-    fn setup(&mut self, c: Self::MasterConf, _m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
+    fn setup(
+        &mut self,
+        c: Self::MasterConf,
+        _m: &DeploymentMetaData,
+    ) -> Result<Self::ClientConf, BenchmarkError> {
         self.num = Some(c.number_of_messages);
         let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
         self.system = Some(system);
