@@ -8,7 +8,8 @@
          'PingPong'/3,
          'NetPingPong'/3,
          'ThroughputPingPong'/3,
-         'NetThroughputPingPong'/3]).
+         'NetThroughputPingPong'/3,
+         'AtomicRegister'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -18,6 +19,12 @@
       pipeline_size => integer(),
       parallelism => integer(),
       static_only => boolean()}.
+
+-type 'AtomicRegisterRequest'() ::
+    #{read_workload => float() | infinity | '-infinity' | nan,
+      write_workload => float() | infinity | '-infinity' | nan,
+      partition_size => integer(),
+      number_of_keys => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -105,6 +112,14 @@ decoder() -> benchmarks.
 'NetThroughputPingPong'(Message, Stream, _State) ->
     io:fwrite("Got NetThroughputPingPong request.~n"),
     Response = await_benchmark_result(net_throughput_ping_pong_bench, Message),
+    {Response, Stream}.
+
+-spec 'AtomicRegister'(Message::'AtomicRegisterRequest'(), Stream::grpc:stream(), State::any()) ->
+  {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'AtomicRegister'(Message, Stream, _State) ->
+    io:fwrite("Got AtomicRegister request.~n"),
+    Response = await_benchmark_result(atomic_register_bench, Message),
     {Response, Stream}.
 
 -spec await_benchmark_result(Benchmark :: module(), Params :: term()) -> 'TestResult'().

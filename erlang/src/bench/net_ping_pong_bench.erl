@@ -6,7 +6,7 @@
 	msg_to_master_conf/1,
 	new_master/0,
 	new_client/0,
-	master_setup/2,
+	master_setup/3,
 	master_prepare_iteration/2,
 	master_run_iteration/1,
 	master_cleanup_iteration/3,
@@ -55,9 +55,9 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf()) -> 
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
 	{ok, Newnstance :: master_instance(), ClientConf :: client_conf()}.
-master_setup(Instance, Conf) ->
+master_setup(Instance, Conf, _NumClients) ->
 	NewInstance = Instance#master_state{num = Conf#master_conf.number_of_messages},
 	process_flag(trap_exit, true),
 	{ok, NewInstance, undefined}.

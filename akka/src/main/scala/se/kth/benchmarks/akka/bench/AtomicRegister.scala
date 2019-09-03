@@ -71,7 +71,6 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
-//      val uuid =randomUUID()
       atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id")
       val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system)
       println(s"Atomic Register(Master) path is $atomicRegPath")
@@ -84,13 +83,6 @@ object AtomicRegister extends DistributedBenchmark {
       partitioningActor = system.actorOf(Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), s"partitioningactor$init_id")
       partitioningActor ! Start
       prepare_latch.await()
-      /*val timeout = 100
-      val timeunit = TimeUnit.SECONDS
-      val successful_prep = prepare_latch.await(timeout, timeunit)
-      if (!successful_prep) {
-        println("Timeout in prepareIteration for INIT_ACK")
-        throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
-      }*/
     }
 
     override def runIteration(): Unit = {
