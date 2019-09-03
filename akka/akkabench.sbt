@@ -2,13 +2,13 @@ name := "Akka Benchmark Suite"
 
 organization in ThisBuild := "se.kth.benchmarks"
 
-version in ThisBuild := "0.2.0-SNAPSHOT"
+version in ThisBuild := "0.3.0-SNAPSHOT"
 
-scalaVersion in ThisBuild := "2.12.6"
+scalaVersion in ThisBuild := "2.12.9"
 
 resolvers += Resolver.mavenLocal
 
-val akkaV = "2.5.24"
+val akkaV = "2.5.25"
 
 libraryDependencies ++= Seq(
   "se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
@@ -16,10 +16,12 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-remote" % akkaV,
   "com.typesafe.akka" %% "akka-actor-typed" % akkaV,
   "ch.qos.logback" % "logback-classic" % "1.2.3",
-  "org.scalatest" %% "scalatest" % "3.0.5" % "test"
+  "org.scalatest" %% "scalatest" % "3.0.8" % "test"
 )
 
 fork := true;
+
+test in assembly := {}
 
 assemblyMergeStrategy in assembly := {
   case "META-INF/io.netty.versions.properties" => MergeStrategy.first

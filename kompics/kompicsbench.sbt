@@ -4,7 +4,7 @@ organization in ThisBuild := "se.kth.benchmarks"
 
 version in ThisBuild := "0.1.0-SNAPSHOT"
 
-scalaVersion in ThisBuild := "2.12.6"
+scalaVersion in ThisBuild := "2.12.9"
 
 resolvers += Resolver.mavenLocal
 resolvers += Resolver.jcenterRepo
@@ -22,8 +22,8 @@ libraryDependencies ++= Seq(
     "se.sics.kompics.basic" % "kompics-component-netty-network" % kompicsV,
     "se.sics.kompics.basic" % "kompics-port-network" % kompicsV,
     "se.sics.kompics.basic" % "kompics-component-java-timer" % kompicsV,
-    "org.scalatest" %% "scalatest" % "3.0.5" % "test",
-    "org.scala-lang" % "scala-reflect" % "2.12.6",
+    "org.scalatest" %% "scalatest" % "3.0.8" % "test",
+    "org.scala-lang" % "scala-reflect" % "2.12.9",
 )
 
 fork := true; // needed for UDT tests to clean up properly after themselves
