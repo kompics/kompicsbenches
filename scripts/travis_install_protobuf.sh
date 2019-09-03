@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
-VERSION="3.6.1"
-OSX_VERSION="3.6"
+VERSION="3.9.1"
+OSX_VERSION="3.9"
 NAME="protoc-$VERSION-linux-x86_64.zip"
 URL="https://github.com/protocolbuffers/protobuf/releases/download/v$VERSION/$NAME"
 
