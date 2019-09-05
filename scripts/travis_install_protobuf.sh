@@ -6,6 +6,7 @@ NAME="protoc-$VERSION-linux-x86_64.zip"
 URL="https://github.com/protocolbuffers/protobuf/releases/download/v$VERSION/$NAME"
 
 if [ $TRAVIS_OS_NAME = 'osx' ]; then
+	ulimit -n 20000 20000
     # Install protobuf on macOS
     (brew install protobuf@$OSX_VERSION && brew link --force --overwrite protobuf@$OSX_VERSION) || brew upgrade protobuf
 else
