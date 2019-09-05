@@ -138,7 +138,9 @@ object AtomicRegister extends DistributedBenchmark {
             val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
             val nodes = atomicRegRef :: s.nodes
             val num_nodes = nodes.size
-            assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
+            assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
+            assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
+            assert((1.0 - (read_workload + write_workload)) < 0.00001, s"Invalid workload sum ${read_workload + write_workload} != 1.0");
             partitioningActor = context.spawn[PartitioningMessage](TypedPartitioningActor(s.prepare_latch, s.finished_latch, s.init_id, nodes, s.num_keys, s.partition_size), s"typed_itactor$init_id")
             partitioningActor ! Start
           }

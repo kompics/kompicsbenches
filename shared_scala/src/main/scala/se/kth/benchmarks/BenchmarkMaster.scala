@@ -284,7 +284,10 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
             };
             t match {
               case Success(f)  => f
-              case Failure(ex) => Future.failed(ex)
+              case Failure(ex) => {
+                logger.error(s"Failed iteration $nRuns!", ex);
+                Future.failed(ex)
+              }
             }
           };
           clientDataLF.map { clientDataL =>

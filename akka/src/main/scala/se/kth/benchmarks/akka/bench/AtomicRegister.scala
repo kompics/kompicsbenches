@@ -71,18 +71,20 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
-      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id")
-      val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system)
+      atomicRegister = system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id");
+      val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system);
       println(s"Atomic Register(Master) path is $atomicRegPath")
-      val nodes = ClientRef(atomicRegPath) :: d
-      val num_nodes = nodes.size
-      assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
-      init_id += 1
-      prepare_latch = new CountDownLatch(1)
-      finished_latch = new CountDownLatch(1)
-      partitioningActor = system.actorOf(Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), s"partitioningactor$init_id")
-      partitioningActor ! Start
-      prepare_latch.await()
+      val nodes = ClientRef(atomicRegPath) :: d;
+      val num_nodes = nodes.size;
+      assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
+      assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
+      assert((1.0 - (read_workload + write_workload)) < 0.00001, s"Invalid workload sum ${read_workload + write_workload} != 1.0");
+      init_id += 1;
+      prepare_latch = new CountDownLatch(1);
+      finished_latch = new CountDownLatch(1);
+      partitioningActor = system.actorOf(Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)), s"partitioningactor$init_id");
+      partitioningActor ! Start;
+      prepare_latch.await();
     }
 
     override def runIteration(): Unit = {
