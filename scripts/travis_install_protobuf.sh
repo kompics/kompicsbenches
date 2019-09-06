@@ -9,7 +9,7 @@ if [ $TRAVIS_OS_NAME = 'osx' ]; then
 	launchctl limit maxfiles;
 	sysctl kern.maxfiles;
 	sysctl kern.maxfilesperproc;
-	ulimit -n 2048 2048;
+	ulimit -n 8192 8192; # max is apparently 10240
     # Install protobuf on macOS
     (brew install protobuf@$OSX_VERSION && brew link --force --overwrite protobuf@$OSX_VERSION) || brew upgrade protobuf
 else
