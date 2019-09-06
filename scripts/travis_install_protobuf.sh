@@ -7,7 +7,6 @@ URL="https://github.com/protocolbuffers/protobuf/releases/download/v$VERSION/$NA
 
 if [ $TRAVIS_OS_NAME = 'osx' ]; then
 	launchctl limit maxfiles;
-	cat /etc/sysctl.conf;
 	sysctl kern.maxfiles;
 	sysctl kern.maxfilesperproc;
 	ulimit -n 2048 2048;
