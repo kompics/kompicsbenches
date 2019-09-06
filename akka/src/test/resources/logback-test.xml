@@ -8,8 +8,10 @@
   </appender>
 
   <logger name="io.grpc" level="INFO"/>
+  <logger name="se.kth.benchmarks.kompicsscala.KompicsSystem" level="INFO"/>
+  <logger name="se.sics.kompics" level="INFO"/>
 
-  <root level="debug">
+  <root level="DEBUG">
     <appender-ref ref="STDOUT" />
   </root>
 </configuration>
