@@ -15,7 +15,7 @@ import $ivy.`com.github.tototoshi::scala-csv:1.3.5`, com.github.tototoshi.csv._
 import $file.build
 import java.io.File
 import $file.benchmarks, benchmarks.{BenchmarkImpl, implementations}
-import $ivy.`se.kth.benchmarks::benchmark-suite-runner:0.2.0-SNAPSHOT`, se.kth.benchmarks.runner._, se.kth.benchmarks.runner.utils._, kompics.benchmarks.benchmarks._
+import $ivy.`se.kth.benchmarks::benchmark-suite-runner:0.3.0-SNAPSHOT`, se.kth.benchmarks.runner._, se.kth.benchmarks.runner.utils._, kompics.benchmarks.benchmarks._
 //import build.{relps, relp, binp}
 
 val results = pwd / 'results;
