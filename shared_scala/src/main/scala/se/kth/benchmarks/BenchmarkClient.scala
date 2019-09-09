@@ -58,12 +58,28 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
         case StateType.Running(activeBench) => {
           logger.debug("Cleaning active bench.");
           if (request.`final`) {
-            activeBench.cleanup(true);
-            state := StateType.Ready;
-            logger.info(s"${activeBench.name} is cleaned.");
+            try {
+              activeBench.cleanup(true);
+              logger.info(s"${activeBench.name} is cleaned.");
+            } catch {
+              case e: Throwable => {
+                logger.error(s"Error during final cleanup of ${activeBench.name}!", e);
+                return Future.failed(e);
+              }
+            } finally {
+              state := StateType.Ready;
+            }
           } else {
-            activeBench.cleanup(false);
-            activeBench.prepare();
+            try {
+              activeBench.cleanup(false);
+              activeBench.prepare();
+            } catch {
+              case e: Throwable => {
+                logger.error(s"Error during cleanup&prepare of ${activeBench.name}!", e);
+                state := StateType.Ready;
+                return Future.failed(e);
+              }
+            }
           }
           Future.successful(CleanupResponse())
         }
@@ -212,7 +228,7 @@ object BenchmarkClient {
       if (_inner == oldValue) {
         _inner = newValue
       } else {
-        throw new RuntimeException(s"Invalid State Transition from $oldValue -> $newValue")
+        throw new RuntimeException(s"Invalid State Transition from $oldValue -> $newValue, actual state was ${_inner}")
       }
     };
     def cas(t: (StateType, StateType)): Unit = cas(t._1, t._2);

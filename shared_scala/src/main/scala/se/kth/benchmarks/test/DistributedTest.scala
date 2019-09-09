@@ -140,7 +140,7 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       logger.info("Starting test AtomicRegister");
       val nnarr = AtomicRegisterRequest()
         .withReadWorkload(0.5f)
-        .withReadWorkload(0.5f)
+        .withWriteWorkload(0.5f)
         .withPartitionSize(3)
         .withNumberOfKeys(500);
       val nnarResF = benchStub.atomicRegister(nnarr);

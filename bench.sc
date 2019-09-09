@@ -44,7 +44,7 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 			relp("runner"),
 			javaBin,
 			Seq("-jar",
-				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString)
