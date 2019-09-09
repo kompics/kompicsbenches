@@ -1,7 +1,5 @@
 use super::*;
-use kompact::helpers::deserialise_actor_path;
 use kompact::prelude::*;
-use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
@@ -163,12 +161,9 @@ impl Deserialiser<Init> for PartitioningActorSer {
                 let max_key: u64 = buf.get_u64_be();
                 let nodes_len: u32 = buf.get_u32_be();
                 let mut nodes: Vec<ActorPath> = Vec::new();
-                let mut buffer = buf;
                 for _ in 0..nodes_len {
-                    if let Ok((b, actorpath)) = deserialise_actor_path(buffer) {
-                        //                        println!("actorpath={}", &actorpath);
+                    if let Ok(actorpath) = ActorPath::deserialise(buf) {
                         nodes.push(actorpath);
-                        buffer = b;
                     } else {
                         return Err(SerError::InvalidType(
                             "Could not deserialise data to ActorPath".into(),

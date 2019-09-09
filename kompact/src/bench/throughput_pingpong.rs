@@ -1,7 +1,7 @@
 use super::*;
 
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::ThroughputPingPongRequest;
-use kompact::*;
+use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 

@@ -3,7 +3,6 @@ use super::*;
 use crate::partitioning_actor::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicRegisterRequest;
 use kompact::prelude::*;
-use kompact::*;
 use partitioning_actor::PartitioningActor;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -1023,22 +1022,22 @@ pub mod mixed_atomicregister {
         }
     }
 
-    struct RegisteredPath<'a> {
-        actor_path: &'a ActorPath,
-        ctx: &'a ComponentContext<BroadcastComp>,
-    }
+    // struct RegisteredPath<'a> {
+    //     actor_path: &'a ActorPath,
+    //     ctx: &'a ComponentContext<BroadcastComp>,
+    // }
 
-    impl<'a> ActorSource for RegisteredPath<'a> {
-        fn path_resolvable(&self) -> PathResolvable {
-            PathResolvable::Path(self.actor_path.clone())
-        }
-    }
+    // impl<'a> ActorSource for RegisteredPath<'a> {
+    //     fn path_resolvable(&self) -> PathResolvable {
+    //         PathResolvable::Path(self.actor_path.clone())
+    //     }
+    // }
 
-    impl<'a> Dispatching for RegisteredPath<'a> {
-        fn dispatcher_ref(&self) -> ActorRef {
-            self.ctx.dispatcher_ref()
-        }
-    }
+    // impl<'a> Dispatching for RegisteredPath<'a> {
+    //     fn dispatcher_ref(&self) -> ActorRef {
+    //         self.ctx.dispatcher_ref()
+    //     }
+    // }
 
     struct CacheInfo {
         sender: ActorPath,
@@ -1084,13 +1083,11 @@ pub mod mixed_atomicregister {
             let nodes = self.nodes.as_ref().unwrap();
             let sender = self.sender.as_ref().unwrap();
             let payload = request.0;
-            let fake_path = RegisteredPath {
-                // TODO: Fix this
-                actor_path: sender,
-                ctx: &self.ctx,
-            };
             for node in nodes {
-                node.tell((payload.clone(), AtomicRegisterSer), &fake_path);
+                node.tell(
+                    (payload.clone(), AtomicRegisterSer),
+                    &sender.using_dispatcher(self),
+                );
             }
         }
     }
