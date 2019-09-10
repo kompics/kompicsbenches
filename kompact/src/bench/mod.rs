@@ -3,6 +3,7 @@ use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
 pub mod atomicregister;
+mod messages;
 pub mod net_throughput_pingpong;
 pub mod netpingpong;
 pub mod pingpong;

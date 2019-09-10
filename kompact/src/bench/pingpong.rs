@@ -4,13 +4,7 @@ use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-
-#[derive(Clone, Debug)]
-struct Ping;
-const PING: Ping = Ping;
-#[derive(Clone, Debug)]
-struct Pong;
-const PONG: Pong = Pong;
+use messages::{StaticPing, StaticPong, STATIC_PING, STATIC_PONG};
 
 pub mod actor_pingpong {
     use super::*;
@@ -161,11 +155,11 @@ pub mod actor_pingpong {
     impl Actor for Pinger {
         fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<Start>() {
-                self.ponger.tell(&PING, &self.ctx);
-            } else if msg.is::<Pong>() {
+                self.ponger.tell(&STATIC_PING, &self.ctx);
+            } else if msg.is::<StaticPong>() {
                 if self.count_down > 0 {
                     self.count_down -= 1;
-                    self.ponger.tell(&PING, &self.ctx);
+                    self.ponger.tell(&STATIC_PING, &self.ctx);
                 } else {
                     let _ = self.latch.decrement();
                 }
@@ -201,8 +195,8 @@ pub mod actor_pingpong {
 
     impl Actor for Ponger {
         fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
-            if msg.is::<Ping>() {
-                sender.tell(&PONG, &self.ctx);
+            if msg.is::<StaticPing>() {
+                sender.tell(&STATIC_PONG, &self.ctx);
             } else {
                 crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
                 unimplemented!(); // shouldn't happen during the test
@@ -221,8 +215,8 @@ pub mod component_pingpong {
     struct PingPongPort;
 
     impl Port for PingPongPort {
-        type Indication = Pong;
-        type Request = Ping;
+        type Indication = &'static StaticPong;
+        type Request = &'static StaticPing;
     }
 
     #[derive(Default)]
@@ -365,17 +359,17 @@ pub mod component_pingpong {
     impl Provide<ControlPort> for Pinger {
         fn handle(&mut self, event: ControlEvent) -> () {
             match event {
-                ControlEvent::Start => self.ppp.trigger(Ping),
+                ControlEvent::Start => self.ppp.trigger(&STATIC_PING),
                 _ => (), // ignore
             }
         }
     }
 
     impl Require<PingPongPort> for Pinger {
-        fn handle(&mut self, _event: Pong) -> () {
+        fn handle(&mut self, _event: &StaticPong) -> () {
             if self.count_down > 0 {
                 self.count_down -= 1;
-                self.ppp.trigger(Ping);
+                self.ppp.trigger(&STATIC_PING);
             } else {
                 let _ = self.latch.decrement();
             }
@@ -404,8 +398,8 @@ pub mod component_pingpong {
     }
 
     impl Provide<PingPongPort> for Ponger {
-        fn handle(&mut self, _event: Ping) -> () {
-            self.ppp.trigger(Pong);
+        fn handle(&mut self, _event: &StaticPing) -> () {
+            self.ppp.trigger(&STATIC_PONG);
         }
     }
 }

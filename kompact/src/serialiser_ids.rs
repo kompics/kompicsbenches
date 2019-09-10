@@ -1,5 +1,7 @@
-pub const NETPP_ID: u64 = 42;
-pub const NETTPPP_ID: u64 = 43;
+pub const PING_ID: u64 = 50;
+pub const PONG_ID: u64 = 51;
+pub const STATIC_PING_ID: u64 = 52;
+pub const STATIC_PONG_ID: u64 = 53;
 
 /* serids for Partitioning Actor messages */
 pub const PARTITIONING_INIT_MSG: u64 = 44;

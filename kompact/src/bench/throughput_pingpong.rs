@@ -2,33 +2,9 @@ use super::*;
 
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::ThroughputPingPongRequest;
 use kompact::prelude::*;
+use messages::{Ping, Pong, StaticPing, StaticPong, STATIC_PING, STATIC_PONG};
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-
-#[derive(Clone, Debug)]
-pub struct StaticPing;
-const PING: StaticPing = StaticPing;
-#[derive(Clone, Debug)]
-pub struct StaticPong;
-const PONG: StaticPong = StaticPong;
-#[derive(Clone, Debug)]
-pub struct Ping {
-    pub index: u64,
-}
-impl Ping {
-    pub fn new(index: u64) -> Ping {
-        Ping { index }
-    }
-}
-#[derive(Clone, Debug)]
-pub struct Pong {
-    pub index: u64,
-}
-impl Pong {
-    pub fn new(index: u64) -> Pong {
-        Pong { index }
-    }
-}
 
 pub struct Params {
     pub num_msgs: u64,
@@ -117,18 +93,32 @@ where
         }
     }
 
-    pub fn actor_ref_for_each<F>(&self, mut f: F) -> ()
-    where
-        F: FnMut(ActorRef),
-    {
+    // pub fn actor_ref_for_each<F>(&self, mut f: F) -> ()
+    // where
+    //     F: FnMut(ActorRef),
+    // {
+    //     match self {
+    //         EitherComponents::StaticOnly(components) => {
+    //             components.iter().map(|c| c.actor_ref()).for_each(|r| f(r))
+    //         }
+    //         EitherComponents::NonStatic(components) => {
+    //             components.iter().map(|c| c.actor_ref()).for_each(|r| f(r))
+    //         }
+    //         EitherComponents::Empty => (), // nothing to do
+    //     }
+    // }
+
+    pub fn hold_all(&self) -> Vec<ActorRefStrong> {
         match self {
-            EitherComponents::StaticOnly(components) => {
-                components.iter().map(|c| c.actor_ref()).for_each(|r| f(r))
-            }
-            EitherComponents::NonStatic(components) => {
-                components.iter().map(|c| c.actor_ref()).for_each(|r| f(r))
-            }
-            EitherComponents::Empty => (), // nothing to do
+            EitherComponents::StaticOnly(components) => components
+                .iter()
+                .map(|c| c.actor_ref().hold().expect("Live ref"))
+                .collect(),
+            EitherComponents::NonStatic(components) => components
+                .iter()
+                .map(|c| c.actor_ref().hold().expect("Live ref"))
+                .collect(),
+            EitherComponents::Empty => Vec::new(), // nothing to do
         }
     }
 }
@@ -158,6 +148,7 @@ pub mod actor_pingpong {
         params: Option<Params>,
         system: Option<KompactSystem>,
         pingers: EitherComponents<StaticPinger, Pinger>,
+        pinger_refs: Vec<ActorRefStrong>,
         pongers: EitherComponents<StaticPonger, Ponger>,
         latch: Option<Arc<CountdownEvent>>,
     }
@@ -168,6 +159,7 @@ pub mod actor_pingpong {
                 params: None,
                 system: None,
                 pingers: EitherComponents::Empty,
+                pinger_refs: Vec::new(),
                 pongers: EitherComponents::Empty,
                 latch: None,
             }
@@ -240,7 +232,7 @@ pub mod actor_pingpong {
                             .start_all(system)
                             .expect("Pingers did not start correctly!");
 
-                        self.pongers = pongers;
+                        self.pongers = pongers;                        self.pinger_refs = pingers.hold_all();
                         self.pingers = pingers;
                         self.latch = Some(latch);
                     }
@@ -254,8 +246,9 @@ pub mod actor_pingpong {
             match self.system {
                 Some(ref system) => {
                     let latch = self.latch.take().unwrap();
-                    self.pingers.actor_ref_for_each(|pinger_ref| {
-                        pinger_ref.tell(&START, system);
+                    let sys_ref = system.actor_ref();
+                    self.pinger_refs.iter().for_each(|pinger_ref| {
+                        pinger_ref.tell(&START, &sys_ref);
                     });
                     latch.wait();
                 }
@@ -265,6 +258,7 @@ pub mod actor_pingpong {
 
         fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
             let system = self.system.take().unwrap();
+            self.pinger_refs.clear();
             self.pingers
                 .take()
                 .kill_all(&system)
@@ -293,7 +287,7 @@ pub mod actor_pingpong {
     struct StaticPinger {
         ctx: ComponentContext<StaticPinger>,
         latch: Arc<CountdownEvent>,
-        ponger: ActorRef,
+        ponger: ActorRefStrong,
         count: u64,
         pipeline: u64,
         sent_count: u64,
@@ -310,7 +304,7 @@ pub mod actor_pingpong {
             StaticPinger {
                 ctx: ComponentContext::new(),
                 latch,
-                ponger,
+                ponger: ponger.hold().expect("Live ref"),
                 count,
                 pipeline,
                 sent_count: 0,
@@ -330,7 +324,7 @@ pub mod actor_pingpong {
             if msg.is::<Start>() {
                 let mut pipelined: u64 = 0;
                 while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-                    self.ponger.tell(&PING, &self.ctx);
+                    self.ponger.tell(&STATIC_PING, &self.ctx);
                     self.sent_count += 1;
                     pipelined += 1;
                 }
@@ -338,7 +332,7 @@ pub mod actor_pingpong {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
-                        self.ponger.tell(&PING, &self.ctx);
+                        self.ponger.tell(&STATIC_PING, &self.ctx);
                         self.sent_count += 1;
                     }
                 } else {
@@ -386,7 +380,7 @@ pub mod actor_pingpong {
     impl Actor for StaticPonger {
         fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
             if msg.is::<StaticPing>() {
-                sender.tell(&PONG, &self.ctx);
+                sender.tell(&STATIC_PONG, &self.ctx);
             } else {
                 crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
                 unimplemented!(); // shouldn't happen during the test
@@ -406,7 +400,7 @@ pub mod actor_pingpong {
     struct Pinger {
         ctx: ComponentContext<Pinger>,
         latch: Arc<CountdownEvent>,
-        ponger: ActorRef,
+        ponger: ActorRefStrong,
         count: u64,
         pipeline: u64,
         sent_count: u64,
@@ -418,7 +412,7 @@ pub mod actor_pingpong {
             Pinger {
                 ctx: ComponentContext::new(),
                 latch,
-                ponger,
+                ponger: ponger.hold().expect("Live ref"),
                 count,
                 pipeline,
                 sent_count: 0,
