@@ -9,7 +9,14 @@ import kompics.benchmarks.benchmarks.PingPongRequest
 import scalapb.GeneratedMessage
 import se.kth.benchmarks.Benchmark
 import se.kth.benchmarks.akka.ActorSystemProvider
-import se.kth.benchmarks.akka.typed_bench.PingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunIteration, StartActors, StopActors, SystemMessage}
+import se.kth.benchmarks.akka.typed_bench.PingPong.SystemSupervisor.{
+  GracefulShutdown,
+  OperationSucceeded,
+  RunIteration,
+  StartActors,
+  StopActors,
+  SystemMessage
+}
 import akka.util.Timeout
 
 import scala.concurrent.{Await, Future}
@@ -26,14 +33,14 @@ object PingPong extends Benchmark {
 
   class PingPongI extends Instance {
 
-    private var num = -1l;
+    private var num = -1L;
     private var system: ActorSystem[SystemMessage] = null
     private var latch: CountDownLatch = null;
 
     override def setup(c: Conf): Unit = {
       println("Atomic Register(Master) setup!")
       this.num = c.numberOfMessages
-      system = ActorSystemProvider.newTypedActorSystem[SystemMessage](SystemSupervisor(), "typed_pingpong", 2)
+      this.system = ActorSystemProvider.newTypedActorSystem[SystemMessage](SystemSupervisor(), "typed_pingpong", 2)
     }
 
     override def prepareIteration(): Unit = {
@@ -64,7 +71,7 @@ object PingPong extends Benchmark {
       val result: Future[SystemSupervisor.OperationSucceeded.type] = system.ask(ref => SystemSupervisor.StopActors(ref))
       implicit val ec = system.executionContext
       Await.result(result, 3 seconds)
-      if (lastIteration){
+      if (lastIteration) {
 //        system.terminate();
         system ! GracefulShutdown
         Await.ready(system.whenTerminated, 5.second);
@@ -76,7 +83,8 @@ object PingPong extends Benchmark {
 
   object SystemSupervisor {
     sealed trait SystemMessage
-    case class StartActors(replyTo: ActorRef[OperationSucceeded.type], latch: CountDownLatch, num: Long) extends SystemMessage
+    case class StartActors(replyTo: ActorRef[OperationSucceeded.type], latch: CountDownLatch, num: Long)
+        extends SystemMessage
     case object RunIteration extends SystemMessage
     case class StopActors(replyTo: ActorRef[OperationSucceeded.type]) extends SystemMessage
     case object GracefulShutdown extends SystemMessage
@@ -85,7 +93,7 @@ object PingPong extends Benchmark {
     def apply(): Behavior[SystemMessage] = Behaviors.setup(context => new SystemSupervisor(context))
   }
 
-  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage]{
+  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
 
     var pinger: ActorRef[MsgForPinger] = null
     var ponger: ActorRef[Ping] = null
@@ -128,11 +136,13 @@ object PingPong extends Benchmark {
   case object Pong extends MsgForPinger
   case object Run extends MsgForPinger
 
-  object Pinger{
-    def apply(latch: CountDownLatch, count: Long, ponger: ActorRef[Ping]): Behavior[MsgForPinger] = Behaviors.setup(context => new Pinger(context, latch, count, ponger))
+  object Pinger {
+    def apply(latch: CountDownLatch, count: Long, ponger: ActorRef[Ping]): Behavior[MsgForPinger] =
+      Behaviors.setup(context => new Pinger(context, latch, count, ponger))
   }
 
-  class Pinger(context: ActorContext[MsgForPinger], latch: CountDownLatch, count: Long, ponger: ActorRef[Ping]) extends AbstractBehavior[MsgForPinger]{
+  class Pinger(context: ActorContext[MsgForPinger], latch: CountDownLatch, count: Long, ponger: ActorRef[Ping])
+      extends AbstractBehavior[MsgForPinger] {
     var countDown = count;
     val selfRef = context.self
 
@@ -140,7 +150,7 @@ object PingPong extends Benchmark {
       msg match {
         case Run => ponger ! Ping(selfRef)
         case Pong => {
-          if (countDown > 0){
+          if (countDown > 0) {
             countDown -= 1
             ponger ! Ping(selfRef)
           } else latch.countDown()
@@ -150,11 +160,11 @@ object PingPong extends Benchmark {
     }
   }
 
-  object Ponger{
+  object Ponger {
     def apply(): Behavior[Ping] = Behaviors.setup(context => new Ponger(context))
   }
 
-  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping]{
+  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping] {
     override def onMessage(msg: Ping): Behavior[Ping] = {
       msg.src ! Pong
       this

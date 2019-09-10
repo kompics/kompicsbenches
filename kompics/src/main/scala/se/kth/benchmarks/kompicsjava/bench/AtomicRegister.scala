@@ -4,7 +4,7 @@ import java.util.UUID
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
-import se.kth.benchmarks.{ClientEntry, DistributedBenchmark}
+import se.kth.benchmarks.{ClientEntry, DeploymentMetaData, DistributedBenchmark}
 import se.kth.benchmarks.kompicsjava.broadcast.{BEBComp, BestEffortBroadcast => JBestEffortBroadcast}
 import se.kth.benchmarks.kompicsjava.bench.atomicregister.{AtomicRegister => JAtomicRegister, AtomicRegisterSerializer}
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
@@ -22,6 +22,9 @@ object AtomicRegister extends DistributedBenchmark {
   override type ClientConf = ClientParams;
   override type ClientData = NetAddress;
 
+  AtomicRegisterSerializer.register();
+  JPartitioningCompSerializer.register();
+
   class MasterImpl extends Master {
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
@@ -35,15 +38,18 @@ object AtomicRegister extends DistributedBenchmark {
     private var finished_latch: CountDownLatch = null;
     private var init_id: Int = -1;
 
-    override def setup(c: MasterConf): ClientConf = {
-      println("Atomic Register setup!")
-      system = KompicsSystemProvider.newRemoteKompicsSystem(1);
-      AtomicRegisterSerializer.register();
-      JPartitioningCompSerializer.register();
+    override def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf] = Try {
+      println("Atomic Register setup!");
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
+      val num_nodes = meta.numberOfClients;
+      assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
+      assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
+      assert((1.0 - (read_workload + write_workload)) < 0.00001,
+             s"Invalid workload sum ${read_workload + write_workload} != 1.0");
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       ClientParams(read_workload, write_workload)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
@@ -66,7 +72,6 @@ object AtomicRegister extends DistributedBenchmark {
       /* connect Iteration prepare component */
       val nodes = addr :: d
       val num_nodes = nodes.size
-      assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
       init_id += 1
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)

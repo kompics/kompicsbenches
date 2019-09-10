@@ -3,11 +3,11 @@ package se.kth.benchmarks.akka.bench
 import akka.actor._
 import akka.serialization.Serializer
 import akka.util.ByteString
-import se.kth.benchmarks.akka.{ ActorSystemProvider, SerializerBindings, SerializerIds }
+import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
-import scala.util.{ Try, Success, Failure }
-import scala.concurrent.{ Future, Await }
+import scala.util.{Failure, Success, Try}
+import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 
@@ -33,38 +33,39 @@ object NetThroughputPingPong extends DistributedBenchmark {
 
     implicit val ec = scala.concurrent.ExecutionContext.global;
 
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: ActorSystem = null;
     private var pingers: List[ActorRef] = List.empty;
     private var latch: CountDownLatch = null;
     private var run_id = -1
 
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = ActorSystemProvider.newRemoteActorSystem(
-        name = "tppingpong",
-        threads = Runtime.getRuntime.availableProcessors(),
-        serialization = serializers);
+      this.system = ActorSystemProvider.newRemoteActorSystem(name = "tppingpong",
+                                                             threads = Runtime.getRuntime.availableProcessors(),
+                                                             serialization = serializers);
       ClientParams(numPairs, staticOnly)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
-      val pongersF = Future.sequence(d.head.actorPaths.map(pongerPath => system.actorSelection(pongerPath).resolveOne(5 seconds)));
+      val pongersF =
+        Future.sequence(d.head.actorPaths.map(pongerPath => system.actorSelection(pongerPath).resolveOne(5 seconds)));
       val pongers = Await.result(pongersF, 5 seconds);
       println(s"Resolved paths to ${pongers.mkString}");
       latch = new CountDownLatch(numPairs);
       run_id += 1
       if (staticOnly) {
-        pingers = pongers.zipWithIndex.map{
-          case (ponger, i) => system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
+        pingers = pongers.zipWithIndex.map {
+          case (ponger, i) =>
+            system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       } else {
-        pingers = pongers.zipWithIndex.map{
+        pingers = pongers.zipWithIndex.map {
           case (ponger, i) => system.actorOf(Props(new Pinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       }
@@ -95,10 +96,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var pongers: List[ActorRef] = List.empty;
 
     override def setup(c: ClientConf): ClientData = {
-      system = ActorSystemProvider.newRemoteActorSystem(
-        name = "pingpong",
-        threads = 1,
-        serialization = serializers);
+      system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1, serialization = serializers);
       if (c.staticOnly) {
         pongers = (1 to c.numPongers).map(i => system.actorOf(Props(new StaticPonger), s"ponger$i")).toList;
       } else {
@@ -163,7 +161,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
 
   class PingPongSerializer extends Serializer {
     import PingPongSerializer._;
-    import java.nio.{ ByteBuffer, ByteOrder }
+    import java.nio.{ByteBuffer, ByteOrder}
 
     implicit val order = ByteOrder.BIG_ENDIAN;
 
@@ -197,16 +195,16 @@ object NetThroughputPingPong extends DistributedBenchmark {
   }
 
   class StaticPinger(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef) extends Actor {
-    var sentCount = 0l;
-    var recvCount = 0l;
+    var sentCount = 0L;
+    var recvCount = 0L;
 
     override def receive = {
       case Start => {
-        var pipelined = 0l;
+        var pipelined = 0L;
         while (pipelined < pipeline && sentCount < count) {
           ponger ! StaticPing;
-          pipelined += 1l;
-          sentCount += 1l;
+          pipelined += 1L;
+          sentCount += 1L;
         }
       }
       case StaticPong => {
@@ -232,16 +230,16 @@ object NetThroughputPingPong extends DistributedBenchmark {
   }
 
   class Pinger(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef) extends Actor {
-    var sentCount = 0l;
-    var recvCount = 0l;
+    var sentCount = 0L;
+    var recvCount = 0L;
 
     override def receive = {
       case Start => {
-        var pipelined = 0l;
+        var pipelined = 0L;
         while (pipelined < pipeline && sentCount < count) {
           ponger ! Ping(sentCount);
-          pipelined += 1l;
-          sentCount += 1l;
+          pipelined += 1L;
+          sentCount += 1L;
         }
       }
       case Pong(_) => {

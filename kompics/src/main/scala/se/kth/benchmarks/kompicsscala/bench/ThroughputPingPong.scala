@@ -35,7 +35,7 @@ object ThroughputPingPong extends Benchmark {
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = KompicsSystemProvider.newKompicsSystem(threads = Runtime.getRuntime.availableProcessors());
+      this.system = KompicsSystemProvider.newKompicsSystem(threads = Runtime.getRuntime.availableProcessors());
     }
     override def prepareIteration(): Unit = {
       assert(system != null);

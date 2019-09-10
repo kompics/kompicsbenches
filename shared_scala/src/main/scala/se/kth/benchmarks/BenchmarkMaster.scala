@@ -236,72 +236,88 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       case Success(masterConf) => {
         state cas (State.READY -> State.SETUP);
         val rp = Promise.apply[TestResult];
+        val meta = DeploymentMetaData(clients.size);
 
         logger.info(s"Starting distributed test ${b.getClass.getCanonicalName}");
 
         val exF = Future {
           val master = b.newMaster();
-          val clientConf = master.setup(masterConf);
-          val clientConfS = b.clientConfToString(clientConf);
-          val clientSetup = SetupConfig(b.getClass.getCanonicalName, clientConfS);
-          val clientDataRLF = Future.sequence(clients.map(_.stub.setup(clientSetup)));
-          val clientDataLF = clientDataRLF.flatMap(l => {
-            logger.debug(s"Got ${l.length} setup responses.");
-            val (successes, failures) = l.partition(sr => sr.success);
-            if (failures.isEmpty) {
-              val deserRes = successes.map { sr =>
-                val cd = b.strToClientData(sr.data);
-                logger.trace(s"Setup response ${sr.data} deserialised to $cd");
-                cd
-              };
-              val (deserSuccesses, deserFailures) = deserRes.partition(_.isSuccess);
-              if (deserFailures.isEmpty) {
-                val deserData = deserSuccesses.map(_.get);
-                Future.successful(deserData)
-              } else {
-                val msg =
-                  s"Client Data Deserialisation Errors: ${deserFailures.map(_.asInstanceOf[Failure[b.ClientData]]).map(_.exception.getMessage()).mkString("[", ";", "]")}";
-                Future.failed(new BenchmarkException(msg))
-              }
-            } else {
-              val msg = s"Client Setup Errors: ${failures.map(_.data).mkString("[", ";", "]")}";
-              Future.failed(new BenchmarkException(msg))
-            }
-          });
-          def iteration(clientDataL: List[b.ClientData], nRuns: Int, results: List[Double]): Future[IterationData] = {
+          master.setup(masterConf, meta) match {
+            case Success(clientConf) => {
+              val clientConfS = b.clientConfToString(clientConf);
+              val clientSetup = SetupConfig(b.getClass.getCanonicalName, clientConfS);
+              val clientDataRLF = Future.sequence(clients.map(_.stub.setup(clientSetup)));
+              val clientDataLF = clientDataRLF.flatMap(l => {
+                logger.debug(s"Got ${l.length} setup responses.");
+                val (successes, failures) = l.partition(sr => sr.success);
+                if (failures.isEmpty) {
+                  val deserRes = successes.map { sr =>
+                    val cd = b.strToClientData(sr.data);
+                    logger.trace(s"Setup response ${sr.data} deserialised to $cd");
+                    cd
+                  };
+                  val (deserSuccesses, deserFailures) = deserRes.partition(_.isSuccess);
+                  if (deserFailures.isEmpty) {
+                    val deserData = deserSuccesses.map(_.get);
+                    Future.successful(deserData)
+                  } else {
+                    val msg =
+                      s"Client Data Deserialisation Errors: ${deserFailures.map(_.asInstanceOf[Failure[b.ClientData]]).map(_.exception.getMessage()).mkString("[", ";", "]")}";
+                    Future.failed(new BenchmarkException(msg))
+                  }
+                } else {
+                  val msg = s"Client Setup Errors: ${failures.map(_.data).mkString("[", ";", "]")}";
+                  Future.failed(new BenchmarkException(msg))
+                }
+              });
+              def iteration(clientDataL: List[b.ClientData],
+                            nRuns: Int,
+                            results: List[Double]): Future[IterationData] = {
 
-            logger.debug(s"Preparing iteration $nRuns");
-            Try(master.prepareIteration(clientDataL)) match {
-              case Success(_) => {
-                logger.debug(s"Starting iteration $nRuns");
-                Try(BenchmarkRunner.measure(master.runIteration)) match {
-                  case Success(r) => {
-                    logger.debug(s"Finished iteration $nRuns");
-                    val incRuns = nRuns + 1;
-                    val newResults = r :: results;
-                    val done = (incRuns < MIN_RUNS) || (incRuns < MAX_RUNS) && (rse(newResults) > RSE_TARGET);
-                    if (done) {
-                      state cas (State.RUN -> State.CLEANUP);
-                    }
-                    Try(master.cleanupIteration(done, r)) match {
-                      case Success(_) => {
-                        val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(done))));
-                        val iterData = IterationData(incRuns, newResults, done);
-                        f.map(_ => {
-                          if (done) {
-                            state cas (State.CLEANUP -> State.FINISHED);
+                logger.debug(s"Preparing iteration $nRuns");
+                Try(master.prepareIteration(clientDataL)) match {
+                  case Success(_) => {
+                    logger.debug(s"Starting iteration $nRuns");
+                    Try(BenchmarkRunner.measure(master.runIteration)) match {
+                      case Success(r) => {
+                        logger.debug(s"Finished iteration $nRuns");
+                        val incRuns = nRuns + 1;
+                        val newResults = r :: results;
+                        val done = (incRuns < MIN_RUNS) || (incRuns < MAX_RUNS) && (rse(newResults) > RSE_TARGET);
+                        if (done) {
+                          state cas (State.RUN -> State.CLEANUP);
+                        }
+                        Try(master.cleanupIteration(done, r)) match {
+                          case Success(_) => {
+                            val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(done))));
+                            val iterData = IterationData(incRuns, newResults, done);
+                            f.map(_ => {
+                              if (done) {
+                                state cas (State.CLEANUP -> State.FINISHED);
+                              }
+                              iterData
+                            })
                           }
-                          iterData
-                        })
+                          case Failure(e) => {
+                            logger.error(s"Failed during cleanupIteration $nRuns", e);
+                            if (!done) { // try again in final mode
+                              try { // this is likely to fail, but we should still try
+                                master.cleanupIteration(true, 0);
+                              } catch {
+                                case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
+                              }
+                            }
+                            val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
+                            f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
+                          }
+                        }
                       }
                       case Failure(e) => {
-                        logger.error(s"Failed during cleanupIteration $nRuns", e);
-                        if (!done) { // try again in final mode
-                          try { // this is likely to fail, but we should still try
-                            master.cleanupIteration(true, 0);
-                          } catch {
-                            case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
-                          }
+                        logger.error(s"Failed during runIteration $nRuns", e);
+                        try { // this is likely to fail, but we should still try
+                          master.cleanupIteration(true, 0);
+                        } catch {
+                          case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
                         }
                         val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
                         f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
@@ -309,7 +325,7 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
                     }
                   }
                   case Failure(e) => {
-                    logger.error(s"Failed during runIteration $nRuns", e);
+                    logger.error(s"Failed during prepareIteration $nRuns", e);
                     try { // this is likely to fail, but we should still try
                       master.cleanupIteration(true, 0);
                     } catch {
@@ -319,42 +335,36 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
                     f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
                   }
                 }
-              }
-              case Failure(e) => {
-                logger.error(s"Failed during prepareIteration $nRuns", e);
-                try { // this is likely to fail, but we should still try
-                  master.cleanupIteration(true, 0);
-                } catch {
-                  case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
-                }
-                val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
-                f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
-              }
-            }
-          };
-          clientDataLF.map { clientDataL =>
-            state cas (State.SETUP -> State.RUN);
-            logger.debug(s"Going to RUN state and starting first iteration.");
-            // run until RSE target is met
-            def loop(id: IterationData): Unit = {
-              if (id.done) {
-                val tr = resultToTestResult(Success(id.results));
-                logger.debug(s"Finished run.");
-                rp.success(tr)
-              } else {
-                val f = iteration(clientDataL, id.nRuns, id.results);
+              };
+              clientDataLF.map { clientDataL =>
+                state cas (State.SETUP -> State.RUN);
+                logger.debug(s"Going to RUN state and starting first iteration.");
+                // run until RSE target is met
+                def loop(id: IterationData): Unit = {
+                  if (id.done) {
+                    val tr = resultToTestResult(Success(id.results));
+                    logger.debug(s"Finished run.");
+                    rp.success(tr)
+                  } else {
+                    val f = iteration(clientDataL, id.nRuns, id.results);
+                    f.onComplete {
+                      case Success(id) => loop(id)
+                      case Failure(ex) => rp.failure(ex)
+                    };
+                  }
+                };
+                val f = iteration(clientDataL, 0, List.empty[Double]);
                 f.onComplete {
                   case Success(id) => loop(id)
                   case Failure(ex) => rp.failure(ex)
                 };
-              }
-            };
-            val f = iteration(clientDataL, 0, List.empty[Double]);
-            f.onComplete {
-              case Success(id) => loop(id)
-              case Failure(ex) => rp.failure(ex)
-            };
-          };
+              };
+            }
+            case Failure(e) => {
+              Future.failed(e)
+            }
+          }
+
         };
         exF.flatten.failed.foreach { e =>
           logger.error(s"runBenchmark failed!", e);

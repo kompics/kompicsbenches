@@ -2,9 +2,9 @@ package se.kth.benchmarks.akka
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
-import scala.concurrent.{ ExecutionContext, Future }
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
-import se.kth.benchmarks.{ Util, BenchmarkRunner }
+import se.kth.benchmarks.{BenchmarkRunner, Util}
 
 import java.util.logging.Logger
 import java.util.concurrent.Executors

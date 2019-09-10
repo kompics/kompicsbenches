@@ -23,16 +23,17 @@ object NetPingPong extends DistributedBenchmark {
   override type ClientConf = Unit;
   override type ClientData = NetAddress;
 
+  NetPingPongSerializer.register();
+
   class MasterImpl extends Master {
     private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
     private var latch: CountDownLatch = null;
 
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
       this.num = c.numberOfMessages;
-      system = KompicsSystemProvider.newRemoteKompicsSystem(1);
-      NetPingPongSerializer.register();
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(1);
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
       assert(system != null);

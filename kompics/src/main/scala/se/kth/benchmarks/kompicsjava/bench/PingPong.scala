@@ -30,7 +30,7 @@ object PingPong extends Benchmark {
 
     override def setup(c: Conf): Unit = {
       this.num = c.numberOfMessages;
-      system = KompicsSystemProvider.newKompicsSystem(threads = 2);
+      this.system = KompicsSystemProvider.newKompicsSystem(threads = 2);
     }
     override def prepareIteration(): Unit = {
       assert(system != null);

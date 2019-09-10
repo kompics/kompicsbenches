@@ -6,7 +6,7 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import io.netty.buffer.ByteBuf
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import scalapb.GeneratedMessage
-import se.kth.benchmarks.{DistributedBenchmark, kompicsscala}
+import se.kth.benchmarks.{DeploymentMetaData, DistributedBenchmark, kompicsscala}
 
 import scala.concurrent.duration._
 import se.kth.benchmarks.kompicsscala._
@@ -29,6 +29,9 @@ object AtomicRegister extends DistributedBenchmark {
   override type ClientConf = ClientParams
   override type ClientData = NetAddress
 
+  AtomicRegisterSerializer.register();
+  PartitioningCompSerializer.register();
+
   class MasterImpl extends Master {
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
@@ -42,23 +45,26 @@ object AtomicRegister extends DistributedBenchmark {
     private var finished_latch: CountDownLatch = null;
     private var init_id: Int = -1;
 
-    override def setup(c: MasterConf): ClientConf = {
-      system = KompicsSystemProvider.newRemoteKompicsSystem(1);
-      AtomicRegisterSerializer.register();
-      PartitioningCompSerializer.register();
+    override def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf] = Try {
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
+      val num_nodes = meta.numberOfClients;
+      assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
+      assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
+      assert((1.0 - (read_workload + write_workload)) < 0.00001,
+             s"Invalid workload sum ${read_workload + write_workload} != 1.0");
+
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       ClientParams(read_workload, write_workload)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
       assert(system != null);
       val addr = system.networkAddress.get;
       println(s"Atomic Register(Master) Path is $addr");
-      val nodes = addr :: d
-      val num_nodes = nodes.size
-      assert(partition_size <= num_nodes && partition_size > 0 && read_workload + write_workload == 1)
+      val nodes = addr :: d;
+      val num_nodes = nodes.size;
       val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)) // TODO parallelism
       atomicRegister = Await.result(atomicRegisterIdF, 5.second)
       /* connect network */

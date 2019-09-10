@@ -2,10 +2,10 @@ package se.kth.benchmarks.akka.bench
 
 import akka.actor._
 import akka.serialization.Serializer
-import se.kth.benchmarks.akka.{ ActorSystemProvider, SerializerBindings, SerializerIds }
+import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.PingPongRequest
-import scala.util.{ Try, Success, Failure }
+import scala.util.{Failure, Success, Try}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
@@ -25,18 +25,16 @@ object NetPingPong extends DistributedBenchmark {
     .addBinding[Pong.type](PingPongSerializer.NAME);
 
   class MasterImpl extends Master {
-    private var num = -1l;
+    private var num = -1L;
     private var system: ActorSystem = null;
     private var pinger: ActorRef = null;
     private var latch: CountDownLatch = null;
     private var run_id = -1
 
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
       this.num = c.numberOfMessages;
-      system = ActorSystemProvider.newRemoteActorSystem(
-        name = "pingpong",
-        threads = 1,
-        serialization = serializers);
+      this.system =
+        ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1, serialization = serializers);
       ()
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
@@ -75,10 +73,7 @@ object NetPingPong extends DistributedBenchmark {
     private var ponger: ActorRef = null;
 
     override def setup(c: ClientConf): ClientData = {
-      system = ActorSystemProvider.newRemoteActorSystem(
-        name = "pingpong",
-        threads = 1,
-        serialization = serializers);
+      system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1, serialization = serializers);
       ponger = system.actorOf(Props(new Ponger), "ponger");
       val path = ActorSystemProvider.actorPathForRef(ponger, system);
       println(s"Ponger Path is $path");

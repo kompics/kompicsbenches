@@ -15,7 +15,13 @@ import PartitioningActor.{Start, Done, ResolvedNodes, _}
 
 import scala.util.{Failure, Success}
 
-class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int) extends Actor{
+class PartitioningActor(prepare_latch: CountDownLatch,
+                        finished_latch: CountDownLatch,
+                        init_id: Int,
+                        nodes: List[ClientRef],
+                        num_keys: Long,
+                        partition_size: Int)
+    extends Actor {
   val logger = Logging(context.system, this)
   implicit val ec = scala.concurrent.ExecutionContext.global;
 
@@ -27,8 +33,9 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
 
   override def receive: Receive = {
     case Start => {
-      val actorRefsF = Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
-      actorRefsF.onComplete{
+      val actorRefsF =
+        Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
+      actorRefsF.onComplete {
         case Success(actorRefs) => {
           self ! ResolvedNodes(actorRefs)
         }
@@ -52,10 +59,10 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
     }
 
     case ResolvedNodes(resolvedRefs) => {
-      val min_key: Long = 0l
+      val min_key: Long = 0L
       val max_key: Long = num_keys - 1
       resolved_active_nodes = resolvedRefs
-      for ((node, rank) <- resolvedRefs.zipWithIndex){
+      for ((node, rank) <- resolvedRefs.zipWithIndex) {
         node ! Init(rank, init_id, active_nodes, min_key, max_key)
       }
     }
@@ -80,7 +87,7 @@ class PartitioningActor(prepare_latch: CountDownLatch, finished_latch: CountDown
   }
 }
 
-object PartitioningActor{
+object PartitioningActor {
   case object Start
   case class ResolvedNodes(actorRefs: List[ActorRef])
   case class Init(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
@@ -89,7 +96,6 @@ object PartitioningActor{
   case object Done
   case object Identify
 }
-
 
 object PartitioningActorSerializer {
   val NAME = "partitioningactor"
@@ -103,7 +109,7 @@ object PartitioningActorSerializer {
 
 class PartitioningActorSerializer extends Serializer {
   import PartitioningActorSerializer._
-  import java.nio.{ ByteBuffer, ByteOrder }
+  import java.nio.{ByteBuffer, ByteOrder}
 
   implicit val order = ByteOrder.BIG_ENDIAN;
 
@@ -119,7 +125,7 @@ class PartitioningActorSerializer extends Serializer {
         bs.putLong(i.min)
         bs.putLong(i.max)
         bs.putInt(i.nodes.size)
-        for (c_ref <- i.nodes){
+        for (c_ref <- i.nodes) {
           val bytes = c_ref.actorPath.getBytes
           bs.putShort(bytes.size)
           bs.putBytes(bytes)
@@ -129,13 +135,12 @@ class PartitioningActorSerializer extends Serializer {
       case ack: InitAck => {
         ByteString.createBuilder.putByte(INIT_ACK_FLAG).putInt(ack.init_id).result().toArray
       }
-      case Run => Array(RUN_FLAG)
-      case Done => Array(DONE_FLAG)
+      case Run      => Array(RUN_FLAG)
+      case Done     => Array(DONE_FLAG)
       case Identify => Array(IDENTIFY_FLAG)
     }
 
   }
-
 
   override def fromBinary(bytes: Array[Byte], manifest: Option[Class[_]]): AnyRef = {
     val buf = ByteBuffer.wrap(bytes).order(order);
@@ -148,7 +153,7 @@ class PartitioningActorSerializer extends Serializer {
         val max = buf.getLong
         val n = buf.getInt
         var nodes = new ListBuffer[ClientRef]
-        for (_ <- 0 until n){
+        for (_ <- 0 until n) {
           val string_length: Int = buf.getShort
           val bytes = new Array[Byte](string_length)
           buf.get(bytes)
@@ -158,10 +163,9 @@ class PartitioningActorSerializer extends Serializer {
         Init(rank, init_id, nodes.toList, min, max)
       }
       case INIT_ACK_FLAG => InitAck(buf.getInt)
-      case RUN_FLAG => Run
-      case DONE_FLAG => Done
+      case RUN_FLAG      => Run
+      case DONE_FLAG     => Done
       case IDENTIFY_FLAG => Identify
     }
   }
 }
-

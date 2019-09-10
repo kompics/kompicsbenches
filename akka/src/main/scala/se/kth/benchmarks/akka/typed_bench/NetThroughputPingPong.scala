@@ -9,7 +9,7 @@ import akka.serialization.Serializer
 import akka.util.{ByteString, Timeout}
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import scalapb.GeneratedMessage
-import se.kth.benchmarks.DistributedBenchmark
+import se.kth.benchmarks.{DeploymentMetaData, DistributedBenchmark}
 import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.ClientSystemSupervisor.StartPongers
 import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor.{
@@ -49,12 +49,13 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var system: ActorSystem[SystemMessage] = null
     private var latch: CountDownLatch = null;
 
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
       println("NetPingPong setup!")
-      system = ActorSystemProvider.newRemoteTypedActorSystem[SystemMessage](SystemSupervisor(),
-                                                                            "nettpingpong_supervisor",
-                                                                            Runtime.getRuntime.availableProcessors(),
-                                                                            serializers)
+      this.system =
+        ActorSystemProvider.newRemoteTypedActorSystem[SystemMessage](SystemSupervisor(),
+                                                                     "nettpingpong_supervisor",
+                                                                     Runtime.getRuntime.availableProcessors(),
+                                                                     serializers)
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;

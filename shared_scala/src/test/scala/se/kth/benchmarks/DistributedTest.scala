@@ -145,11 +145,11 @@ class FailDistributedBench(val masterFailAt: Option[Stage], val clientFailAt: Op
     }
   }
 
-  class TestDistributedBenchMaster extends Master {
-    override def setup(c: MasterConf): ClientConf = {
+  class FailDistributedBenchMaster extends Master {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
       failIfSome(FailDistributedBench.this.masterFailAt, Stage.Setup);
       FailDistributedBench.this.clientFailAt
-    }
+    };
     override def prepareIteration(d: List[ClientData]): Unit = {
       failIfSome(FailDistributedBench.this.masterFailAt, Stage.Prepare);
     }
@@ -171,7 +171,7 @@ class FailDistributedBench(val masterFailAt: Option[Stage], val clientFailAt: Op
     }
   }
 
-  class TestDistributedBenchClient extends Client {
+  class FailDistributedBenchClient extends Client {
 
     private var failAt: Option[Stage] = None;
 
@@ -191,10 +191,10 @@ class FailDistributedBench(val masterFailAt: Option[Stage], val clientFailAt: Op
     }
   }
 
-  override def newMaster(): Master = new TestDistributedBenchMaster;
+  override def newMaster(): Master = new FailDistributedBenchMaster;
   override def msgToMasterConf(msg: scalapb.GeneratedMessage): Try[MasterConf] = Success(());
 
-  override def newClient(): Client = new TestDistributedBenchClient;
+  override def newClient(): Client = new FailDistributedBenchClient;
   override def strToClientConf(str: String): Try[ClientConf] = {
     if (str.isEmpty) {
       Success(None)
@@ -219,8 +219,9 @@ object TestDistributedBench extends DistributedBenchmark {
   type ClientData = Unit;
 
   class TestDistributedBenchMaster extends Master with StrictLogging {
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = {
       logger.trace("Master setting up.");
+      Success(())
     }
     override def prepareIteration(d: List[ClientData]): Unit = {
       logger.trace("Master preparing iteration.");

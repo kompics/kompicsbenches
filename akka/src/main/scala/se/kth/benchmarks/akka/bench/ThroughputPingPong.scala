@@ -3,7 +3,7 @@ package se.kth.benchmarks.akka.bench
 import se.kth.benchmarks.akka.ActorSystemProvider
 import se.kth.benchmarks.Benchmark
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
-import akka.actor.{ ActorSystem, Actor, ActorRef, Props, PoisonPill }
+import akka.actor.{Actor, ActorRef, ActorSystem, PoisonPill, Props}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.Try
@@ -19,9 +19,9 @@ object ThroughputPingPong extends Benchmark {
 
   class PingPongI extends Instance {
 
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true;
     private var system: ActorSystem = null;
     private var pingers: List[ActorRef] = List.empty;
@@ -33,9 +33,8 @@ object ThroughputPingPong extends Benchmark {
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = ActorSystemProvider.newActorSystem(
-        name = "tppingpong", threads =
-        Runtime.getRuntime.availableProcessors());
+      this.system =
+        ActorSystemProvider.newActorSystem(name = "tppingpong", threads = Runtime.getRuntime.availableProcessors());
     }
     override def prepareIteration(): Unit = {
       assert(system != null);
@@ -84,24 +83,24 @@ object ThroughputPingPong extends Benchmark {
   case class Pong(index: Long);
 
   class StaticPinger(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef) extends Actor {
-    var sentCount = 0l;
-    var recvCount = 0l;
+    var sentCount = 0L;
+    var recvCount = 0L;
 
     override def receive = {
       case Start => {
-        var pipelined = 0l;
+        var pipelined = 0L;
         while (pipelined < pipeline && sentCount < count) {
           ponger ! StaticPing;
-          pipelined += 1l;
-          sentCount += 1l;
+          pipelined += 1L;
+          sentCount += 1L;
         }
       }
       case StaticPong => {
-        recvCount += 1l;
+        recvCount += 1L;
         if (recvCount < count) {
           if (sentCount < count) {
             ponger ! StaticPing;
-            sentCount += 1l;
+            sentCount += 1L;
           }
         } else {
           latch.countDown();
@@ -119,24 +118,24 @@ object ThroughputPingPong extends Benchmark {
   }
 
   class Pinger(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef) extends Actor {
-    var sentCount = 0l;
-    var recvCount = 0l;
+    var sentCount = 0L;
+    var recvCount = 0L;
 
     override def receive = {
       case Start => {
-        var pipelined = 0l;
+        var pipelined = 0L;
         while (pipelined < pipeline && sentCount < count) {
           ponger ! Ping(sentCount);
-          pipelined += 1l;
-          sentCount += 1l;
+          pipelined += 1L;
+          sentCount += 1L;
         }
       }
       case Pong(_) => {
-        recvCount += 1l;
+        recvCount += 1L;
         if (recvCount < count) {
           if (sentCount < count) {
             ponger ! Ping(sentCount);
-            sentCount += 1l;
+            sentCount += 1L;
           }
         } else {
           latch.countDown();

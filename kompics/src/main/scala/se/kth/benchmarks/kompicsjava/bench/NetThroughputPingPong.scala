@@ -34,13 +34,15 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var pingers: List[UUID] = List.empty;
     private var latch: CountDownLatch = null;
 
-    override def setup(c: MasterConf): ClientConf = {
+    override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
+      NetPingPongSerializer.register();
+
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = KompicsSystemProvider.newRemoteKompicsSystem(Runtime.getRuntime.availableProcessors());
-      NetPingPongSerializer.register();
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(Runtime.getRuntime.availableProcessors());
+
       ClientParams(numPairs, staticOnly)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {

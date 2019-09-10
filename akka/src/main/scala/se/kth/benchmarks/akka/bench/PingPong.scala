@@ -3,7 +3,7 @@ package se.kth.benchmarks.akka.bench
 import se.kth.benchmarks.akka.ActorSystemProvider
 import se.kth.benchmarks.Benchmark
 import kompics.benchmarks.benchmarks.PingPongRequest
-import akka.actor.{ ActorSystem, Actor, ActorRef, Props, PoisonPill }
+import akka.actor.{Actor, ActorRef, ActorSystem, PoisonPill, Props}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.Try
@@ -19,7 +19,7 @@ object PingPong extends Benchmark {
 
   class PingPongI extends Instance {
 
-    private var num = -1l;
+    private var num = -1L;
     private var system: ActorSystem = null;
     private var pinger: ActorRef = null;
     private var ponger: ActorRef = null;
@@ -27,7 +27,7 @@ object PingPong extends Benchmark {
 
     override def setup(c: Conf): Unit = {
       this.num = c.numberOfMessages;
-      system = ActorSystemProvider.newActorSystem(name = "pingpong", threads = 2);
+      this.system = ActorSystemProvider.newActorSystem(name = "pingpong", threads = 2);
     }
     override def prepareIteration(): Unit = {
       assert(system != null);
@@ -73,7 +73,7 @@ object PingPong extends Benchmark {
       }
       case Pong => {
         if (countDown > 0) {
-          countDown -= 1l;
+          countDown -= 1L;
           ponger ! Ping;
         } else {
           latch.countDown();

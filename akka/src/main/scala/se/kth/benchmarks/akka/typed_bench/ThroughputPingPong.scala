@@ -11,13 +11,20 @@ import scalapb.GeneratedMessage
 import se.kth.benchmarks.Benchmark
 import se.kth.benchmarks.akka.ActorSystemProvider
 import se.kth.benchmarks.akka.bench.ThroughputPingPong.{Conf, Ping}
-import se.kth.benchmarks.akka.typed_bench.ThroughputPingPong.SystemSupervisor.{GracefulShutdown, OperationSucceeded, RunIteration, StartActors, StopActors, SystemMesssage}
+import se.kth.benchmarks.akka.typed_bench.ThroughputPingPong.SystemSupervisor.{
+  GracefulShutdown,
+  OperationSucceeded,
+  RunIteration,
+  StartActors,
+  StopActors,
+  SystemMesssage
+}
 
 import scala.util.Try
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 
-object ThroughputPingPong extends Benchmark{
+object ThroughputPingPong extends Benchmark {
   override type Conf = ThroughputPingPongRequest
 
   override def msgToConf(msg: scalapb.GeneratedMessage): Try[Conf] = {
@@ -27,9 +34,9 @@ object ThroughputPingPong extends Benchmark{
   override def newInstance(): ThroughputPingPong.Instance = new PingPongI
 
   class PingPongI extends Instance {
-    private var numMsgs = -1l;
+    private var numMsgs = -1L;
     private var numPairs = -1;
-    private var pipeline = -1l;
+    private var pipeline = -1L;
     private var staticOnly = true
     private var system: ActorSystem[SystemMesssage] = null
     private var latch: CountDownLatch = null
@@ -39,7 +46,9 @@ object ThroughputPingPong extends Benchmark{
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
       this.staticOnly = c.staticOnly;
-      system = ActorSystemProvider.newTypedActorSystem[SystemMesssage](SystemSupervisor(), "typed_tppingpong", Runtime.getRuntime.availableProcessors())
+      this.system = ActorSystemProvider.newTypedActorSystem[SystemMesssage](SystemSupervisor(),
+                                                                            "typed_tppingpong",
+                                                                            Runtime.getRuntime.availableProcessors())
     }
 
     override def prepareIteration(): Unit = {
@@ -47,7 +56,8 @@ object ThroughputPingPong extends Benchmark{
       latch = new CountDownLatch(numPairs);
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
-      val f: Future[OperationSucceeded.type] = system.ask(ref => StartActors(ref, latch, numMsgs, numPairs, pipeline, staticOnly))
+      val f: Future[OperationSucceeded.type] =
+        system.ask(ref => StartActors(ref, latch, numMsgs, numPairs, pipeline, staticOnly))
       implicit val ec = system.executionContext
       Await.result(f, 5 seconds)
     }
@@ -79,7 +89,13 @@ object ThroughputPingPong extends Benchmark{
 
   object SystemSupervisor {
     sealed trait SystemMesssage
-    case class StartActors(replyTo: ActorRef[OperationSucceeded.type], latch: CountDownLatch, numMsgs: Long, numPairs: Int, pipeline: Long, staticOnly: Boolean) extends SystemMesssage
+    case class StartActors(replyTo: ActorRef[OperationSucceeded.type],
+                           latch: CountDownLatch,
+                           numMsgs: Long,
+                           numPairs: Int,
+                           pipeline: Long,
+                           staticOnly: Boolean)
+        extends SystemMesssage
     case object RunIteration extends SystemMesssage
     case class StopActors(replyTo: ActorRef[OperationSucceeded.type]) extends SystemMesssage
     case object GracefulShutdown extends SystemMesssage
@@ -88,7 +104,7 @@ object ThroughputPingPong extends Benchmark{
     def apply(): Behavior[SystemMesssage] = Behaviors.setup(context => new SystemSupervisor(context))
   }
 
-  class SystemSupervisor(context: ActorContext[SystemMesssage]) extends AbstractBehavior[SystemMesssage]{
+  class SystemSupervisor(context: ActorContext[SystemMesssage]) extends AbstractBehavior[SystemMesssage] {
 
     var pingers: List[ActorRef[MsgForPinger]] = null
     var pongers: List[ActorRef[Ping]] = null
@@ -104,15 +120,22 @@ object ThroughputPingPong extends Benchmark{
           run_id += 1
           this.staticOnly = s.staticOnly
           val indexes = (1 to s.numPairs).toList;
-          if (staticOnly){
+          if (staticOnly) {
             static_pongers = indexes.map(i => context.spawn(StaticPonger(), s"typed_staticponger${run_id}_$i"))
           } else {
             pongers = indexes.map(i => context.spawn(Ponger(), s"typed_ponger${run_id}_$i"))
           }
-          if (staticOnly){
-            static_pingers = static_pongers.zipWithIndex.map{ case(static_ponger, i) => context.spawn(StaticPinger(s.latch, s.numMsgs, s.pipeline, static_ponger), s"typed_staticpinger${run_id}_$i")}
+          if (staticOnly) {
+            static_pingers = static_pongers.zipWithIndex.map {
+              case (static_ponger, i) =>
+                context.spawn(StaticPinger(s.latch, s.numMsgs, s.pipeline, static_ponger),
+                              s"typed_staticpinger${run_id}_$i")
+            }
           } else {
-            pingers = pongers.zipWithIndex.map{ case(ponger, i) => context.spawn(Pinger(s.latch, s.numMsgs, s.pipeline, ponger), s"typed_pinger${run_id}_$i")}
+            pingers = pongers.zipWithIndex.map {
+              case (ponger, i) =>
+                context.spawn(Pinger(s.latch, s.numMsgs, s.pipeline, ponger), s"typed_pinger${run_id}_$i")
+            }
           }
           s.replyTo ! OperationSucceeded
           context.log.info("StartActors completed")
@@ -124,22 +147,21 @@ object ThroughputPingPong extends Benchmark{
           this
         }
         case StopActors(replyTo: ActorRef[OperationSucceeded.type]) => {
-          if (staticOnly){
-            if (static_pongers.nonEmpty){
+          if (staticOnly) {
+            if (static_pongers.nonEmpty) {
               static_pongers.foreach(static_ponger => context.stop(static_ponger))
               static_pongers = List.empty
             }
-            if (static_pingers.nonEmpty){
+            if (static_pingers.nonEmpty) {
               static_pingers.foreach(static_pinger => context.stop(static_pinger))
               static_pingers = List.empty
             }
-          }
-          else{
-            if (pongers.nonEmpty){
+          } else {
+            if (pongers.nonEmpty) {
               pongers.foreach(ponger => context.stop(ponger))
               pongers = List.empty
             }
-            if (pingers.nonEmpty){
+            if (pingers.nonEmpty) {
               pingers.foreach(pinger => context.stop(pinger))
               pingers = List.empty
             }
@@ -160,30 +182,36 @@ object ThroughputPingPong extends Benchmark{
   case object RunPinger extends MsgForPinger
 
   object Pinger {
-    def apply(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef[Ping]): Behavior[MsgForPinger] = Behaviors.setup(context => new Pinger(context, latch, count, pipeline, ponger))
+    def apply(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef[Ping]): Behavior[MsgForPinger] =
+      Behaviors.setup(context => new Pinger(context, latch, count, pipeline, ponger))
   }
 
-  class Pinger(context: ActorContext[MsgForPinger], latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef[Ping]) extends AbstractBehavior[MsgForPinger]{
-    var sentCount = 0l;
-    var recvCount = 0l;
+  class Pinger(context: ActorContext[MsgForPinger],
+               latch: CountDownLatch,
+               count: Long,
+               pipeline: Long,
+               ponger: ActorRef[Ping])
+      extends AbstractBehavior[MsgForPinger] {
+    var sentCount = 0L;
+    var recvCount = 0L;
     val selfRef = context.self
 
     override def onMessage(msg: MsgForPinger): Behavior[MsgForPinger] = {
       msg match {
         case RunPinger => {
-          var pipelined = 0l;
+          var pipelined = 0L;
           while (pipelined < pipeline && sentCount < count) {
             ponger ! Ping(selfRef, sentCount)
-            pipelined += 1l;
-            sentCount += 1l;
+            pipelined += 1L;
+            sentCount += 1L;
           }
         }
         case Pong(_) => {
-          recvCount += 1l;
+          recvCount += 1L;
           if (recvCount < count) {
             if (sentCount < count) {
               ponger ! Ping(selfRef, sentCount);
-              sentCount += 1l;
+              sentCount += 1L;
             }
           } else {
             latch.countDown();
@@ -198,7 +226,7 @@ object ThroughputPingPong extends Benchmark{
     def apply(): Behavior[Ping] = Behaviors.setup(context => new Ponger(context))
   }
 
-  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping]{
+  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping] {
     override def onMessage(msg: Ping): Behavior[Ping] = {
       msg.src ! Pong(msg.index)
       this
@@ -212,30 +240,39 @@ object ThroughputPingPong extends Benchmark{
   case object RunStaticPinger extends MsgForStaticPinger
 
   object StaticPinger {
-    def apply(latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef[StaticPing]): Behavior[MsgForStaticPinger] = Behaviors.setup(context => new StaticPinger(context, latch, count, pipeline, ponger))
+    def apply(latch: CountDownLatch,
+              count: Long,
+              pipeline: Long,
+              ponger: ActorRef[StaticPing]): Behavior[MsgForStaticPinger] =
+      Behaviors.setup(context => new StaticPinger(context, latch, count, pipeline, ponger))
   }
 
-  class StaticPinger(context: ActorContext[MsgForStaticPinger], latch: CountDownLatch, count: Long, pipeline: Long, ponger: ActorRef[StaticPing]) extends AbstractBehavior[MsgForStaticPinger]{
-    var sentCount = 0l;
-    var recvCount = 0l;
+  class StaticPinger(context: ActorContext[MsgForStaticPinger],
+                     latch: CountDownLatch,
+                     count: Long,
+                     pipeline: Long,
+                     ponger: ActorRef[StaticPing])
+      extends AbstractBehavior[MsgForStaticPinger] {
+    var sentCount = 0L;
+    var recvCount = 0L;
     val selfRef = context.self
 
     override def onMessage(msg: MsgForStaticPinger): Behavior[MsgForStaticPinger] = {
       msg match {
         case RunStaticPinger => {
-          var pipelined = 0l;
+          var pipelined = 0L;
           while (pipelined < pipeline && sentCount < count) {
             ponger ! StaticPing(selfRef);
-            pipelined += 1l;
-            sentCount += 1l;
+            pipelined += 1L;
+            sentCount += 1L;
           }
         }
         case StaticPong => {
-          recvCount += 1l;
+          recvCount += 1L;
           if (recvCount < count) {
             if (sentCount < count) {
               ponger ! StaticPing(selfRef);
-              sentCount += 1l;
+              sentCount += 1L;
             }
           } else {
             latch.countDown();
@@ -258,4 +295,3 @@ object ThroughputPingPong extends Benchmark{
   }
 
 }
-
