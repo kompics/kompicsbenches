@@ -52,7 +52,7 @@ fn main() {
         BenchMode::MIXED => {
             BenchmarkMain::run_with(
                 args,
-                benchmark_runner::BenchmarkRunnerComponentImpl::new(),
+                benchmark_runner::BenchmarkRunnerMixedImpl::new(),
                 bench::mixed(),
                 kompact_system_provider::set_global_public_if,
             );

@@ -109,12 +109,6 @@ pub struct MixedFactory;
 impl BenchmarkFactory for MixedFactory {
     fn by_label(&self, label: &str) -> Result<AbstractBench, NotImplementedError> {
         match label {
-            pingpong::component_pingpong::PingPong::LABEL => self.ping_pong().map_into(),
-            netpingpong::PingPong::LABEL => self.net_ping_pong().map_into(),
-            throughput_pingpong::actor_pingpong::PingPong::LABEL => {
-                self.throughput_ping_pong().map_into()
-            }
-            net_throughput_pingpong::PingPong::LABEL => self.net_throughput_ping_pong().map_into(),
             atomicregister::mixed_atomicregister::AtomicRegister::LABEL => {
                 self.atomic_register().map_into()
             }
@@ -127,19 +121,19 @@ impl BenchmarkFactory for MixedFactory {
     }
 
     fn ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(pingpong::component_pingpong::PingPong {}.into())
+        Err(NotImplementedError::NotImplementable)
     }
     fn net_ping_pong(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
-        Ok(netpingpong::PingPong {}.into())
+        Err(NotImplementedError::NotImplementable)
     }
 
     fn throughput_ping_pong(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
-        Ok(throughput_pingpong::component_pingpong::PingPong {}.into())
+        Err(NotImplementedError::NotImplementable)
     }
     fn net_throughput_ping_pong(
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
-        Ok(net_throughput_pingpong::PingPong {}.into())
+        Err(NotImplementedError::NotImplementable)
     }
 
     fn atomic_register(
