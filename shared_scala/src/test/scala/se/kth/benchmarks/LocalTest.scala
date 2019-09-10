@@ -15,6 +15,52 @@ class LocalTest extends FunSuite with Matchers {
     val ltest = new se.kth.benchmarks.test.LocalTest(TestRunner);
     ltest.test();
   }
+
+  test("Local failures") {
+    for (s <- Stage.list) {
+      val ltest = new se.kth.benchmarks.test.LocalTest(new FailRunner(s));
+      ltest.testFail();
+    }
+  }
+}
+
+class FailRunner(s: Stage) extends BenchmarkRunnerGrpc.BenchmarkRunner {
+  implicit val futurePool = ExecutionContext.fromExecutor(Executors.newSingleThreadExecutor());
+
+  override def ready(request: ReadyRequest): Future[ReadyResponse] = {
+    Future.successful(ReadyResponse(true))
+  }
+  override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
+    ???
+  }
+
+  override def pingPong(request: PingPongRequest): Future[TestResult] = {
+    Future {
+      val res = BenchmarkRunner.run(new FailLocalBench(s))(); // fail the first one
+      val msg = BenchmarkRunner.resultToTestResult(res);
+      msg
+    }
+  }
+
+  override def netPingPong(request: PingPongRequest): Future[TestResult] = {
+    Future.successful(NotImplemented())
+  }
+
+  override def throughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
+    Future {
+      val res = BenchmarkRunner.run(TestLocalBench)(); // but run the second one to make sure we are in a consistent state
+      val msg = BenchmarkRunner.resultToTestResult(res);
+      msg
+    }
+  }
+
+  override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
+    Future.successful(NotImplemented())
+  }
+
+  override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = {
+    Future.successful(NotImplemented())
+  }
 }
 
 object TestRunner extends BenchmarkRunnerGrpc.BenchmarkRunner {

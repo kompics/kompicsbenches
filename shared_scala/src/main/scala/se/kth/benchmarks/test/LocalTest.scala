@@ -16,7 +16,15 @@ class LocalTest(val runnerImpl: BenchmarkRunnerGrpc.BenchmarkRunner) extends Mat
   private var implemented: List[String] = Nil;
   private var notImplemented: List[String] = Nil;
 
+  private var allowedFailures: List[String] = List("RSE");
+
   val timeout = 60.seconds;
+
+  def testFail(): Unit = {
+    allowedFailures ::= "Benchmark was purposefully failed at stage";
+    this.test();
+    allowedFailures = allowedFailures.tail;
+  }
 
   def test(): Unit = {
     val runnerPort = 45677;
@@ -148,7 +156,17 @@ ${notImplemented.size} tests not implemented: ${notImplemented.mkString(",")}
             implemented ::= label;
           }
           case f: TestFailure => {
-            f.reason should include("RSE"); // since tests are short they may not meet RSE requirements
+            this.allowedFailures match {
+              case rseErr :: Nil => {
+                f.reason should include(rseErr); // since tests are short they may not meet RSE requirements
+              }
+              case testErr :: rseErr :: Nil => {
+                f.reason should (include(testErr) or include(rseErr));
+              }
+              case _ => {
+                ???
+              }
+            }
             implemented ::= label;
           }
           case n: NotImplemented => {

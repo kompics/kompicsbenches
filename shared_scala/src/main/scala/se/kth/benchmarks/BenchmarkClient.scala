@@ -22,6 +22,15 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
 
   private val state: State = State.init();
 
+  private def classGetField(c: Class[_], fieldName: String): Option[java.lang.reflect.Field] = {
+    for (f <- c.getFields()) {
+      if (f.getName().equals(fieldName)) {
+        return Some(f);
+      }
+    }
+    return None;
+  }
+
   private object ClientService extends BenchmarkClientGrpc.BenchmarkClient {
     override def setup(request: SetupConfig): Future[SetupResponse] = {
       if (state() == StateType.CheckingIn) {
@@ -31,7 +40,10 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
       logger.debug(s"Trying to set up $benchClassName.");
       val res = Try {
         val benchC = classLoader.loadClass(benchClassName);
-        val bench = benchC.getField("MODULE$").get(benchC).asInstanceOf[DistributedBenchmark];
+        val bench = classGetField(benchC, "MODULE$") match {
+          case Some(f) => f.get(benchC).asInstanceOf[DistributedBenchmark] // is object
+          case None    => benchC.newInstance().asInstanceOf[DistributedBenchmark] // is class
+        }
         val activeBench = new ActiveBench(bench);
         state cas (StateType.Ready -> StateType.Running(activeBench));
         val r = activeBench.setup(request);
@@ -47,6 +59,7 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
         }
         case Failure(ex) => {
           logger.error(s"Setup for test $benchClassName was not successful.", ex);
+          state := StateType.Ready; // reset state
           SetupResponse(false, ex.getMessage);
         }
       }

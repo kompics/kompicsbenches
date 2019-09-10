@@ -140,6 +140,12 @@ object BenchmarkRunner extends StrictLogging {
       }
     }
   }
+  def failureToTestResult(f: Failure[_], stage: Option[String] = None): TestResult = {
+    val e = f.exception;
+    logger.warn(s"Test Failure at stage $stage: ${e.getMessage}", e);
+    val msg = s"${e.getClass.getName}: ${e.getMessage}";
+    TestFailure(msg)
+  }
 
   def rse(l: List[Double]): Double = new Statistics(l).relativeErrorOfTheMean;
 }
