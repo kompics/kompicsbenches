@@ -72,6 +72,18 @@ mod tests {
     use benchmark_suite_shared::test_utils::test_implementation;
 
     #[test]
+    fn test_actor() {
+        let benchmarks = Box::new(bench::ActorFactory {});
+        test_implementation(benchmarks);
+    }
+
+    #[test]
+    fn test_component() {
+        let benchmarks = Box::new(bench::ComponentFactory {});
+        test_implementation(benchmarks);
+    }
+
+    #[test]
     fn test_mixed() {
         let benchmarks = Box::new(bench::MixedFactory {});
         test_implementation(benchmarks);
