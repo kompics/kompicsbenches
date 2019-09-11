@@ -274,7 +274,7 @@ impl Actor for Pinger {
                     if self.count_down > 0 {
                         self.ponger.tell(StaticPing, self);
                     } else {
-                        let _ = self.latch.decrement();
+                        self.latch.decrement().expect("Should decrement!");
                     }
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising PongMsg: {:?}", e),

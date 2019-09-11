@@ -376,7 +376,7 @@ impl Actor for StaticPinger {
                             self.sent_count += 1;
                         }
                     } else {
-                        let _ = self.latch.decrement();
+                        self.latch.decrement().expect("Should decrement!");
                     }
                 }
                 Err(e) => error!(self.ctx.log(), "Error deserialising PongMsg: {:?}", e),
@@ -515,10 +515,10 @@ impl Actor for Pinger {
                             self.sent_count += 1;
                         }
                     } else {
-                        let _ = self.latch.decrement();
+                        self.latch.decrement().expect("Should decrement!");
                     }
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising PongMsg: {:?}", e),
+                Err(e) => error!(self.ctx.log(), "Error deserialising Pong: {:?}", e),
             }
         } else {
             crit!(

@@ -336,7 +336,7 @@ pub mod actor_pingpong {
                         self.sent_count += 1;
                     }
                 } else {
-                    let _ = self.latch.decrement();
+                    self.latch.decrement().expect("Should decrement!");
                 }
             } else {
                 crit!(
@@ -446,7 +446,7 @@ pub mod actor_pingpong {
                         self.sent_count += 1;
                     }
                 } else {
-                    let _ = self.latch.decrement();
+                    self.latch.decrement().expect("Should decrement!");
                 }
             } else {
                 crit!(
@@ -716,7 +716,7 @@ pub mod component_pingpong {
                     self.sent_count += 1;
                 }
             } else {
-                let _ = self.latch.decrement();
+                self.latch.decrement().expect("Should decrement!");
             }
         }
     }
@@ -813,7 +813,7 @@ pub mod component_pingpong {
                     self.sent_count += 1;
                 }
             } else {
-                let _ = self.latch.decrement();
+                self.latch.decrement().expect("Should decrement!");
             }
         }
     }

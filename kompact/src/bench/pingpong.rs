@@ -161,7 +161,7 @@ pub mod actor_pingpong {
                     self.count_down -= 1;
                     self.ponger.tell(&STATIC_PING, &self.ctx);
                 } else {
-                    let _ = self.latch.decrement();
+                    self.latch.decrement().expect("Should decrement!");
                 }
             } else {
                 crit!(self.ctx.log(), "Got unexpected local msg {:?}", msg);
@@ -371,7 +371,7 @@ pub mod component_pingpong {
                 self.count_down -= 1;
                 self.ppp.trigger(&STATIC_PING);
             } else {
-                let _ = self.latch.decrement();
+                self.latch.decrement().expect("Should decrement!");
             }
         }
     }
