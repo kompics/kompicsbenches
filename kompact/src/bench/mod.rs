@@ -9,9 +9,9 @@ pub mod netpingpong;
 pub mod pingpong;
 pub mod throughput_pingpong;
 
-#[derive(Clone, Debug)]
-pub struct Start;
-pub const START: Start = Start;
+pub trait ReceiveRun {
+    fn recipient(&self) -> kompact::prelude::Recipient<&'static messages::Run>;
+}
 
 pub fn component() -> Box<dyn BenchmarkFactory> {
     Box::new(ComponentFactory {})

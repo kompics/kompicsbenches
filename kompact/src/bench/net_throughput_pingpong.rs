@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-use messages::{Ping, Pong, StaticPing, StaticPong};
+use messages::{Ping, Pong, Run, StaticPing, StaticPong, RUN};
 use throughput_pingpong::{EitherComponents, Params};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,7 +97,7 @@ pub struct PingPongMaster {
     params: Option<Params>,
     system: Option<KompactSystem>,
     pingers: EitherComponents<StaticPinger, Pinger>,
-    pinger_refs: Vec<ActorRefStrong>,
+    pinger_refs: Vec<ActorRefStrong<&'static Run>>,
     pongers: Vec<ActorPath>,
     latch: Option<Arc<CountdownEvent>>,
 }
@@ -151,10 +151,13 @@ impl DistributedBenchmarkMaster for PingPongMaster {
                                     ponger_ref.clone(),
                                 )
                             });
-                            unique_reg_f
-                                .wait_timeout(Duration::from_millis(1000))
-                                .expect("Pinger never registered!")
-                                .expect("Pinger failed to register!");
+                            unique_reg_f.wait_expect(
+                                Duration::from_millis(1000),
+                                "Pinger failed to register!",
+                            );
+
+                            self.pinger_refs
+                                .push(pinger.actor_ref().hold().expect("Live ref"));
                             vpi.push(pinger);
                         }
                         EitherComponents::StaticOnly(vpi)
@@ -169,10 +172,12 @@ impl DistributedBenchmarkMaster for PingPongMaster {
                                     ponger_ref.clone(),
                                 )
                             });
-                            unique_reg_f
-                                .wait_timeout(Duration::from_millis(1000))
-                                .expect("Pinger never registered!")
-                                .expect("Pinger failed to register!");
+                            unique_reg_f.wait_expect(
+                                Duration::from_millis(1000),
+                                "Pinger failed to register!",
+                            );
+                            self.pinger_refs
+                                .push(pinger.actor_ref().hold().expect("Live ref"));
                             vpi.push(pinger);
                         }
                         EitherComponents::NonStatic(vpi)
@@ -181,7 +186,6 @@ impl DistributedBenchmarkMaster for PingPongMaster {
                         .start_all(system)
                         .expect("Pingers did not start correctly!");
 
-                    self.pinger_refs = pingers.hold_all();
                     self.pingers = pingers;
                     self.latch = Some(latch);
                 }
@@ -192,11 +196,10 @@ impl DistributedBenchmarkMaster for PingPongMaster {
     }
     fn run_iteration(&mut self) -> () {
         match self.system {
-            Some(ref system) => {
+            Some(ref _system) => {
                 let latch = self.latch.take().unwrap();
-                let sys_ref = system.actor_ref(); //.hold().expect("Live System Ref");
                 self.pinger_refs.iter().for_each(|pinger_ref| {
-                    pinger_ref.tell(&START, &sys_ref);
+                    pinger_ref.tell(&RUN);
                 });
                 latch.wait();
             }
@@ -250,10 +253,7 @@ impl DistributedBenchmarkClient for PingPongClient {
             let mut vpor = Vec::with_capacity(c.num_pongers as usize);
             for _ in 1..=c.num_pongers {
                 let (ponger, unique_reg_f) = system.create_and_register(StaticPonger::new);
-                unique_reg_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Ponger never registered!")
-                    .expect("Ponger failed to register!");
+                unique_reg_f.wait_expect(Duration::from_millis(1000), "Ponger failed to register!");
                 let path: ActorPath = (system.system_path(), ponger.id().clone()).into();
                 vpor.push(path);
                 vpo.push(ponger);
@@ -264,10 +264,7 @@ impl DistributedBenchmarkClient for PingPongClient {
             let mut vpor = Vec::with_capacity(c.num_pongers as usize);
             for _ in 1..=c.num_pongers {
                 let (ponger, unique_reg_f) = system.create_and_register(Ponger::new);
-                unique_reg_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Ponger never registered!")
-                    .expect("Ponger failed to register!");
+                unique_reg_f.wait_expect(Duration::from_millis(1000), "Ponger failed to register!");
                 let path: ActorPath = (system.system_path(), ponger.id().clone()).into();
                 vpor.push(path);
                 vpo.push(ponger);
@@ -346,50 +343,31 @@ impl Provide<ControlPort> for StaticPinger {
 }
 
 impl Actor for StaticPinger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
-        if msg.is::<Start>() {
-            let mut pipelined: u64 = 0;
-            while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-                self.ponger.tell(StaticPing, self);
-                self.sent_count += 1;
-                pipelined += 1;
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got unexpected local msg {:?} (tid: {:?})",
-                msg,
-                msg.type_id(),
-            );
-            unimplemented!(); // shouldn't happen during the test
+    type Message = &'static Run;
+
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        let mut pipelined: u64 = 0;
+        while (pipelined < self.pipeline) && (self.sent_count < self.count) {
+            self.ponger.tell(StaticPing, self);
+            self.sent_count += 1;
+            pipelined += 1;
         }
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-        if ser_id == StaticPong::SERID {
-            let r: Result<StaticPong, SerError> = StaticPong::deserialise(buf);
-            match r {
-                Ok(_pong) => {
-                    self.recv_count += 1;
-                    if self.recv_count < self.count {
-                        if self.sent_count < self.count {
-                            self.ponger.tell(StaticPing, self);
-                            self.sent_count += 1;
-                        }
-                    } else {
-                        self.latch.decrement().expect("Should decrement!");
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        match_deser! {msg; {
+            _pong: StaticPong [StaticPong] => {
+                self.recv_count += 1;
+                if self.recv_count < self.count {
+                    if self.sent_count < self.count {
+                        self.ponger.tell(StaticPing, self);
+                        self.sent_count += 1;
                     }
+                } else {
+                    self.latch.decrement().expect("Should decrement!");
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising PongMsg: {:?}", e),
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got message with unexpected serialiser {} from {}",
-                ser_id,
-                sender
-            );
-            unimplemented!(); // shouldn't happen during the test
-        }
+            },
+            !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPong: {:?}", e),
+        }}
     }
 }
 
@@ -417,33 +395,20 @@ impl Provide<ControlPort> for StaticPonger {
 }
 
 impl Actor for StaticPonger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
-        crit!(
-            self.ctx.log(),
-            "Got unexpected local msg {:?} (tid: {:?})",
-            msg,
-            msg.type_id(),
-        );
-        unimplemented!(); // shouldn't happen during the test
+    type Message = Never;
+
+    fn receive_local(&mut self, msg: Self::Message) -> () {
+        unreachable!("Can't instantiate Never!");
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-        if ser_id == StaticPing::SERID {
-            let r: Result<StaticPing, SerError> = StaticPing::deserialise(buf);
-            match r {
-                Ok(_ping) => {
-                    sender.tell(StaticPong, self);
-                }
-                Err(e) => error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got message with unexpected serialiser {} from {}",
-                ser_id,
-                sender
-            );
-            unimplemented!(); // shouldn't happen during the test
-        }
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        let sender = msg.sender().clone();
+
+        match_deser! {msg; {
+            _ping: StaticPing [StaticPing] => {
+                sender.tell(StaticPong, self);
+            },
+            !Err(e) =>error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
+        }}
     }
 }
 
@@ -483,52 +448,31 @@ impl Provide<ControlPort> for Pinger {
 }
 
 impl Actor for Pinger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
-        if msg.is::<Start>() {
-            let mut pipelined: u64 = 0;
-            while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-                self.ponger
-                    .tell(Ping::new(self.sent_count), self);
-                self.sent_count += 1;
-                pipelined += 1;
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got unexpected local msg {:?} (tid: {:?})",
-                msg,
-                msg.type_id()
-            );
-            unimplemented!(); // shouldn't happen during the test
+    type Message = &'static Run;
+
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        let mut pipelined: u64 = 0;
+        while (pipelined < self.pipeline) && (self.sent_count < self.count) {
+            self.ponger.tell(Ping::new(self.sent_count), self);
+            self.sent_count += 1;
+            pipelined += 1;
         }
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-        if ser_id == Pong::SERID {
-            let r: Result<Pong, SerError> = Pong::deserialise(buf);
-            match r {
-                Ok(_pong) => {
-                    self.recv_count += 1;
-                    if self.recv_count < self.count {
-                        if self.sent_count < self.count {
-                            self.ponger
-                                .tell(Ping::new(self.sent_count), self);
-                            self.sent_count += 1;
-                        }
-                    } else {
-                        self.latch.decrement().expect("Should decrement!");
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        match_deser! {msg; {
+            _pong: Pong [Pong] => {
+                self.recv_count += 1;
+                if self.recv_count < self.count {
+                    if self.sent_count < self.count {
+                        self.ponger.tell(Ping::new(self.sent_count), self);
+                        self.sent_count += 1;
                     }
+                } else {
+                    self.latch.decrement().expect("Should decrement!");
                 }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Pong: {:?}", e),
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got message with unexpected serialiser {} from {}",
-                ser_id,
-                sender
-            );
-            unimplemented!(); // shouldn't happen during the test
-        }
+            },
+            !Err(e) => error!(self.ctx.log(), "Error deserialising Pong: {:?}", e),
+        }}
     }
 }
 
@@ -556,33 +500,20 @@ impl Provide<ControlPort> for Ponger {
 }
 
 impl Actor for Ponger {
-    fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
-        crit!(
-            self.ctx.log(),
-            "Got unexpected local msg {:?} (tid: {:?})",
-            msg,
-            msg.type_id()
-        );
-        unimplemented!(); // shouldn't happen during the test
+    type Message = Never;
+
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        unreachable!("Can't instantiate Never!");
     }
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-        if ser_id == Ping::SERID {
-            let r: Result<Ping, SerError> = Ping::deserialise(buf);
-            match r {
-                Ok(ping) => {
-                    sender.tell(Pong::new(ping.index), self);
-                }
-                Err(e) => error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
-            }
-        } else {
-            crit!(
-                self.ctx.log(),
-                "Got message with unexpected serialiser {} from {}",
-                ser_id,
-                sender
-            );
-            unimplemented!(); // shouldn't happen during the test
-        }
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        let sender = msg.sender().clone();
+
+        match_deser! {msg; {
+            ping: Ping [Ping] => {
+                sender.tell(Pong::new(ping.index), self);
+            },
+            !Err(e) => error!(self.ctx.log(), "Error deserialising Ping: {:?}", e),
+        }}
     }
 }
 
