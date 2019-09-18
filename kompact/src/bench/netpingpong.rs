@@ -2,7 +2,7 @@ use super::*;
 
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::prelude::*;
-use messages::{Run, StaticPing, StaticPong, RUN};
+use messages::{Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};
 use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
@@ -249,15 +249,17 @@ impl Provide<ControlPort> for Pinger {
 impl Actor for Pinger {
     type Message = &'static Run;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
-        self.ponger.tell(StaticPing, self);
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        self.ponger
+            .tell_ser(STATIC_PING.serialised(), self)
+            .expect("Should have serialised!");
     }
     fn receive_network(&mut self, msg: NetMessage) -> () {
         match_deser! {msg; {
             _pong: StaticPong [StaticPong] => {
                 self.count_down -= 1;
                 if self.count_down > 0 {
-                    self.ponger.tell(StaticPing, self);
+                    self.ponger.tell_ser(STATIC_PING.serialised(), self).expect("Should have serialised!");
                 } else {
                     self.latch.decrement().expect("Should decrement!");
                 }
@@ -297,7 +299,7 @@ impl Actor for Ponger {
 
         match_deser! {msg; {
             _ping: StaticPing [StaticPing] => {
-                sender.tell(StaticPong, self);
+                sender.tell_ser(STATIC_PONG.serialised(), self).expect("Should have serialised");
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
         }}

@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-use messages::{Ping, Pong, Run, StaticPing, StaticPong, RUN};
+use messages::{Ping, Pong, Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};
 use throughput_pingpong::{EitherComponents, Params};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -348,7 +348,9 @@ impl Actor for StaticPinger {
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger.tell(StaticPing, self);
+            self.ponger
+                .tell_ser(STATIC_PING.serialised(), self)
+                .expect("Should have serialised");
             self.sent_count += 1;
             pipelined += 1;
         }
@@ -359,7 +361,7 @@ impl Actor for StaticPinger {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
-                        self.ponger.tell(StaticPing, self);
+                        self.ponger.tell_ser(STATIC_PING.serialised(), self).expect("Should have serialised");
                         self.sent_count += 1;
                     }
                 } else {
@@ -405,7 +407,7 @@ impl Actor for StaticPonger {
 
         match_deser! {msg; {
             _ping: StaticPing [StaticPing] => {
-                sender.tell(StaticPong, self);
+                sender.tell_ser(STATIC_PONG.serialised(), self).expect("Should have serialised");
             },
             !Err(e) =>error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
         }}
@@ -453,7 +455,9 @@ impl Actor for Pinger {
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger.tell(Ping::new(self.sent_count), self);
+            self.ponger
+                .tell_ser(Ping::new(self.sent_count).serialised(), self)
+                .expect("Should have serialised");
             self.sent_count += 1;
             pipelined += 1;
         }
@@ -464,7 +468,7 @@ impl Actor for Pinger {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
-                        self.ponger.tell(Ping::new(self.sent_count), self);
+                        self.ponger.tell_ser(Ping::new(self.sent_count).serialised(), self).expect("Should have serialised");
                         self.sent_count += 1;
                     }
                 } else {
@@ -510,7 +514,7 @@ impl Actor for Ponger {
 
         match_deser! {msg; {
             ping: Ping [Ping] => {
-                sender.tell(Pong::new(ping.index), self);
+                sender.tell_ser(Pong::new(ping.index).serialised(), self).expect("Should have serialised");
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising Ping: {:?}", e),
         }}
