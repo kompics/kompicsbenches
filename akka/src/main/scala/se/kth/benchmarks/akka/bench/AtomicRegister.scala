@@ -19,8 +19,9 @@ import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 import java.util.UUID.randomUUID
+import com.typesafe.scalalogging.StrictLogging
 
-object AtomicRegister extends DistributedBenchmark {
+object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
   case class ClientRef(actorPath: String)
   case class ClientParams(read_workload: Float, write_workload: Float)
@@ -57,7 +58,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var init_id: Int = -1;
 
     override def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf] = Try {
-      println("Atomic Register(Master) Setup!")
+      logger.info("Atomic Register(Master) Setup!");
 
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
@@ -77,7 +78,7 @@ object AtomicRegister extends DistributedBenchmark {
       atomicRegister =
         system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id");
       val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system);
-      println(s"Atomic Register(Master) path is $atomicRegPath")
+      logger.debug(s"Atomic Register(Master) path is $atomicRegPath")
       val nodes = ClientRef(atomicRegPath) :: d;
       val num_nodes = nodes.size;
       init_id += 1;
@@ -92,38 +93,37 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def runIteration(): Unit = {
-      partitioningActor ! Run
-      finished_latch.await()
-      println("Finished run") // TODO REMOVE FOR TEST
+      partitioningActor ! Run;
+      finished_latch.await();
     };
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up Atomic Register(Master) side");
-      if (prepare_latch != null) prepare_latch = null
-      if (finished_latch != null) finished_latch = null
+      logger.debug("Cleaning up Atomic Register(Master) side");
+      if (prepare_latch != null) prepare_latch = null;
+      if (finished_latch != null) finished_latch = null;
       if (atomicRegister != null) {
-        system.stop(atomicRegister)
-        atomicRegister = null
+        system.stop(atomicRegister);
+        atomicRegister = null;
       }
       if (partitioningActor != null) {
-        system.stop(partitioningActor)
-        partitioningActor = null
+        system.stop(partitioningActor);
+        partitioningActor = null;
       }
       if (lastIteration) {
-        println("Cleaning up Last iteration")
+        logger.debug("Cleaning up Last iteration");
         try {
           val f = system.terminate();
           Await.ready(f, 11.second);
           system = null;
-          println("Last cleanup completed!")
+          logger.info("Last cleanup completed!");
         } catch {
-          case ex: Exception => println(s"Failed to terminate ActorSystem: $ex")
+          case ex: Exception => logger.error("Failed to terminate ActorSystem", ex)
         }
       }
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
     private var system: ActorSystem = null;
@@ -141,36 +141,36 @@ object AtomicRegister extends DistributedBenchmark {
       .addBinding[InitAck](PartitioningActorSerializer.NAME)
       .addBinding[Run.type](PartitioningActorSerializer.NAME)
       .addBinding[Done.type](PartitioningActorSerializer.NAME)
-      .addBinding[Identify.type](PartitioningActorSerializer.NAME)
+      .addBinding[Identify.type](PartitioningActorSerializer.NAME);
 
     override def setup(c: ClientConf): ClientData = {
       system =
         ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 1, serialization = serializers);
-      this.read_workload = c.read_workload
-      this.write_workload = c.write_workload
+      this.read_workload = c.read_workload;
+      this.write_workload = c.write_workload;
       atomicRegister =
-        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg${randomUUID()}")
+        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg${randomUUID()}");
       val path = ActorSystemProvider.actorPathForRef(atomicRegister, system);
-      println(s"Atomic Register Path is $path");
+      logger.debug(s"Atomic Register Path is $path");
       ClientRef(path)
     }
 
     override def prepareIteration(): Unit = {
-      println("Preparing Atomic Register(Client) iteration")
+      logger.debug("Preparing Atomic Register(Client) iteration");
     }
 
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up Atomic Register(Client) side")
+      logger.debug("Cleaning up Atomic Register(Client) side")
       if (lastIteration) {
-        println("Cleaning up Last iteration")
+        logger.debug("Cleaning up Last iteration")
         atomicRegister = null
         try {
           val f = system.terminate();
           Await.ready(f, 11.second);
           system = null;
-          println("Last cleanup completed!")
+          logger.info("Last cleanup completed!")
         } catch {
-          case ex: Exception => println(s"Failed to terminate ActorSystem: $ex")
+          case ex: Exception => logger.error("Failed to terminate ActorSystem!", ex)
         }
       }
     }

@@ -23,6 +23,7 @@ import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success, Try}
+import com.typesafe.scalalogging.StrictLogging
 
 object NetThroughputPingPong extends DistributedBenchmark {
   case class ActorReference(actorPath: String)
@@ -41,7 +42,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     .addBinding[Ping](PingPongSerializer.NAME)
     .addBinding[Pong](PingPongSerializer.NAME);
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
     private var numMsgs = -1L;
     private var numPairs = -1;
     private var pipeline = -1L;
@@ -50,12 +51,12 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var latch: CountDownLatch = null;
 
     override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
-      println("NetPingPong setup!")
+      logger.info("Setting up Master");
       this.system =
         ActorSystemProvider.newRemoteTypedActorSystem[SystemMessage](SystemSupervisor(),
                                                                      "nettpingpong_supervisor",
                                                                      Runtime.getRuntime.availableProcessors(),
-                                                                     serializers)
+                                                                     serializers);
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
@@ -64,58 +65,58 @@ object NetThroughputPingPong extends DistributedBenchmark {
     }
 
     override def prepareIteration(d: List[ClientData]): Unit = {
-      println("Preparing NetPingPong Iteration")
+      logger.debug("Preparing iteration");
       latch = new CountDownLatch(numPairs);
-      implicit val timeout: Timeout = 3.seconds
-      implicit val scheduler = system.scheduler
+      implicit val timeout: Timeout = 3.seconds;
+      implicit val scheduler = system.scheduler;
       val f: Future[OperationSucceeded.type] =
-        system.ask(ref => StartPingers(ref, latch, numMsgs, pipeline, staticOnly, d.head))
+        system.ask(ref => StartPingers(ref, latch, numMsgs, pipeline, staticOnly, d.head));
       implicit val ec = scala.concurrent.ExecutionContext.global;
-      Await.result(f, 3 seconds)
+      Await.result(f, 3 seconds);
     }
 
     override def runIteration(): Unit = {
-      system ! RunIteration
-      latch.await()
+      system ! RunIteration;
+      latch.await();
     }
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up pinger side");
+      logger.debug("Cleaning up pinger side");
       if (latch != null) {
         latch = null;
       }
-      implicit val timeout: Timeout = 3.seconds
-      implicit val scheduler = system.scheduler
-      val f: Future[OperationSucceeded.type] = system.ask(ref => StopPingers(ref))
+      implicit val timeout: Timeout = 3.seconds;
+      implicit val scheduler = system.scheduler;
+      val f: Future[OperationSucceeded.type] = system.ask(ref => StopPingers(ref));
       implicit val ec = scala.concurrent.ExecutionContext.global;
-      Await.result(f, 3 seconds)
+      Await.result(f, 3 seconds);
       if (lastIteration) {
-        println("Cleaning up last iteration...")
-        system.terminate()
-        Await.ready(system.whenTerminated, 5 seconds)
-        system = null
-        println("Last cleanup completed")
+        system.terminate();
+        Await.ready(system.whenTerminated, 5 seconds);
+        system = null;
+        logger.info("Cleaned up Master");
       }
 
     }
   }
 
-  class ClientImpl extends Client {
-    private var system: ActorSystem[StartPongers] = null
+  class ClientImpl extends Client with StrictLogging {
+    private var system: ActorSystem[StartPongers] = null;
 
     override def setup(c: ClientParams): ClientRefs = {
+      logger.info("Setting up Client");
       system = ActorSystemProvider.newRemoteTypedActorSystem[StartPongers](ClientSystemSupervisor(),
                                                                            "nettpingpong_clientsupervisor",
                                                                            1,
-                                                                           serializers)
-      implicit val timeout: Timeout = 3.seconds
-      implicit val scheduler = system.scheduler
-      val f: Future[ClientRefs] = system.ask(ref => StartPongers(ref, c.staticOnly, c.numPongers))
+                                                                           serializers);
+      implicit val timeout: Timeout = 3.seconds;
+      implicit val scheduler = system.scheduler;
+      val f: Future[ClientRefs] = system.ask(ref => StartPongers(ref, c.staticOnly, c.numPongers));
       implicit val ec = scala.concurrent.ExecutionContext.global;
-      val ready = Await.ready(f, 5 seconds)
+      val ready = Await.ready(f, 5 seconds);
       ready.value.get match {
         case Success(pongerPaths) => {
-          println(s"Ponger Paths are${pongerPaths.actorPaths.mkString}")
+          logger.trace(s"Ponger Paths are${pongerPaths.actorPaths.mkString}");
           pongerPaths
         }
         case Failure(e) => ClientRefs(List.empty)
@@ -123,14 +124,15 @@ object NetThroughputPingPong extends DistributedBenchmark {
     }
     override def prepareIteration(): Unit = {
       // nothing
-      println("Preparing ponger iteration");
+      logger.debug("Preparing ponger iteration");
     }
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up ponger side");
+      logger.debug("Cleaning up ponger side");
       if (lastIteration) {
-        system.terminate()
+        system.terminate();
         Await.ready(system.whenTerminated, 5.second);
         system = null;
+        logger.info("Cleaned up Client");
       }
     }
   }

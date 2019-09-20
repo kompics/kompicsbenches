@@ -22,6 +22,7 @@ import se.kth.benchmarks.akka.typed_bench.NetPingPong.SystemSupervisor.{
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.{Success, Try}
+import com.typesafe.scalalogging.StrictLogging
 
 object NetPingPong extends DistributedBenchmark {
 
@@ -37,20 +38,22 @@ object NetPingPong extends DistributedBenchmark {
     .addBinding[Ping](PingPongSerializer.NAME)
     .addBinding[Pong.type](PingPongSerializer.NAME);
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
     private var num = -1L;
     private var system: ActorSystem[SystemMessage] = null
     private var latch: CountDownLatch = null;
 
     override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
+      logger.info("Setting up Master");
       this.num = c.numberOfMessages
       this.system = ActorSystemProvider
         .newRemoteTypedActorSystem[SystemMessage](SystemSupervisor(), "netpingpong_supervisor", 1, serializers)
     }
 
     override def prepareIteration(d: List[ClientRef]): Unit = {
+      logger.debug("Preparing iteration");
       val ponger = d.head
-      println(s"Resolving ponger path ${ponger}");
+      logger.trace(s"Resolving ponger path ${ponger}");
       latch = new CountDownLatch(1);
       implicit val timeout: Timeout = 3.seconds
       implicit val scheduler = system.scheduler
@@ -65,7 +68,7 @@ object NetPingPong extends DistributedBenchmark {
     }
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up pinger side");
+      logger.debug("Cleaning up pinger side");
       if (latch != null) {
         latch = null;
       }
@@ -76,39 +79,38 @@ object NetPingPong extends DistributedBenchmark {
       Await.result(f, 3 seconds)
 //      system ! SystemSupervisor.StopPinger
       if (lastIteration) {
-        println("Cleaning up last iteration...")
         system.terminate()
 //        implicit val ec = scala.concurrent.ExecutionContext.global;
         Await.ready(system.whenTerminated, 5 seconds)
         system = null
-        println("Last cleanup completed")
+        logger.info("Cleanup up Master.");
       }
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var ponger: ActorSystem[Ping] = null
 
     override def setup(c: ClientConf): ClientRef = {
+      logger.info("Setting up Client");
       ponger = ActorSystemProvider.newRemoteTypedActorSystem[Ping](Ponger(), "netpingpong", 1, serializers)
       val resolver = ActorRefResolver(ponger)
       val path = resolver.toSerializationFormat(ponger)
-      println(s"Ponger path is $path")
+      logger.trace(s"Ponger path is $path")
       ClientRef(path)
     }
 
     override def prepareIteration(): Unit = {
-      println("Preparing ponger iteration")
+      logger.debug("Preparing ponger iteration")
     }
 
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up ponger side")
+      logger.debug("Cleaning up ponger side")
       if (lastIteration) {
-        println("Cleaning up last iteration")
         ponger.terminate()
         Await.ready(ponger.whenTerminated, 5 seconds)
         ponger = null
-        println("Last cleanup completed")
+        logger.info("Cleaned up client.");
       }
     }
   }

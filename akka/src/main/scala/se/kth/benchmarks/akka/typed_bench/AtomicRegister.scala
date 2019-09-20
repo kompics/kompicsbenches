@@ -27,6 +27,7 @@ import se.kth.benchmarks.akka.bench.AtomicRegister.{AtomicRegisterState, FailedP
 
 import scala.collection.mutable
 import scala.util.Try
+import com.typesafe.scalalogging.StrictLogging
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -50,14 +51,13 @@ object AtomicRegister extends DistributedBenchmark {
     .addBinding[Init](TypedPartitioningActorSerializer.NAME)
     .addBinding[InitAck](TypedPartitioningActorSerializer.NAME)
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
     import SystemSupervisor._
 
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
     private var partition_size: Int = -1;
     private var num_keys: Long = -1L;
-//    private var system: ActorSystem = null;
     private var system: ActorSystem[SystemSupervisor.SystemMessage] = null;
     private var prepare_latch: CountDownLatch = null;
     private var finished_latch: CountDownLatch = null;
@@ -65,7 +65,7 @@ object AtomicRegister extends DistributedBenchmark {
     implicit val ec = ExecutionContext.global
 
     override def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf] = Try {
-      println("Atomic Register(Master) Setup!")
+      logger.info("Setting up Master");
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
@@ -86,6 +86,7 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
+      logger.debug("Preparing iteration");
       system ! StartAtomicRegister(read_workload, write_workload)
       init_id += 1
       prepare_latch = new CountDownLatch(1)
@@ -95,19 +96,19 @@ object AtomicRegister extends DistributedBenchmark {
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
       if (!successful_prep) {
-        println("Timeout in prepareIteration for INIT_ACK")
+        logger.error("Timeout in prepareIteration for INIT_ACK");
         throw new FailedPreparationException("Timeout waiting for INIT ACK from all nodes")
       }
 
     }
 
     override def runIteration(): Unit = {
-      system ! RunIteration
-      finished_latch.await()
+      system ! RunIteration;
+      finished_latch.await();
     };
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up Atomic Register(Master) side");
+      logger.debug("Cleaning up Atomic Register(Master) side");
       if (prepare_latch != null) prepare_latch = null
       if (finished_latch != null) finished_latch = null
       implicit val timeout: Timeout = 3.seconds
@@ -115,14 +116,13 @@ object AtomicRegister extends DistributedBenchmark {
       val f: Future[OperationSucceeded.type] = system.ask(ref => StopActors(ref))
       Await.result(f, 5 seconds)
       if (lastIteration) {
-        println("Cleaning up Last iteration")
         try {
           system.terminate()
           Await.ready(system.whenTerminated, 11 seconds)
           system = null
-          println("Last clean up completed")
+          logger.info("Last clean up completed");
         } catch {
-          case ex: Exception => println(s"Failed to terminate ActorSystem: $ex")
+          case ex: Exception => logger.error("Failed to terminate ActorSystem!", ex)
         }
       }
     }
@@ -155,7 +155,7 @@ object AtomicRegister extends DistributedBenchmark {
         msg match {
           case StartAtomicRegister(r, w) => {
             atomicRegister = context.spawn[AtomicRegisterMessage](AtomicRegisterActor(r, w), s"typed_atomicreg$init_id")
-            println(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
+            this.context.log.debug(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
           }
           case s: StartPartitioningActor => {
             val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
@@ -192,13 +192,13 @@ object AtomicRegister extends DistributedBenchmark {
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
     private var system: ActorSystem[AtomicRegisterMessage] = null
 
     override def setup(c: ClientConf): ClientData = {
-      println("Atomic Register(Client) Setup!")
+      logger.info("Setting up Client");
       this.read_workload = c.read_workload
       this.write_workload = c.write_workload
       system = ActorSystemProvider.newRemoteTypedActorSystem[AtomicRegisterMessage](
@@ -212,21 +212,20 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def prepareIteration(): Unit = {
-      println("Preparing Atomic Register(Client) iteration")
+      logger.debug("Preparing Atomic Register(Client) iteration")
     }
 
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up Atomic Register(Client) side")
+      logger.debug("Cleaning up Atomic Register(Client) side")
       if (lastIteration) {
-        println("Cleaning up Last iteration")
         try {
-          system.terminate()
-          Await.ready(system.whenTerminated, 11 seconds)
-          system = null
-          println("Last clean up completed")
+          system.terminate();
+          Await.ready(system.whenTerminated, 11 seconds);
+          system = null;
+          logger.info("Cleaned up Client");
         } catch {
-          case _: TimeoutException => println("Timeout on ActorSystem termination")
-          case ex: Exception       => println(s"Failed to terminate ActorSystem: $ex")
+          case _: TimeoutException => logger.error("Timeout on ActorSystem termination")
+          case ex: Exception       => logger.error(s"Failed to terminate ActorSystem", ex)
         }
       }
     }

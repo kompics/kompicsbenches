@@ -1,8 +1,8 @@
 package se.kth.benchmarks.runner
 
 //import com.google.protobuf.{ Message, TextFormat }
-import scalapb.{ GeneratedMessageCompanion => Companion }
-import scala.reflect.runtime.{ currentMirror => cm }
+import scalapb.{GeneratedMessageCompanion => Companion}
+import scala.reflect.runtime.{currentMirror => cm}
 import scala.reflect.runtime.universe._
 
 object Parameters {
@@ -32,7 +32,7 @@ class ProtobufDescriptor[P <: Message[P]](implicit tag: TypeTag[P]) extends Para
     val s = p.toProtoString;
     //TextFormat.printToUnicodeString(p)
     // remove things that aren't allowed in CSV files
-    s.replaceAll(",", "!C!").replaceAll("""\R""", "!N!")
+    s.replaceAll(",", "!C!").replaceAll("""\R""", "!N!").replaceAll("\"", "\"\"")
   }
   override def toPath(p: P): String = {
     //TextFormat.printToString(p)
@@ -47,7 +47,7 @@ class ProtobufDescriptor[P <: Message[P]](implicit tag: TypeTag[P]) extends Para
 }
 object ProtobufDescriptor {
   def unescapeCSV(s: String): String = {
-    s.replaceAll("!N!", "\n").replaceAll("!C!", ",")
+    s.replaceAll("\"\"", "\"").replaceAll("!N!", "\n").replaceAll("!C!", ",")
   }
 }
 
@@ -77,7 +77,8 @@ trait ParameterSpace[Params] {
   def paramsFromCSV(s: String): Params;
 }
 
-case class ParametersSparse1D[T](params: Seq[T])(implicit private val descr: ParameterDescriptor[T]) extends ParameterSpace[T] {
+case class ParametersSparse1D[T](params: Seq[T])(implicit private val descr: ParameterDescriptor[T])
+    extends ParameterSpace[T] {
   import ParameterDescriptionImplicits.ParameterDescriptorDescription;
 
   override def foreach(f: T => Unit) = params.foreach(f);
@@ -89,7 +90,7 @@ case class ParametersSparse1D[T](params: Seq[T])(implicit private val descr: Par
 class ParameterSpacePB[P <: Message[P]: TypeTag](val params: Seq[P]) extends ParameterSpace[P] {
   import ParameterDescriptionImplicits._;
 
-  private implicit val descr = protobufDescr[P];
+  implicit private val descr = protobufDescr[P];
 
   override def foreach(f: P => Unit) = params.foreach(f);
   override def size: Long = params.size;
@@ -114,7 +115,10 @@ object ParameterSpacePB {
     } yield (i1, i2, i3);
     new TupleSpace(iter)
   }
-  def cross[T1, T2, T3, T4](p1: Traversable[T1], p2: Traversable[T2], p3: Traversable[T3], p4: Traversable[T4]): TupleSpace[(T1, T2, T3, T4)] = {
+  def cross[T1, T2, T3, T4](p1: Traversable[T1],
+                            p2: Traversable[T2],
+                            p3: Traversable[T3],
+                            p4: Traversable[T4]): TupleSpace[(T1, T2, T3, T4)] = {
     val iter = for {
       i1 <- p1;
       i2 <- p2;

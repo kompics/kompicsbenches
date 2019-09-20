@@ -18,7 +18,7 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
 
   private var allowedFailures: List[String] = List("RSE");
 
-  val timeout = 60.seconds;
+  val timeout = 5.minutes; // some of these tests can take a long time
 
   def testFail(): Unit = {
     allowedFailures ::= "Benchmark was purposefully failed at stage";
@@ -145,6 +145,9 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       checkResult("NetThroughputPingPong (gc)", tnpprResF2);
       logger.info("Finished test NetThroughputPingPong (gc)");
 
+      /*
+       * Atomic Register
+       */
       logger.info("Starting test AtomicRegister");
       val nnarr = AtomicRegisterRequest()
         .withReadWorkload(0.5f)
@@ -154,6 +157,19 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       val nnarResF = benchStub.atomicRegister(nnarr);
       checkResult("Atomic Register", nnarResF);
       logger.info("Finished test AtomicRegister");
+
+      /*
+       * Streaming Windows
+       */
+      logger.info("Starting test StreamingWindows");
+      val swr = StreamingWindowsRequest()
+        .withBatchSize(10)
+        .withNumberOfPartitions(2)
+        .withNumberOfWindows(2)
+        .withWindowSize("10ms");
+      val swResF = benchStub.streamingWindows(swr);
+      checkResult("Streaming Windows", swResF);
+      logger.info("Finished test StreamingWindows");
 
       /*
        * Clean Up
@@ -201,6 +217,7 @@ ${notImplemented.size} tests not implemented: ${notImplemented.mkString(",")}
         tr match {
           case s: TestSuccess => {
             s.runResults.size should equal(s.numberOfRuns);
+            s.runResults.size should be >= BenchmarkRunner.MIN_RUNS;
             implemented ::= label;
           }
           case f: TestFailure => {

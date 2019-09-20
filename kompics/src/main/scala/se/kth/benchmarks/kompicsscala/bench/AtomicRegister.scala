@@ -20,6 +20,8 @@ import scala.collection.mutable
 import scala.concurrent.Await
 import scala.util.{Random, Success, Try}
 
+import com.typesafe.scalalogging.StrictLogging
+
 object AtomicRegister extends DistributedBenchmark {
 
   case class ClientParams(read_workload: Float, write_workload: Float)
@@ -32,7 +34,7 @@ object AtomicRegister extends DistributedBenchmark {
   AtomicRegisterSerializer.register();
   PartitioningCompSerializer.register();
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
     private var read_workload = 0.0f;
     private var write_workload = 0.0f;
     private var partition_size: Int = -1;
@@ -46,6 +48,7 @@ object AtomicRegister extends DistributedBenchmark {
     private var init_id: Int = -1;
 
     override def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf] = Try {
+      logger.info("Setting up Master");
       this.read_workload = c.readWorkload;
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
@@ -60,52 +63,46 @@ object AtomicRegister extends DistributedBenchmark {
       ClientParams(read_workload, write_workload)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
+      logger.debug("Preparing iteration");
       assert(system != null);
       val addr = system.networkAddress.get;
-      println(s"Atomic Register(Master) Path is $addr");
+      logger.trace(s"Atomic Register(Master) Path is $addr");
       val nodes = addr :: d;
       val num_nodes = nodes.size;
-      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)) // TODO parallelism
-      atomicRegister = Await.result(atomicRegisterIdF, 5.second)
+      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)); // TODO parallelism
+      atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](KompicsInit(addr))
-      beb = Await.result(bebF, 5.second)
-      val beb_net_connF = system.connectNetwork(beb)
-      Await.result(beb_net_connF, 5.second)
-      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
-      Await.result(beb_ar_connF, 5.seconds)
+      val bebF = system.createNotify[BEBComp](KompicsInit(addr));
+      beb = Await.result(bebF, 5.second);
+      val beb_net_connF = system.connectNetwork(beb);
+      Await.result(beb_net_connF, 5.second);
+      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb);
+      Await.result(beb_ar_connF, 5.seconds);
       /* connect Iteration prepare component */
-      init_id += 1
-      prepare_latch = new CountDownLatch(1)
-      finished_latch = new CountDownLatch(1)
+      init_id += 1;
+      prepare_latch = new CountDownLatch(1);
+      finished_latch = new CountDownLatch(1);
       val partitioningCompF = system.createNotify[PartitioningComp](
         KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
-      ) // only wait for InitAck from clients
-      partitioningComp = Await.result(partitioningCompF, 5.second)
-      val partitioningComp_net_connF = system.connectNetwork(partitioningComp)
-      Await.result(partitioningComp_net_connF, 5.seconds)
+      ); // only wait for InitAck from clients
+      partitioningComp = Await.result(partitioningCompF, 5.second);
+      val partitioningComp_net_connF = system.connectNetwork(partitioningComp);
+      Await.result(partitioningComp_net_connF, 5.seconds);
       assert(beb != null && partitioningComp != null && atomicRegister != null);
-      system.startNotify(beb)
-      system.startNotify(atomicRegister)
-      system.startNotify(partitioningComp)
-      prepare_latch.await()
-      /*val timeout = 100
-      val timeunit = TimeUnit.SECONDS
-      val successful_prep = prepare_latch.await(timeout, timeunit)
-      if (!successful_prep) {
-        println("Timeout on InitAck in prepareIteration")
-        throw new FailedPreparationException("Timeout waiting for Init Ack from all nodes")
-      }*/
+      system.startNotify(beb);
+      system.startNotify(atomicRegister);
+      system.startNotify(partitioningComp);
+      prepare_latch.await();
     }
     override def runIteration(): Unit = {
-      system.triggerComponent(Run, partitioningComp)
-      finished_latch.await()
+      system.triggerComponent(Run, partitioningComp);
+      finished_latch.await();
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up Atomic Register(Master) side");
+      logger.debug("Cleaning up Atomic Register(Master) side");
       assert(system != null);
       if (prepare_latch != null) prepare_latch = null
       if (finished_latch != null) finished_latch = null
@@ -121,14 +118,14 @@ object AtomicRegister extends DistributedBenchmark {
         partitioningComp = null
       }
       if (lastIteration) {
-        println("Cleaning up Last iteration")
         val f = system.terminate();
         system = null;
+        logger.info("Cleaned up Master");
       }
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var system: KompicsSystem = null;
     private var atomicRegister: UUID = null;
     private var beb: UUID = null
@@ -136,43 +133,44 @@ object AtomicRegister extends DistributedBenchmark {
     private var write_workload = 0.0f
 
     override def setup(c: ClientConf): ClientData = {
+      logger.info("Setting up Client");
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       AtomicRegisterSerializer.register();
       PartitioningCompSerializer.register();
       val addr = system.networkAddress.get;
-      println(s"Atomic Register(Client) Path is $addr");
+      logger.trace(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
-      val atomicRegisterF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload))
-      atomicRegister = Await.result(atomicRegisterF, 5.seconds)
+      val atomicRegisterF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload));
+      atomicRegister = Await.result(atomicRegisterF, 5.seconds);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
       Await.result(connF, 5.seconds);
       /* connect best effort broadcast */
-      val bebF = system.createNotify[BEBComp](KompicsInit(addr))
-      beb = Await.result(bebF, 5.second)
-      val beb_net_connF = system.connectNetwork(beb)
-      Await.result(beb_net_connF, 5.second)
-      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb)
+      val bebF = system.createNotify[BEBComp](KompicsInit(addr));
+      beb = Await.result(bebF, 5.second);
+      val beb_net_connF = system.connectNetwork(beb);
+      Await.result(beb_net_connF, 5.second);
+      val beb_ar_connF = system.connectComponents[BestEffortBroadcast](atomicRegister, beb);
       Await.result(beb_ar_connF, 5.seconds);
-      system.startNotify(beb)
-      system.startNotify(atomicRegister)
+      system.startNotify(beb);
+      system.startNotify(atomicRegister);
       addr
     }
     override def prepareIteration(): Unit = {
       // nothing
-      println("Preparing Atomic Register(Client) iteration");
+      logger.debug("Preparing Atomic Register(Client) iteration");
       assert(system != null);
     }
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up Atomic Register(Client) side");
+      logger.debug("Cleaning up Atomic Register(Client) side");
       assert(system != null);
       if (lastIteration) {
-        println("Cleaning up Last iteration")
         atomicRegister = null; // will be stopped when system is shut down
         beb = null
         system.terminate();
         system = null;
+        logger.info("Cleaned up Client");
       }
     }
   }

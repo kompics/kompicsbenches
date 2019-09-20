@@ -27,6 +27,7 @@ import scala.util.{Failure, Success, Try}
 import com.google.common.collect.ImmutableSet
 
 import scala.compat.java8.OptionConverters._
+import com.typesafe.scalalogging.StrictLogging
 
 case class SetupFH(p: Promise[KompicsSystem]) extends FaultHandler {
   override def handle(f: Fault): Fault.ResolveAction = {
@@ -39,7 +40,7 @@ case class SetupFH(p: Promise[KompicsSystem]) extends FaultHandler {
   }
 }
 
-object KompicsSystemProvider {
+object KompicsSystemProvider extends StrictLogging {
 
   BenchNet.registerSerializers();
   se.kth.benchmarks.kompicsjava.net.BenchNetSerializer.register();
@@ -83,7 +84,7 @@ object KompicsSystemProvider {
     try {
       val p = Promise[KompicsSystem];
       val addr = NetAddress.from(getPublicIf(), 0).get;
-      println(s"Trying to bind on: $addr");
+      logger.info(s"Trying to bind on: $addr");
       val c = Kompics.config.copy(false).asInstanceOf[se.sics.kompics.config.Config.Impl];
       val cb = c.modify(UUID.randomUUID());
       cb.setValue(SELF_ADDR_KEY, addr);

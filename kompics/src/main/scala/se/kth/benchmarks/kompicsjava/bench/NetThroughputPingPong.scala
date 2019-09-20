@@ -14,6 +14,7 @@ import java.util.UUID
 import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import java.util.Optional
 import io.netty.buffer.ByteBuf
+import com.typesafe.scalalogging.StrictLogging
 
 object NetThroughputPingPong extends DistributedBenchmark {
 
@@ -25,7 +26,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
   override type ClientConf = ClientParams;
   override type ClientData = NetAddress;
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
     private var numMsgs = -1L;
     private var numPairs = -1;
     private var pipeline = -1L;
@@ -35,6 +36,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var latch: CountDownLatch = null;
 
     override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
+      logger.info("Setting up Master");
       NetPingPongSerializer.register();
 
       this.numMsgs = c.messagesPerPair;
@@ -46,8 +48,9 @@ object NetThroughputPingPong extends DistributedBenchmark {
       ClientParams(numPairs, staticOnly)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
+      logger.debug("Preparing iteration");
       val ponger = d.head;
-      println(s"Resolved path to ${ponger}");
+      logger.trace(s"Resolved path to ${ponger}");
       latch = new CountDownLatch(numPairs);
       val pingersLF = (1 to numPairs).map { index =>
         for {
@@ -71,7 +74,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       latch.await();
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up pinger side");
+      logger.debug("Cleaning up pinger side");
       assert(system != null);
       if (latch != null) {
         latch = null;
@@ -83,15 +86,17 @@ object NetThroughputPingPong extends DistributedBenchmark {
       if (lastIteration) {
         val f = system.terminate();
         system = null;
+        logger.info("Cleaned up Master.");
       }
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var system: KompicsSystem = null;
     private var pongers: List[UUID] = null;
 
     override def setup(c: ClientConf): ClientData = {
+      logger.info("Setting up Client");
       system = KompicsSystemProvider.newRemoteKompicsSystem(1);
       NetPingPongSerializer.register();
 
@@ -114,16 +119,17 @@ object NetThroughputPingPong extends DistributedBenchmark {
     }
     override def prepareIteration(): Unit = {
       // nothing
-      println("Preparing ponger iteration");
+      logger.debug("Preparing ponger iteration");
       assert(system != null);
     }
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up ponger side");
+      logger.debug("Cleaning up ponger side");
       assert(system != null);
       if (lastIteration) {
         pongers = List.empty; // will be stopped when system is shut down
         system.terminate();
         system = null;
+        logger.info("Cleaned up Client.");
       }
     }
   }

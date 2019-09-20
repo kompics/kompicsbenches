@@ -18,3 +18,22 @@ class Statistics(results: Seq[Double]) {
     s"#${sampleSize} with mean of ${sampleMean}${unit} and error of ${standardErrorOfTheMean}${unit} (${relativeErrorOfTheMean * 100.0}%)"
   }
 }
+
+object Statistics {
+  import scala.collection.mutable.ArrayBuffer;
+
+  def medianFromUnsorted(buf: ArrayBuffer[Long]): Double = {
+    require(!buf.isEmpty, "No medians in empty collection!");
+    val sortedBuf = buf.sorted; // this is pretty inefficient, but sortInPlace only appears in Scala 2.13
+    val len = sortedBuf.length;
+    val median = if (len % 2 == 0) { // is even
+      val upperMiddle = len / 2;
+      val lowerMiddle = upperMiddle - 1;
+      (sortedBuf(lowerMiddle) + sortedBuf(upperMiddle)).toDouble / 2.0
+    } else { // is odd
+      val middle = len / 2;
+      sortedBuf(middle).toDouble
+    };
+    median
+  }
+}

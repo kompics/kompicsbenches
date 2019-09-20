@@ -6,7 +6,7 @@ import akka.actor.{Actor, ActorRef}
 import akka.event.Logging
 import akka.serialization.Serializer
 import akka.util.ByteString
-import se.kth.benchmarks.akka.bench.AtomicRegister.{ClientRef}
+import se.kth.benchmarks.akka.bench.AtomicRegister.ClientRef
 
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{Await, Future}
@@ -14,6 +14,7 @@ import scala.concurrent.duration._
 import PartitioningActor.{Start, Done, ResolvedNodes, _}
 
 import scala.util.{Failure, Success}
+import akka.actor.ActorLogging
 
 class PartitioningActor(prepare_latch: CountDownLatch,
                         finished_latch: CountDownLatch,
@@ -21,8 +22,8 @@ class PartitioningActor(prepare_latch: CountDownLatch,
                         nodes: List[ClientRef],
                         num_keys: Long,
                         partition_size: Int)
-    extends Actor {
-  val logger = Logging(context.system, this)
+    extends Actor
+    with ActorLogging {
   implicit val ec = scala.concurrent.ExecutionContext.global;
 
   val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes
@@ -37,10 +38,11 @@ class PartitioningActor(prepare_latch: CountDownLatch,
         Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
       actorRefsF.onComplete {
         case Success(actorRefs) => {
-          self ! ResolvedNodes(actorRefs)
+          self ! ResolvedNodes(actorRefs);
         }
         case Failure(ex) => {
-          logger.info(s"Failed to resolve ActorPaths: $ex")
+          log.error("Failed to resolve ActorPaths!", ex);
+          System.exit(1); // prevent deadlock
         }
       }
       // TODO: The following should work but sometimes fails to solve actorpath :(
@@ -125,10 +127,8 @@ class PartitioningActorSerializer extends Serializer {
         bs.putLong(i.min)
         bs.putLong(i.max)
         bs.putInt(i.nodes.size)
-        for (c_ref <- i.nodes) {
-          val bytes = c_ref.actorPath.getBytes
-          bs.putShort(bytes.size)
-          bs.putBytes(bytes)
+        for (cRef <- i.nodes) {
+          SerUtils.stringIntoByteString(bs, cRef.actorPath);
         }
         bs.result().toArray
       }
@@ -148,19 +148,16 @@ class PartitioningActorSerializer extends Serializer {
     flag match {
       case INIT_FLAG => {
         val rank = buf.getInt
-        val init_id = buf.getInt
+        val initId = buf.getInt
         val min = buf.getLong
         val max = buf.getLong
         val n = buf.getInt
         var nodes = new ListBuffer[ClientRef]
         for (_ <- 0 until n) {
-          val string_length: Int = buf.getShort
-          val bytes = new Array[Byte](string_length)
-          buf.get(bytes)
-          val c_ref = ClientRef(bytes.map(_.toChar).mkString)
-          nodes += c_ref
+          val cRef = SerUtils.stringFromByteBuffer(buf);
+          nodes += ClientRef(cRef)
         }
-        Init(rank, init_id, nodes.toList, min, max)
+        Init(rank, initId, nodes.toList, min, max)
       }
       case INIT_ACK_FLAG => InitAck(buf.getInt)
       case RUN_FLAG      => Run

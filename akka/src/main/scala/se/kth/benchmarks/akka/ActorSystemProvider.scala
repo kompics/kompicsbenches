@@ -69,6 +69,9 @@ object ActorSystemProvider extends StrictLogging {
     akka {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
+      loggers = ["akka.event.slf4j.Slf4jLogger"]
+      loglevel = "WARNING"
+      logging-filter = "akka.event.slf4j.Slf4jLoggingFilter"
 
       actor {
         creation-timeout = 6000s
@@ -110,6 +113,9 @@ object ActorSystemProvider extends StrictLogging {
     akka {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
+      loggers = ["akka.event.slf4j.Slf4jLogger"]
+      loglevel = "WARNING"
+      logging-filter = "akka.event.slf4j.Slf4jLoggingFilter"
 
       actor {
         creation-timeout = 6000s

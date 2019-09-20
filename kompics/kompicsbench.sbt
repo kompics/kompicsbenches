@@ -28,7 +28,7 @@ libraryDependencies ++= Seq(
 
 fork := true; // needed for UDT tests to clean up properly after themselves
 parallelExecution in ThisBuild := false;
-//test in assembly := {}
+test in assembly := {}
 
 assemblyMergeStrategy in assembly := {
   case "META-INF/io.netty.versions.properties" => MergeStrategy.first

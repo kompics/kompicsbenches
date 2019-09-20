@@ -10,6 +10,7 @@ import scala.util.{Failure, Success, Try}
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
+import com.typesafe.scalalogging.StrictLogging
 
 object NetThroughputPingPong extends DistributedBenchmark {
 
@@ -29,7 +30,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     .addBinding[Ping](PingPongSerializer.NAME)
     .addBinding[Pong](PingPongSerializer.NAME);
 
-  class MasterImpl extends Master {
+  class MasterImpl extends Master with StrictLogging {
 
     implicit val ec = scala.concurrent.ExecutionContext.global;
 
@@ -43,6 +44,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     private var run_id = -1
 
     override def setup(c: MasterConf, _meta: DeploymentMetaData): Try[ClientConf] = Try {
+      logger.info("Setting up Master");
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
@@ -53,10 +55,11 @@ object NetThroughputPingPong extends DistributedBenchmark {
       ClientParams(numPairs, staticOnly)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
+      logger.debug("Preparing iteration");
       val pongersF =
         Future.sequence(d.head.actorPaths.map(pongerPath => system.actorSelection(pongerPath).resolveOne(5 seconds)));
       val pongers = Await.result(pongersF, 5 seconds);
-      println(s"Resolved paths to ${pongers.mkString}");
+      logger.trace(s"Resolved paths to ${pongers.mkString}");
       latch = new CountDownLatch(numPairs);
       run_id += 1
       if (staticOnly) {
@@ -75,7 +78,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       latch.await();
     };
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      println("Cleaning up pinger side");
+      logger.debug("Cleaning up pinger side");
       if (latch != null) {
         latch = null;
       }
@@ -87,15 +90,17 @@ object NetThroughputPingPong extends DistributedBenchmark {
         val f = system.terminate();
         Await.ready(f, 5 seconds);
         system = null;
+        logger.info("Cleaned up Master");
       }
     }
   }
 
-  class ClientImpl extends Client {
+  class ClientImpl extends Client with StrictLogging {
     private var system: ActorSystem = null;
     private var pongers: List[ActorRef] = List.empty;
 
     override def setup(c: ClientConf): ClientData = {
+      logger.info("Setting up Client");
       system = ActorSystemProvider.newRemoteActorSystem(name = "pingpong", threads = 1, serialization = serializers);
       if (c.staticOnly) {
         pongers = (1 to c.numPongers).map(i => system.actorOf(Props(new StaticPonger), s"ponger$i")).toList;
@@ -103,19 +108,20 @@ object NetThroughputPingPong extends DistributedBenchmark {
         pongers = (1 to c.numPongers).map(i => system.actorOf(Props(new Ponger), s"ponger$i")).toList;
       }
       val paths = pongers.map(ponger => ActorSystemProvider.actorPathForRef(ponger, system));
-      println(s"Ponger Paths are ${paths.mkString}");
+      logger.trace(s"Ponger Paths are ${paths.mkString}");
       ClientRefs(paths)
     }
     override def prepareIteration(): Unit = {
       // nothing
-      println("Preparing ponger iteration");
+      logger.debug("Preparing ponger iteration");
     }
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      println("Cleaning up ponger side");
+      logger.debug("Cleaning up ponger side");
       if (lastIteration) {
         val f = system.terminate();
         Await.ready(f, 5.second);
         system = null;
+        logger.info("Cleaning up Client");
       }
     }
   }

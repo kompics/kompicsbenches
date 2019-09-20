@@ -23,6 +23,7 @@ import se.kth.benchmarks.akka.typed_bench.ThroughputPingPong.SystemSupervisor.{
 import scala.util.Try
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
+import com.typesafe.scalalogging.StrictLogging
 
 object ThroughputPingPong extends Benchmark {
   override type Conf = ThroughputPingPongRequest
@@ -33,7 +34,7 @@ object ThroughputPingPong extends Benchmark {
 
   override def newInstance(): ThroughputPingPong.Instance = new PingPongI
 
-  class PingPongI extends Instance {
+  class PingPongI extends Instance with StrictLogging {
     private var numMsgs = -1L;
     private var numPairs = -1;
     private var pipeline = -1L;
@@ -42,6 +43,7 @@ object ThroughputPingPong extends Benchmark {
     private var latch: CountDownLatch = null
 
     override def setup(c: Conf): Unit = {
+      logger.info("Setting up Instance");
       this.numMsgs = c.messagesPerPair;
       this.numPairs = c.parallelism;
       this.pipeline = c.pipelineSize;
@@ -52,36 +54,39 @@ object ThroughputPingPong extends Benchmark {
     }
 
     override def prepareIteration(): Unit = {
-      assert(system != null)
+      logger.debug("Preparing iteration");
+      assert(system != null);
       latch = new CountDownLatch(numPairs);
-      implicit val timeout: Timeout = 3.seconds
-      implicit val scheduler = system.scheduler
+      implicit val timeout: Timeout = 3.seconds;
+      implicit val scheduler = system.scheduler;
       val f: Future[OperationSucceeded.type] =
-        system.ask(ref => StartActors(ref, latch, numMsgs, numPairs, pipeline, staticOnly))
-      implicit val ec = system.executionContext
-      Await.result(f, 5 seconds)
+        system.ask(ref => StartActors(ref, latch, numMsgs, numPairs, pipeline, staticOnly));
+      implicit val ec = system.executionContext;
+      Await.result(f, 5 seconds);
     }
 
     override def runIteration(): Unit = {
-      println("Run iteration")
-      system ! RunIteration
-      latch.await()
+      system ! RunIteration;
+      latch.await();
     }
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      logger.debug("Cleaning up iteration");
       if (latch != null) {
         latch = null;
       }
-      implicit val timeout: Timeout = 3.seconds
-      implicit val scheduler = system.scheduler
-      val f: Future[OperationSucceeded.type] = system.ask(ref => StopActors(ref))
-      implicit val ec = system.executionContext
-      Await.result(f, 3 seconds)
+      implicit val timeout: Timeout = 3.seconds;
+      implicit val scheduler = system.scheduler;
+      val f: Future[OperationSucceeded.type] = system.ask(ref => StopActors(ref));
+      implicit val ec = system.executionContext;
+      Await.result(f, 3 seconds);
       if (lastIteration) {
-//        system.terminate();
-        system ! GracefulShutdown
-        Await.ready(system.whenTerminated, 5.second);
-        system = null;
+        if (system != null) {
+          system ! GracefulShutdown;
+          Await.ready(system.whenTerminated, 5.second);
+          system = null;
+        }
+        logger.info("Cleaned up Instance");
       }
     }
 

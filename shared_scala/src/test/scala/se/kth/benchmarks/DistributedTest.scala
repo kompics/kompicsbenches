@@ -280,6 +280,7 @@ object TestFactory extends BenchmarkFactory {
   override def throughputPingPong(): Benchmark = TestLocalBench;
   override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
   override def atomicRegister(): DistributedBenchmark = TestDistributedBench;
+  override def streamingWindows(): DistributedBenchmark = TestDistributedBench;
 }
 
 class FailFactory(val masterFailAt: Option[Stage], val clientFailAt: Option[Stage]) extends BenchmarkFactory {
@@ -293,4 +294,5 @@ class FailFactory(val masterFailAt: Option[Stage], val clientFailAt: Option[Stag
   override def throughputPingPong(): Benchmark = TestLocalBench; // run one of each of the others normally
   override def netThroughputPingPong(): DistributedBenchmark = TestDistributedBench;
   override def atomicRegister(): DistributedBenchmark = ???;
+  override def streamingWindows(): DistributedBenchmark = ???;
 }
