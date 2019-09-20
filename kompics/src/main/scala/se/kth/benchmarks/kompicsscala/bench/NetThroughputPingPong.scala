@@ -46,7 +46,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       ClientParams(numPairs, staticOnly)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
-      logger.deebug("Preparing iteration");
+      logger.debug("Preparing iteration");
       val ponger = d.head;
       logger.trace(s"Resolved path to ${ponger}");
       latch = new CountDownLatch(numPairs);

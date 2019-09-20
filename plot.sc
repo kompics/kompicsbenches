@@ -1,8 +1,10 @@
 #!/usr/bin/env amm
 
-interp.repositories() ++= Seq(coursier.MavenRepository(
-    "https://dl.bintray.com/lkrollcom/maven"
-))
+import coursierapi.MavenRepository
+
+val lkrollcom = MavenRepository.of("https://dl.bintray.com/lkrollcom/maven");
+
+interp.repositories() ++= Seq(lkrollcom);
 
 @
 
