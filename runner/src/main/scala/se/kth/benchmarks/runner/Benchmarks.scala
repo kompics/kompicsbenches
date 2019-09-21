@@ -120,7 +120,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       }
   );
 
-  private val windowLengthUtil = utils.Conversions.SizeToTime(8.0 / 1000.0, 1.millisecond); // 8kB/s in MB
+  private val windowDataSize = 0.008; // 8kB in MB
+  private val windowLengthUtil = utils.Conversions.SizeToTime(windowDataSize, 1.millisecond); // 8kB/s in MB
+  private val windowLength = windowLengthUtil.timeForMB(windowDataSize); // 1s window
   val streamingWindows = Benchmark(
     name = "Streaming Windows",
     symbol = "STREAMINGWINDOWS",
@@ -128,25 +130,27 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.streamingWindows(request)
     },
     space = ParameterSpacePB
-      .cross(List(1, 2, 4, 8, 16), List(10, 100, 1000), List(0.01, 0.1, 1.0, 10.0), List(1, 10, 100))
+      .cross(List(1, 2, 4, 8, 16), List(100, 1000), List(0.01, 1.0, 100.0), List(10))
       .msg[StreamingWindowsRequest] {
         case (np, bs, ws, nw) => {
-          val windowLength = windowLengthUtil.timeForMB(ws);
+          val windowAmp = (ws / windowDataSize).round;
           StreamingWindowsRequest(numberOfPartitions = np,
                                   batchSize = bs,
                                   windowSize = windowLength,
-                                  numberOfWindows = nw)
+                                  numberOfWindows = nw,
+                                  windowSizeAmplification = windowAmp)
         }
       },
     testSpace = ParameterSpacePB
-      .cross(List(1, 2), List(10, 100), List(0.01, 0.1), List(1, 10))
+      .cross(List(1, 2), List(100), List(0.01, 0.1, 1.0, 10.0), List(10))
       .msg[StreamingWindowsRequest] {
         case (np, bs, ws, nw) => {
-          val windowLength = windowLengthUtil.timeForMB(ws);
+          val windowAmp = (ws / windowDataSize).round;
           StreamingWindowsRequest(numberOfPartitions = np,
                                   batchSize = bs,
                                   windowSize = windowLength,
-                                  numberOfWindows = nw)
+                                  numberOfWindows = nw,
+                                  windowSizeAmplification = windowAmp)
         }
       }
   );

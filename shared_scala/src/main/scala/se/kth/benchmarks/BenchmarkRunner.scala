@@ -79,7 +79,7 @@ object BenchmarkRunnerServer {
 
 object BenchmarkRunner extends StrictLogging {
 
-  val MIN_RUNS = 20;
+  val MIN_RUNS = 30;
   val MAX_RUNS = 100;
   val RSE_TARGET = 0.1; // 10% RSE
 

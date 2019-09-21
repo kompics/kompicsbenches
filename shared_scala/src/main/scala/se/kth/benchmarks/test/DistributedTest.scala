@@ -166,7 +166,8 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
         .withBatchSize(10)
         .withNumberOfPartitions(2)
         .withNumberOfWindows(2)
-        .withWindowSize("10ms");
+        .withWindowSize("10ms")
+        .withWindowSizeAmplification(1000L);
       val swResF = benchStub.streamingWindows(swr);
       checkResult("Streaming Windows", swResF);
       logger.info("Finished test StreamingWindows");

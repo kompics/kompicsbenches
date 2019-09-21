@@ -122,50 +122,20 @@ private def plotBenchSW(b: Benchmark, res: Map[String, ImplGroupedResult[String]
   {
     val meanGroupedNumberOfPartitions = ImplResults.slices(
       meanGroupedParams,
-      (req: StreamingWindowsRequest) => (req.batchSize, req.windowSize, req.numberOfWindows),
+      (req: StreamingWindowsRequest) => (req.batchSize, req.windowSize, req.numberOfWindows, req.windowSizeAmplification),
       (req: StreamingWindowsRequest) => req.numberOfPartitions
     );
     meanGroupedNumberOfPartitions.foreach { case (params, impls) =>
       val p = new JavaPlot();
       if (!show) {
-        val outfile = output / s"${b.symbol}-batchsize${params._1}-windowsize${params._2}-numwindows${params._3}.eps";
+        val outfile = output / s"${b.symbol}-batchsize${params._1}-windowsize${params._2}-numwindows${params._3}-amplification${params._4}.eps";
         val epsf = new terminal.PostscriptTerminal(outfile.toString);
         epsf.setColor(true);
             p.setTerminal(epsf);
       }
       p.getAxis("x").setLabel("#partitions");
       p.getAxis("y").setLabel("average wall time per window (ms)");
-      p.setTitle(s"${b.name} (batch size = ${params._1}, window size = ${params._2}, number of windows = ${params._3})");
-      impls.foreach { case (key, res) =>
-        val dsp = new gplot.DataSetPlot(res);
-        dsp.setTitle(res.implLabel);
-        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
-        val colour = colourMap(key);
-        ps.setLineType(colour);
-        ps.setPointType(pointMap(key));
-        dsp.setPlotStyle(ps);
-        p.addPlot(dsp);
-      }
-      p.plot();
-    }
-  }
-  {
-    val meanGroupedBatchSize = ImplResults.slices(
-      meanGroupedParams,
-      (req: StreamingWindowsRequest) => (req.numberOfPartitions, req.windowSize, req.numberOfWindows),
-      (req: StreamingWindowsRequest) => req.batchSize
-    );
-    meanGroupedBatchSize.foreach { case (params, impls) =>
-      val p = new JavaPlot();
-      if (!show) {
-        val outfile = output / s"${b.symbol}-numpartitions${params._1}-windowsize${params._2}-numwindows${params._3}.eps";
-        val epsf = new terminal.PostscriptTerminal(outfile.toString);
-        epsf.setColor(true);
-            p.setTerminal(epsf);
-      }
-      p.getAxis("x").setLabel("batch size (#msgs)");
-      p.getAxis("y").setLabel("average wall time per window (ms)");
-      p.setTitle(s"${b.name} (number of partitions = ${params._1}, window size = ${params._2}, number of windows = ${params._3})");
+      p.setTitle(s"${b.name} (batch = ${params._1} msgs, window = ${params._2}, #windows = ${params._3}, window amp. = ${params._4})");
       impls.foreach { case (key, res) =>
         val dsp = new gplot.DataSetPlot(res);
         dsp.setTitle(res.implLabel);
@@ -182,20 +152,27 @@ private def plotBenchSW(b: Benchmark, res: Map[String, ImplGroupedResult[String]
   {
     val meanGroupedWindowSize = ImplResults.slices(
       meanGroupedParams,
-      (req: StreamingWindowsRequest) => (req.numberOfPartitions, req.batchSize, req.numberOfWindows),
-      (req: StreamingWindowsRequest) => scala.concurrent.duration.Duration(req.windowSize).toMillis
+      (req: StreamingWindowsRequest) => (req.numberOfPartitions, req.batchSize, req.windowSize, req.numberOfWindows),
+      (req: StreamingWindowsRequest) => {
+      	val lengthSec = scala.concurrent.duration.Duration(req.windowSize).toUnit(java.util.concurrent.TimeUnit.SECONDS);
+      	val unamplifiedSize = lengthSec * 0.008; // 8kB/s
+      	val amplifiedSize = (req.windowSizeAmplification.toDouble * unamplifiedSize);
+      	(amplifiedSize * 1000.0).round
+      }
     );
     meanGroupedWindowSize.foreach { case (params, impls) =>
       val p = new JavaPlot();
       if (!show) {
-        val outfile = output / s"${b.symbol}-numpartitions${params._1}-batchsize${params._2}-numwindows${params._3}.eps";
+        val outfile = output / s"${b.symbol}-numpartitions${params._1}-batchsize${params._2}-windowsize${params._3}-numwindows${params._4}.eps";
         val epsf = new terminal.PostscriptTerminal(outfile.toString);
         epsf.setColor(true);
             p.setTerminal(epsf);
       }
-      p.getAxis("x").setLabel("window length (ms)");
+      val xAxis = p.getAxis("x");
+      xAxis.setLabel("window size (kB)");
+      xAxis.setLogScale(true);
       p.getAxis("y").setLabel("average wall time per window (ms)");
-      p.setTitle(s"${b.name} (number of partitions = ${params._1}, batch size = ${params._2}, number of windows = ${params._3})");
+      p.setTitle(s"${b.name} (#partitions = ${params._1}, batch = ${params._2} msgs, window = ${params._3}, #windows = ${params._4})");
       impls.foreach { case (key, res) =>
         val dsp = new gplot.DataSetPlot(res);
         dsp.setTitle(res.implLabel);

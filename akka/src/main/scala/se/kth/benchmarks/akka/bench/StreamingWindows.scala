@@ -23,7 +23,10 @@ import com.typesafe.scalalogging.StrictLogging
 
 object StreamingWindows extends DistributedBenchmark {
 
-  case class WindowerConfig(windowSize: Duration, batchSize: Long, upstreamActorPaths: List[String])
+  case class WindowerConfig(windowSize: Duration,
+                            batchSize: Long,
+                            amplification: Long,
+                            upstreamActorPaths: List[String])
   case class WindowerRefs(actorPaths: List[String])
 
   override type MasterConf = StreamingWindowsRequest;
@@ -51,17 +54,18 @@ object StreamingWindows extends DistributedBenchmark {
   override def newClient(): Client = new ClientImpl();
   override def strToClientConf(str: String): Try[ClientConf] = Try {
     val parts = str.split(",");
-    assert(parts.length == 3, "ClientConf consists of 3 comma-separated parts!");
+    assert(parts.length == 4, "ClientConf consists of 4 comma-separated parts!");
     val windowSizeMS = parts(0).toLong;
     val windowSize = Duration.apply(windowSizeMS, TimeUnit.MILLISECONDS);
     val batchSize = parts(1).toLong;
-    val upstream = parts(2).split(";").toList;
-    WindowerConfig(windowSize, batchSize, upstream)
+    val amplification = parts(2).toLong;
+    val upstream = parts(3).split(";").toList;
+    WindowerConfig(windowSize, batchSize, amplification, upstream)
   }
   override def strToClientData(str: String): Try[ClientData] = Success(WindowerRefs(str.split(";").toList));
 
   override def clientConfToString(c: ClientConf): String = {
-    s"${c.windowSize.toMillis},${c.batchSize},${c.upstreamActorPaths.mkString(";")}"
+    s"${c.windowSize.toMillis},${c.batchSize},${c.amplification},${c.upstreamActorPaths.mkString(";")}"
   }
   override def clientDataToString(d: ClientData): String = d.actorPaths.mkString(";");
 
@@ -71,6 +75,7 @@ object StreamingWindows extends DistributedBenchmark {
     private var batchSize: Long = -1L;
     private var windowSize: Duration = Duration.Zero;
     private var numberOfWindows: Long = -1L;
+    private var windowSizeAmplification: Long = -1L;
 
     private var system: ActorSystem = null;
     private var sources: List[(Int, ActorRef)] = Nil;
@@ -81,6 +86,7 @@ object StreamingWindows extends DistributedBenchmark {
       logger.info(s"Setting up master: $c");
       this.numberOfPartitions = c.numberOfPartitions;
       this.batchSize = c.batchSize;
+      this.windowSizeAmplification = c.windowSizeAmplification;
       this.windowSize = Duration(c.windowSize);
       this.numberOfWindows = c.numberOfWindows;
       this.system = ActorSystemProvider.newRemoteActorSystem(name = "streamingwindows",
@@ -93,7 +99,7 @@ object StreamingWindows extends DistributedBenchmark {
       val sourcesStringified: List[String] = this.sources.map {
         case (_, ref) => ActorSystemProvider.actorPathForRef(ref, system)
       };
-      WindowerConfig(windowSize, batchSize, sourcesStringified)
+      WindowerConfig(windowSize, batchSize, windowSizeAmplification, sourcesStringified)
     }
     override def prepareIteration(d: List[ClientData]): Unit = {
       implicit val ec = scala.concurrent.ExecutionContext.global;
@@ -145,6 +151,7 @@ object StreamingWindows extends DistributedBenchmark {
 
     private var windowSize: Duration = Duration.Zero;
     private var batchSize: Long = -1L;
+    private var amplification: Long = -1L;
 
     private var system: ActorSystem = null;
     private var sources: List[ActorRef] = Nil;
@@ -156,6 +163,7 @@ object StreamingWindows extends DistributedBenchmark {
 
       this.windowSize = c.windowSize;
       this.batchSize = c.batchSize;
+      this.amplification = c.amplification;
       this.system = ActorSystemProvider.newRemoteActorSystem(name = "streamingwindows",
                                                              threads = Runtime.getRuntime.availableProcessors(),
                                                              serialization = serializers);
@@ -163,7 +171,7 @@ object StreamingWindows extends DistributedBenchmark {
       val sourcesF = Future.sequence(sourcesFs);
       this.sources = Await.result(sourcesF, RESOLVE_TIMEOUT);
       this.windowers = for (source <- sources) yield {
-        system.actorOf(Props(new Windower(this.windowSize, this.batchSize, source)))
+        system.actorOf(Props(new Windower(this.windowSize, this.batchSize, this.amplification, source)))
       };
       val windowerPaths = this.windowers.map(windower => ActorSystemProvider.actorPathForRef(windower, system));
       WindowerRefs(windowerPaths)
@@ -200,7 +208,9 @@ object StreamingWindows extends DistributedBenchmark {
     case object Flushed extends WindowerMessage;
   }
 
-  class Windower(windowSize: Duration, val batchSize: Long, val upstream: ActorRef) extends Actor with ActorLogging {
+  class Windower(windowSize: Duration, val batchSize: Long, val amplification: Long, val upstream: ActorRef)
+      extends Actor
+      with ActorLogging {
     import WindowerMessage._;
 
     val windowSizeMS = windowSize.toMillis;
@@ -235,11 +245,15 @@ object StreamingWindows extends DistributedBenchmark {
       case Event(ts, id, value) if running => {
         if (ts < (windowStartTS + windowSizeMS)) {
           //log.debug(s"Window not yet ready ($ts < ${(windowStartTS + windowSizeMS)})");
-          currentWindow += value;
+          for (_ <- 0L until this.amplification) {
+            currentWindow += value;
+          }
         } else {
           triggerWindow(id);
           windowStartTS = ts;
-          currentWindow += value;
+          for (_ <- 0L until this.amplification) {
+            currentWindow += value;
+          }
         }
         manageReady();
       }

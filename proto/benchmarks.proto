@@ -36,4 +36,5 @@ message StreamingWindowsRequest {
 	uint64 batch_size = 2;
 	string window_size = 3;
 	uint64 number_of_windows = 4;
+	uint64 window_size_amplification = 5;
 }
