@@ -92,7 +92,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       Await.result(f, 3 seconds);
       if (lastIteration) {
         system.terminate();
-        Await.ready(system.whenTerminated, 5 seconds);
+        Await.ready(system.whenTerminated, 5.seconds);
         system = null;
         logger.info("Cleaned up Master");
       }
@@ -113,7 +113,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
       implicit val scheduler = system.scheduler;
       val f: Future[ClientRefs] = system.ask(ref => StartPongers(ref, c.staticOnly, c.numPongers));
       implicit val ec = scala.concurrent.ExecutionContext.global;
-      val ready = Await.ready(f, 5 seconds);
+      val ready = Await.ready(f, 5.seconds);
       ready.value.get match {
         case Success(pongerPaths) => {
           logger.trace(s"Ponger Paths are${pongerPaths.actorPaths.mkString}");
@@ -204,11 +204,11 @@ object NetThroughputPingPong extends DistributedBenchmark {
   }
 
   class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
-    val resolver = ActorRefResolver(context.system)
-    var pingers: List[ActorRef[MsgForPinger]] = null
-    var static_pingers: List[ActorRef[MsgForStaticPinger]] = null
-    var run_id: Int = -1
-    var staticOnly = true
+    val resolver = ActorRefResolver(context.system);
+    var pingers: List[ActorRef[MsgForPinger]] = null;
+    var static_pingers: List[ActorRef[MsgForStaticPinger]] = null;
+    var run_id: Int = -1;
+    var staticOnly = true;
 
     override def onMessage(msg: SystemMessage): Behavior[SystemMessage] = {
       msg match {
@@ -335,9 +335,9 @@ object NetThroughputPingPong extends DistributedBenchmark {
                      pipeline: Long,
                      pongerPath: String)
       extends AbstractBehavior[MsgForStaticPinger] {
-    val resolver = ActorRefResolver(context.system)
-    val selfRef = ActorReference(resolver.toSerializationFormat(context.self))
-    val ponger: ActorRef[StaticPing] = resolver.resolveActorRef(pongerPath)
+    val resolver = ActorRefResolver(context.system);
+    val selfRef = ActorReference(resolver.toSerializationFormat(context.self));
+    val ponger: ActorRef[StaticPing] = resolver.resolveActorRef(pongerPath);
 
     var sentCount = 0L;
     var recvCount = 0L;
@@ -395,6 +395,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
   }
 
   class PingPongSerializer extends Serializer {
+    import se.kth.benchmarks.akka.SerUtils;
     import PingPongSerializer._
     import java.nio.{ByteBuffer, ByteOrder}
 
@@ -408,16 +409,12 @@ object NetThroughputPingPong extends DistributedBenchmark {
         case Ping(src, index) => {
           val br = ByteString.createBuilder.putByte(PING_FLAG)
           br.putLong(index)
-          val src_bytes = src.actorPath.getBytes
-          br.putShort(src_bytes.size)
-          br.putBytes(src_bytes)
+          SerUtils.stringIntoByteString(br, src.actorPath);
           br.result().toArray
         }
         case StaticPing(src) => {
           val br = ByteString.createBuilder.putByte(STATIC_PING_FLAG)
-          val src_bytes = src.actorPath.getBytes
-          br.putShort(src_bytes.size)
-          br.putBytes(src_bytes)
+          SerUtils.stringIntoByteString(br, src.actorPath);
           br.result().toArray
         }
         case Pong(index) => ByteString.createBuilder.putByte(PONG_FLAG).putLong(index).result().toArray
@@ -430,18 +427,12 @@ object NetThroughputPingPong extends DistributedBenchmark {
       val flag = buf.get;
       flag match {
         case PING_FLAG => {
-          val index = buf.getLong
-          val src_length: Int = buf.getShort
-          val src_bytes = new Array[Byte](src_length)
-          buf.get(src_bytes)
-          val src = ActorReference(src_bytes.map(_.toChar).mkString)
+          val index = buf.getLong;
+          val src = ActorReference(SerUtils.stringFromByteBuffer(buf));
           Ping(src, index)
         }
         case STATIC_PING_FLAG => {
-          val src_length: Int = buf.getShort
-          val src_bytes = new Array[Byte](src_length)
-          buf.get(src_bytes)
-          val src = ActorReference(src_bytes.map(_.toChar).mkString)
+          val src = ActorReference(SerUtils.stringFromByteBuffer(buf));
           StaticPing(src)
         }
         case PONG_FLAG        => Pong(buf.getLong)

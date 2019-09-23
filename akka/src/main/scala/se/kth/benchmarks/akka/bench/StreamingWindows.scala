@@ -306,7 +306,9 @@ object StreamingWindows extends DistributedBenchmark {
         this.downstream = Some(sender());
         send()
       }
+      case Ready(_) if flushing           => () // drop
       case StreamSource.Next if !flushing => send()
+      case StreamSource.Next if flushing  => () // drop
       case StreamSource.Reset if !flushing => {
         log.debug("Got reset");
         this.flushing = true;
