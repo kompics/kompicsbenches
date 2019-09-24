@@ -1,22 +1,23 @@
 package se.kth.benchmarks.kompicsscala.bench
 
 import org.scalatest._
-import scala.util.{ Failure, Success, Try }
+import scala.util.{Failure, Success, Try}
 import se.kth.benchmarks.kompicsscala._
 import java.util.concurrent.CountDownLatch
 import se.kth.benchmarks.kompicsscala.bench.AtomicRegister._
 import se.sics.kompics.sl._
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import com.typesafe.scalalogging.StrictLogging
 
-class DistributedTest extends FunSuite with Matchers {
+class DistributedTest extends FunSuite with Matchers with StrictLogging {
 
   implicit val ec = scala.concurrent.ExecutionContext.global;
 
   test("Network Ser/Deser") {
     import NetPingPong._
     import se.sics.kompics.network.netty.serialization.Serializers;
-    import io.netty.buffer.{ Unpooled, ByteBuf };
+    import io.netty.buffer.{ByteBuf, Unpooled};
     import java.util.Optional;
 
     BenchNet.registerSerializers();
@@ -36,7 +37,7 @@ class DistributedTest extends FunSuite with Matchers {
     val addrDeserO = Serializers.fromBinary(buf, noHint);
     addrDeserO shouldBe a[NetAddress];
     val addrDeser = addrDeserO.asInstanceOf[NetAddress];
-    addrDeser should equal (addr);
+    addrDeser should equal(addr);
 
     buf.clear();
 
@@ -44,7 +45,7 @@ class DistributedTest extends FunSuite with Matchers {
     val addr2DeserO = Serializers.fromBinary(buf, noHint);
     addr2DeserO shouldBe a[NetAddress];
     val addr2Deser = addr2DeserO.asInstanceOf[NetAddress];
-    addr2Deser should equal (addr2);
+    addr2Deser should equal(addr2);
 
     buf.clear();
 
@@ -52,7 +53,7 @@ class DistributedTest extends FunSuite with Matchers {
     val pingDeserO = Serializers.fromBinary(buf, noHint);
     pingDeserO shouldBe a[NetMessage[_]];
     val pingDeser = pingDeserO.asInstanceOf[NetMessage[Ping.type]];
-    pingDeser should equal (ping);
+    pingDeser should equal(ping);
 
     buf.clear();
 
@@ -60,7 +61,7 @@ class DistributedTest extends FunSuite with Matchers {
     val pongDeserO = Serializers.fromBinary(buf, noHint);
     pongDeserO shouldBe a[NetMessage[_]];
     val pongDeser = pongDeserO.asInstanceOf[NetMessage[Pong.type]];
-    pongDeser should equal (pong);
+    pongDeser should equal(pong);
     /*
     buf.clear();
     // Atomic Register events
@@ -138,13 +139,13 @@ class DistributedTest extends FunSuite with Matchers {
     valueDeser.ts should be (ts)
     valueDeser.wr should be (wr)
     valueDeser.value should be (v)
-    */
+   */
   }
 
   test("Throughput Network Ser/Deser") {
     import NetThroughputPingPong._
     import se.sics.kompics.network.netty.serialization.Serializers;
-    import io.netty.buffer.{ Unpooled, ByteBuf };
+    import io.netty.buffer.{ByteBuf, Unpooled};
     import java.util.Optional;
 
     BenchNet.registerSerializers();
@@ -165,7 +166,7 @@ class DistributedTest extends FunSuite with Matchers {
     val addrDeserO = Serializers.fromBinary(buf, noHint);
     addrDeserO shouldBe a[NetAddress];
     val addrDeser = addrDeserO.asInstanceOf[NetAddress];
-    addrDeser should equal (addr);
+    addrDeser should equal(addr);
 
     buf.clear();
 
@@ -173,7 +174,7 @@ class DistributedTest extends FunSuite with Matchers {
     val addr2DeserO = Serializers.fromBinary(buf, noHint);
     addr2DeserO shouldBe a[NetAddress];
     val addr2Deser = addr2DeserO.asInstanceOf[NetAddress];
-    addr2Deser should equal (addr2);
+    addr2Deser should equal(addr2);
 
     buf.clear();
 
@@ -181,7 +182,7 @@ class DistributedTest extends FunSuite with Matchers {
     val spingDeserO = Serializers.fromBinary(buf, noHint);
     spingDeserO shouldBe a[NetMessage[_]];
     val spingDeser = spingDeserO.asInstanceOf[NetMessage[StaticPing]];
-    spingDeser should equal (sping);
+    spingDeser should equal(sping);
 
     buf.clear();
 
@@ -189,7 +190,7 @@ class DistributedTest extends FunSuite with Matchers {
     val spongDeserO = Serializers.fromBinary(buf, noHint);
     spongDeserO shouldBe a[NetMessage[_]];
     val spongDeser = spongDeserO.asInstanceOf[NetMessage[StaticPong]];
-    spongDeser should equal (spong);
+    spongDeser should equal(spong);
 
     buf.clear();
 
@@ -197,7 +198,7 @@ class DistributedTest extends FunSuite with Matchers {
     val pingDeserO = Serializers.fromBinary(buf, noHint);
     pingDeserO shouldBe a[NetMessage[_]];
     val pingDeser = pingDeserO.asInstanceOf[NetMessage[Ping]];
-    pingDeser should equal (ping);
+    pingDeser should equal(ping);
 
     buf.clear();
 
@@ -205,31 +206,31 @@ class DistributedTest extends FunSuite with Matchers {
     val pongDeserO = Serializers.fromBinary(buf, noHint);
     pongDeserO shouldBe a[NetMessage[_]];
     val pongDeser = pongDeserO.asInstanceOf[NetMessage[Pong]];
-    pongDeser should equal (pong);
+    pongDeser should equal(pong);
   }
 
   test("NetPingPong Ser/Deser") {
     val addr = NetAddress.from("127.0.0.1", 12345).get;
-    println(s"Original Address: $addr");
+    logger.debug(s"Original Address: $addr");
     val ser = NetPingPong.clientDataToString(addr);
-    println(s"Serialised Address: $ser");
+    logger.debug(s"Serialised Address: $ser");
     val deser = NetPingPong.strToClientData(ser).get;
-    println(s"Deserialised Address: $deser");
-    deser.getIp() should equal (addr.getIp());
-    deser.getPort() should equal (addr.getPort());
-    deser should equal (addr);
+    logger.debug(s"Deserialised Address: $deser");
+    deser.getIp() should equal(addr.getIp());
+    deser.getPort() should equal(addr.getPort());
+    deser should equal(addr);
   }
 
   test("NetThroughputPingPong Ser/Deser") {
     val addr = NetAddress.from("127.0.0.1", 12345).get;
-    println(s"Original Address: $addr");
+    logger.debug(s"Original Address: $addr");
     val ser = NetThroughputPingPong.clientDataToString(addr);
-    println(s"Serialised Address: $ser");
+    logger.debug(s"Serialised Address: $ser");
     val deser = NetThroughputPingPong.strToClientData(ser).get;
-    println(s"Deserialised Address: $deser");
-    deser.getIp() should equal (addr.getIp());
-    deser.getPort() should equal (addr.getPort());
-    deser should equal (addr);
+    logger.debug(s"Deserialised Address: $deser");
+    deser.getIp() should equal(addr.getIp());
+    deser.getPort() should equal(addr.getPort());
+    deser should equal(addr);
   }
 
   test("Kompics Scala Network System") {
@@ -241,17 +242,17 @@ class DistributedTest extends FunSuite with Matchers {
     val addr = system.networkAddress.get;
 
     val latch = new CountDownLatch(1);
-    val pingerIdF = system.createNotify[Pinger](Init(latch, 100l, addr));
+    val pingerIdF = system.createNotify[Pinger](Init(latch, 100L, addr));
     val pinger = Await.result(pingerIdF, 5.second);
     val pingerConnF = system.connectNetwork(pinger);
     Await.result(pingerConnF, 5.seconds);
-    println(s"Pinger Path is $addr");
+    logger.debug(s"Pinger Path is $addr");
 
     val pongerF = system.createNotify[Ponger](Init.none);
     val ponger = Await.result(pongerF, 5.seconds);
     val pongerConnF = system.connectNetwork(ponger);
     Await.result(pongerConnF, 5.seconds);
-    println(s"Ponger Path is $addr");
+    logger.debug(s"Ponger Path is $addr");
     val pongerStartF = system.startNotify(ponger);
     Await.result(pongerStartF, 5.seconds);
     //pongerStartF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
@@ -260,7 +261,7 @@ class DistributedTest extends FunSuite with Matchers {
     //startF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
     Await.result(pingerStartF, 5.seconds);
 
-    println("Awaiting test result");
+    logger.info("Awaiting test result");
     latch.await();
 
     system.terminate();
@@ -275,17 +276,17 @@ class DistributedTest extends FunSuite with Matchers {
     val addr = system.networkAddress.get;
 
     val latch = new CountDownLatch(1);
-    val pingerIdF = system.createNotify[StaticPinger](Init(1, latch, 100l, 2l, addr));
+    val pingerIdF = system.createNotify[StaticPinger](Init(1, latch, 100L, 2L, addr));
     val pinger = Await.result(pingerIdF, 5.second);
     val pingerConnF = system.connectNetwork(pinger);
     Await.result(pingerConnF, 5.seconds);
-    println(s"Pinger Path is $addr");
+    logger.debug(s"Pinger Path is $addr");
 
     val pongerF = system.createNotify[StaticPonger](Init(1));
     val ponger = Await.result(pongerF, 5.seconds);
     val pongerConnF = system.connectNetwork(ponger);
     Await.result(pongerConnF, 5.seconds);
-    println(s"Ponger Path is $addr");
+    logger.debug(s"Ponger Path is $addr");
     val pongerStartF = system.startNotify(ponger);
     Await.result(pongerStartF, 5.seconds);
     //pongerStartF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
@@ -294,7 +295,7 @@ class DistributedTest extends FunSuite with Matchers {
     //startF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
     Await.result(pingerStartF, 5.seconds);
 
-    println("Awaiting test result");
+    logger.info("Awaiting test result");
     latch.await();
 
     system.terminate();
@@ -309,17 +310,17 @@ class DistributedTest extends FunSuite with Matchers {
     val addr = system.networkAddress.get;
 
     val latch = new CountDownLatch(1);
-    val pingerIdF = system.createNotify[Pinger](Init(1, latch, 100l, 2l, addr));
+    val pingerIdF = system.createNotify[Pinger](Init(1, latch, 100L, 2L, addr));
     val pinger = Await.result(pingerIdF, 5.second);
     val pingerConnF = system.connectNetwork(pinger);
     Await.result(pingerConnF, 5.seconds);
-    println(s"Pinger Path is $addr");
+    logger.debug(s"Pinger Path is $addr");
 
     val pongerF = system.createNotify[Ponger](Init(1));
     val ponger = Await.result(pongerF, 5.seconds);
     val pongerConnF = system.connectNetwork(ponger);
     Await.result(pongerConnF, 5.seconds);
-    println(s"Ponger Path is $addr");
+    logger.debug(s"Ponger Path is $addr");
     val pongerStartF = system.startNotify(ponger);
     Await.result(pongerStartF, 5.seconds);
     //pongerStartF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
@@ -328,7 +329,63 @@ class DistributedTest extends FunSuite with Matchers {
     //startF.failed.foreach(e => Console.err.println(s"Could not start pinger: $e"));
     Await.result(pingerStartF, 5.seconds);
 
-    println("Awaiting test result");
+    logger.info("Awaiting test result");
+    latch.await();
+
+    system.terminate();
+  }
+
+  test("Kompics Scala Streaming Windows") {
+    import StreamingWindows._;
+    import scala.concurrent.{Await, Future, Promise};
+    KompicsSystemProvider.setPublicIf("127.0.0.1");
+
+    val _ = StreamingWindows.newMaster(); // just to ensure that serialisers are loaded...
+
+    implicit val ec = scala.concurrent.ExecutionContext.global;
+    val timeout = 30.seconds;
+
+    val system = KompicsSystemProvider.newRemoteKompicsSystem(2);
+
+    val addr = system.networkAddress.get;
+
+    val numberOfPartitions = 2;
+    val latch = new CountDownLatch(2);
+    val numberOfWindows = 2L;
+    val windowSize = 100.millis;
+    val batchSize = 10L;
+    val amplification = 5L;
+
+    val componentsLF = (for (pid <- (0 until numberOfPartitions)) yield {
+      val source = for {
+        source <- system.createNotify[StreamSource](Init[StreamSource](pid));
+        _ <- system.connectNetwork(source);
+        _ <- system.startNotify(source)
+      } yield source;
+      val windower = for {
+        windower <- system
+          .createNotify[Windower](WindowerInit(pid, windowSize, batchSize, amplification, addr));
+        _ <- system.connectNetwork(windower);
+        _ <- system.startNotify(windower)
+      } yield windower;
+      val sink = for {
+        sink <- system
+          .createNotify[StreamSink](Init[StreamSink](pid, latch, numberOfWindows, addr));
+        _ <- system.connectNetwork(sink)
+      } yield sink;
+      for {
+        so <- source;
+        w <- windower;
+        si <- sink
+      } yield (pid, so, w, si)
+    }).toList;
+    val componentsFL = Future.sequence(componentsLF);
+    val components = Await.result(componentsFL, timeout);
+
+    val sinksStartF = components.map { case (_, _, _, sink) => system.startNotify(sink) };
+    Await.result(Future.sequence(sinksStartF), timeout);
+
+    logger.info("Awaiting test result");
     latch.await();
 
     system.terminate();

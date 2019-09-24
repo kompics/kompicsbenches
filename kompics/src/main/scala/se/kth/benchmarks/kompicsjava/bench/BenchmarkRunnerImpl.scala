@@ -27,9 +27,7 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
     }
   }
 
-  override def netPingPong(request: PingPongRequest): Future[TestResult] = {
-    Future.successful(NotImplemented())
-  }
+  override def netPingPong(request: PingPongRequest): Future[TestResult] = Future.successful(NotImplemented());
 
   override def throughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
     Future {
@@ -39,9 +37,11 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
     }
   }
 
-  override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] = {
+  override def netThroughputPingPong(request: ThroughputPingPongRequest): Future[TestResult] =
     Future.successful(NotImplemented())
-  }
 
-  override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = ???
+  override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = Future.successful(NotImplemented());
+
+  override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] =
+    Future.successful(NotImplemented());
 }

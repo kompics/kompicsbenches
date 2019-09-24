@@ -8,4 +8,5 @@ object Factory extends BenchmarkFactory {
   override def throughputPingPong(): Benchmark = ThroughputPingPong;
   override def netThroughputPingPong(): DistributedBenchmark = NetThroughputPingPong;
   override def atomicRegister(): DistributedBenchmark = AtomicRegister;
+  override def streamingWindows(): DistributedBenchmark = ???; // TODO
 }
