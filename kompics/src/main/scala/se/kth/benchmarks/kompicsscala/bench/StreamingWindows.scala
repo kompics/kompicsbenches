@@ -22,7 +22,6 @@ import scala.util.Try
 import java.util.UUID.randomUUID
 
 import com.typesafe.scalalogging.StrictLogging
-import se.sics.kompics.network.netty.NettyAddress
 
 object StreamingWindows extends DistributedBenchmark {
 
@@ -373,7 +372,7 @@ object StreamingWindows extends DistributedBenchmark {
       case context @ NetMessage(_, Flushed(this.partitionId)) =>
         handle {
           if (flushing) {
-            log.debug("Got flushed");
+            log.debug("Got Flushed");
             this.replyOnFlushed.get.success(());
             this.replyOnFlushed = None;
             this.flushing = false;
@@ -386,7 +385,7 @@ object StreamingWindows extends DistributedBenchmark {
     loopbck uponEvent {
       case Reset(replyTo) =>
         handle {
-          log.debug("Got reset");
+          log.debug("Got Reset");
           this.flushing = true;
           this.replyOnFlushed = Some(replyTo);
           sendDownstream(Flush(this.partitionId));
@@ -441,7 +440,7 @@ object StreamingWindows extends DistributedBenchmark {
     ctrl uponEvent {
       case _: Start =>
         handle {
-          logger.debug("Got start!");
+          log.debug("Got Start!");
           sendUpstream(WindowerMessage.Start(partitionId));
         }
     }

@@ -46,7 +46,7 @@ object KompicsSystemProvider extends StrictLogging {
   se.kth.benchmarks.kompicsjava.net.BenchNetSerializer.register();
   Conversions.register(new se.kth.benchmarks.kompicsjava.net.NetAddressConverter());
 
-  val SELF_ADDR_KEY = "self-address";
+  val SELF_ADDR_KEY = se.kth.benchmarks.kompics.ConfigKeys.SELF_ADDR_KEY;
 
   private var publicIf = "127.0.0.1";
   def setPublicIf(pif: String): Unit = this.synchronized { publicIf = pif; };

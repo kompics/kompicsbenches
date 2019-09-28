@@ -4,8 +4,8 @@ import java.util.concurrent.CountDownLatch;
 
 import se.sics.kompics.*;
 import se.sics.kompics.network.Network;
+import se.kth.benchmarks.kompics.ConfigKeys;
 import se.kth.benchmarks.kompicsjava.net.*;
-import se.kth.benchmarks.kompicsscala.KompicsSystemProvider;
 
 public class Pinger extends ComponentDefinition {
 
@@ -47,7 +47,7 @@ public class Pinger extends ComponentDefinition {
         count = init.count;
         pipeline = init.pipeline;
         ponger = init.ponger;
-        selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
+        selfAddr = config().getValue(ConfigKeys.SELF_ADDR_KEY, NetAddress.class);
 
         // Subscriptions
         subscribe(startHandler, control);

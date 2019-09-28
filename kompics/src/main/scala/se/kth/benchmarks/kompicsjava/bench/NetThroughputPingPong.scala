@@ -4,16 +4,12 @@ import se.kth.benchmarks._
 import se.kth.benchmarks.kompicsscala.{KompicsSystem, KompicsSystemProvider, NetAddress}
 import _root_.kompics.benchmarks.benchmarks.ThroughputPingPongRequest
 import se.kth.benchmarks.kompicsjava.bench.netthroughputpingpong._;
-import se.sics.kompics.network.Network
-import se.sics.kompics.sl.Init
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
-import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
-import java.util.Optional
-import io.netty.buffer.ByteBuf
+import se.sics.kompics.network.netty.serialization.Serializers
 import com.typesafe.scalalogging.StrictLogging
 
 object NetThroughputPingPong extends DistributedBenchmark {
