@@ -291,7 +291,7 @@ impl Provide<ControlPort> for Ponger {
 impl Actor for Ponger {
     type Message = Never;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
         unreachable!("Can't instantiate Never!");
     }
     fn receive_network(&mut self, msg: NetMessage) -> () {

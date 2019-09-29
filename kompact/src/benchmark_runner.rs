@@ -91,6 +91,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 #[derive(Clone)]
@@ -180,6 +188,13 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 #[derive(Clone)]
@@ -213,7 +228,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
     fn ping_pong(
         &self,
         _o: grpc::RequestOptions,
-        p: benchmarks::PingPongRequest,
+        _p: benchmarks::PingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
@@ -229,7 +244,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
     fn throughput_ping_pong(
         &self,
         _o: grpc::RequestOptions,
-        p: benchmarks::ThroughputPingPongRequest,
+        _p: benchmarks::ThroughputPingPongRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
@@ -246,6 +261,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
         &self,
         _o: grpc::RequestOptions,
         _p: benchmarks::AtomicRegisterRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

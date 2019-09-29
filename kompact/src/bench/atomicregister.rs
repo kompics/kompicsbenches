@@ -229,20 +229,15 @@ pub mod actor_atomicregister {
         }
 
         fn run_iteration(&mut self) -> () {
-            match self.system {
-                Some(ref _system) => {
-                    println!("Running experiment!");
-                    let finished_latch = self.finished_latch.take().unwrap();
-                    if let Some(partitioning_actor) = self.partitioning_actor.take() {
-                        let partitioning_actor_ref = partitioning_actor.actor_ref();
-                        partitioning_actor_ref.tell(Run);
-                        finished_latch.wait();
-                        self.partitioning_actor = Some(partitioning_actor);
-                    } else {
-                        unimplemented!()
-                    }
-                }
-                None => unimplemented!(),
+            assert!(self.system.is_some());
+            println!("Running experiment!");
+            let finished_latch = self.finished_latch.take().unwrap();
+            if let Some(ref partitioning_actor) = self.partitioning_actor {
+                let partitioning_actor_ref = partitioning_actor.actor_ref();
+                partitioning_actor_ref.tell(Run);
+                finished_latch.wait();
+            } else {
+                unimplemented!()
             }
         }
 
@@ -1465,7 +1460,7 @@ struct Write {
 }
 
 struct AtomicRegisterSer;
-const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
+//const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
 const READ_ID: i8 = 1;
 const WRITE_ID: i8 = 2;
 const VALUE_ID: i8 = 3;

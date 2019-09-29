@@ -288,6 +288,7 @@ pub mod test_utils {
         // );
         check_result("NetThroughputPingPong (GC)", ntppres2);
 
+        
         let mut nnar_request = benchmarks::AtomicRegisterRequest::new();
         nnar_request.set_read_workload(0.5);
         nnar_request.set_write_workload(0.5);
@@ -299,6 +300,19 @@ pub mod test_utils {
             .drop_metadata();
         let nnares = nnares_f.wait().expect("nnar result");
         check_result("Atomic Register", nnares);
+
+        let mut sw_request = benchmarks::StreamingWindowsRequest::new();
+        sw_request.set_batch_size(10);
+        sw_request.set_number_of_partitions(2);
+        sw_request.set_number_of_windows(2);
+        sw_request.set_window_size("10ms".to_string());
+        sw_request.set_window_size_amplification(1000);
+
+        let swres_f = bench_stub
+            .streaming_windows(grpc::RequestOptions::default(), sw_request)
+            .drop_metadata();
+        let swres = swres_f.wait().expect("sw result");
+        check_result("Streaming Windows", swres);
 
         info!(logger, "Sending shutdown request to master");
         let mut sreq = messages::ShutdownRequest::new();

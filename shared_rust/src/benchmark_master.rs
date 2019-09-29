@@ -665,6 +665,17 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         let b_res = self.benchmarks.atomic_register();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got net req: {:?}", p);
+        let b_res = self.benchmarks.streaming_windows();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
 }
 
 #[derive(Clone)]

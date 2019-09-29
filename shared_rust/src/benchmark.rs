@@ -375,6 +375,9 @@ pub trait BenchmarkFactory: Send + Sync {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
     fn atomic_register(&self)
         -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+    fn streaming_windows(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 impl Clone for Box<dyn BenchmarkFactory> {
@@ -632,6 +635,12 @@ pub(crate) mod tests {
         }
 
         fn atomic_register(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(Test3B {}.into())
+        }
+
+        fn streaming_windows(
             &self,
         ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())

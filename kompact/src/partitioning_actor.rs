@@ -65,15 +65,13 @@ impl Provide<ControlPort> for PartitioningActor {
 impl Actor for PartitioningActor {
     type Message = Run;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
         for node in &self.nodes {
             node.tell((Run, PARTITIONING_ACTOR_SER), self);
         }
     }
 
     fn receive_network(&mut self, msg: NetMessage) -> () {
-        let sender = msg.sender().clone();
-
         match_deser! {msg; {
             _init_ack: InitAck [PartitioningActorSer] => {
                 self.init_ack_count += 1;
@@ -139,7 +137,7 @@ impl Serialiser<Init> for PartitioningActorSer {
         buf.put_u64_be(i.max_key);
         buf.put_u32_be(i.nodes.len() as u32);
         for node in i.nodes.iter() {
-            node.serialise(buf).expect("Node didn't serialise.");
+            node.serialise(buf)?;
         }
         Ok(())
     }
@@ -157,13 +155,8 @@ impl Deserialiser<Init> for PartitioningActorSer {
                 let nodes_len: u32 = buf.get_u32_be();
                 let mut nodes: Vec<ActorPath> = Vec::new();
                 for _ in 0..nodes_len {
-                    if let Ok(actorpath) = ActorPath::deserialise(buf) {
-                        nodes.push(actorpath);
-                    } else {
-                        return Err(SerError::InvalidType(
-                            "Could not deserialise data to ActorPath".into(),
-                        ));
-                    }
+                    let actorpath = ActorPath::deserialise(buf)?;
+                    nodes.push(actorpath);
                 }
                 let init = Init {
                     rank,

@@ -1,4 +1,4 @@
-package se.kth.benchmarks.akka.typed_bench
+
 
 import akka.actor.typed.{ActorRef, ActorRefResolver, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
@@ -508,7 +508,7 @@ object StreamingWindows extends DistributedBenchmark {
     override def onMessage(msg: SourceMsg): Behavior[SourceMsg] = {
       msg match {
         case Ready(batchSize, sendTo) if !flushing => {
-          log.debug("Got ready!");
+          log.debug("Got Ready!");
           this.remaining += batchSize;
           this.downstream = Some(getWindowerRef(sendTo));
           send();
@@ -517,7 +517,7 @@ object StreamingWindows extends DistributedBenchmark {
         case StreamSource.Next if !flushing => send()
         case StreamSource.Next if flushing  => () // drop
         case StreamSource.Reset(replyTo) if !flushing => {
-          log.debug("Got reset");
+          log.debug("Got Reset");
           this.flushing = true;
           this.replyOnFlushed = Some(replyTo);
           this.downstream.get ! Windower.Flush;
@@ -527,7 +527,7 @@ object StreamingWindows extends DistributedBenchmark {
         }
         case StreamSource.Reset(_) if flushing => ??? // shouldn't happen!
         case Flushed if flushing => {
-          log.debug("Got flushed");
+          log.debug("Got Flushed");
           this.replyOnFlushed.get ! Flushed;
           this.replyOnFlushed = None;
           this.flushing = false;
@@ -578,7 +578,7 @@ object StreamingWindows extends DistributedBenchmark {
     override def onMessage(msg: SinkMsg): Behavior[SinkMsg] = {
       msg match {
         case Start => {
-          log.debug("Got start!");
+          log.debug("Got Start!");
           upstream ! Windower.Start(selfRef);
         }
         case WindowAggregate(_, _, median) => {

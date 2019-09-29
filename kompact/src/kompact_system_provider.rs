@@ -1,7 +1,6 @@
 //use super::*;
 
 use kompact::prelude::*;
-use kompact::*;
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

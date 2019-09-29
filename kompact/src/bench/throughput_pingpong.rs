@@ -248,16 +248,12 @@ pub mod actor_pingpong {
         }
 
         fn run_iteration(&mut self) -> () {
-            match self.system {
-                Some(ref system) => {
-                    let latch = self.latch.take().unwrap();
-                    self.pinger_refs.iter().for_each(|pinger_ref| {
-                        pinger_ref.tell(&RUN);
-                    });
-                    latch.wait();
-                }
-                None => unimplemented!(),
-            }
+            assert!(self.system.is_some());
+            let latch = self.latch.take().unwrap();
+            self.pinger_refs.iter().for_each(|pinger_ref| {
+                pinger_ref.tell(&RUN);
+            });
+            latch.wait();
         }
 
         fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {

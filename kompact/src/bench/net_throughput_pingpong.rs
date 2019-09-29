@@ -217,7 +217,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         if last_iteration {
             system
                 .shutdown()
-                .expect("Kompics didn't shut down properly");
+                .expect("Kompact didn't shut down properly");
             self.params = None;
         } else {
             self.system = Some(system);
@@ -399,7 +399,7 @@ impl Provide<ControlPort> for StaticPonger {
 impl Actor for StaticPonger {
     type Message = Never;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
         unreachable!("Can't instantiate Never!");
     }
     fn receive_network(&mut self, msg: NetMessage) -> () {
