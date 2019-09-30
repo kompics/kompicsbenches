@@ -5,6 +5,7 @@ use kompact::prelude::*;
 use parse_duration;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use std::convert::TryInto;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -602,6 +603,8 @@ impl NetworkActor for Windower {
                     self.trigger_window(pid);
                     self.window_start_ts = ts;
                 }
+                let reserve: usize = self.amplification.try_into().unwrap_or(std::usize::MAX);
+                self.current_window.reserve(reserve);
                 for _i in 0..self.amplification {
                     self.current_window.push(value);
                 }

@@ -1,3 +1,4 @@
+
 package se.kth.benchmarks.kompicsjava.bench.streamingwindows;
 
 import se.sics.kompics.ComponentDefinition;
@@ -50,15 +51,17 @@ public class StreamSink extends ComponentDefinition {
 
         @Override
         public void handle(WindowerMessage.WindowAggregate content, NetMessage context) {
-            logger.debug("Got window with median={}", content.value);
-            windowCount++;
-            if (windowCount == numberOfWindows) {
-                latch.countDown();
-                sendUpstream(new WindowerMessage.Stop(partitionId));
-                logger.debug("Done!");
-            } else {
-                logger.debug("Got {}/{} windows.", windowCount, numberOfWindows);
-            }
+            if (content.partitionId == partitionId) {
+	            logger.debug("Got window with median={}", content.value);
+	            windowCount++;
+	            if (windowCount == numberOfWindows) {
+	                latch.countDown();
+	                sendUpstream(new WindowerMessage.Stop(partitionId));
+	                logger.debug("Done!");
+	            } else {
+	                logger.debug("Got {}/{} windows.", windowCount, numberOfWindows);
+	            }
+        	}
         }
     };
 
