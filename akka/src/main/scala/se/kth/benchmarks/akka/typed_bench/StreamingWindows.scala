@@ -1,4 +1,4 @@
-
+package se.kth.benchmarks.akka.typed_bench
 
 import akka.actor.typed.{ActorRef, ActorRefResolver, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
