@@ -57,7 +57,8 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 }
 
 val javaBin = binp('java);
-val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx32G", "-XX:+UseG1GC");
+//val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx32G", "-XX:+UseG1GC","-XX:+HeapDumpOnOutOfMemoryError");
+val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx8G", "-XX:+UseG1GC","-XX:+HeapDumpOnOutOfMemoryError");
 
 val implementations: Map[String, BenchmarkImpl] = Map(
 	"AKKA" -> BenchmarkImpl(

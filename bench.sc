@@ -75,7 +75,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 		      }
 		    });
 			client.waitFor();
-			Console.err.println("Client shut down!");
+			Console.err.println("Client shut down with code="+client.exitValue()+"!");
 		}
 		case None => {
 			Console.err.println(s"No Benchmark Implementation found for '${name}'");
