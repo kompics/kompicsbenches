@@ -36,7 +36,7 @@ val builders: List[Builder] = List(
 	Builder("Kompics", relp("kompics"), sbt, Seq("assembly"), Seq("clean")),
 	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean")),
 	Builder("Actix", relp("actix"), cargo, Seq("build", "--release"), Seq("clean")),
-	Builder("Erlang", relp("erlang"), make, Seq("rel"), Seq("clean"))
+	Builder("Erlang", relp("erlang"), make, Seq(), Seq("clean"))
 );
 
 @main

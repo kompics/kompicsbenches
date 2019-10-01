@@ -240,7 +240,8 @@ run_distributed_benchmark_caught(Request, Data) ->
 		{ok, MasterConfig} ->
 			EmptyMaster = Benchmark:new_master(),
 			NumClients = length(Data#state.clients),
-			case Benchmark:master_setup(EmptyMaster, MasterConfig, NumClients) of
+			Meta = distributed_benchmark:meta_create(NumClients),
+			case Benchmark:master_setup(EmptyMaster, MasterConfig, Meta) of
 				{ok, SetupMaster, ClientConf} ->
 					SetupConf = distributed_native:new_setup_config(Benchmark, ClientConf),
 					ClientDataRes = benchmark_client:setup_all(get_clients(Data), SetupConf),
@@ -273,13 +274,14 @@ loop_distributed_iteration(Clients, Benchmark, SetupMaster, ClientData, ResultDa
 	{ok, PreparedMaster} = Benchmark:master_prepare_iteration(SetupMaster, ClientData),
 	io:fwrite("Starting run ~b.~n", [NRuns]),
 	{Time, RunMaster} = measure(Benchmark, PreparedMaster),
-	io:fwrite("Finished run ~b.~n", [NRuns]),
+	io:fwrite("Finished run ~b in ~w ms.~n", [NRuns, Time]),
 	NewResultData = [Time | ResultData],
 	NewNRuns = NRuns + 1,
 	MAX_RUNS = benchmark_runner:max_runs(),
 	if
 		NewNRuns < MAX_RUNS ->
 			LastIteration = (NewNRuns >= benchmark_runner:min_runs()) andalso (statistics:rse(NewResultData) =< benchmark_runner:rse_target()),
+			io:fwrite("LastIteration=~w.~n", [LastIteration]),
 			{ok, CleanupMaster} = Benchmark:master_cleanup_iteration(RunMaster, LastIteration, Time),
 			case benchmark_client:cleanup_all(Clients, distributed_native:new_cleanup_info(LastIteration)) of
 				ok when LastIteration == false ->

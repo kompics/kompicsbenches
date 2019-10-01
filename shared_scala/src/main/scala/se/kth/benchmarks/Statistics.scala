@@ -27,7 +27,7 @@ object Statistics {
     val sortedBuf = buf.sorted; // this is pretty inefficient, but sortInPlace only appears in Scala 2.13
     val len = sortedBuf.length;
     val median = if (len % 2 == 0) { // is even
-      val upperMiddle = len / 2;
+      val upperMiddle = len / 2; // zero indexing
       val lowerMiddle = upperMiddle - 1;
       (sortedBuf(lowerMiddle) + sortedBuf(upperMiddle)).toDouble / 2.0
     } else { // is odd

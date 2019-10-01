@@ -1,5 +1,13 @@
 -module(distributed_benchmark).
 
+-record(deployment_metadata, {num_clients = 0 :: integer()}).
+-opaque deployment_metadata() :: #deployment_metadata{}.
+-export_type([deployment_metadata/0]).
+
+-export([meta_create/1, meta_num_clients/1]).
+
+%%%% General API %%%%%
+
 -callback msg_to_master_conf(Msg :: term()) ->
 	{ok, MasterConf :: term()} |
 	{error, Reason :: string()}.
@@ -12,7 +20,7 @@
 
 %%%% On Master Instance %%%%%
 
--callback master_setup(MasterInstance :: term(), MasterConf :: term()) -> 
+-callback master_setup(MasterInstance :: term(), MasterConf :: term(), Meta :: deployment_metadata()) -> 
 	{ok, NewMasterInstance :: term(), ClientConf :: term()} |
 	{error, Reason :: string()}.
 
@@ -35,3 +43,13 @@
 
 -callback client_cleanup_iteration(ClientInstance :: term(), LastIteration :: boolean()) ->
 	{ok, NewClientInstance :: term()}.
+
+%%%% Metadata Functions %%%%%
+
+-spec meta_create(NumClients :: integer()) -> deployment_metadata().
+meta_create(NumClients) ->
+	#deployment_metadata{num_clients = NumClients}.
+
+-spec meta_num_clients(Meta :: deployment_metadata()) -> integer().
+meta_num_clients(Meta) ->
+	Meta#deployment_metadata.num_clients.
