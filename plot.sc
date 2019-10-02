@@ -368,11 +368,12 @@ private val colourMap: Map[String, style.PlotColor] = Map(
 	"KOMPACTAC" -> style.NamedPlotColor.SEA_GREEN,
 	"KOMPACTCO" -> style.NamedPlotColor.SPRING_GREEN,
 	"KOMPACTMIX" -> style.NamedPlotColor.FOREST_GREEN,
-	"KOMPICSJ" -> style.NamedPlotColor.RED,
+	"KOMPICSJ" -> style.NamedPlotColor.VIOLET,
 	"KOMPICSSC" -> style.NamedPlotColor.DARK_RED,
-	"KOMPICSSC2" -> style.NamedPlotColor.LIGHT_RED,
+	"KOMPICSSC2" -> style.NamedPlotColor.RED,
 	"ACTIX" -> style.NamedPlotColor.DARK_BLUE,
-	"ERLANG" -> style.NamedPlotColor.NAVY
+	"ERLANG" -> style.NamedPlotColor.NAVY,
+	"RIKER" -> style.NamedPlotColor.MIDNIGHT_BLUE
 );
 
 private val colourMap2: Map[String, style.PlotColor] = Map(
@@ -381,12 +382,13 @@ private val colourMap2: Map[String, style.PlotColor] = Map(
 	"Kompact Actor" -> style.NamedPlotColor.SEA_GREEN,
 	"Kompact Component" -> style.NamedPlotColor.SPRING_GREEN,
 	"Kompact Mixed" -> style.NamedPlotColor.TURQUOISE ,
-	"Kompics Java" -> style.NamedPlotColor.RED,
+	"Kompics Java" -> style.NamedPlotColor.VIOLET,
 	"Kompics Scala 1.x" -> style.NamedPlotColor.DARK_RED,
-	"Kompics Scala 2.x" -> style.NamedPlotColor.LIGHT_RED,
+	"Kompics Scala 2.x" -> style.NamedPlotColor.RED,
 	"Actix" -> style.NamedPlotColor.DARK_BLUE,
-	"Erlang" -> style.NamedPlotColor.NAVY
+	"Erlang" -> style.NamedPlotColor.NAVY,
+	"Riker" -> style.NamedPlotColor.MIDNIGHT_BLUE
 );
 
 private val pointMap: Map[String, Int] = 
-	List("AKKA", "AKKATYPED", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "KOMPICSSC2", "ACTIX", "ERLANG").zipWithIndex.toMap.mapValues(_ + 1);
+	List("AKKA", "AKKATYPED", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "KOMPICSSC2", "ACTIX", "ERLANG", "RIKER").zipWithIndex.toMap.mapValues(_ + 1);

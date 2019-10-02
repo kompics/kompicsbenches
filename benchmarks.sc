@@ -140,6 +140,14 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("erlang"), relp("erlang/run.sh"), Seq(s"erlang${benchMasterAddr.port}@${benchMasterAddr.address}", "-erlang_benchmarks", "runner", s""""${benchRunnerAddr}"""", "master", s""""${benchMasterAddr}"""", "clients", numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("erlang"), relp("erlang/run.sh"), Seq(s"erlang${benchClientAddr.port}@${benchClientAddr.address}", "-erlang_benchmarks", "master", s""""${benchMasterAddr}"""", "client", s""""${benchClientAddr}"""")),
 		mustCopy = List(relp("erlang/run.sh"), relp("erlang/_rel"))
+	),
+	"RIKER" -> BenchmarkImpl(
+		symbol="RIKER",
+		label="Riker",
+		local = (benchRunnerAddr) => Runner(relp("riker"), relp("riker/target/release/riker_benchmarks"), Seq(benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("riker"), relp("riker/target/release/riker_benchmarks"), Seq(benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("riker"), relp("riker/target/release/riker_benchmarks"), Seq(benchMasterAddr, benchClientAddr)),
+		mustCopy = List(relp("riker/target/release/riker_benchmarks"))
 	)
 );
 
