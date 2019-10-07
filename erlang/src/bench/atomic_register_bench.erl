@@ -116,12 +116,13 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), Meta :: distributed_benchmark:deployment_metadata()) ->
   {ok, Newinstance :: master_instance(), ClientConf :: client_conf()} |
   {error, Reason :: string()}.
-master_setup(Instance, Conf, NumClients) ->
+master_setup(Instance, Conf, Meta) ->
   io:fwrite("Setting up Atomic Register(Master)"),
-  logger:set_primary_config(level, error),
+  NumClients = distributed_benchmark:meta_num_clients(Meta),
+  %logger:set_primary_config(level, error), % should be set globally
   PartitionSize = Conf#master_conf.partition_size,
   case NumClients of
     N when N < PartitionSize - 1 ->
@@ -436,6 +437,3 @@ write_response(State, _Key) ->
     true ->
       NewState
   end.
-
-
-

@@ -1,7 +1,8 @@
 -module(statistics).
 
 -export([
-	rse/1
+	rse/1,
+	median/1
 	]).
 
 -record(stats, {
@@ -45,16 +46,23 @@ calculate_stats(Data) ->
 	},
 	{ok, Stats}.
 
-% lazy val sampleSize = results.size.toDouble;
-%   lazy val sampleMean = results.sum / sampleSize;
-%   lazy val sampleVariance = results.foldLeft(0.0) { (acc, sample) =>
-%     val err = sample - sampleMean;
-%     acc + (err * err)
-%   } / (sampleSize - 1.0);
-%   lazy val sampleStandardDeviation = Math.sqrt(sampleVariance);
-%   lazy val standardErrorOfTheMean = sampleStandardDeviation / Math.sqrt(sampleSize);
-%   lazy val relativeErrorOfTheMean = standardErrorOfTheMean / sampleMean;
-%   lazy val symmetricConfidenceInterval95: (Double, Double) = {
-%     val cidist = 1.96 * standardErrorOfTheMean;
-%     (sampleMean - cidist, sampleMean + cidist)
-%   }
+-spec median(List :: [integer()] | [float()]) -> {ok, Median :: float()} | empty.
+median([]) -> 
+	empty;
+median(Unsorted) ->
+    Sorted = lists:sort(Unsorted),
+    Length = length(Sorted),
+    case Length rem 2 of
+    	0 ->
+    		LowerMiddle = Length div 2, % nth is 1 indexed
+    		UpperMiddle = LowerMiddle + 1,
+    		LowerValue = lists:nth(LowerMiddle, Sorted),
+    		UpperValue = lists:nth(UpperMiddle, Sorted),
+    		Median = float(LowerValue + UpperValue)/2,
+    		{ok, Median};
+    	1 ->
+    		Middle = Length div 2 + 1, % nth is 1 indexed
+    		Median = lists:nth(Middle, Sorted),
+    		{ok, float(Median)}
+
+    end.

@@ -1,11 +1,14 @@
 #!/bin/bash
 set -ev
 cd shared_rust
-exec cargo test --verbose
+cargo test --verbose -- --test-threads=1
 cd ..
 cd kompact
-exec cargo test --verbose
+cargo test --verbose --features travis_ci -- --test-threads=1
 cd ..
 cd actix
-exec cargo test --verbose
+cargo test --verbose -- --test-threads=1
+cd ..
+cd riker
+cargo test --verbose -- --test-threads=1
 cd ..

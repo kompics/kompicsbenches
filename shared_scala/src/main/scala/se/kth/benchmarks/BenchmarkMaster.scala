@@ -17,7 +17,7 @@ case class BenchRequest(f: () => Future[TestResult])
 
 class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int, val benchmarks: BenchmarkFactory)
     extends StrictLogging { self =>
-  import BenchmarkRunner.{MAX_RUNS, MIN_RUNS, RSE_TARGET, measure, resultToTestResult, rse};
+  import BenchmarkRunner.{MAX_RUNS, MIN_RUNS, RSE_TARGET, failureToTestResult, measure, resultToTestResult, rse};
 
   import BenchmarkMaster.{IterationData, State};
 
@@ -95,6 +95,11 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       val b = benchmarks.atomicRegister;
       runBenchmark(b, request)
     };
+
+    override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] = queueIfNotReady {
+      val b = benchmarks.streamingWindows;
+      runBenchmark(b, request)
+    }
 
     override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
       logger.info(s"Got shutdown request with force=${request.force}");
@@ -236,94 +241,155 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       case Success(masterConf) => {
         state cas (State.READY -> State.SETUP);
         val rp = Promise.apply[TestResult];
-        //resultPromiseO = Some(rp);
+        val meta = DeploymentMetaData(clients.size);
 
         logger.info(s"Starting distributed test ${b.getClass.getCanonicalName}");
 
         val exF = Future {
           val master = b.newMaster();
-          val clientConf = master.setup(masterConf);
-          val clientConfS = b.clientConfToString(clientConf);
-          val clientSetup = SetupConfig(b.getClass.getCanonicalName, clientConfS);
-          val clientDataRLF = Future.sequence(clients.map(_.stub.setup(clientSetup)));
-          val clientDataLF = clientDataRLF.flatMap(l => {
-            logger.debug(s"Got ${l.length} setup responses.");
-            val lf = l.map(sr => {
-              val t = Try {
-                assert(sr.success, sr.data);
-                val cd = b.strToClientData(sr.data);
-                logger.debug(s"Setup response ${sr.data} deserialised to $cd");
-                cd
-              } flatten;
-              tryToFuture(t)
-            });
-            Future.sequence(lf)
-          });
-          def iteration(clientDataL: List[b.ClientData], nRuns: Int, results: List[Double]): Future[IterationData] = {
-            val t = Try {
-              logger.debug(s"Preparing iteration $nRuns");
-              master.prepareIteration(clientDataL);
-              logger.debug(s"Starting iteration $nRuns");
-              val r = BenchmarkRunner.measure(master.runIteration);
-              logger.debug(s"Finished iteration $nRuns");
-              val incRuns = nRuns + 1;
-              val newResults = r :: results;
-              if ((incRuns < MIN_RUNS) || (incRuns < MAX_RUNS) && (rse(newResults) > RSE_TARGET)) {
-                master.cleanupIteration(false, r);
-                val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(false))));
-                f.map(_ => IterationData(incRuns, newResults, false))
-              } else {
-                state cas (State.RUN -> State.CLEANUP);
-                master.cleanupIteration(true, r);
-                val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
-                f.map(_ => {
-                  state cas (State.CLEANUP -> State.FINISHED);
-                  IterationData(incRuns, newResults, true)
-                })
-              }
-            };
-            t match {
-              case Success(f)  => f
-              case Failure(ex) => Future.failed(ex)
-            }
-          };
-          clientDataLF.map { clientDataL =>
-            state cas (State.SETUP -> State.RUN);
-            logger.debug(s"Going to RUN state and starting first iteration.");
-            // run until RSE target is met
-            def loop(id: IterationData): Unit = {
-              if (id.done) {
-                val tr = resultToTestResult(Success(id.results));
-                logger.debug(s"Finished run.");
-                rp.success(tr)
-              } else {
-                val f = iteration(clientDataL, id.nRuns, id.results);
+          master.setup(masterConf, meta) match {
+            case Success(clientConf) => {
+              val clientConfS = b.clientConfToString(clientConf);
+              val clientSetup = SetupConfig(b.getClass.getCanonicalName, clientConfS);
+              val clientDataRLF = Future.sequence(clients.map(_.stub.setup(clientSetup)));
+              val clientDataLF = clientDataRLF.flatMap(l => {
+                logger.debug(s"Got ${l.length} setup responses.");
+                val (successes, failures) = l.partition(sr => sr.success);
+                if (failures.isEmpty) {
+                  val deserRes = successes.map { sr =>
+                    val cd = b.strToClientData(sr.data);
+                    logger.trace(s"Setup response ${sr.data} deserialised to $cd");
+                    cd
+                  };
+                  val (deserSuccesses, deserFailures) = deserRes.partition(_.isSuccess);
+                  if (deserFailures.isEmpty) {
+                    val deserData = deserSuccesses.map(_.get);
+                    Future.successful(deserData)
+                  } else {
+                    val msg =
+                      s"Client Data Deserialisation Errors: ${deserFailures.map(_.asInstanceOf[Failure[b.ClientData]]).map(_.exception.getMessage()).mkString("[", ";", "]")}";
+                    Future.failed(new BenchmarkException(msg))
+                  }
+                } else {
+                  val msg = s"Client Setup Errors: ${failures.map(_.data).mkString("[", ";", "]")}";
+                  Future.failed(new BenchmarkException(msg))
+                }
+              });
+              def iteration(clientDataL: List[b.ClientData],
+                            nRuns: Int,
+                            results: List[Double]): Future[IterationData] = {
+
+                logger.debug(s"Preparing iteration $nRuns");
+                Try(master.prepareIteration(clientDataL)) match {
+                  case Success(_) => {
+                    logger.debug(s"Starting iteration $nRuns");
+                    Try(BenchmarkRunner.measure(master.runIteration)) match {
+                      case Success(r) => {
+                        logger.debug(s"Finished iteration $nRuns");
+                        val incRuns = nRuns + 1;
+                        val newResults = r :: results;
+                        val done = !((incRuns < MIN_RUNS) || (incRuns < MAX_RUNS) && (rse(newResults) > RSE_TARGET));
+                        if (done) {
+                          state cas (State.RUN -> State.CLEANUP);
+                        }
+                        Try(master.cleanupIteration(done, r)) match {
+                          case Success(_) => {
+                            val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(done))));
+                            val iterData = IterationData(incRuns, newResults, done);
+                            f.map(_ => {
+                              if (done) {
+                                state cas (State.CLEANUP -> State.FINISHED);
+                              }
+                              iterData
+                            })
+                          }
+                          case Failure(e) => {
+                            logger.error(s"Failed during cleanupIteration $nRuns", e);
+                            if (!done) { // try again in final mode
+                              try { // this is likely to fail, but we should still try
+                                master.cleanupIteration(true, 0);
+                              } catch {
+                                case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
+                              }
+                            }
+                            val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
+                            f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
+                          }
+                        }
+                      }
+                      case Failure(e) => {
+                        logger.error(s"Failed during runIteration $nRuns", e);
+                        try { // this is likely to fail, but we should still try
+                          master.cleanupIteration(true, 0);
+                        } catch {
+                          case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
+                        }
+                        val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
+                        f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
+                      }
+                    }
+                  }
+                  case Failure(e) => {
+                    logger.error(s"Failed during prepareIteration $nRuns", e);
+                    try { // this is likely to fail, but we should still try
+                      master.cleanupIteration(true, 0);
+                    } catch {
+                      case e: Throwable => logger.error(s"Error during forced master cleanup!", e)
+                    }
+                    val f = Future.sequence(clients.map(_.stub.cleanup(CleanupInfo(true))));
+                    f.transformWith(_ => Future.failed(e)) // ignore cleanup errors and return original failure
+                  }
+                }
+              };
+              clientDataLF.map { clientDataL =>
+                state cas (State.SETUP -> State.RUN);
+                logger.debug(s"Going to RUN state and starting first iteration.");
+                // run until RSE target is met
+                def loop(id: IterationData): Unit = {
+                  if (id.done) {
+                    val tr = resultToTestResult(Success(id.results));
+                    logger.debug(s"Finished run.");
+                    rp.success(tr)
+                  } else {
+                    val f = iteration(clientDataL, id.nRuns, id.results);
+                    f.onComplete {
+                      case Success(id) => loop(id)
+                      case Failure(ex) => rp.failure(ex)
+                    };
+                  }
+                };
+                val f = iteration(clientDataL, 0, List.empty[Double]);
                 f.onComplete {
                   case Success(id) => loop(id)
                   case Failure(ex) => rp.failure(ex)
                 };
-              }
-            };
-            val f = iteration(clientDataL, 0, List.empty[Double]);
-            f.onComplete {
-              case Success(id) => loop(id)
-              case Failure(ex) => rp.failure(ex)
-            };
-          };
+              };
+            }
+            case Failure(e) => {
+              Future.failed(e)
+            }
+          }
+
         };
         exF.flatten.failed.foreach { e =>
           logger.error(s"runBenchmark failed!", e);
           rp.failure(e);
         }
 
-        val f = rp.future;
+        val f = rp.future.transform {
+          case s @ Success(_) => s
+          case f @ Failure(_) => Success(failureToTestResult(f))
+        };
         f.onComplete(_ => {
           logger.info(s"Completed distributed test ${b.getClass.getCanonicalName}");
-          state := State.READY;
+          state := State.READY; // reset state
         }); // no point to check state here, as the exception would be swallowed anyway
         f
       }
-      case Failure(e) => Future.failed(e)
+      case f @ Failure(_) => {
+        //logger.warn("Master setup failed", e);
+        Future.successful(failureToTestResult(f, Some("Deserialise Master Conf")))
+      }
     }
   }
 
@@ -333,10 +399,10 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
     ClientEntry(ci.address, ci.port, stub)
   }
 
-  private def tryToFuture[T](t: Try[T]): Future[T] = t match {
-    case Success(cd) => Future.successful(cd)
-    case Failure(ex) => Future.failed(ex)
-  };
+  // private def tryToFuture[T](t: Try[T]): Future[T] = t match {
+  //   case Success(cd) => Future.successful(cd)
+  //   case Failure(ex) => Future.failed(ex)
+  // };
 }
 
 object BenchmarkMaster {

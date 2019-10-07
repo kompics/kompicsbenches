@@ -39,9 +39,9 @@ new_bench_request(BenchModule, Params) ->
 
 %%%%% Public API %%%%%
 
--spec start_link(Args :: any()) -> 
-	{ok, Pid :: pid()} | 
-	ignore | 
+-spec start_link(Args :: any()) ->
+	{ok, Pid :: pid()} |
+	ignore |
 	{error, Error :: {already_started, Pid :: pid()} | term()}.
 start_link(Args) ->
     gen_statem:start_link(?GLOBAl_NAME, ?MODULE, Args, []).
@@ -50,37 +50,37 @@ start_link(Args) ->
 start_runner(RunnerAddr) ->
 	RunnerPort = socket_addr:port(RunnerAddr),
 	{ok, _Server} = grpc:start_server(
-		runner_server, 
-		tcp, 
-		RunnerPort, 
+		runner_server,
+		tcp,
+		RunnerPort,
 		#{'BenchmarkRunner' => #{handler => benchmarks_server_master}}),
 	io:fwrite("Benchmark server is running on TCP port=~b.~n",[RunnerPort]),
 	ok.
 
--spec check_in(ClientInfo :: distributed_native:'ClientInfo'()) -> 
-	distributed_native:'CheckinResponse'() | 
+-spec check_in(ClientInfo :: distributed_native:'ClientInfo'()) ->
+	distributed_native:'CheckinResponse'() |
 	{error, Reason :: term()}.
 check_in(ClientInfo) ->
     try gen_statem:call(?GLOBAl_NAME, {'CheckIn', ClientInfo}, ?TIMEOUT) of
-    	{'CheckinResponse', Content} -> 
+    	{'CheckinResponse', Content} ->
     		Content;
-    	Other -> 
+    	Other ->
     		{error, Other}
     catch
     	Error -> {error, Error}
     end.
 
--spec get_state() -> 
-	benchmark_master:master_state() | 
+-spec get_state() ->
+	benchmark_master:master_state() |
 	{error, Reason :: term()}.
 get_state() ->
     try gen_statem:call(?GLOBAl_NAME, master_state, ?TIMEOUT) of
-    	{master_state, Content} -> 
+    	{master_state, Content} ->
     		Content;
-    	Other -> 
+    	Other ->
     		{error, Other}
     catch
-    	Error -> 
+    	Error ->
     		{error, Error}
     end.
 
@@ -89,12 +89,12 @@ get_state() ->
 	{error, Reason :: term()}.
 shutdown_all(Request) ->
 	try gen_statem:call(?GLOBAl_NAME, {'Shutdown', Request}, ?TIMEOUT*10) of
-    	ok -> 
+    	ok ->
     		ok;
-    	Other -> 
+    	Other ->
     		{error, Other}
     catch
-    	Error -> 
+    	Error ->
     		{error, Error}
     end.
 
@@ -104,8 +104,8 @@ request_bench(BenchRequest) ->
 
 %%%%% gen_statem impl %%%%%
 
-% -spec callback_mode() -> 
-% 	gen_statem:callback_mode() | 
+% -spec callback_mode() ->
+% 	gen_statem:callback_mode() |
 % 	[ gen_statem:callback_mode() | gen_statem:state_enter() ].
 callback_mode() ->
 	handle_event_function.
@@ -179,7 +179,7 @@ do_check_in(ClientInfo, From, State, Data) ->
 	gen_statem:event_handler_result(master_state()).
 do_shutdown(Request, From, _State, Data) ->
 	io:fwrite("Got shutdown request ~p.~n", [Request]),
-	case benchmark_client:shutdown_all(get_clients(Data), Request) of 
+	case benchmark_client:shutdown_all(get_clients(Data), Request) of
 		ok ->
 			io:fwrite("All clients shut down successfully!~n");
 		{error, Reason} ->
@@ -230,7 +230,7 @@ run_distributed_benchmark(Request, Data) ->
 			complete_benchmark(Request, {error, Error})
 	end.
 
--spec run_distributed_benchmark_caught(Request :: bench_request(), Data :: state()) -> 
+-spec run_distributed_benchmark_caught(Request :: bench_request(), Data :: state()) ->
 	{ok, ResultData :: [float()]} |
 	{error, Reason :: term()}.
 run_distributed_benchmark_caught(Request, Data) ->
@@ -240,7 +240,8 @@ run_distributed_benchmark_caught(Request, Data) ->
 		{ok, MasterConfig} ->
 			EmptyMaster = Benchmark:new_master(),
 			NumClients = length(Data#state.clients),
-			case Benchmark:master_setup(EmptyMaster, MasterConfig, NumClients) of
+			Meta = distributed_benchmark:meta_create(NumClients),
+			case Benchmark:master_setup(EmptyMaster, MasterConfig, Meta) of
 				{ok, SetupMaster, ClientConf} ->
 					SetupConf = distributed_native:new_setup_config(Benchmark, ClientConf),
 					ClientDataRes = benchmark_client:setup_all(get_clients(Data), SetupConf),
@@ -273,13 +274,14 @@ loop_distributed_iteration(Clients, Benchmark, SetupMaster, ClientData, ResultDa
 	{ok, PreparedMaster} = Benchmark:master_prepare_iteration(SetupMaster, ClientData),
 	io:fwrite("Starting run ~b.~n", [NRuns]),
 	{Time, RunMaster} = measure(Benchmark, PreparedMaster),
-	io:fwrite("Finished run ~b.~n", [NRuns]),
+	io:fwrite("Finished run ~b in ~w ms.~n", [NRuns, Time]),
 	NewResultData = [Time | ResultData],
 	NewNRuns = NRuns + 1,
 	MAX_RUNS = benchmark_runner:max_runs(),
 	if
 		NewNRuns < MAX_RUNS ->
 			LastIteration = (NewNRuns >= benchmark_runner:min_runs()) andalso (statistics:rse(NewResultData) =< benchmark_runner:rse_target()),
+			io:fwrite("LastIteration=~w.~n", [LastIteration]),
 			{ok, CleanupMaster} = Benchmark:master_cleanup_iteration(RunMaster, LastIteration, Time),
 			case benchmark_client:cleanup_all(Clients, distributed_native:new_cleanup_info(LastIteration)) of
 				ok when LastIteration == false ->

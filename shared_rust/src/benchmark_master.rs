@@ -49,27 +49,39 @@ pub fn run(
             check_in_sender.clone(),
         );
         let master_address = format!("0.0.0.0:{}", master_port);
-        let mut serverb = grpc::ServerBuilder::new_plain();
-        let res: OperationResult<grpc::Server, String> =
-            match serverb.http.set_addr(master_address.clone()) {
-                Ok(_) => {
-                    let service_def =
-                        distributed_grpc::BenchmarkMasterServer::new_service_def(master_handler);
-                    serverb.add_service(service_def);
-                    match serverb.build() {
-                        Ok(server) => OperationResult::Ok(server),
-                        Err(e) => OperationResult::Retry(format!(
-                            "Could not start master on {}: {}.",
+        match std::net::TcpListener::bind(master_address.clone()) {
+            // FIXME workaround for httbis panic on bound socket in 0.7.0
+            Ok(l) => {
+                drop(l);
+                let mut serverb = grpc::ServerBuilder::new_plain();
+                let res: OperationResult<grpc::Server, String> =
+                    match serverb.http.set_addr(master_address.clone()) {
+                        Ok(_) => {
+                            let service_def =
+                                distributed_grpc::BenchmarkMasterServer::new_service_def(
+                                    master_handler,
+                                );
+                            serverb.add_service(service_def);
+                            match serverb.build() {
+                                Ok(server) => OperationResult::Ok(server),
+                                Err(e) => OperationResult::Retry(format!(
+                                    "Could not start master on {}: {}.",
+                                    master_address, e
+                                )),
+                            }
+                        },
+                        Err(e) => OperationResult::Err(format!(
+                            "Could not read master address {}: {}",
                             master_address, e
                         )),
-                    }
-                },
-                Err(e) => OperationResult::Err(format!(
-                    "Could not read master address {}: {}",
-                    master_address, e
-                )),
-            };
-        res
+                    };
+                res
+            },
+            Err(e) => OperationResult::Retry(format!(
+                "Could not bind to master address {}: {}",
+                master_address, e
+            )),
+        }
     });
 
     let master_server = master_server_result.expect("master server");
@@ -84,27 +96,39 @@ pub fn run(
             inst.state(),
         );
         let runner_address = format!("0.0.0.0:{}", runner_port);
-        let mut serverb = grpc::ServerBuilder::new_plain();
-        let res: OperationResult<grpc::Server, String> =
-            match serverb.http.set_addr(runner_address.clone()) {
-                Ok(_) => {
-                    let service_def =
-                        benchmarks_grpc::BenchmarkRunnerServer::new_service_def(runner_handler);
-                    serverb.add_service(service_def);
-                    match serverb.build() {
-                        Ok(server) => OperationResult::Ok(server),
-                        Err(e) => OperationResult::Retry(format!(
-                            "Could not start runner on {}: {}.",
-                            runner_address, e
-                        )),
-                    }
-                },
-                Err(e) => OperationResult::Err(format!(
-                    "Could not read runner address {}: {}",
-                    runner_address, e
-                )),
-            };
-        res
+        match std::net::TcpListener::bind(runner_address.clone()) {
+            // FIXME workaround for httbis panic on bound socket in 0.7.0
+            Ok(l) => {
+                drop(l);
+                let mut serverb = grpc::ServerBuilder::new_plain();
+                let res: OperationResult<grpc::Server, String> = match serverb
+                    .http
+                    .set_addr(runner_address.clone())
+                {
+                    Ok(_) => {
+                        let service_def =
+                            benchmarks_grpc::BenchmarkRunnerServer::new_service_def(runner_handler);
+                        serverb.add_service(service_def);
+                        match serverb.build() {
+                            Ok(server) => OperationResult::Ok(server),
+                            Err(e) => OperationResult::Retry(format!(
+                                "Could not start runner on {}: {}.",
+                                runner_address, e
+                            )),
+                        }
+                    },
+                    Err(e) => OperationResult::Err(format!(
+                        "Could not read runner address {}: {}",
+                        runner_address, e
+                    )),
+                };
+                res
+            },
+            Err(e) => OperationResult::Retry(format!(
+                "Could not bind to runner address {}: {}",
+                runner_address, e
+            )),
+        }
     });
 
     let runner_server = runner_server_result.expect("runner server");
@@ -639,6 +663,17 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
     {
         info!(self.logger, "Got net req: {:?}", p);
         let b_res = self.benchmarks.atomic_register();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got net req: {:?}", p);
+        let b_res = self.benchmarks.streaming_windows();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 }

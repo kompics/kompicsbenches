@@ -28,13 +28,13 @@
 -type client_data() :: [pid()].
 
 -record(master_state, {
-	config = #master_conf{} :: master_conf(), 
-	pingers :: [pid()] | 'undefined', 
+	config = #master_conf{} :: master_conf(),
+	pingers :: [pid()] | 'undefined',
 	pongers :: [pid()] | 'undefined'}).
 
 -type master_instance() :: #master_state{}.
 
--record(client_state, { 
+-record(client_state, {
 	config = #client_conf{} :: client_conf(),
 	pongers :: [pid()] | 'undefined'}).
 
@@ -75,7 +75,7 @@ msg_to_master_conf(Msg) ->
         	pipeline_size := Pipeline,
         	parallelism := NumPairs,
         	static_only := StaticOnly
-        } when 
+        } when
         	is_integer(NumMsgs) andalso (NumMsgs > 0),
         	is_integer(Pipeline) andalso (Pipeline > 0),
         	is_integer(NumPairs) andalso (NumPairs > 0),
@@ -101,9 +101,9 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), Meta :: distributed_benchmark:deployment_metadata()) ->
 	{ok, Newnstance :: master_instance(), ClientConf :: client_conf()}.
-master_setup(Instance, Conf, _NumClients) ->
+master_setup(Instance, Conf, _Meta) ->
 	NewInstance = Instance#master_state{config = Conf},
 	process_flag(trap_exit, true),
 	ClientConf = #client_conf{num_pairs = get_num_pairs(NewInstance), static_only = is_static_only(NewInstance) },
@@ -117,16 +117,16 @@ master_prepare_iteration(Instance, ClientData) ->
 	StaticOnly = is_static_only(Instance),
 	PingerFun = case StaticOnly of
 		true ->
-			fun(Ponger) -> 
-				fun() -> 
+			fun(Ponger) ->
+				fun() ->
 					static_pinger(Ponger, get_num_msgs(Instance), get_pipeline(Instance), Self)
-				end 
+				end
 			end;
 		false ->
-			fun(Ponger) -> 
-				fun() -> 
+			fun(Ponger) ->
+				fun() ->
 					pinger(Ponger, get_num_msgs(Instance), get_pipeline(Instance), Self)
-				end 
+				end
 			end
 	end,
 	Pingers = lists:map(fun(Ponger) -> spawn_link(PingerFun(Ponger)) end, Pongers),
@@ -199,7 +199,7 @@ static_pinger(Ponger, MsgCount, Pipeline, Return) ->
 	end.
 
 -spec static_pinger_pipe(Ponger :: pid(), MsgCount :: integer(), SentCount :: integer(), RecvCount :: integer(), Pipeline :: integer(), Return :: pid()) -> ok.
-static_pinger_pipe(Ponger, MsgCount, SentCount, RecvCount, Pipeline, Return) 
+static_pinger_pipe(Ponger, MsgCount, SentCount, RecvCount, Pipeline, Return)
 	when (SentCount < Pipeline) andalso (SentCount < MsgCount) ->
 	Ponger ! {ping, self()},
 	static_pinger_pipe(Ponger, MsgCount, SentCount + 1, RecvCount, Pipeline, Return);
@@ -242,7 +242,7 @@ pinger(Ponger, MsgCount, Pipeline, Return) ->
 	end.
 
 -spec pinger_pipe(Ponger :: pid(), MsgCount :: integer(), SentCount :: integer(), RecvCount :: integer(), Pipeline :: integer(), Return :: pid()) -> ok.
-pinger_pipe(Ponger, MsgCount, SentCount, RecvCount, Pipeline, Return) 
+pinger_pipe(Ponger, MsgCount, SentCount, RecvCount, Pipeline, Return)
 	when (SentCount < Pipeline) andalso (SentCount < MsgCount) ->
 	Ponger ! {ping, SentCount, self()},
 	pinger_pipe(Ponger, MsgCount, SentCount + 1, RecvCount, Pipeline, Return);

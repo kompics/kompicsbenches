@@ -3,7 +3,6 @@ use super::*;
 use crate::partitioning_actor::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicRegisterRequest;
 use kompact::prelude::*;
-use kompact::*;
 use partitioning_actor::PartitioningActor;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -128,10 +127,18 @@ pub mod actor_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
+        fn setup(
+            &mut self,
+            c: Self::MasterConf,
+            m: &DeploymentMetaData,
+        ) -> Result<Self::ClientConf, BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
             if m.number_of_clients() < c.partition_size - 1 {
-                return Err(BenchmarkError::InvalidTest(format!("Not enough clients: {}, Partition size: {}", &m.number_of_clients(), &c.partition_size)));
+                return Err(BenchmarkError::InvalidTest(format!(
+                    "Not enough clients: {}, Partition size: {}",
+                    &m.number_of_clients(),
+                    &c.partition_size
+                )));
             }
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
@@ -165,15 +172,15 @@ pub mod actor_atomicregister {
                         format!("atomicreg_actor{}", &self.init_id),
                     );
 
-                    unique_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("AtomicRegisterComp never registered!")
-                        .expect("AtomicRegisterComp to register!");
+                    unique_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "AtomicRegisterComp to register!",
+                    );
 
-                    named_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("AtomicRegisterComp never registered!")
-                        .expect("AtomicRegisterComp to register!");
+                    named_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "AtomicRegisterComp to register!",
+                    );
 
                     let atomic_register_f = system.start_notify(&atomic_register);
                     atomic_register_f
@@ -200,10 +207,10 @@ pub mod actor_atomicregister {
                             self.num_keys.unwrap(),
                         )
                     });
-                    unique_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("PartitioningComp never registered!")
-                        .expect("PartitioningComp to register!");
+                    unique_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "PartitioningComp failed to register!",
+                    );
 
                     let partitioning_actor_f = system.start_notify(&partitioning_actor);
                     partitioning_actor_f
@@ -222,20 +229,15 @@ pub mod actor_atomicregister {
         }
 
         fn run_iteration(&mut self) -> () {
-            match self.system {
-                Some(ref system) => {
-                    println!("Running experiment!");
-                    let finished_latch = self.finished_latch.take().unwrap();
-                    if let Some(partitioning_actor) = self.partitioning_actor.take() {
-                        let partitioning_actor_ref = partitioning_actor.actor_ref();
-                        partitioning_actor_ref.tell(Box::new(Run), system);
-                        finished_latch.wait();
-                        self.partitioning_actor = Some(partitioning_actor);
-                    } else {
-                        unimplemented!()
-                    }
-                }
-                None => unimplemented!(),
+            assert!(self.system.is_some());
+            println!("Running experiment!");
+            let finished_latch = self.finished_latch.take().unwrap();
+            if let Some(ref partitioning_actor) = self.partitioning_actor {
+                let partitioning_actor_ref = partitioning_actor.actor_ref();
+                partitioning_actor_ref.tell(Run);
+                finished_latch.wait();
+            } else {
+                unimplemented!()
             }
         }
 
@@ -298,14 +300,14 @@ pub mod actor_atomicregister {
                 AtomicRegisterActor::with(c.read_workload, c.write_workload)
             });
             let named_reg_f = system.register_by_alias(&atomic_register, "atomicreg_actor");
-            unique_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Atomic Register actor never registered!")
-                .expect("Atomic Register actor failed to register!");
-            named_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Atomic Register actor never registered!")
-                .expect("Atomic Register actor failed to register!");
+            unique_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "Atomic Register failed to register!",
+            );
+            named_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "Atomic Register failed to register!",
+            );
             let start_f = system.start_notify(&atomic_register);
             start_f
                 .wait_timeout(Duration::from_millis(1000))
@@ -486,37 +488,30 @@ pub mod actor_atomicregister {
     }
 
     impl Actor for AtomicRegisterActor {
-        fn receive_local(&mut self, _sender: ActorRef, _msg: &dyn Any) -> () {
-            // ignore
+        type Message = Never;
+
+        fn receive_local(&mut self, _msg: Self::Message) -> () {
+            unimplemented!("Can't be invoked!");
         }
 
-        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-            if ser_id == Serialiser::<Init>::serid(&PARTITIONING_ACTOR_SER) {
-                let r: Result<Init, SerError> = PartitioningActorSer::deserialise(buf);
-                match r {
-                    Ok(init) => {
-                        self.new_iteration(&init);
+        fn receive_network(&mut self, msg: NetMessage) -> () {
+            let sender = msg.sender().clone();
+            let ser_id = msg.ser_id();
+            match_deser! {msg; {
+                init: Init [PartitioningActorSer] => {
+                    self.new_iteration(&init);
                         self.nodes = Some(init.nodes);
                         let init_ack = InitAck(self.current_run_id);
                         sender.tell((init_ack, PARTITIONING_ACTOR_SER), self);
                         self.master = Some(sender);
-                    }
-                    Err(e) => error!(self.ctx.log(), "Error deserialising Init: {:?}", e),
-                }
-            } else if ser_id == Serialiser::<Run>::serid(&PARTITIONING_ACTOR_SER) {
-                let r: Result<Run, SerError> = PartitioningActorSer::deserialise(buf);
-                match r {
-                    Ok(_) => {
-                        self.invoke_operations();
-                    }
-                    Err(e) => error!(self.ctx.log(), "Error deserialising Run: {:?}", e),
-                }
-            } else if ser_id == Serialiser::<AtomicRegisterMessage>::serid(&ATOMIC_REGISTER_SER) {
-                let r: Result<AtomicRegisterMessage, SerError> =
-                    AtomicRegisterSer::deserialise(buf);
-                match r {
-                    Ok(AtomicRegisterMessage::Read(read)) => {
-                        if read.run_id == self.current_run_id {
+                },
+                _run: Run [PartitioningActorSer] => {
+                    self.invoke_operations();
+                },
+                arm: AtomicRegisterMessage [AtomicRegisterSer] => {
+                    match arm {
+                        AtomicRegisterMessage::Read(read) => {
+                            if read.run_id == self.current_run_id {
                             let current_register = self.register_state.get(&read.key).unwrap();
                             let value = Value {
                                 run_id: self.current_run_id,
@@ -532,9 +527,9 @@ pub mod actor_atomicregister {
                                 self,
                             );
                         }
-                    }
-                    Ok(AtomicRegisterMessage::Value(v)) => {
-                        if v.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Value(v) => {
+                            if v.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&v.key).unwrap();
                             if v.rid == current_register.rid {
                                 let readlist = self.register_readlist.get_mut(&v.key).unwrap();
@@ -584,9 +579,9 @@ pub mod actor_atomicregister {
                                 }
                             }
                         }
-                    }
-                    Ok(AtomicRegisterMessage::Write(w)) => {
-                        if w.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Write(w) => {
+                            if w.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&w.key).unwrap();
                             if (w.ts, w.wr) > (current_register.ts, current_register.wr) {
                                 current_register.ts = w.ts;
@@ -600,9 +595,9 @@ pub mod actor_atomicregister {
                             rid: w.rid,
                         };
                         sender.tell((AtomicRegisterMessage::Ack(ack), AtomicRegisterSer), self);
-                    }
-                    Ok(AtomicRegisterMessage::Ack(a)) => {
-                        if a.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Ack(a) => {
+                            if a.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&a.key).unwrap();
                             if a.rid == current_register.rid {
                                 current_register.acks += 1;
@@ -617,13 +612,15 @@ pub mod actor_atomicregister {
                                 }
                             }
                         }
+                        }
                     }
-                    Err(e) => error!(
-                        self.ctx.log(),
-                        "Error deserialising AtomicRegisterMessage: {:?}", e
-                    ),
-                }
-            }
+                },
+                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                _ => {
+                    crit!(self.ctx.log(), "Got unexpected message with ser_id={}!", ser_id);
+                    unimplemented!();
+                },
+            }}
         }
     }
 }
@@ -734,10 +731,18 @@ pub mod mixed_atomicregister {
         type ClientConf = ClientParams;
         type ClientData = ActorPath;
 
-        fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf,BenchmarkError> {
+        fn setup(
+            &mut self,
+            c: Self::MasterConf,
+            m: &DeploymentMetaData,
+        ) -> Result<Self::ClientConf, BenchmarkError> {
             println!("Setting up Atomic Register(Master)");
             if m.number_of_clients() < c.partition_size - 1 {
-                return Err(BenchmarkError::InvalidTest(format!("Not enough clients: {}, Partition size: {}", &m.number_of_clients(), &c.partition_size)));
+                return Err(BenchmarkError::InvalidTest(format!(
+                    "Not enough clients: {}, Partition size: {}",
+                    &m.number_of_clients(),
+                    &c.partition_size
+                )));
             }
             self.read_workload = Some(c.read_workload);
             self.write_workload = Some(c.write_workload);
@@ -785,15 +790,15 @@ pub mod mixed_atomicregister {
                         format!("atomicreg_comp{}", &self.init_id),
                     );
 
-                    unique_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("AtomicRegisterComp never registered!")
-                        .expect("AtomicRegisterComp to register!");
+                    unique_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "AtomicRegisterComp failed to register!",
+                    );
 
-                    named_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("AtomicRegisterComp never registered!")
-                        .expect("AtomicRegisterComp to register!");
+                    named_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "AtomicRegisterComp failed to register!",
+                    );
 
                     let atomic_register_f = system.start_notify(&atomic_register);
                     atomic_register_f
@@ -811,14 +816,15 @@ pub mod mixed_atomicregister {
                         nodes.push(d[i].clone());
                     }
                     /*** Connect broadcast and atomic register ***/
-                    on_dual_definition(
-                        &bcast_comp,
-                        &atomic_register,
-                        |bcast_def, atomicreg_def| {
-                            biconnect(&mut bcast_def.bcast_port, &mut atomicreg_def.bcast_port);
-                        },
-                    )
-                    .expect("Could not connect components!");
+                    // on_dual_definition(
+                    //     &bcast_comp,
+                    //     &atomic_register,
+                    //     |bcast_def, atomicreg_def| {
+                    //         biconnect(&mut bcast_def.bcast_port, &mut atomicreg_def.bcast_port);
+                    //     },
+                    // )
+                    biconnect_components::<BroadcastPort, _, _>(&bcast_comp, &atomic_register)
+                        .expect("Could not connect components!");
 
                     /*** Setup partitioning actor ***/
                     let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {
@@ -830,10 +836,10 @@ pub mod mixed_atomicregister {
                             self.num_keys.unwrap(),
                         )
                     });
-                    unique_reg_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("PartitioningComp never registered!")
-                        .expect("PartitioningComp to register!");
+                    unique_reg_f.wait_expect(
+                        Duration::from_millis(1000),
+                        "PartitioningComp failed to register!",
+                    );
 
                     let partitioning_actor_f = system.start_notify(&partitioning_actor);
                     partitioning_actor_f
@@ -853,12 +859,12 @@ pub mod mixed_atomicregister {
 
         fn run_iteration(&mut self) -> () {
             match self.system {
-                Some(ref system) => {
+                Some(ref _system) => {
                     println!("Running experiment!");
                     let finished_latch = self.finished_latch.take().unwrap();
                     if let Some(partitioning_actor) = self.partitioning_actor.take() {
                         let partitioning_actor_ref = partitioning_actor.actor_ref();
-                        partitioning_actor_ref.tell(Box::new(Run), system);
+                        partitioning_actor_ref.tell(Run);
                         finished_latch.wait();
                         self.partitioning_actor = Some(partitioning_actor);
                     } else {
@@ -939,24 +945,24 @@ pub mod mixed_atomicregister {
             bcast_comp_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("BroadcastComp never started!");
-            unique_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("BroadcastComp actor never registered!")
-                .expect("BroadcastComp actor failed to register!");
+            unique_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "BroadcastComp failed to register!",
+            );
 
             /*** Setup atomic register ***/
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                 AtomicRegisterComp::with(c.read_workload, c.write_workload, bcast_comp.actor_ref())
             });
             let named_reg_f = system.register_by_alias(&atomic_register, "atomicreg_comp");
-            unique_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Atomic Register actor never registered!")
-                .expect("Atomic Register actor failed to register!");
-            named_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Atomic Register actor never registered!")
-                .expect("Atomic Register actor failed to register!");
+            unique_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "Atomic Register actor failed to register!",
+            );
+            named_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "Atomic Register actor failed to register!",
+            );
             let start_f = system.start_notify(&atomic_register);
             start_f
                 .wait_timeout(Duration::from_millis(1000))
@@ -968,10 +974,11 @@ pub mod mixed_atomicregister {
             ));
 
             /*** Connect broadcast and atomic register **/
-            on_dual_definition(&bcast_comp, &atomic_register, |bcast_def, atomicreg_def| {
-                biconnect(&mut bcast_def.bcast_port, &mut atomicreg_def.bcast_port);
-            })
-            .expect("Could not connect components!");
+            // on_dual_definition(&bcast_comp, &atomic_register, |bcast_def, atomicreg_def| {
+            //     biconnect(&mut bcast_def.bcast_port, &mut atomicreg_def.bcast_port);
+            // })
+            biconnect_components::<BroadcastPort, _, _>(&bcast_comp, &atomic_register)
+                .expect("Could not connect components!");
 
             self.atomic_register = Some(atomic_register);
             self.bcast_comp = Some(bcast_comp);
@@ -1007,27 +1014,29 @@ pub mod mixed_atomicregister {
         }
     }
 
-    struct RegisteredPath<'a> {
-        actor_path: &'a ActorPath,
-        ctx: &'a ComponentContext<BroadcastComp>,
-    }
+    // struct RegisteredPath<'a> {
+    //     actor_path: &'a ActorPath,
+    //     ctx: &'a ComponentContext<BroadcastComp>,
+    // }
 
-    impl<'a> ActorSource for RegisteredPath<'a> {
-        fn path_resolvable(&self) -> PathResolvable {
-            PathResolvable::Path(self.actor_path.clone())
-        }
-    }
+    // impl<'a> ActorSource for RegisteredPath<'a> {
+    //     fn path_resolvable(&self) -> PathResolvable {
+    //         PathResolvable::Path(self.actor_path.clone())
+    //     }
+    // }
 
-    impl<'a> Dispatching for RegisteredPath<'a> {
-        fn dispatcher_ref(&self) -> ActorRef {
-            self.ctx.dispatcher_ref()
-        }
-    }
+    // impl<'a> Dispatching for RegisteredPath<'a> {
+    //     fn dispatcher_ref(&self) -> ActorRef {
+    //         self.ctx.dispatcher_ref()
+    //     }
+    // }
 
+    #[derive(Debug)]
     struct CacheInfo {
         sender: ActorPath,
         nodes: Vec<ActorPath>,
     }
+    #[derive(Debug)]
     struct CacheNodesAck;
     #[derive(Clone, Debug)]
     struct BroadcastRequest(AtomicRegisterMessage);
@@ -1068,28 +1077,25 @@ pub mod mixed_atomicregister {
             let nodes = self.nodes.as_ref().unwrap();
             let sender = self.sender.as_ref().unwrap();
             let payload = request.0;
-            let fake_path = RegisteredPath {    // TODO: Fix this
-                actor_path: sender,
-                ctx: &self.ctx,
-            };
             for node in nodes {
-                node.tell((payload.clone(), AtomicRegisterSer), &fake_path);
+                node.tell(
+                    (payload.clone(), AtomicRegisterSer),
+                    &sender.using_dispatcher(self),
+                );
             }
         }
     }
 
     impl Actor for BroadcastComp {
-        fn receive_local(&mut self, sender: ActorRef, msg: &dyn Any) -> () {
-            if let Some(ref c) = msg.downcast_ref::<CacheInfo>() {
-                self.nodes = Some(c.nodes.clone());
-                self.sender = Some(c.sender.clone());
-                sender.tell(Box::new(CacheNodesAck), self);
-            } else {
-                error!(self.ctx.log(), "Could not downcast to CacheNodes!");
-            }
+        type Message = WithSender<CacheInfo, CacheNodesAck>;
+
+        fn receive_local(&mut self, msg: Self::Message) -> () {
+            self.nodes = Some(msg.nodes.clone());
+            self.sender = Some(msg.sender.clone());
+            msg.reply(CacheNodesAck);
         }
 
-        fn receive_message(&mut self, _sender: ActorPath, _ser_id: u64, _buf: &mut dyn Buf) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> () {
             // ignore
         }
     }
@@ -1098,7 +1104,7 @@ pub mod mixed_atomicregister {
     struct AtomicRegisterComp {
         ctx: ComponentContext<AtomicRegisterComp>,
         bcast_port: RequiredPort<BroadcastPort, AtomicRegisterComp>,
-        bcast_ref: ActorRef,
+        bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
         read_workload: f32,
         write_workload: f32,
 
@@ -1119,7 +1125,7 @@ pub mod mixed_atomicregister {
         fn with(
             read_workload: f32,
             write_workload: f32,
-            bcast_ref: ActorRef,
+            bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
         ) -> AtomicRegisterComp {
             AtomicRegisterComp {
                 ctx: ComponentContext::new(),
@@ -1247,48 +1253,37 @@ pub mod mixed_atomicregister {
     }
 
     impl Actor for AtomicRegisterComp {
-        fn receive_local(&mut self, _sender: ActorRef, msg: &dyn Any) -> () {
-            if msg.is::<CacheNodesAck>() {
-                let master = self.master.as_ref().unwrap();
-                let init_ack = InitAck(self.current_run_id);
-                master.tell((init_ack, PARTITIONING_ACTOR_SER), self);
-            }
+        type Message = CacheNodesAck;
+
+        fn receive_local(&mut self, _msg: Self::Message) -> () {
+            let master = self.master.as_ref().unwrap();
+            let init_ack = InitAck(self.current_run_id);
+            master.tell((init_ack, PARTITIONING_ACTOR_SER), self);
         }
 
-        fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut dyn Buf) -> () {
-            if ser_id == Serialiser::<Init>::serid(&PARTITIONING_ACTOR_SER) {
-                let r: Result<Init, SerError> = PartitioningActorSer::deserialise(buf);
-                match r {
-                    Ok(init) => {
-                        self.new_iteration(&init);
-                        self.nodes = Some(init.nodes.clone());
-                        self.master = Some(sender);
-                        let self_path =
-                            ActorPath::from((self.ctx.system().system_path(), self.ctx.id()));
-                        &self.bcast_ref.tell(
-                            Box::new(CacheInfo {
-                                sender: self_path,
-                                nodes: init.nodes,
-                            }),
-                            self,
-                        );
-                    }
-                    Err(e) => error!(self.ctx.log(), "Error deserialising Init: {:?}", e),
-                }
-            } else if ser_id == Serialiser::<Run>::serid(&PARTITIONING_ACTOR_SER) {
-                let r: Result<Run, SerError> = PartitioningActorSer::deserialise(buf);
-                match r {
-                    Ok(_) => {
-                        self.invoke_operations();
-                    }
-                    Err(e) => error!(self.ctx.log(), "Error deserialising Run: {:?}", e),
-                }
-            } else if ser_id == Serialiser::<AtomicRegisterMessage>::serid(&ATOMIC_REGISTER_SER) {
-                let r: Result<AtomicRegisterMessage, SerError> =
-                    AtomicRegisterSer::deserialise(buf);
-                match r {
-                    Ok(AtomicRegisterMessage::Read(read)) => {
-                        if read.run_id == self.current_run_id {
+        fn receive_network(&mut self, msg: NetMessage) -> () {
+            let sender = msg.sender().clone();
+
+            match_deser! {msg; {
+                init: Init [PartitioningActorSer] => {
+                    self.new_iteration(&init);
+                    self.nodes = Some(init.nodes.clone());
+                    self.master = Some(sender);
+                    let self_path = self.actor_path();
+                    self.bcast_ref.tell(
+                        WithSender::from(CacheInfo {
+                            sender: self_path,
+                            nodes: init.nodes,
+                        }, self)
+                    );
+                },
+                _run: Run [PartitioningActorSer] => {
+                    self.invoke_operations();
+                },
+                arm: AtomicRegisterMessage [AtomicRegisterSer] => {
+                    match arm {
+                        AtomicRegisterMessage::Read(read) => {
+                            if read.run_id == self.current_run_id {
                             let current_register = self.register_state.get(&read.key).unwrap();
                             let value = Value {
                                 run_id: self.current_run_id,
@@ -1304,9 +1299,9 @@ pub mod mixed_atomicregister {
                                 self,
                             );
                         }
-                    }
-                    Ok(AtomicRegisterMessage::Value(v)) => {
-                        if v.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Value(v) => {
+                            if v.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&v.key).unwrap();
                             if v.rid == current_register.rid {
                                 let readlist = self.register_readlist.get_mut(&v.key).unwrap();
@@ -1358,9 +1353,9 @@ pub mod mixed_atomicregister {
                                 }
                             }
                         }
-                    }
-                    Ok(AtomicRegisterMessage::Write(w)) => {
-                        if w.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Write(w) => {
+                            if w.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&w.key).unwrap();
                             if (w.ts, w.wr) > (current_register.ts, current_register.wr) {
                                 current_register.ts = w.ts;
@@ -1374,9 +1369,9 @@ pub mod mixed_atomicregister {
                             rid: w.rid,
                         };
                         sender.tell((AtomicRegisterMessage::Ack(ack), AtomicRegisterSer), self);
-                    }
-                    Ok(AtomicRegisterMessage::Ack(a)) => {
-                        if a.run_id == self.current_run_id {
+                        }
+                        AtomicRegisterMessage::Ack(a) => {
+                            if a.run_id == self.current_run_id {
                             let current_register = self.register_state.get_mut(&a.key).unwrap();
                             if a.rid == current_register.rid {
                                 current_register.acks += 1;
@@ -1391,13 +1386,11 @@ pub mod mixed_atomicregister {
                                 }
                             }
                         }
+                        }
                     }
-                    Err(e) => error!(
-                        self.ctx.log(),
-                        "Error deserialising AtomicRegisterMessage: {:?}", e
-                    ),
-                }
-            }
+                },
+                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+            }}
         }
     }
 }
@@ -1467,7 +1460,7 @@ struct Write {
 }
 
 struct AtomicRegisterSer;
-const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
+//const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
 const READ_ID: i8 = 1;
 const WRITE_ID: i8 = 2;
 const VALUE_ID: i8 = 3;
@@ -1482,7 +1475,7 @@ enum AtomicRegisterMessage {
 }
 
 impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer {
-    fn serid(&self) -> u64 {
+    fn ser_id(&self) -> SerId {
         serialiser_ids::ATOMICREG_ID
     }
 
@@ -1532,6 +1525,8 @@ impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer {
 }
 
 impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer {
+    const SER_ID: SerId = serialiser_ids::ATOMICREG_ID;
+
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicRegisterMessage, SerError> {
         match buf.get_i8() {
             READ_ID => {
@@ -1580,7 +1575,6 @@ impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer {
                 let rid = buf.get_u32_be();
                 Ok(AtomicRegisterMessage::Ack(Ack { run_id, key, rid }))
             }
-
             _ => Err(SerError::InvalidType(
                 "Found unkown id, but expected Read, Value, Write or Ack.".into(),
             )),

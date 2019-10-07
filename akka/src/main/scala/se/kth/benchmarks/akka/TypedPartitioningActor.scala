@@ -13,8 +13,16 @@ import se.kth.benchmarks.akka.typed_bench.AtomicRegister.{AtomicRegisterMessage,
 import scala.collection.mutable.ListBuffer
 
 object TypedPartitioningActor {
-  def apply(prepare_latch: CountDownLatch, finished_latch: CountDownLatch, init_id: Int, nodes: List[ClientRef], num_keys: Long, partition_size: Int): Behavior[PartitioningMessage] =
-    Behaviors.setup(context => new TypedPartitioningActor(context, prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size))
+  def apply(prepare_latch: CountDownLatch,
+            finished_latch: CountDownLatch,
+            init_id: Int,
+            nodes: List[ClientRef],
+            num_keys: Long,
+            partition_size: Int): Behavior[PartitioningMessage] =
+    Behaviors.setup(
+      context =>
+        new TypedPartitioningActor(context, prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+    )
 
   trait PartitioningMessage
 
@@ -24,14 +32,14 @@ object TypedPartitioningActor {
   case class InitAck(init_id: Int) extends PartitioningMessage
 }
 
-
 class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
                              prepare_latch: CountDownLatch,
                              finished_latch: CountDownLatch,
                              init_id: Int,
                              nodes: List[ClientRef],
                              num_keys: Long,
-                             partition_size: Int) extends AbstractBehavior[PartitioningMessage] {
+                             partition_size: Int)
+    extends AbstractBehavior[PartitioningMessage] {
 
 //  val logger = context.log
 
@@ -49,9 +57,9 @@ class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
   override def onMessage(msg: PartitioningMessage): Behavior[PartitioningMessage] = {
     msg match {
       case Start => {
-        val min_key: Long = 0l
+        val min_key: Long = 0L
         val max_key: Long = num_keys - 1
-        for ((node, rank) <- active_nodes.zipWithIndex){
+        for ((node, rank) <- active_nodes.zipWithIndex) {
           val actorRef = getActorRef(node)
           actorRef ! Init(selfRef, rank, init_id, active_nodes, min_key, max_key)
         }
@@ -65,7 +73,7 @@ class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
       }
 
       case Run => {
-        for (node <- active_nodes){
+        for (node <- active_nodes) {
           val actorRef = getActorRef(node)
           actorRef ! ATOMICREG_RUN
         }
@@ -93,13 +101,12 @@ object TypedPartitioningActorSerializer {
 
 class TypedPartitioningActorSerializer extends Serializer {
   import TypedPartitioningActorSerializer._
-  import java.nio.{ ByteBuffer, ByteOrder }
+  import java.nio.{ByteBuffer, ByteOrder}
 
   implicit val order = ByteOrder.BIG_ENDIAN;
 
   override def identifier: Int = SerializerIds.TYPEDPARTITACTOR
   override def includeManifest: Boolean = false
-
 
   override def toBinary(o: AnyRef): Array[Byte] = {
     o match {
@@ -113,7 +120,7 @@ class TypedPartitioningActorSerializer extends Serializer {
         bs.putLong(i.min)
         bs.putLong(i.max)
         bs.putInt(i.nodes.size)
-        for (ClientRef(node: String) <- i.nodes){
+        for (ClientRef(node: String) <- i.nodes) {
           val node_bytes = node.getBytes
           bs.putShort(node_bytes.size)
           bs.putBytes(node_bytes)
@@ -123,7 +130,7 @@ class TypedPartitioningActorSerializer extends Serializer {
       case ack: InitAck => {
         ByteString.createBuilder.putByte(INIT_ACK_FLAG).putInt(ack.init_id).result().toArray
       }
-      case Run => Array(RUN_FLAG)
+      case Run  => Array(RUN_FLAG)
       case Done => Array(DONE_FLAG)
     }
   }
@@ -143,7 +150,7 @@ class TypedPartitioningActorSerializer extends Serializer {
         val max = buf.getLong
         val n = buf.getInt
         var nodes = new ListBuffer[ClientRef]
-        for (_ <- 0 until n){
+        for (_ <- 0 until n) {
           val string_length: Int = buf.getShort
           val bytes = new Array[Byte](string_length)
           buf.get(bytes)
@@ -154,9 +161,8 @@ class TypedPartitioningActorSerializer extends Serializer {
         Init(src, rank, init_id, nodes.toList, min, max)
       }
       case INIT_ACK_FLAG => InitAck(buf.getInt)
-      case RUN_FLAG => Run
-      case DONE_FLAG => Done
+      case RUN_FLAG      => Run
+      case DONE_FLAG     => Done
     }
   }
 }
-

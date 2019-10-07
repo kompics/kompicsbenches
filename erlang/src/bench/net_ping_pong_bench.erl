@@ -21,13 +21,13 @@
 -type client_data() :: pid().
 
 -record(master_state, {
-	num = 0 :: integer(), 
-	pinger :: pid() | 'undefined', 
+	num = 0 :: integer(),
+	pinger :: pid() | 'undefined',
 	ponger :: pid() | 'undefined'}).
 
 -type master_instance() :: #master_state{}.
 
--record(client_state, { 
+-record(client_state, {
 	ponger :: pid() | 'undefined'}).
 
 -type client_instance() :: #client_state{}.
@@ -55,9 +55,9 @@ new_client() ->
 
 %%%% On Master Instance %%%%%
 
--spec master_setup(Instance :: master_instance(), Conf :: master_conf(), NumClients :: integer()) ->
+-spec master_setup(Instance :: master_instance(), Conf :: master_conf(), Meta :: distributed_benchmark:deployment_metadata()) ->
 	{ok, Newnstance :: master_instance(), ClientConf :: client_conf()}.
-master_setup(Instance, Conf, _NumClients) ->
+master_setup(Instance, Conf, _Meta) ->
 	NewInstance = Instance#master_state{num = Conf#master_conf.number_of_messages},
 	process_flag(trap_exit, true),
 	{ok, NewInstance, undefined}.
@@ -78,7 +78,7 @@ master_run_iteration(Instance) ->
 	receive
 		ok ->
 			{ok, Instance};
-		X -> 
+		X ->
 			io:fwrite("Got unexpected message during iteration: ~p!~n",[X]),
 			throw(X)
 	end.

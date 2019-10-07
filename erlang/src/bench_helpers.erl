@@ -15,7 +15,7 @@ await_exit(Pid) ->
 		{'EXIT', Pid, Reason} ->
 			{ok, Reason};
 		X ->
-			{error, X}
+			{error, {expected_exit_but_got, X}}
 	end.
 
 -spec await_exit_all(Pids :: [pid()]) ->
@@ -34,7 +34,7 @@ await_exit_all(Pids) ->
 					await_exit_all(NewPids)
 			end;
 		X ->
-			{error, X}
+			{error, {expected_exit_but_got, X}}
 	end.
 
 -spec await_all(Pids :: [pid()], Token :: term()) ->

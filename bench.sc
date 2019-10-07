@@ -28,7 +28,7 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 			relp("runner"),
 			javaBin,
 			Seq("-jar",
-				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString,
@@ -44,7 +44,7 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 			relp("runner"),
 			javaBin,
 			Seq("-jar",
-				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString)
@@ -75,7 +75,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 		      }
 		    });
 			client.waitFor();
-			Console.err.println("Client shut down!");
+			Console.err.println("Client shut down with code="+client.exitValue()+"!");
 		}
 		case None => {
 			Console.err.println(s"No Benchmark Implementation found for '${name}'");
@@ -86,9 +86,9 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impl: String = "*"): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = runnersForImpl(impl.toUpperCase(), _.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -125,11 +125,10 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*"): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
 	val remoteDir = tmp.dir();
-	val implUpperCase = impl.toUpperCase();
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
-	val masterBenches = runnersForImpl(implUpperCase, identity);
+	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
 	};
@@ -189,8 +188,8 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impl: String = "*
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, impl: String = "*"): Unit = {
-	val runners = runnersForImpl(impl.toUpperCase(), _.localRunner(runnerAddr));
+def local(testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
+	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -229,14 +228,20 @@ def local(testing: Boolean = false, impl: String = "*"): Unit = {
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
 }
 
-private def runnersForImpl[T](impl: String, mapper: BenchmarkImpl => T): List[T] = {
-	val runners = if (impl == "*") {
-			implementations.values.map(mapper).toList;
+private def runnersForImpl[T](impls: Seq[String], mapper: BenchmarkImpl => T): List[T] = {
+	val runners: List[T] = if (impls.isEmpty) {
+		implementations.values.map(mapper).toList;
 	} else {
-			implementations.get(impl.toUpperCase()).map(i => List(mapper(i))).getOrElse(List.empty)
+		impls.map(_.toUpperCase).flatMap(impl => {
+			val res: Option[BenchmarkImpl] = implementations.get(impl);
+			if (res.isEmpty) {
+				Console.err.println(s"No benchmark found for impl ${impl}!");
+			}
+			res.map(mapper)
+		}).toList
 	};
 	if (runners.isEmpty) {
-		Console.err.println(s"No benchmark found for '${impl}'");
+		Console.err.println(s"No benchmarks found!");
 		System.exit(1);
 	}
 	runners

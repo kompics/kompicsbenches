@@ -49,27 +49,39 @@ pub fn run(
             command_sender.clone(),
         );
         let client_address = format!("{}:{}", service_address, service_port);
-        let mut serverb = grpc::ServerBuilder::new_plain();
-        let res: OperationResult<grpc::Server, String> =
-            match serverb.http.set_addr(client_address.clone()) {
-                Ok(_) => {
-                    let service_def =
-                        distributed_grpc::BenchmarkClientServer::new_service_def(client_handler);
-                    serverb.add_service(service_def);
-                    match serverb.build() {
-                        Ok(server) => OperationResult::Ok(server),
-                        Err(e) => OperationResult::Retry(format!(
-                            "Could not start client on {}: {}.",
+        match std::net::TcpListener::bind(client_address.clone()) {
+            // FIXME workaround for httbis panic on bound socket in 0.7.0
+            Ok(l) => {
+                drop(l);
+                let mut serverb = grpc::ServerBuilder::new_plain();
+                let res: OperationResult<grpc::Server, String> =
+                    match serverb.http.set_addr(client_address.clone()) {
+                        Ok(_) => {
+                            let service_def =
+                                distributed_grpc::BenchmarkClientServer::new_service_def(
+                                    client_handler,
+                                );
+                            serverb.add_service(service_def);
+                            match serverb.build() {
+                                Ok(server) => OperationResult::Ok(server),
+                                Err(e) => OperationResult::Retry(format!(
+                                    "Could not start client on {}: {}.",
+                                    client_address, e
+                                )),
+                            }
+                        },
+                        Err(e) => OperationResult::Err(format!(
+                            "Could not read client address {}: {}",
                             client_address, e
                         )),
-                    }
-                },
-                Err(e) => OperationResult::Err(format!(
-                    "Could not read client address {}: {}",
-                    client_address, e
-                )),
-            };
-        res
+                    };
+                res
+            },
+            Err(e) => OperationResult::Retry(format!(
+                "Could not bind to client address {}: {}",
+                client_address, e
+            )),
+        }
     });
 
     let client_server = client_server_result.expect("client server");

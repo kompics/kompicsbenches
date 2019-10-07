@@ -91,6 +91,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 #[derive(Clone)]
@@ -177,6 +185,90 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
         &self,
         _o: grpc::RequestOptions,
         _p: benchmarks::AtomicRegisterRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+}
+
+#[derive(Clone)]
+pub struct BenchmarkRunnerMixedImpl;
+
+impl BenchmarkRunnerMixedImpl {
+    pub fn new() -> BenchmarkRunnerMixedImpl {
+        BenchmarkRunnerMixedImpl {}
+    }
+}
+
+impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
+    fn ready(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: messages::ReadyRequest,
+    ) -> grpc::SingleResponse<messages::ReadyResponse> {
+        println!("Got ready? req.");
+        let mut msg = messages::ReadyResponse::new();
+        msg.set_status(true);
+        grpc::SingleResponse::completed(msg)
+    }
+    fn shutdown(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: messages::ShutdownRequest,
+    ) -> ::grpc::SingleResponse<messages::ShutdownAck> {
+        unimplemented!();
+    }
+
+    fn ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::PingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn net_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::PingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn net_throughput_ping_pong(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::ThroughputPingPongRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn atomic_register(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::AtomicRegisterRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

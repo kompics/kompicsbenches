@@ -79,7 +79,7 @@ object BenchmarkRunnerServer {
 
 object BenchmarkRunner extends StrictLogging {
 
-  val MIN_RUNS = 20;
+  val MIN_RUNS = 30;
   val MAX_RUNS = 100;
   val RSE_TARGET = 0.1; // 10% RSE
 
@@ -139,6 +139,12 @@ object BenchmarkRunner extends StrictLogging {
         TestFailure(msg)
       }
     }
+  }
+  def failureToTestResult(f: Failure[_], stage: Option[String] = None): TestResult = {
+    val e = f.exception;
+    logger.warn(s"Test Failure at stage $stage: ${e.getMessage}", e);
+    val msg = s"${e.getClass.getName}: ${e.getMessage}";
+    TestFailure(msg)
   }
 
   def rse(l: List[Double]): Double = new Statistics(l).relativeErrorOfTheMean;

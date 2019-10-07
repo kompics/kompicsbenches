@@ -9,7 +9,8 @@
          'NetPingPong'/3,
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
-         'AtomicRegister'/3]).
+         'AtomicRegister'/3,
+         'StreamingWindows'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -25,6 +26,13 @@
       write_workload => float() | infinity | '-infinity' | nan,
       partition_size => integer(),
       number_of_keys => integer()}.
+
+-type 'StreamingWindowsRequest'() ::
+    #{number_of_partitions => integer(),
+      batch_size => integer(),
+      window_size => string(),
+      number_of_windows => integer(),
+      window_size_amplification => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -122,8 +130,27 @@ decoder() -> benchmarks.
     Response = await_benchmark_result(atomic_register_bench, Message),
     {Response, Stream}.
 
+-spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'StreamingWindows'(Message, Stream, _State) ->
+    io:fwrite("Got StreamingWindows request.~n"),
+    Response = await_benchmark_result(streaming_windows_bench, Message),
+    {Response, Stream}.
+
 -spec await_benchmark_result(Benchmark :: module(), Params :: term()) -> 'TestResult'().
 await_benchmark_result(Benchmark, Params) ->
+	try await_benchmark_result_caught(Benchmark, Params) of
+		X -> X
+	catch
+		Error when is_list(Error) ->
+			test_result:failure(Error);
+		Error ->
+			test_result:failure(io_lib:fwrite("Test test threw an exception: ~p.~n", [Error]))
+	end.
+
+-spec await_benchmark_result_caught(Benchmark :: module(), Params :: term()) -> 'TestResult'().
+await_benchmark_result_caught(Benchmark, Params) ->
 	{ok, Request, Future} = benchmark_master:new_bench_request(Benchmark, Params),
 	ok = benchmark_master:request_bench(Request),
 	{ok, Result} = futures:await(Future),
@@ -132,8 +159,8 @@ await_benchmark_result(Benchmark, Params) ->
 			test_result:success(length(Data), Data);
 		{error, Reason} when is_list(Reason) ->
 			test_result:failure(Reason);
-    {error, Reason} ->
-      test_result:failure(io_lib:fwrite("Test failed with: ~p.~n", [Reason]));
+    	{error, Reason} ->
+      		test_result:failure(io_lib:fwrite("Test failed with: ~p.~n", [Reason]));
 		Other ->
 			test_result:failure(io_lib:fwrite("Unknown test response:~p.~n", [Other]))
     end.

@@ -11,7 +11,8 @@ SP = 4
 DOC_DEPS = edown
 EDOC_OPTS = {doclet, edown_doclet}
 
-DEPS = grpc grpc_client gpb
+#DEPS = grpc grpc_client gpb
+DEPS = grpc gpb
 dep_grpc = git https://github.com/Bathtor/grpc master
 #dep_grpc = ln /Users/lkroll/Documents/Programming/grpc-erlang/grpc
 #DEP_PLUGINS = grpc

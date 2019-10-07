@@ -16,7 +16,15 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
   private var implemented: List[String] = Nil;
   private var notImplemented: List[String] = Nil;
 
-  val timeout = 60.seconds;
+  private var allowedFailures: List[String] = List("RSE");
+
+  val timeout = 5.minutes; // some of these tests can take a long time
+
+  def testFail(): Unit = {
+    allowedFailures ::= "Benchmark was purposefully failed at stage";
+    this.test();
+    allowedFailures = allowedFailures.tail;
+  }
 
   def test(): Unit = {
     val runnerPort = 45678;
@@ -34,11 +42,11 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
 
     val masterThread = new Thread("BenchmarkMaster") {
       override def run(): Unit = {
-        println("Starting master");
+        logger.debug("Starting master");
         val runnerAddr = Util.argToAddr(runnerAddrS).get;
         val masterAddr = Util.argToAddr(masterAddrS).get;
         BenchmarkMaster.run(numClients, masterAddr.port, runnerAddr.port, benchFactory);
-        println("Finished master");
+        logger.debug("Finished master");
       }
     };
     masterThread.start();
@@ -46,11 +54,11 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     val clientThreads = clientAddrs.map { clientAddrS =>
       val clientThread = new Thread(s"BenchmarkClient-$clientAddrS") {
         override def run(): Unit = {
-          println(s"Starting client $clientAddrS");
+          logger.debug(s"Starting client $clientAddrS");
           val masterAddr = Util.argToAddr(masterAddrS).get;
           val clientAddr = Util.argToAddr(clientAddrS).get;
           BenchmarkClient.run(clientAddr.addr, masterAddr.addr, masterAddr.port);
-          println(s"Finished client $clientAddrS");
+          logger.debug(s"Finished client $clientAddrS");
         }
       };
       clientThread.start();
@@ -58,91 +66,143 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
     };
 
     val runnerAddr = Util.argToAddr(runnerAddrS).get;
-    val benchStub = {
-      val channel = ManagedChannelBuilder.forAddress(runnerAddr.addr, runnerAddr.port).usePlaintext().build;
-      val stub = BenchmarkRunnerGrpc.stub(channel);
-      stub
-    };
+    var benchChannel = ManagedChannelBuilder.forAddress(runnerAddr.addr, runnerAddr.port).usePlaintext().build();
+    var benchStub = BenchmarkRunnerGrpc.stub(benchChannel);
+    try {
 
-    var attempts = 0;
-    var ready = false;
-    while (!ready && attempts < 20) {
-      attempts += 1;
-      println(s"Checking if ready, attempt #${attempts}");
-      val readyF = benchStub.ready(ReadyRequest());
-      val res = Await.result(readyF, 500.milliseconds);
-      if (res.status) {
-        println("Was ready.");
-        ready = true
-      } else {
-        println("Wasn't ready, yet.");
-        Thread.sleep(500);
+      var attempts = 0;
+      var ready = false;
+      while (!ready && attempts < 20) {
+        attempts += 1;
+        try {
+          logger.info(s"Checking if runner is ready, attempt #${attempts}");
+          val readyF = benchStub.ready(ReadyRequest());
+          val res = Await.result(readyF, 500.milliseconds);
+          if (res.status) {
+            logger.info("Runner is ready!");
+            ready = true
+          } else {
+            logger.info("Runner wasn't ready, yet.");
+            Thread.sleep(500);
+          }
+        } catch {
+          case e: Throwable => {
+            logger.error("Couldn't connect to runner server. Redoing setup and retrying...", e);
+            TestUtil.shutdownChannel(benchChannel);
+            benchChannel = ManagedChannelBuilder.forAddress(runnerAddr.addr, runnerAddr.port).usePlaintext().build();
+            benchStub = BenchmarkRunnerGrpc.stub(benchChannel);
+            Thread.sleep(500);
+          }
+        }
+      }
+      ready should be(true);
+
+      /*
+       * Ping Pong
+       */
+      logger.info("Starting test PingPong");
+      val ppr = PingPongRequest().withNumberOfMessages(100);
+      val pprResF = benchStub.pingPong(ppr);
+      checkResult("PingPong", pprResF);
+      logger.info("Finished test PingPong");
+
+      logger.info("Starting test NetPingPong");
+      val npprResF = benchStub.netPingPong(ppr);
+      checkResult("NetPingPong", npprResF);
+      logger.info("Finished test PingPong");
+
+      /*
+       * Throughput Ping Pong
+       */
+      logger.info("Starting test ThroughputPingPong (static)");
+      val tppr =
+        ThroughputPingPongRequest()
+          .withMessagesPerPair(100)
+          .withParallelism(2)
+          .withPipelineSize(20)
+          .withStaticOnly(true);
+      val tpprResF = benchStub.throughputPingPong(tppr);
+      checkResult("ThroughputPingPong (static)", tpprResF);
+      logger.info("Finished test ThroughputPingPong (static)");
+
+      logger.info("Starting test NetThroughputPingPong (static)");
+      val tnpprResF = benchStub.netThroughputPingPong(tppr);
+      checkResult("NetThroughputPingPong (static)", tnpprResF);
+      logger.info("Finished test NetThroughputPingPong (static)");
+
+      logger.info("Starting test ThroughputPingPong (gc)");
+      val tppr2 = ThroughputPingPongRequest()
+        .withMessagesPerPair(100)
+        .withParallelism(2)
+        .withPipelineSize(20)
+        .withStaticOnly(false);
+      val tpprResF2 = benchStub.throughputPingPong(tppr2);
+      checkResult("ThroughputPingPong (gc)", tpprResF2);
+      logger.info("Finished test ThroughputPingPong (gc)");
+
+      logger.info("Starting test NetThroughputPingPong (gc)");
+      val tnpprResF2 = benchStub.netThroughputPingPong(tppr2);
+      checkResult("NetThroughputPingPong (gc)", tnpprResF2);
+      logger.info("Finished test NetThroughputPingPong (gc)");
+
+      /*
+       * Atomic Register
+       */
+      logger.info("Starting test AtomicRegister");
+      val nnarr = AtomicRegisterRequest()
+        .withReadWorkload(0.5f)
+        .withWriteWorkload(0.5f)
+        .withPartitionSize(3)
+        .withNumberOfKeys(500);
+      val nnarResF = benchStub.atomicRegister(nnarr);
+      checkResult("Atomic Register", nnarResF);
+      logger.info("Finished test AtomicRegister");
+
+      /*
+       * Streaming Windows
+       */
+      logger.info("Starting test StreamingWindows");
+      val swr = StreamingWindowsRequest()
+        .withBatchSize(10)
+        .withNumberOfPartitions(2)
+        .withNumberOfWindows(2)
+        .withWindowSize("10ms")
+        .withWindowSizeAmplification(1000L);
+      val swResF = benchStub.streamingWindows(swr);
+      checkResult("Streaming Windows", swResF);
+      logger.info("Finished test StreamingWindows");
+
+      /*
+       * Clean Up
+       */
+      logger.debug("Sending shutdown request to master");
+      val sreq = ShutdownRequest().withForce(false);
+      val shutdownResF = benchStub.shutdown(sreq);
+
+      logger.debug("Waiting for master to finish...");
+      masterThread.join();
+      logger.debug("Master is done.");
+      logger.debug("Waiting for all clients to finish...");
+      clientThreads.foreach(t => t.join());
+      logger.debug("All clients are done.");
+    } catch {
+      case e: org.scalatest.exceptions.TestFailedException => throw e // let these pass through
+      case e: Throwable => {
+        logger.error("Error during test", e);
+        Console.err.println("Thrown error:");
+        e.printStackTrace(Console.err);
+        Console.err.println("Caused by:");
+        e.getCause().printStackTrace(Console.err);
+        fail(e);
+      }
+    } finally {
+      benchStub = null;
+      if (benchChannel != null) {
+        TestUtil.shutdownChannel(benchChannel);
       }
     }
-    ready should be(true);
 
-    /*
-     * Ping Pong
-     */
-    val ppr = PingPongRequest().withNumberOfMessages(100);
-    val pprResF = benchStub.pingPong(ppr);
-    val pprRes = Await.result(pprResF, timeout);
-    checkResult("PingPong", pprRes);
-
-    val npprResF = benchStub.netPingPong(ppr);
-    val npprRes = Await.result(npprResF, timeout);
-    checkResult("NetPingPong", npprRes);
-
-    /*
-     * Throughput Ping Pong
-     */
-    val tppr =
-      ThroughputPingPongRequest().withMessagesPerPair(100).withParallelism(2).withPipelineSize(20).withStaticOnly(true);
-    val tpprResF = benchStub.throughputPingPong(tppr);
-    val tpprRes = Await.result(tpprResF, timeout);
-    checkResult("ThroughputPingPong (static)", tpprRes);
-
-    val tnpprResF = benchStub.netThroughputPingPong(tppr);
-    val tnpprRes = Await.result(tnpprResF, timeout);
-    checkResult("NetThroughputPingPong (static)", tnpprRes);
-
-    val tppr2 = ThroughputPingPongRequest()
-      .withMessagesPerPair(100)
-      .withParallelism(2)
-      .withPipelineSize(20)
-      .withStaticOnly(false);
-    val tpprResF2 = benchStub.throughputPingPong(tppr2);
-    val tpprRes2 = Await.result(tpprResF2, timeout);
-    checkResult("ThroughputPingPong (gc)", tpprRes2);
-
-    val tnpprResF2 = benchStub.netThroughputPingPong(tppr2);
-    val tnpprRes2 = Await.result(tnpprResF2, timeout);
-    checkResult("NetThroughputPingPong (gc)", tnpprRes2);
-
-    val nnarr = AtomicRegisterRequest()
-      .withReadWorkload(0.5f)
-      .withReadWorkload(0.5f)
-      .withPartitionSize(3)
-      .withNumberOfKeys(500);
-    val nnarResF = benchStub.atomicRegister(nnarr);
-    val nnarRes = Await.result(nnarResF, timeout);
-    checkResult("Atomic Register", nnarRes);
-
-    /*
-     * Clean Up
-     */
-    println("Sending shutdown request to master");
-    val sreq = ShutdownRequest().withForce(false);
-    val shutdownResF = benchStub.shutdown(sreq);
-
-    println("Waiting for master to finish...");
-    masterThread.join();
-    println("Master is done.");
-    println("Waiting for all clients to finish...");
-    clientThreads.foreach(t => t.join());
-    println("All clients are done.");
-
-    println(s"""
+    logger.info(s"""
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% MASTER-CLIENT SUMMARY %%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -151,21 +211,42 @@ ${notImplemented.size} tests not implemented: ${notImplemented.mkString(",")}
 """)
   }
 
-  private def checkResult(label: String, tr: TestResult): Unit = {
-    tr match {
-      case s: TestSuccess => {
-        s.runResults.size should equal(s.numberOfRuns);
-        implemented ::= label;
+  private def checkResult(label: String, trf: Future[TestResult]): Unit = {
+    val trfReady = Await.ready(trf, timeout);
+    trfReady.value.get match {
+      case Success(tr) => {
+        tr match {
+          case s: TestSuccess => {
+            s.runResults.size should equal(s.numberOfRuns);
+            s.runResults.size should be >= BenchmarkRunner.MIN_RUNS;
+            implemented ::= label;
+          }
+          case f: TestFailure => {
+            this.allowedFailures match {
+              case rseErr :: Nil => {
+                f.reason should include(rseErr); // since tests are short they may not meet RSE requirements
+              }
+              case testErr :: rseErr :: Nil => {
+                f.reason should (include(testErr) or include(rseErr));
+              }
+              case _ => {
+                ???
+              }
+            }
+            implemented ::= label;
+          }
+          case n: NotImplemented => {
+            logger.warn(s"Test $label was not implemented");
+            notImplemented ::= label;
+          }
+          case x => fail(s"Unexpected test result: $x")
+        }
       }
-      case f: TestFailure => {
-        f.reason should include("RSE"); // since tests are short they may not meet RSE requirements
-        implemented ::= label;
+      case Failure(e) => {
+        logger.error(s"Test $label failed in promise/future!", e);
+        e.printStackTrace(Console.err);
+        fail(s"Test failed due to gRPC communication: ${e.getMessage()}")
       }
-      case n: NotImplemented => {
-        logger.warn(s"Test $label was not implemented");
-        notImplemented ::= label;
-      }
-      case x => fail(s"Unexpected test result: $x")
     }
   }
 }

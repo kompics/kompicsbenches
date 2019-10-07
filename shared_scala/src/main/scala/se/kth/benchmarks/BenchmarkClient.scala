@@ -22,6 +22,15 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
 
   private val state: State = State.init();
 
+  private def classGetField(c: Class[_], fieldName: String): Option[java.lang.reflect.Field] = {
+    for (f <- c.getFields()) {
+      if (f.getName().equals(fieldName)) {
+        return Some(f);
+      }
+    }
+    return None;
+  }
+
   private object ClientService extends BenchmarkClientGrpc.BenchmarkClient {
     override def setup(request: SetupConfig): Future[SetupResponse] = {
       if (state() == StateType.CheckingIn) {
@@ -31,7 +40,10 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
       logger.debug(s"Trying to set up $benchClassName.");
       val res = Try {
         val benchC = classLoader.loadClass(benchClassName);
-        val bench = benchC.getField("MODULE$").get(benchC).asInstanceOf[DistributedBenchmark];
+        val bench = classGetField(benchC, "MODULE$") match {
+          case Some(f) => f.get(benchC).asInstanceOf[DistributedBenchmark] // is object
+          case None    => benchC.newInstance().asInstanceOf[DistributedBenchmark] // is class
+        }
         val activeBench = new ActiveBench(bench);
         state cas (StateType.Ready -> StateType.Running(activeBench));
         val r = activeBench.setup(request);
@@ -47,6 +59,7 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
         }
         case Failure(ex) => {
           logger.error(s"Setup for test $benchClassName was not successful.", ex);
+          state := StateType.Ready; // reset state
           SetupResponse(false, ex.getMessage);
         }
       }
@@ -58,12 +71,28 @@ class BenchmarkClient(val address: String, val masterAddress: String, val master
         case StateType.Running(activeBench) => {
           logger.debug("Cleaning active bench.");
           if (request.`final`) {
-            activeBench.cleanup(true);
-            state := StateType.Ready;
-            logger.info(s"${activeBench.name} is cleaned.");
+            try {
+              activeBench.cleanup(true);
+              logger.info(s"${activeBench.name} is cleaned.");
+            } catch {
+              case e: Throwable => {
+                logger.error(s"Error during final cleanup of ${activeBench.name}!", e);
+                return Future.failed(e);
+              }
+            } finally {
+              state := StateType.Ready;
+            }
           } else {
-            activeBench.cleanup(false);
-            activeBench.prepare();
+            try {
+              activeBench.cleanup(false);
+              activeBench.prepare();
+            } catch {
+              case e: Throwable => {
+                logger.error(s"Error during cleanup&prepare of ${activeBench.name}!", e);
+                state := StateType.Ready;
+                return Future.failed(e);
+              }
+            }
           }
           Future.successful(CleanupResponse())
         }
@@ -212,7 +241,7 @@ object BenchmarkClient {
       if (_inner == oldValue) {
         _inner = newValue
       } else {
-        throw new RuntimeException(s"Invalid State Transition from $oldValue -> $newValue")
+        throw new RuntimeException(s"Invalid State Transition from $oldValue -> $newValue, actual state was ${_inner}")
       }
     };
     def cas(t: (StateType, StateType)): Unit = cas(t._1, t._2);

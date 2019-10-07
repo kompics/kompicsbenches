@@ -52,7 +52,7 @@ fn main() {
         BenchMode::MIXED => {
             BenchmarkMain::run_with(
                 args,
-                benchmark_runner::BenchmarkRunnerComponentImpl::new(),
+                benchmark_runner::BenchmarkRunnerMixedImpl::new(),
                 bench::mixed(),
                 kompact_system_provider::set_global_public_if,
             );
@@ -70,6 +70,18 @@ enum BenchMode {
 mod tests {
     use super::*;
     use benchmark_suite_shared::test_utils::test_implementation;
+
+    #[test]
+    fn test_actor() {
+        let benchmarks = Box::new(bench::ActorFactory {});
+        test_implementation(benchmarks);
+    }
+
+    #[test]
+    fn test_component() {
+        let benchmarks = Box::new(bench::ComponentFactory {});
+        test_implementation(benchmarks);
+    }
 
     #[test]
     fn test_mixed() {

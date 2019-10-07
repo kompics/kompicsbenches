@@ -16,13 +16,15 @@ trait Benchmark {
   def newInstance(): Instance;
 }
 
+case class DeploymentMetaData(numberOfClients: Int)
+
 trait DistributedBenchmark {
   type MasterConf;
   type ClientConf;
   type ClientData;
 
   trait Master {
-    def setup(c: MasterConf): ClientConf;
+    def setup(c: MasterConf, meta: DeploymentMetaData): Try[ClientConf];
     def prepareIteration(d: List[ClientData]): Unit = {}
     def runIteration(): Unit;
     def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {}
@@ -55,4 +57,5 @@ trait BenchmarkFactory {
   def throughputPingPong(): Benchmark;
   def netThroughputPingPong(): DistributedBenchmark;
   def atomicRegister(): DistributedBenchmark;
+  def streamingWindows(): DistributedBenchmark;
 }

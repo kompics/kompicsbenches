@@ -18,6 +18,7 @@ object Util {
     val thread = new Thread {
       override def run {
         Thread.sleep(500);
+        Console.err.println("Forcing system shutdown!");
         System.exit(0);
       }
     };
