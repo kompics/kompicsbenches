@@ -70,7 +70,7 @@ object ActorSystemProvider extends StrictLogging {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
       loggers = ["akka.event.slf4j.Slf4jLogger"]
-      loglevel = "WARNING"
+      loglevel = "DEBUG"
       logging-filter = "akka.event.slf4j.Slf4jLoggingFilter"
 
       actor {
@@ -162,7 +162,7 @@ object ActorSystemProvider extends StrictLogging {
     getIntegerProp(propertyName) match {
       case Some(i) if i > 0 => i
       case _ => {
-        val byCores = rt.availableProcessors() * 2
+        val byCores = rt.availableProcessors() // already includes HT
         if (byCores > minNumThreads) byCores else minNumThreads
       }
     }
@@ -198,6 +198,10 @@ object ActorSystemProvider extends StrictLogging {
     );
     val conf = ConfigFactory.load(confStr);
     ActorSystem(name, conf)
+  }
+
+  def newTypedActorSystem[T](behavior: typed.Behavior[T], name: String): typed.ActorSystem[T] = {
+    typed.ActorSystem(behavior, name, config)
   }
 
   def newTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int): typed.ActorSystem[T] = {

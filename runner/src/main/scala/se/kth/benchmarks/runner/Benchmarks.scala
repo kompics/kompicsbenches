@@ -177,6 +177,21 @@ object Benchmarks extends ParameterDescriptionImplicits {
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
       }
   );
+
+  val fibonacci = Benchmark(
+    name = "Fibonacci",
+    symbol = "FIBONACCI",
+    invoke = (stub, request: FibonacciRequest) => {
+      stub.fibonacci(request)
+    },
+    space = ParameterSpacePB
+      .mapped(26 to 32 by 1)
+      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n)),
+    testSpace = ParameterSpacePB
+      .mapped(22 to 28 by 1)
+      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n))
+  );
+
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;
 }
