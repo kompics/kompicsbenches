@@ -26,7 +26,7 @@ object Fibonacci extends Benchmark {
     private var latch: CountDownLatch = null;
 
     override def setup(c: Conf): Unit = {
-      logger.info("Setting up Instance");
+      logger.info(s"Setting up Instance with config: $c");
       this.fibNumber = c.fibNumber;
       this.system = ActorSystemProvider.newActorSystem(name = "fibonacci");
     }

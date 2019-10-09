@@ -34,7 +34,7 @@ object AllPairsShortestPath extends Benchmark {
     private var latch: CountDownLatch = null;
 
     override def setup(c: Conf): Unit = {
-      logger.info("Setting up Instance");
+      logger.info(s"Setting up Instance with config: $c");
       this.numNodes = c.numberOfNodes;
       this.blockSize = c.blockSize;
       this.system = ActorSystemProvider.newTypedActorSystem[ManagerMsg](ManagerActor(blockSize), "typed_apsp");

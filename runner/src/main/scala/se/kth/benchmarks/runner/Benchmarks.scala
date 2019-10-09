@@ -192,6 +192,48 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n))
   );
 
+  val chameneos = Benchmark(
+    name = "Chameneos",
+    symbol = "CHAMENEOS",
+    invoke = (stub, request: ChameneosRequest) => {
+      stub.chameneos(request)
+    },
+    space = ParameterSpacePB
+      .cross(List(32, 64, 128, 512, 1024, 2048, 4096), List(100.mio))
+      .msg[ChameneosRequest] {
+        case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
+      },
+    testSpace = ParameterSpacePB
+      .cross(List(4, 8, 16, 32, 64, 128, 256, 512), List(1.mio))
+      .msg[ChameneosRequest] {
+        case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
+      }
+  );
+
+  val allPairsShortestPath = Benchmark(
+    name = "All-Pairs Shortest Path",
+    symbol = "APSP",
+    invoke = (stub, request: APSPRequest) => {
+      stub.allPairsShortestPath(request)
+    },
+    space = ParameterSpacePB
+      .cross(List(128, 256, 512, 1024), List(16, 32, 64))
+      .msg[APSPRequest] {
+        case (nn, bs) => {
+          assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
+          APSPRequest(numberOfNodes = nn, blockSize = bs)
+        }
+      },
+    testSpace = ParameterSpacePB
+      .cross(List(128, 192, 256), List(8, 16, 32))
+      .msg[APSPRequest] {
+        case (nn, bs) => {
+          assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
+          APSPRequest(numberOfNodes = nn, blockSize = bs)
+        }
+      }
+  );
+
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;
 }

@@ -70,7 +70,7 @@ object ActorSystemProvider extends StrictLogging {
       log-dead-letters-during-shutdown = off
       log-dead-letters = off
       loggers = ["akka.event.slf4j.Slf4jLogger"]
-      loglevel = "DEBUG"
+      loglevel = "WARNING"
       logging-filter = "akka.event.slf4j.Slf4jLoggingFilter"
 
       actor {
