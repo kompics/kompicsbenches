@@ -25,7 +25,6 @@ object AllPairsShortestPath extends Benchmark {
   override def newInstance(): Instance = new AllPairsShortestPathI;
 
   class AllPairsShortestPathI extends Instance with StrictLogging {
-    import Messages._;
 
     private var numNodes = -1;
     private var blockSize = -1;
@@ -48,7 +47,7 @@ object AllPairsShortestPath extends Benchmark {
       assert(this.latch != null);
       assert(this.system != null);
       assert(this.graph != null);
-      this.system ! ComputeFW(graph, latch);
+      this.system ! Messages.ComputeFW(graph, latch);
       latch.await();
     }
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
@@ -60,7 +59,7 @@ object AllPairsShortestPath extends Benchmark {
         if (this.graph != null) {
           this.graph = null;
         }
-        system ! GracefulShutdown;
+        system ! Messages.GracefulShutdown;
         Await.ready(system.whenTerminated, 5.second);
         system = null;
         logger.info("Cleaned up Instance");

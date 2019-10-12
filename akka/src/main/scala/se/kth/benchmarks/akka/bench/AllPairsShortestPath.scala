@@ -11,7 +11,6 @@ import scala.util.Try
 import scala.collection.mutable
 import java.util.concurrent.CountDownLatch
 import com.typesafe.scalalogging.StrictLogging
-import se.kth.benchmarks.akka.bench.AllPairsShortestPath.Messages.ComputeFW
 
 object AllPairsShortestPath extends Benchmark {
 
@@ -47,7 +46,7 @@ object AllPairsShortestPath extends Benchmark {
       assert(this.latch != null);
       assert(this.manager != null);
       assert(this.graph != null);
-      this.manager ! ComputeFW(graph, latch);
+      this.manager ! Messages.ComputeFW(graph, latch);
       latch.await();
     }
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {

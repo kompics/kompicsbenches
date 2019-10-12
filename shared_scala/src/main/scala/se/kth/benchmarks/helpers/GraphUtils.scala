@@ -72,7 +72,6 @@ class Graph[T: ClassTag](val data: Array[Array[T]], val formatter: T => String) 
   def breakIntoBlocks(blockSize: Int): Array[Array[Block[T]]] = {
     assert(data.size % blockSize == 0, "Only break evenly into blocks!");
     val numBlocksPerDim = data.size / blockSize;
-    val builder = Map.newBuilder[Int, Block[T]];
     Array.tabulate[Block[T]](numBlocksPerDim, numBlocksPerDim) {
       case (i, j) => {
         val blockId = (i * numBlocksPerDim) + j;

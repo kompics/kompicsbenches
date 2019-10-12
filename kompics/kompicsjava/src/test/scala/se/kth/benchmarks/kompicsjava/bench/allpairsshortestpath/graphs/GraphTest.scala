@@ -1,4 +1,4 @@
-package se.kth.benchmarks.helpers
+package se.kth.benchmarks.kompicsjava.bench.allpairsshortestpath.graphs
 
 import org.scalatest._
 
@@ -14,12 +14,13 @@ class GraphTest extends FunSuite with Matchers {
     //println(g);
     val blocks = g.breakIntoBlocks(5);
     for (bi <- 0 until blocks.size; bj <- 0 until blocks.size) {
-      val (i, j) = blocks(bi)(bj).blockPosition;
+      val i = blocks(bi)(bj).blockPositionI();
+      val j = blocks(bi)(bj).blockPositionJ();
       bi should ===(i);
       bj should ===(j);
     }
     //println(blocks.map(_.map(b => s"${b.blockId} -> $b").mkString("\n")).mkString("\n"));
-    val g2 = Graph.assembleFromBlocks(blocks);
+    val g2 = DoubleGraph.assembleFromBlocks(blocks);
     g2 should ===(g);
   }
 
@@ -28,16 +29,13 @@ class GraphTest extends FunSuite with Matchers {
     //println(g);
     val blocks = g.breakIntoBlocks(5);
     //println(blocks.map(_.map(b => s"${b.blockId} -> $b").mkString("\n")).mkString("\n"));
-    val lookupfun: Int => Block[Double] = (blockId: Int) => {
-      val i = blockId / blocks.size;
-      val j = blockId % blocks.size;
-      blocks(i)(j)
-    };
+    val lookupMap: java.util.Map[java.lang.Integer, DoubleBlock] = new java.util.TreeMap[Integer, DoubleBlock];
+    blocks.foreach(_.foreach(b => lookupMap.put(b.blockId, b)));
     for (k <- 0 until 10) {
-      blocks.foreach(_.foreach(block => block.computeFloydWarshallInner(lookupfun, k)));
+      blocks.foreach(_.foreach(block => block.computeFloydWarshallInner(lookupMap, k)));
     }
     //println("=== Blocked APSP ===");
-    val gBlocked = Graph.assembleFromBlocks(blocks);
+    val gBlocked = DoubleGraph.assembleFromBlocks(blocks);
     //println(gBlocked);
     //println("=== Raw APSP ===");
     val g2 = g.copy();
