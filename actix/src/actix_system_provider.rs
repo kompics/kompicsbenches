@@ -142,7 +142,7 @@ impl ActixSystemCore {
         let manager_future = self.receiver.take().unwrap().for_each(|cmd| {
             match cmd {
                 SystemCommand::Start(f) => {
-                    println!("Starting something!");
+                    //println!("Starting something!");
                     f();
                 }
                 //SystemCommand::Stop => println!("Stopping something!"),
