@@ -5,6 +5,57 @@ use std::{
 
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Phase {
+    Initial,
+    Normal(usize),
+}
+impl Phase {
+    pub fn k(&self) -> usize {
+        match self {
+            Phase::Normal(k) => *k,
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn inc(&mut self) -> () {
+        match self {
+            Phase::Initial => {
+                *self = Phase::Normal(0usize);
+            },
+            Phase::Normal(k) => {
+                *k += 1usize;
+            },
+        }
+    }
+
+    pub fn incremented(&self) -> Phase {
+        match self {
+            Phase::Initial => Phase::Normal(0usize),
+            Phase::Normal(k) => Phase::Normal(k + 1usize),
+        }
+    }
+}
+impl Default for Phase {
+    fn default() -> Self { Phase::Initial }
+}
+impl fmt::Display for Phase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Phase::Initial => write!(f, "<init>"),
+            Phase::Normal(k) => write!(f, "{}", k),
+        }
+    }
+}
+impl PartialEq<usize> for Phase {
+    fn eq(&self, other: &usize) -> bool {
+        match self {
+            Phase::Initial => false,
+            Phase::Normal(k) => k == other,
+        }
+    }
+}
+
 pub const WEIGHT_FACTOR: f64 = 10.0;
 pub const WEIGHT_CUTOFF: f64 = 5.0;
 
@@ -44,7 +95,7 @@ fn format_f64(v: &f64) -> String {
     }
 }
 
-trait GraphOps<T>: Clone {
+pub trait GraphOps<T>: Clone {
     fn num_nodes(&self) -> usize;
     fn get(&self, i: usize, j: usize) -> &T;
     fn set(&mut self, i: usize, j: usize, v: T) -> T;
@@ -208,16 +259,9 @@ impl<T> Block<T> {
         formatter: fn(&T) -> String,
     ) -> Block<T>
     {
-    	let block_size = data.len();
+        let block_size = data.len();
         let graph = Graph::with(data, formatter);
-        Block {
-            block_id,
-            num_blocks_per_dim,
-            row_offset,
-            col_offset,
-            block_size,
-            graph,
-        }
+        Block { block_id, num_blocks_per_dim, row_offset, col_offset, block_size, graph }
     }
 
     pub fn block_size(&self) -> usize { self.block_size }
@@ -226,6 +270,10 @@ impl<T> Block<T> {
         let i = self.block_id / self.num_blocks_per_dim;
         let j = self.block_id % self.num_blocks_per_dim;
         (i, j)
+    }
+
+    pub fn block_id(&self) -> usize {
+        self.block_id
     }
 }
 

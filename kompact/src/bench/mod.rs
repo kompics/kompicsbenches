@@ -2,7 +2,10 @@ use super::*;
 use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
+pub mod all_pairs_shortest_path;
 pub mod atomicregister;
+pub mod chameneos;
+pub mod fibonacci;
 mod messages;
 pub mod net_throughput_pingpong;
 pub mod netpingpong;
@@ -59,6 +62,15 @@ impl BenchmarkFactory for ComponentFactory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
+    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
+    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
+    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Ok(all_pairs_shortest_path::component_apsp::AllPairsShortestPath {}.into())
+    }
 }
 
 pub fn actor() -> Box<dyn BenchmarkFactory> {
@@ -113,6 +125,16 @@ impl BenchmarkFactory for ActorFactory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(streaming_windows::StreamingWindows {}.into())
     }
+    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Ok(fibonacci::Fibonacci {}.into())
+    }
+    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Ok(chameneos::actor_chameneos::Chameneos {}.into())
+    }
+
+    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Ok(all_pairs_shortest_path::actor_apsp::AllPairsShortestPath {}.into())
+    }
 }
 pub fn mixed() -> Box<dyn BenchmarkFactory> {
     Box::new(MixedFactory {})
@@ -158,5 +180,15 @@ impl BenchmarkFactory for MixedFactory {
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
+    }
+    fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
+
+    fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Ok(chameneos::mixed_chameneos::Chameneos {}.into())
+    }
+    fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::FutureWork)
     }
 }
