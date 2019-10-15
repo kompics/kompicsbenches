@@ -10,7 +10,10 @@
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
          'AtomicRegister'/3,
-         'StreamingWindows'/3]).
+         'StreamingWindows'/3,
+         'Fibonacci'/3,
+         'Chameneos'/3,
+         'AllPairsShortestPath'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -33,6 +36,17 @@
       window_size => string(),
       number_of_windows => integer(),
       window_size_amplification => integer()}.
+
+-type 'FibonacciRequest'() ::
+    #{fib_number => integer()}.
+
+-type 'ChameneosRequest'() ::
+    #{number_of_chameneos => integer(),
+      number_of_meetings => integer()}.
+
+-type 'APSPRequest'() ::
+    #{number_of_nodes => integer(),
+      block_size => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -136,6 +150,30 @@ decoder() -> benchmarks.
 'StreamingWindows'(Message, Stream, _State) ->
     io:fwrite("Got StreamingWindows request.~n"),
     Response = await_benchmark_result(streaming_windows_bench, Message),
+    {Response, Stream}.
+
+-spec 'Fibonacci'(Message::'FibonacciRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'Fibonacci'(Message, Stream, _State) ->
+    io:fwrite("Got Fibonacci request.~n"),
+    Response = await_benchmark_result(fibonacci_bench, Message),
+    {Response, Stream}.
+
+-spec 'Chameneos'(Message::'ChameneosRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'Chameneos'(Message, Stream, _State) ->
+    io:fwrite("Got Chameneos request.~n"),
+    Response = await_benchmark_result(chameneos_bench, Message),
+    {Response, Stream}.
+
+-spec 'AllPairsShortestPath'(Message::'APSPRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'AllPairsShortestPath'(Message, Stream, _State) ->
+    io:fwrite("Got APSP request.~n"),
+    Response = await_benchmark_result(all_pairs_shortest_path_bench, Message),
     {Response, Stream}.
 
 -spec await_benchmark_result(Benchmark :: module(), Params :: term()) -> 'TestResult'().

@@ -60,6 +60,12 @@
 
 -type 'StreamingWindowsRequest'() :: #'StreamingWindowsRequest'{}.
 
+-type 'FibonacciRequest'() :: #'FibonacciRequest'{}.
+
+-type 'ChameneosRequest'() :: #'ChameneosRequest'{}.
+
+-type 'APSPRequest'() :: #'APSPRequest'{}.
+
 -type 'TestResult'() :: #'TestResult'{}.
 
 -type 'TestSuccess'() :: #'TestSuccess'{}.
@@ -76,20 +82,20 @@
 
 -type 'ShutdownAck'() :: #'ShutdownAck'{}.
 
--export_type(['PingPongRequest'/0, 'ThroughputPingPongRequest'/0, 'AtomicRegisterRequest'/0, 'StreamingWindowsRequest'/0, 'TestResult'/0, 'TestSuccess'/0, 'TestFailure'/0, 'NotImplemented'/0, 'ReadyRequest'/0, 'ReadyResponse'/0, 'ShutdownRequest'/0, 'ShutdownAck'/0]).
+-export_type(['PingPongRequest'/0, 'ThroughputPingPongRequest'/0, 'AtomicRegisterRequest'/0, 'StreamingWindowsRequest'/0, 'FibonacciRequest'/0, 'ChameneosRequest'/0, 'APSPRequest'/0, 'TestResult'/0, 'TestSuccess'/0, 'TestFailure'/0, 'NotImplemented'/0, 'ReadyRequest'/0, 'ReadyResponse'/0, 'ShutdownRequest'/0, 'ShutdownAck'/0]).
 
--spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}) -> binary().
+-spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'FibonacciRequest'{} | #'ChameneosRequest'{} | #'APSPRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}) -> binary().
 encode_msg(Msg) when tuple_size(Msg) >= 1 ->
     encode_msg(Msg, element(1, Msg), []).
 
--spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}, atom() | list()) -> binary().
+-spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'FibonacciRequest'{} | #'ChameneosRequest'{} | #'APSPRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}, atom() | list()) -> binary().
 encode_msg(Msg, MsgName) when is_atom(MsgName) ->
     encode_msg(Msg, MsgName, []);
 encode_msg(Msg, Opts)
     when tuple_size(Msg) >= 1, is_list(Opts) ->
     encode_msg(Msg, element(1, Msg), Opts).
 
--spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}, atom(), list()) -> binary().
+-spec encode_msg(#'PingPongRequest'{} | #'ThroughputPingPongRequest'{} | #'AtomicRegisterRequest'{} | #'StreamingWindowsRequest'{} | #'FibonacciRequest'{} | #'ChameneosRequest'{} | #'APSPRequest'{} | #'TestResult'{} | #'TestSuccess'{} | #'TestFailure'{} | #'NotImplemented'{} | #'ReadyRequest'{} | #'ReadyResponse'{} | #'ShutdownRequest'{} | #'ShutdownAck'{}, atom(), list()) -> binary().
 encode_msg(Msg, MsgName, Opts) ->
     case proplists:get_bool(verify, Opts) of
       true -> verify_msg(Msg, MsgName, Opts);
@@ -110,6 +116,14 @@ encode_msg(Msg, MsgName, Opts) ->
       'StreamingWindowsRequest' ->
 	  encode_msg_StreamingWindowsRequest(id(Msg, TrUserData),
 					     TrUserData);
+      'FibonacciRequest' ->
+	  encode_msg_FibonacciRequest(id(Msg, TrUserData),
+				      TrUserData);
+      'ChameneosRequest' ->
+	  encode_msg_ChameneosRequest(id(Msg, TrUserData),
+				      TrUserData);
+      'APSPRequest' ->
+	  encode_msg_APSPRequest(id(Msg, TrUserData), TrUserData);
       'TestResult' ->
 	  encode_msg_TestResult(id(Msg, TrUserData), TrUserData);
       'TestSuccess' ->
@@ -308,6 +322,77 @@ encode_msg_StreamingWindowsRequest(#'StreamingWindowsRequest'{number_of_partitio
 	     TrF5 = id(F5, TrUserData),
 	     if TrF5 =:= 0 -> B4;
 		true -> e_varint(TrF5, <<B4/binary, 40>>, TrUserData)
+	     end
+	   end
+    end.
+
+encode_msg_FibonacciRequest(Msg, TrUserData) ->
+    encode_msg_FibonacciRequest(Msg, <<>>, TrUserData).
+
+
+encode_msg_FibonacciRequest(#'FibonacciRequest'{fib_number
+						    = F1},
+			    Bin, TrUserData) ->
+    if F1 == undefined -> Bin;
+       true ->
+	   begin
+	     TrF1 = id(F1, TrUserData),
+	     if TrF1 =:= 0 -> Bin;
+		true -> e_varint(TrF1, <<Bin/binary, 8>>, TrUserData)
+	     end
+	   end
+    end.
+
+encode_msg_ChameneosRequest(Msg, TrUserData) ->
+    encode_msg_ChameneosRequest(Msg, <<>>, TrUserData).
+
+
+encode_msg_ChameneosRequest(#'ChameneosRequest'{number_of_chameneos
+						    = F1,
+						number_of_meetings = F2},
+			    Bin, TrUserData) ->
+    B1 = if F1 == undefined -> Bin;
+	    true ->
+		begin
+		  TrF1 = id(F1, TrUserData),
+		  if TrF1 =:= 0 -> Bin;
+		     true -> e_varint(TrF1, <<Bin/binary, 8>>, TrUserData)
+		  end
+		end
+	 end,
+    if F2 == undefined -> B1;
+       true ->
+	   begin
+	     TrF2 = id(F2, TrUserData),
+	     if TrF2 =:= 0 -> B1;
+		true -> e_varint(TrF2, <<B1/binary, 16>>, TrUserData)
+	     end
+	   end
+    end.
+
+encode_msg_APSPRequest(Msg, TrUserData) ->
+    encode_msg_APSPRequest(Msg, <<>>, TrUserData).
+
+
+encode_msg_APSPRequest(#'APSPRequest'{number_of_nodes =
+					  F1,
+				      block_size = F2},
+		       Bin, TrUserData) ->
+    B1 = if F1 == undefined -> Bin;
+	    true ->
+		begin
+		  TrF1 = id(F1, TrUserData),
+		  if TrF1 =:= 0 -> Bin;
+		     true -> e_varint(TrF1, <<Bin/binary, 8>>, TrUserData)
+		  end
+		end
+	 end,
+    if F2 == undefined -> B1;
+       true ->
+	   begin
+	     TrF2 = id(F2, TrUserData),
+	     if TrF2 =:= 0 -> B1;
+		true -> e_varint(TrF2, <<B1/binary, 16>>, TrUserData)
 	     end
 	   end
     end.
@@ -612,6 +697,16 @@ decode_msg_2_doit('StreamingWindowsRequest', Bin,
 		  TrUserData) ->
     id(decode_msg_StreamingWindowsRequest(Bin, TrUserData),
        TrUserData);
+decode_msg_2_doit('FibonacciRequest', Bin,
+		  TrUserData) ->
+    id(decode_msg_FibonacciRequest(Bin, TrUserData),
+       TrUserData);
+decode_msg_2_doit('ChameneosRequest', Bin,
+		  TrUserData) ->
+    id(decode_msg_ChameneosRequest(Bin, TrUserData),
+       TrUserData);
+decode_msg_2_doit('APSPRequest', Bin, TrUserData) ->
+    id(decode_msg_APSPRequest(Bin, TrUserData), TrUserData);
 decode_msg_2_doit('TestResult', Bin, TrUserData) ->
     id(decode_msg_TestResult(Bin, TrUserData), TrUserData);
 decode_msg_2_doit('TestSuccess', Bin, TrUserData) ->
@@ -1501,6 +1596,369 @@ skip_64_StreamingWindowsRequest(<<_:64, Rest/binary>>,
     dfp_read_field_def_StreamingWindowsRequest(Rest, Z1, Z2,
 					       F@_1, F@_2, F@_3, F@_4, F@_5,
 					       TrUserData).
+
+decode_msg_FibonacciRequest(Bin, TrUserData) ->
+    dfp_read_field_def_FibonacciRequest(Bin, 0, 0,
+					id(0, TrUserData), TrUserData).
+
+dfp_read_field_def_FibonacciRequest(<<8, Rest/binary>>,
+				    Z1, Z2, F@_1, TrUserData) ->
+    d_field_FibonacciRequest_fib_number(Rest, Z1, Z2, F@_1,
+					TrUserData);
+dfp_read_field_def_FibonacciRequest(<<>>, 0, 0, F@_1,
+				    _) ->
+    #'FibonacciRequest'{fib_number = F@_1};
+dfp_read_field_def_FibonacciRequest(Other, Z1, Z2, F@_1,
+				    TrUserData) ->
+    dg_read_field_def_FibonacciRequest(Other, Z1, Z2, F@_1,
+				       TrUserData).
+
+dg_read_field_def_FibonacciRequest(<<1:1, X:7,
+				     Rest/binary>>,
+				   N, Acc, F@_1, TrUserData)
+    when N < 32 - 7 ->
+    dg_read_field_def_FibonacciRequest(Rest, N + 7,
+				       X bsl N + Acc, F@_1, TrUserData);
+dg_read_field_def_FibonacciRequest(<<0:1, X:7,
+				     Rest/binary>>,
+				   N, Acc, F@_1, TrUserData) ->
+    Key = X bsl N + Acc,
+    case Key of
+      8 ->
+	  d_field_FibonacciRequest_fib_number(Rest, 0, 0, F@_1,
+					      TrUserData);
+      _ ->
+	  case Key band 7 of
+	    0 ->
+		skip_varint_FibonacciRequest(Rest, 0, 0, F@_1,
+					     TrUserData);
+	    1 ->
+		skip_64_FibonacciRequest(Rest, 0, 0, F@_1, TrUserData);
+	    2 ->
+		skip_length_delimited_FibonacciRequest(Rest, 0, 0, F@_1,
+						       TrUserData);
+	    3 ->
+		skip_group_FibonacciRequest(Rest, Key bsr 3, 0, F@_1,
+					    TrUserData);
+	    5 ->
+		skip_32_FibonacciRequest(Rest, 0, 0, F@_1, TrUserData)
+	  end
+    end;
+dg_read_field_def_FibonacciRequest(<<>>, 0, 0, F@_1,
+				   _) ->
+    #'FibonacciRequest'{fib_number = F@_1}.
+
+d_field_FibonacciRequest_fib_number(<<1:1, X:7,
+				      Rest/binary>>,
+				    N, Acc, F@_1, TrUserData)
+    when N < 57 ->
+    d_field_FibonacciRequest_fib_number(Rest, N + 7,
+					X bsl N + Acc, F@_1, TrUserData);
+d_field_FibonacciRequest_fib_number(<<0:1, X:7,
+				      Rest/binary>>,
+				    N, Acc, _, TrUserData) ->
+    {NewFValue, RestF} = {id(X bsl N + Acc, TrUserData),
+			  Rest},
+    dfp_read_field_def_FibonacciRequest(RestF, 0, 0,
+					NewFValue, TrUserData).
+
+skip_varint_FibonacciRequest(<<1:1, _:7, Rest/binary>>,
+			     Z1, Z2, F@_1, TrUserData) ->
+    skip_varint_FibonacciRequest(Rest, Z1, Z2, F@_1,
+				 TrUserData);
+skip_varint_FibonacciRequest(<<0:1, _:7, Rest/binary>>,
+			     Z1, Z2, F@_1, TrUserData) ->
+    dfp_read_field_def_FibonacciRequest(Rest, Z1, Z2, F@_1,
+					TrUserData).
+
+skip_length_delimited_FibonacciRequest(<<1:1, X:7,
+					 Rest/binary>>,
+				       N, Acc, F@_1, TrUserData)
+    when N < 57 ->
+    skip_length_delimited_FibonacciRequest(Rest, N + 7,
+					   X bsl N + Acc, F@_1, TrUserData);
+skip_length_delimited_FibonacciRequest(<<0:1, X:7,
+					 Rest/binary>>,
+				       N, Acc, F@_1, TrUserData) ->
+    Length = X bsl N + Acc,
+    <<_:Length/binary, Rest2/binary>> = Rest,
+    dfp_read_field_def_FibonacciRequest(Rest2, 0, 0, F@_1,
+					TrUserData).
+
+skip_group_FibonacciRequest(Bin, FNum, Z2, F@_1,
+			    TrUserData) ->
+    {_, Rest} = read_group(Bin, FNum),
+    dfp_read_field_def_FibonacciRequest(Rest, 0, Z2, F@_1,
+					TrUserData).
+
+skip_32_FibonacciRequest(<<_:32, Rest/binary>>, Z1, Z2,
+			 F@_1, TrUserData) ->
+    dfp_read_field_def_FibonacciRequest(Rest, Z1, Z2, F@_1,
+					TrUserData).
+
+skip_64_FibonacciRequest(<<_:64, Rest/binary>>, Z1, Z2,
+			 F@_1, TrUserData) ->
+    dfp_read_field_def_FibonacciRequest(Rest, Z1, Z2, F@_1,
+					TrUserData).
+
+decode_msg_ChameneosRequest(Bin, TrUserData) ->
+    dfp_read_field_def_ChameneosRequest(Bin, 0, 0,
+					id(0, TrUserData), id(0, TrUserData),
+					TrUserData).
+
+dfp_read_field_def_ChameneosRequest(<<8, Rest/binary>>,
+				    Z1, Z2, F@_1, F@_2, TrUserData) ->
+    d_field_ChameneosRequest_number_of_chameneos(Rest, Z1,
+						 Z2, F@_1, F@_2, TrUserData);
+dfp_read_field_def_ChameneosRequest(<<16, Rest/binary>>,
+				    Z1, Z2, F@_1, F@_2, TrUserData) ->
+    d_field_ChameneosRequest_number_of_meetings(Rest, Z1,
+						Z2, F@_1, F@_2, TrUserData);
+dfp_read_field_def_ChameneosRequest(<<>>, 0, 0, F@_1,
+				    F@_2, _) ->
+    #'ChameneosRequest'{number_of_chameneos = F@_1,
+			number_of_meetings = F@_2};
+dfp_read_field_def_ChameneosRequest(Other, Z1, Z2, F@_1,
+				    F@_2, TrUserData) ->
+    dg_read_field_def_ChameneosRequest(Other, Z1, Z2, F@_1,
+				       F@_2, TrUserData).
+
+dg_read_field_def_ChameneosRequest(<<1:1, X:7,
+				     Rest/binary>>,
+				   N, Acc, F@_1, F@_2, TrUserData)
+    when N < 32 - 7 ->
+    dg_read_field_def_ChameneosRequest(Rest, N + 7,
+				       X bsl N + Acc, F@_1, F@_2, TrUserData);
+dg_read_field_def_ChameneosRequest(<<0:1, X:7,
+				     Rest/binary>>,
+				   N, Acc, F@_1, F@_2, TrUserData) ->
+    Key = X bsl N + Acc,
+    case Key of
+      8 ->
+	  d_field_ChameneosRequest_number_of_chameneos(Rest, 0, 0,
+						       F@_1, F@_2, TrUserData);
+      16 ->
+	  d_field_ChameneosRequest_number_of_meetings(Rest, 0, 0,
+						      F@_1, F@_2, TrUserData);
+      _ ->
+	  case Key band 7 of
+	    0 ->
+		skip_varint_ChameneosRequest(Rest, 0, 0, F@_1, F@_2,
+					     TrUserData);
+	    1 ->
+		skip_64_ChameneosRequest(Rest, 0, 0, F@_1, F@_2,
+					 TrUserData);
+	    2 ->
+		skip_length_delimited_ChameneosRequest(Rest, 0, 0, F@_1,
+						       F@_2, TrUserData);
+	    3 ->
+		skip_group_ChameneosRequest(Rest, Key bsr 3, 0, F@_1,
+					    F@_2, TrUserData);
+	    5 ->
+		skip_32_ChameneosRequest(Rest, 0, 0, F@_1, F@_2,
+					 TrUserData)
+	  end
+    end;
+dg_read_field_def_ChameneosRequest(<<>>, 0, 0, F@_1,
+				   F@_2, _) ->
+    #'ChameneosRequest'{number_of_chameneos = F@_1,
+			number_of_meetings = F@_2}.
+
+d_field_ChameneosRequest_number_of_chameneos(<<1:1, X:7,
+					       Rest/binary>>,
+					     N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    d_field_ChameneosRequest_number_of_chameneos(Rest,
+						 N + 7, X bsl N + Acc, F@_1,
+						 F@_2, TrUserData);
+d_field_ChameneosRequest_number_of_chameneos(<<0:1, X:7,
+					       Rest/binary>>,
+					     N, Acc, _, F@_2, TrUserData) ->
+    {NewFValue, RestF} = {id(X bsl N + Acc, TrUserData),
+			  Rest},
+    dfp_read_field_def_ChameneosRequest(RestF, 0, 0,
+					NewFValue, F@_2, TrUserData).
+
+d_field_ChameneosRequest_number_of_meetings(<<1:1, X:7,
+					      Rest/binary>>,
+					    N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    d_field_ChameneosRequest_number_of_meetings(Rest, N + 7,
+						X bsl N + Acc, F@_1, F@_2,
+						TrUserData);
+d_field_ChameneosRequest_number_of_meetings(<<0:1, X:7,
+					      Rest/binary>>,
+					    N, Acc, F@_1, _, TrUserData) ->
+    {NewFValue, RestF} = {id(X bsl N + Acc, TrUserData),
+			  Rest},
+    dfp_read_field_def_ChameneosRequest(RestF, 0, 0, F@_1,
+					NewFValue, TrUserData).
+
+skip_varint_ChameneosRequest(<<1:1, _:7, Rest/binary>>,
+			     Z1, Z2, F@_1, F@_2, TrUserData) ->
+    skip_varint_ChameneosRequest(Rest, Z1, Z2, F@_1, F@_2,
+				 TrUserData);
+skip_varint_ChameneosRequest(<<0:1, _:7, Rest/binary>>,
+			     Z1, Z2, F@_1, F@_2, TrUserData) ->
+    dfp_read_field_def_ChameneosRequest(Rest, Z1, Z2, F@_1,
+					F@_2, TrUserData).
+
+skip_length_delimited_ChameneosRequest(<<1:1, X:7,
+					 Rest/binary>>,
+				       N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    skip_length_delimited_ChameneosRequest(Rest, N + 7,
+					   X bsl N + Acc, F@_1, F@_2,
+					   TrUserData);
+skip_length_delimited_ChameneosRequest(<<0:1, X:7,
+					 Rest/binary>>,
+				       N, Acc, F@_1, F@_2, TrUserData) ->
+    Length = X bsl N + Acc,
+    <<_:Length/binary, Rest2/binary>> = Rest,
+    dfp_read_field_def_ChameneosRequest(Rest2, 0, 0, F@_1,
+					F@_2, TrUserData).
+
+skip_group_ChameneosRequest(Bin, FNum, Z2, F@_1, F@_2,
+			    TrUserData) ->
+    {_, Rest} = read_group(Bin, FNum),
+    dfp_read_field_def_ChameneosRequest(Rest, 0, Z2, F@_1,
+					F@_2, TrUserData).
+
+skip_32_ChameneosRequest(<<_:32, Rest/binary>>, Z1, Z2,
+			 F@_1, F@_2, TrUserData) ->
+    dfp_read_field_def_ChameneosRequest(Rest, Z1, Z2, F@_1,
+					F@_2, TrUserData).
+
+skip_64_ChameneosRequest(<<_:64, Rest/binary>>, Z1, Z2,
+			 F@_1, F@_2, TrUserData) ->
+    dfp_read_field_def_ChameneosRequest(Rest, Z1, Z2, F@_1,
+					F@_2, TrUserData).
+
+decode_msg_APSPRequest(Bin, TrUserData) ->
+    dfp_read_field_def_APSPRequest(Bin, 0, 0,
+				   id(0, TrUserData), id(0, TrUserData),
+				   TrUserData).
+
+dfp_read_field_def_APSPRequest(<<8, Rest/binary>>, Z1,
+			       Z2, F@_1, F@_2, TrUserData) ->
+    d_field_APSPRequest_number_of_nodes(Rest, Z1, Z2, F@_1,
+					F@_2, TrUserData);
+dfp_read_field_def_APSPRequest(<<16, Rest/binary>>, Z1,
+			       Z2, F@_1, F@_2, TrUserData) ->
+    d_field_APSPRequest_block_size(Rest, Z1, Z2, F@_1, F@_2,
+				   TrUserData);
+dfp_read_field_def_APSPRequest(<<>>, 0, 0, F@_1, F@_2,
+			       _) ->
+    #'APSPRequest'{number_of_nodes = F@_1,
+		   block_size = F@_2};
+dfp_read_field_def_APSPRequest(Other, Z1, Z2, F@_1,
+			       F@_2, TrUserData) ->
+    dg_read_field_def_APSPRequest(Other, Z1, Z2, F@_1, F@_2,
+				  TrUserData).
+
+dg_read_field_def_APSPRequest(<<1:1, X:7, Rest/binary>>,
+			      N, Acc, F@_1, F@_2, TrUserData)
+    when N < 32 - 7 ->
+    dg_read_field_def_APSPRequest(Rest, N + 7,
+				  X bsl N + Acc, F@_1, F@_2, TrUserData);
+dg_read_field_def_APSPRequest(<<0:1, X:7, Rest/binary>>,
+			      N, Acc, F@_1, F@_2, TrUserData) ->
+    Key = X bsl N + Acc,
+    case Key of
+      8 ->
+	  d_field_APSPRequest_number_of_nodes(Rest, 0, 0, F@_1,
+					      F@_2, TrUserData);
+      16 ->
+	  d_field_APSPRequest_block_size(Rest, 0, 0, F@_1, F@_2,
+					 TrUserData);
+      _ ->
+	  case Key band 7 of
+	    0 ->
+		skip_varint_APSPRequest(Rest, 0, 0, F@_1, F@_2,
+					TrUserData);
+	    1 ->
+		skip_64_APSPRequest(Rest, 0, 0, F@_1, F@_2, TrUserData);
+	    2 ->
+		skip_length_delimited_APSPRequest(Rest, 0, 0, F@_1,
+						  F@_2, TrUserData);
+	    3 ->
+		skip_group_APSPRequest(Rest, Key bsr 3, 0, F@_1, F@_2,
+				       TrUserData);
+	    5 ->
+		skip_32_APSPRequest(Rest, 0, 0, F@_1, F@_2, TrUserData)
+	  end
+    end;
+dg_read_field_def_APSPRequest(<<>>, 0, 0, F@_1, F@_2,
+			      _) ->
+    #'APSPRequest'{number_of_nodes = F@_1,
+		   block_size = F@_2}.
+
+d_field_APSPRequest_number_of_nodes(<<1:1, X:7,
+				      Rest/binary>>,
+				    N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    d_field_APSPRequest_number_of_nodes(Rest, N + 7,
+					X bsl N + Acc, F@_1, F@_2, TrUserData);
+d_field_APSPRequest_number_of_nodes(<<0:1, X:7,
+				      Rest/binary>>,
+				    N, Acc, _, F@_2, TrUserData) ->
+    {NewFValue, RestF} = {id(X bsl N + Acc, TrUserData),
+			  Rest},
+    dfp_read_field_def_APSPRequest(RestF, 0, 0, NewFValue,
+				   F@_2, TrUserData).
+
+d_field_APSPRequest_block_size(<<1:1, X:7,
+				 Rest/binary>>,
+			       N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    d_field_APSPRequest_block_size(Rest, N + 7,
+				   X bsl N + Acc, F@_1, F@_2, TrUserData);
+d_field_APSPRequest_block_size(<<0:1, X:7,
+				 Rest/binary>>,
+			       N, Acc, F@_1, _, TrUserData) ->
+    {NewFValue, RestF} = {id(X bsl N + Acc, TrUserData),
+			  Rest},
+    dfp_read_field_def_APSPRequest(RestF, 0, 0, F@_1,
+				   NewFValue, TrUserData).
+
+skip_varint_APSPRequest(<<1:1, _:7, Rest/binary>>, Z1,
+			Z2, F@_1, F@_2, TrUserData) ->
+    skip_varint_APSPRequest(Rest, Z1, Z2, F@_1, F@_2,
+			    TrUserData);
+skip_varint_APSPRequest(<<0:1, _:7, Rest/binary>>, Z1,
+			Z2, F@_1, F@_2, TrUserData) ->
+    dfp_read_field_def_APSPRequest(Rest, Z1, Z2, F@_1, F@_2,
+				   TrUserData).
+
+skip_length_delimited_APSPRequest(<<1:1, X:7,
+				    Rest/binary>>,
+				  N, Acc, F@_1, F@_2, TrUserData)
+    when N < 57 ->
+    skip_length_delimited_APSPRequest(Rest, N + 7,
+				      X bsl N + Acc, F@_1, F@_2, TrUserData);
+skip_length_delimited_APSPRequest(<<0:1, X:7,
+				    Rest/binary>>,
+				  N, Acc, F@_1, F@_2, TrUserData) ->
+    Length = X bsl N + Acc,
+    <<_:Length/binary, Rest2/binary>> = Rest,
+    dfp_read_field_def_APSPRequest(Rest2, 0, 0, F@_1, F@_2,
+				   TrUserData).
+
+skip_group_APSPRequest(Bin, FNum, Z2, F@_1, F@_2,
+		       TrUserData) ->
+    {_, Rest} = read_group(Bin, FNum),
+    dfp_read_field_def_APSPRequest(Rest, 0, Z2, F@_1, F@_2,
+				   TrUserData).
+
+skip_32_APSPRequest(<<_:32, Rest/binary>>, Z1, Z2, F@_1,
+		    F@_2, TrUserData) ->
+    dfp_read_field_def_APSPRequest(Rest, Z1, Z2, F@_1, F@_2,
+				   TrUserData).
+
+skip_64_APSPRequest(<<_:64, Rest/binary>>, Z1, Z2, F@_1,
+		    F@_2, TrUserData) ->
+    dfp_read_field_def_APSPRequest(Rest, Z1, Z2, F@_1, F@_2,
+				   TrUserData).
 
 decode_msg_TestResult(Bin, TrUserData) ->
     dfp_read_field_def_TestResult(Bin, 0, 0,
@@ -2474,6 +2932,12 @@ merge_msgs(Prev, New, MsgName, Opts) ->
       'StreamingWindowsRequest' ->
 	  merge_msg_StreamingWindowsRequest(Prev, New,
 					    TrUserData);
+      'FibonacciRequest' ->
+	  merge_msg_FibonacciRequest(Prev, New, TrUserData);
+      'ChameneosRequest' ->
+	  merge_msg_ChameneosRequest(Prev, New, TrUserData);
+      'APSPRequest' ->
+	  merge_msg_APSPRequest(Prev, New, TrUserData);
       'TestResult' ->
 	  merge_msg_TestResult(Prev, New, TrUserData);
       'TestSuccess' ->
@@ -2637,6 +3101,52 @@ merge_msg_StreamingWindowsRequest(#'StreamingWindowsRequest'{number_of_partition
 				      true -> NFwindow_size_amplification
 				   end}.
 
+-compile({nowarn_unused_function,merge_msg_FibonacciRequest/3}).
+merge_msg_FibonacciRequest(#'FibonacciRequest'{fib_number
+						   = PFfib_number},
+			   #'FibonacciRequest'{fib_number = NFfib_number}, _) ->
+    #'FibonacciRequest'{fib_number =
+			    if NFfib_number =:= undefined -> PFfib_number;
+			       true -> NFfib_number
+			    end}.
+
+-compile({nowarn_unused_function,merge_msg_ChameneosRequest/3}).
+merge_msg_ChameneosRequest(#'ChameneosRequest'{number_of_chameneos
+						   = PFnumber_of_chameneos,
+					       number_of_meetings =
+						   PFnumber_of_meetings},
+			   #'ChameneosRequest'{number_of_chameneos =
+						   NFnumber_of_chameneos,
+					       number_of_meetings =
+						   NFnumber_of_meetings},
+			   _) ->
+    #'ChameneosRequest'{number_of_chameneos =
+			    if NFnumber_of_chameneos =:= undefined ->
+				   PFnumber_of_chameneos;
+			       true -> NFnumber_of_chameneos
+			    end,
+			number_of_meetings =
+			    if NFnumber_of_meetings =:= undefined ->
+				   PFnumber_of_meetings;
+			       true -> NFnumber_of_meetings
+			    end}.
+
+-compile({nowarn_unused_function,merge_msg_APSPRequest/3}).
+merge_msg_APSPRequest(#'APSPRequest'{number_of_nodes =
+					 PFnumber_of_nodes,
+				     block_size = PFblock_size},
+		      #'APSPRequest'{number_of_nodes = NFnumber_of_nodes,
+				     block_size = NFblock_size},
+		      _) ->
+    #'APSPRequest'{number_of_nodes =
+		       if NFnumber_of_nodes =:= undefined -> PFnumber_of_nodes;
+			  true -> NFnumber_of_nodes
+		       end,
+		   block_size =
+		       if NFblock_size =:= undefined -> PFblock_size;
+			  true -> NFblock_size
+		       end}.
+
 -compile({nowarn_unused_function,merge_msg_TestResult/3}).
 merge_msg_TestResult(#'TestResult'{sealed_value =
 				       PFsealed_value},
@@ -2748,6 +3258,12 @@ verify_msg(Msg, MsgName, Opts) ->
       'StreamingWindowsRequest' ->
 	  v_msg_StreamingWindowsRequest(Msg, [MsgName],
 					TrUserData);
+      'FibonacciRequest' ->
+	  v_msg_FibonacciRequest(Msg, [MsgName], TrUserData);
+      'ChameneosRequest' ->
+	  v_msg_ChameneosRequest(Msg, [MsgName], TrUserData);
+      'APSPRequest' ->
+	  v_msg_APSPRequest(Msg, [MsgName], TrUserData);
       'TestResult' ->
 	  v_msg_TestResult(Msg, [MsgName], TrUserData);
       'TestSuccess' ->
@@ -2880,6 +3396,58 @@ v_msg_StreamingWindowsRequest(#'StreamingWindowsRequest'{number_of_partitions
 v_msg_StreamingWindowsRequest(X, Path, _TrUserData) ->
     mk_type_error({expected_msg, 'StreamingWindowsRequest'},
 		  X, Path).
+
+-compile({nowarn_unused_function,v_msg_FibonacciRequest/3}).
+-dialyzer({nowarn_function,v_msg_FibonacciRequest/3}).
+v_msg_FibonacciRequest(#'FibonacciRequest'{fib_number =
+					       F1},
+		       Path, TrUserData) ->
+    if F1 == undefined -> ok;
+       true ->
+	   v_type_uint32(F1, [fib_number | Path], TrUserData)
+    end,
+    ok;
+v_msg_FibonacciRequest(X, Path, _TrUserData) ->
+    mk_type_error({expected_msg, 'FibonacciRequest'}, X,
+		  Path).
+
+-compile({nowarn_unused_function,v_msg_ChameneosRequest/3}).
+-dialyzer({nowarn_function,v_msg_ChameneosRequest/3}).
+v_msg_ChameneosRequest(#'ChameneosRequest'{number_of_chameneos
+					       = F1,
+					   number_of_meetings = F2},
+		       Path, TrUserData) ->
+    if F1 == undefined -> ok;
+       true ->
+	   v_type_uint32(F1, [number_of_chameneos | Path],
+			 TrUserData)
+    end,
+    if F2 == undefined -> ok;
+       true ->
+	   v_type_uint64(F2, [number_of_meetings | Path],
+			 TrUserData)
+    end,
+    ok;
+v_msg_ChameneosRequest(X, Path, _TrUserData) ->
+    mk_type_error({expected_msg, 'ChameneosRequest'}, X,
+		  Path).
+
+-compile({nowarn_unused_function,v_msg_APSPRequest/3}).
+-dialyzer({nowarn_function,v_msg_APSPRequest/3}).
+v_msg_APSPRequest(#'APSPRequest'{number_of_nodes = F1,
+				 block_size = F2},
+		  Path, TrUserData) ->
+    if F1 == undefined -> ok;
+       true ->
+	   v_type_uint32(F1, [number_of_nodes | Path], TrUserData)
+    end,
+    if F2 == undefined -> ok;
+       true ->
+	   v_type_uint32(F2, [block_size | Path], TrUserData)
+    end,
+    ok;
+v_msg_APSPRequest(X, Path, _TrUserData) ->
+    mk_type_error({expected_msg, 'APSPRequest'}, X, Path).
 
 -compile({nowarn_unused_function,v_msg_TestResult/3}).
 -dialyzer({nowarn_function,v_msg_TestResult/3}).
@@ -3133,6 +3701,19 @@ get_msg_defs() ->
        #field{name = window_size_amplification, fnum = 5,
 	      rnum = 6, type = uint64, occurrence = optional,
 	      opts = []}]},
+     {{msg, 'FibonacciRequest'},
+      [#field{name = fib_number, fnum = 1, rnum = 2,
+	      type = uint32, occurrence = optional, opts = []}]},
+     {{msg, 'ChameneosRequest'},
+      [#field{name = number_of_chameneos, fnum = 1, rnum = 2,
+	      type = uint32, occurrence = optional, opts = []},
+       #field{name = number_of_meetings, fnum = 2, rnum = 3,
+	      type = uint64, occurrence = optional, opts = []}]},
+     {{msg, 'APSPRequest'},
+      [#field{name = number_of_nodes, fnum = 1, rnum = 2,
+	      type = uint32, occurrence = optional, opts = []},
+       #field{name = block_size, fnum = 2, rnum = 3,
+	      type = uint32, occurrence = optional, opts = []}]},
      {{msg, 'TestResult'},
       [#gpb_oneof{name = sealed_value, rnum = 2,
 		  fields =
@@ -3168,6 +3749,7 @@ get_msg_defs() ->
 get_msg_names() ->
     ['PingPongRequest', 'ThroughputPingPongRequest',
      'AtomicRegisterRequest', 'StreamingWindowsRequest',
+     'FibonacciRequest', 'ChameneosRequest', 'APSPRequest',
      'TestResult', 'TestSuccess', 'TestFailure',
      'NotImplemented', 'ReadyRequest', 'ReadyResponse',
      'ShutdownRequest', 'ShutdownAck'].
@@ -3179,6 +3761,7 @@ get_group_names() -> [].
 get_msg_or_group_names() ->
     ['PingPongRequest', 'ThroughputPingPongRequest',
      'AtomicRegisterRequest', 'StreamingWindowsRequest',
+     'FibonacciRequest', 'ChameneosRequest', 'APSPRequest',
      'TestResult', 'TestSuccess', 'TestFailure',
      'NotImplemented', 'ReadyRequest', 'ReadyResponse',
      'ShutdownRequest', 'ShutdownAck'].
@@ -3232,6 +3815,19 @@ find_msg_def('StreamingWindowsRequest') ->
      #field{name = window_size_amplification, fnum = 5,
 	    rnum = 6, type = uint64, occurrence = optional,
 	    opts = []}];
+find_msg_def('FibonacciRequest') ->
+    [#field{name = fib_number, fnum = 1, rnum = 2,
+	    type = uint32, occurrence = optional, opts = []}];
+find_msg_def('ChameneosRequest') ->
+    [#field{name = number_of_chameneos, fnum = 1, rnum = 2,
+	    type = uint32, occurrence = optional, opts = []},
+     #field{name = number_of_meetings, fnum = 2, rnum = 3,
+	    type = uint64, occurrence = optional, opts = []}];
+find_msg_def('APSPRequest') ->
+    [#field{name = number_of_nodes, fnum = 1, rnum = 2,
+	    type = uint32, occurrence = optional, opts = []},
+     #field{name = block_size, fnum = 2, rnum = 3,
+	    type = uint32, occurrence = optional, opts = []}];
 find_msg_def('TestResult') ->
     [#gpb_oneof{name = sealed_value, rnum = 2,
 		fields =
@@ -3309,14 +3905,25 @@ get_service_def('BenchmarkRunner') ->
       #rpc{name = 'StreamingWindows',
 	   input = 'StreamingWindowsRequest',
 	   output = 'TestResult', input_stream = false,
-	   output_stream = false, opts = []}]};
+	   output_stream = false, opts = []},
+      #rpc{name = 'Fibonacci', input = 'FibonacciRequest',
+	   output = 'TestResult', input_stream = false,
+	   output_stream = false, opts = []},
+      #rpc{name = 'Chameneos', input = 'ChameneosRequest',
+	   output = 'TestResult', input_stream = false,
+	   output_stream = false, opts = []},
+      #rpc{name = 'AllPairsShortestPath',
+	   input = 'APSPRequest', output = 'TestResult',
+	   input_stream = false, output_stream = false,
+	   opts = []}]};
 get_service_def(_) -> error.
 
 
 get_rpc_names('BenchmarkRunner') ->
     ['Ready', 'Shutdown', 'PingPong', 'NetPingPong',
      'ThroughputPingPong', 'NetThroughputPingPong',
-     'AtomicRegister', 'StreamingWindows'];
+     'AtomicRegister', 'StreamingWindows', 'Fibonacci',
+     'Chameneos', 'AllPairsShortestPath'];
 get_rpc_names(_) -> error.
 
 
@@ -3360,6 +3967,18 @@ find_rpc_def_BenchmarkRunner('StreamingWindows') ->
 	 input = 'StreamingWindowsRequest',
 	 output = 'TestResult', input_stream = false,
 	 output_stream = false, opts = []};
+find_rpc_def_BenchmarkRunner('Fibonacci') ->
+    #rpc{name = 'Fibonacci', input = 'FibonacciRequest',
+	 output = 'TestResult', input_stream = false,
+	 output_stream = false, opts = []};
+find_rpc_def_BenchmarkRunner('Chameneos') ->
+    #rpc{name = 'Chameneos', input = 'ChameneosRequest',
+	 output = 'TestResult', input_stream = false,
+	 output_stream = false, opts = []};
+find_rpc_def_BenchmarkRunner('AllPairsShortestPath') ->
+    #rpc{name = 'AllPairsShortestPath',
+	 input = 'APSPRequest', output = 'TestResult',
+	 input_stream = false, output_stream = false, opts = []};
 find_rpc_def_BenchmarkRunner(_) -> error.
 
 
@@ -3404,6 +4023,12 @@ fqbins_to_service_and_rpc_name(<<"kompics.benchmarks.BenchmarkRunner">>, <<"Atom
     {'BenchmarkRunner', 'AtomicRegister'};
 fqbins_to_service_and_rpc_name(<<"kompics.benchmarks.BenchmarkRunner">>, <<"StreamingWindows">>) ->
     {'BenchmarkRunner', 'StreamingWindows'};
+fqbins_to_service_and_rpc_name(<<"kompics.benchmarks.BenchmarkRunner">>, <<"Fibonacci">>) ->
+    {'BenchmarkRunner', 'Fibonacci'};
+fqbins_to_service_and_rpc_name(<<"kompics.benchmarks.BenchmarkRunner">>, <<"Chameneos">>) ->
+    {'BenchmarkRunner', 'Chameneos'};
+fqbins_to_service_and_rpc_name(<<"kompics.benchmarks.BenchmarkRunner">>, <<"AllPairsShortestPath">>) ->
+    {'BenchmarkRunner', 'AllPairsShortestPath'};
 fqbins_to_service_and_rpc_name(S, R) ->
     error({gpb_error, {badservice_or_rpc, {S, R}}}).
 
@@ -3435,6 +4060,15 @@ service_and_rpc_name_to_fqbins('BenchmarkRunner',
 service_and_rpc_name_to_fqbins('BenchmarkRunner',
 			       'StreamingWindows') ->
     {<<"kompics.benchmarks.BenchmarkRunner">>, <<"StreamingWindows">>};
+service_and_rpc_name_to_fqbins('BenchmarkRunner',
+			       'Fibonacci') ->
+    {<<"kompics.benchmarks.BenchmarkRunner">>, <<"Fibonacci">>};
+service_and_rpc_name_to_fqbins('BenchmarkRunner',
+			       'Chameneos') ->
+    {<<"kompics.benchmarks.BenchmarkRunner">>, <<"Chameneos">>};
+service_and_rpc_name_to_fqbins('BenchmarkRunner',
+			       'AllPairsShortestPath') ->
+    {<<"kompics.benchmarks.BenchmarkRunner">>, <<"AllPairsShortestPath">>};
 service_and_rpc_name_to_fqbins(S, R) ->
     error({gpb_error, {badservice_or_rpc, {S, R}}}).
 
@@ -3444,6 +4078,9 @@ fqbin_to_msg_name(<<"kompics.benchmarks.ThroughputPingPongRequest">>) ->
     'ThroughputPingPongRequest';
 fqbin_to_msg_name(<<"kompics.benchmarks.AtomicRegisterRequest">>) -> 'AtomicRegisterRequest';
 fqbin_to_msg_name(<<"kompics.benchmarks.StreamingWindowsRequest">>) -> 'StreamingWindowsRequest';
+fqbin_to_msg_name(<<"kompics.benchmarks.FibonacciRequest">>) -> 'FibonacciRequest';
+fqbin_to_msg_name(<<"kompics.benchmarks.ChameneosRequest">>) -> 'ChameneosRequest';
+fqbin_to_msg_name(<<"kompics.benchmarks.APSPRequest">>) -> 'APSPRequest';
 fqbin_to_msg_name(<<"kompics.benchmarks.TestResult">>) -> 'TestResult';
 fqbin_to_msg_name(<<"kompics.benchmarks.TestSuccess">>) -> 'TestSuccess';
 fqbin_to_msg_name(<<"kompics.benchmarks.TestFailure">>) -> 'TestFailure';
@@ -3460,6 +4097,9 @@ msg_name_to_fqbin('ThroughputPingPongRequest') ->
     <<"kompics.benchmarks.ThroughputPingPongRequest">>;
 msg_name_to_fqbin('AtomicRegisterRequest') -> <<"kompics.benchmarks.AtomicRegisterRequest">>;
 msg_name_to_fqbin('StreamingWindowsRequest') -> <<"kompics.benchmarks.StreamingWindowsRequest">>;
+msg_name_to_fqbin('FibonacciRequest') -> <<"kompics.benchmarks.FibonacciRequest">>;
+msg_name_to_fqbin('ChameneosRequest') -> <<"kompics.benchmarks.ChameneosRequest">>;
+msg_name_to_fqbin('APSPRequest') -> <<"kompics.benchmarks.APSPRequest">>;
 msg_name_to_fqbin('TestResult') -> <<"kompics.benchmarks.TestResult">>;
 msg_name_to_fqbin('TestSuccess') -> <<"kompics.benchmarks.TestSuccess">>;
 msg_name_to_fqbin('TestFailure') -> <<"kompics.benchmarks.TestFailure">>;
@@ -3510,8 +4150,10 @@ get_all_proto_names() -> ["benchmarks", "messages"].
 
 
 get_msg_containment("benchmarks") ->
-    ['AtomicRegisterRequest', 'PingPongRequest',
-     'StreamingWindowsRequest', 'ThroughputPingPongRequest'];
+    ['APSPRequest', 'AtomicRegisterRequest',
+     'ChameneosRequest', 'FibonacciRequest',
+     'PingPongRequest', 'StreamingWindowsRequest',
+     'ThroughputPingPongRequest'];
 get_msg_containment("messages") ->
     ['NotImplemented', 'ReadyRequest', 'ReadyResponse',
      'ShutdownAck', 'ShutdownRequest', 'TestFailure',
@@ -3541,7 +4183,10 @@ get_rpc_containment("benchmarks") ->
      {'BenchmarkRunner', 'ThroughputPingPong'},
      {'BenchmarkRunner', 'NetThroughputPingPong'},
      {'BenchmarkRunner', 'AtomicRegister'},
-     {'BenchmarkRunner', 'StreamingWindows'}];
+     {'BenchmarkRunner', 'StreamingWindows'},
+     {'BenchmarkRunner', 'Fibonacci'},
+     {'BenchmarkRunner', 'Chameneos'},
+     {'BenchmarkRunner', 'AllPairsShortestPath'}];
 get_rpc_containment("messages") -> [];
 get_rpc_containment(P) ->
     error({gpb_error, {badproto, P}}).
@@ -3561,7 +4206,10 @@ get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.NotImplemented">>) -> "mess
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.ThroughputPingPongRequest">>) -> "benchmarks";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.StreamingWindowsRequest">>) -> "benchmarks";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.PingPongRequest">>) -> "benchmarks";
+get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.FibonacciRequest">>) -> "benchmarks";
+get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.ChameneosRequest">>) -> "benchmarks";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.AtomicRegisterRequest">>) -> "benchmarks";
+get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.APSPRequest">>) -> "benchmarks";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.TestFailure">>) -> "messages";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.ReadyResponse">>) -> "messages";
 get_proto_by_msg_name_as_fqbin(<<"kompics.benchmarks.ShutdownAck">>) -> "messages";

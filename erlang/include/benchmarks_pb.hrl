@@ -45,6 +45,29 @@
         }).
 -endif.
 
+-ifndef('FIBONACCIREQUEST_PB_H').
+-define('FIBONACCIREQUEST_PB_H', true).
+-record('FibonacciRequest',
+        {fib_number = 0         :: non_neg_integer() | undefined % = 1, 32 bits
+        }).
+-endif.
+
+-ifndef('CHAMENEOSREQUEST_PB_H').
+-define('CHAMENEOSREQUEST_PB_H', true).
+-record('ChameneosRequest',
+        {number_of_chameneos = 0 :: non_neg_integer() | undefined, % = 1, 32 bits
+         number_of_meetings = 0 :: non_neg_integer() | undefined % = 2, 32 bits
+        }).
+-endif.
+
+-ifndef('APSPREQUEST_PB_H').
+-define('APSPREQUEST_PB_H', true).
+-record('APSPRequest',
+        {number_of_nodes = 0    :: non_neg_integer() | undefined, % = 1, 32 bits
+         block_size = 0         :: non_neg_integer() | undefined % = 2, 32 bits
+        }).
+-endif.
+
 -ifndef('TESTRESULT_PB_H').
 -define('TESTRESULT_PB_H', true).
 -record('TestResult',
