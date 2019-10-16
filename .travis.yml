@@ -111,7 +111,7 @@ matrix:
       otp_release: 22.0
       script:
         - cd erlang
-        - make
+        - make check
         - cd ..
 
   allow_failures:

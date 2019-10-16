@@ -69,6 +69,9 @@ private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 				case "TPPINGPONG"|"NETTPPINGPONG" => plotBenchTPPP(bench, meanGrouped, output, show)
 				case "ATOMICREGISTER" => plotBenchAtomicReg(bench, meanGrouped, output, show)
 				case "STREAMINGWINDOWS" => plotBenchSW(bench, meanGrouped, output, show)
+				case "FIBONACCI" => plotBenchFib(bench, meanGrouped, output, show)
+				case "CHAMENEOS" => plotBenchCham(bench, meanGrouped, output, show)
+				case "APSP" => plotBenchAPSP(bench, meanGrouped, output, show)
 				case symbol => println(s"Could not find instructions for '${symbol}'! Skipping plot.")
 			}
 		}
@@ -93,6 +96,36 @@ private def plotBenchPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]
 	}
 	p.getAxis("x").setLabel("#msgs");
 	p.getAxis("y").setLabel("execution time (ms)");
+	p.setTitle(b.name);
+	meanGroupedLong.foreach { case (key, res) =>
+		val dsp = new gplot.DataSetPlot(res);
+		dsp.setTitle(res.implLabel);
+		val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+		val colour = colourMap(key);
+		ps.setLineType(colour);
+		ps.setPointType(pointMap(key));
+		dsp.setPlotStyle(ps);
+		p.addPlot(dsp);
+	}
+	p.plot();
+}
+
+private def plotBenchFib(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
+	val bench = b.asInstanceOf[BenchmarkWithSpace[FibonacciRequest]];
+	val space = bench.space.asInstanceOf[ParameterSpacePB[FibonacciRequest]];
+	val meanGroupedParams = res.mapValues(_.mapParams(space.paramsFromCSV));
+	val meanGroupedLong = meanGroupedParams.mapValues(_.map2D(_.fibNumber));
+	val p = new JavaPlot();
+	if (!show) {
+		val outfile = output / s"${b.symbol}.eps";
+		val epsf = new terminal.PostscriptTerminal(outfile.toString);
+		epsf.setColor(true);
+        p.setTerminal(epsf);
+	}
+	p.getAxis("x").setLabel("Fibonacci Index");
+	val yAxis = p.getAxis("y")
+  yAxis.setLabel("execution time (ms)");
+  yAxis.setLogScale(true);
 	p.setTitle(b.name);
 	meanGroupedLong.foreach { case (key, res) =>
 		val dsp = new gplot.DataSetPlot(res);
@@ -231,6 +264,125 @@ private def plotBenchAtomicReg(b: Benchmark, res: Map[String, ImplGroupedResult[
     }
   }
 
+}
+
+private def plotBenchCham(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
+  val bench = b.asInstanceOf[BenchmarkWithSpace[ChameneosRequest]];
+  val space = bench.space.asInstanceOf[ParameterSpacePB[ChameneosRequest]];
+  val meanGroupedParamsTime = res.mapValues(_.mapParams(space.paramsFromCSV));
+  val meanGroupedParams = ImplResults.mapData(
+    meanGroupedParamsTime,
+    (req: ChameneosRequest, meanTime: Double) => {
+      val throughput = (req.numberOfMeetings.toDouble*1000.0)/meanTime; // meetings/s
+      throughput
+    }
+  );
+  {
+    val meanGroupedMeetings = ImplResults.slices(
+      meanGroupedParams,
+      (req: ChameneosRequest) => Tuple1(req.numberOfMeetings),
+      (req: ChameneosRequest) => req.numberOfChameneos
+    );
+    meanGroupedMeetings.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-meetings${params._1}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      val xAxis = p.getAxis("x");
+      xAxis.setLabel("#chameneos");
+      xAxis.setLogScale(true);
+      p.getAxis("y").setLabel("throughput (meetings/s)");
+      p.setTitle(s"${b.name} (total #meetings = ${params._1})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
+}
+
+private def plotBenchAPSP(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
+  val bench = b.asInstanceOf[BenchmarkWithSpace[APSPRequest]];
+  val space = bench.space.asInstanceOf[ParameterSpacePB[APSPRequest]];
+  val meanGroupedParams = res.mapValues(_.mapParams(space.paramsFromCSV));
+  {
+    val meanGroupedNodes = ImplResults.slices(
+      meanGroupedParams,
+      (req: APSPRequest) => Tuple1(req.blockSize),
+      (req: APSPRequest) => req.numberOfNodes
+    );
+    meanGroupedNodes.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-blocksize${params._1}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      p.getAxis("x").setLabel("#nodes in the graph (|V|)");
+      p.getAxis("y").setLabel("execution time (ms)");
+      p.setTitle(s"${b.name} (block size = ${params._1})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
+  {
+    val meanGroupedWorkers = ImplResults.slices(
+      meanGroupedParams,
+      (req: APSPRequest) => Tuple1(req.numberOfNodes),
+      (req: APSPRequest) => {
+      	val entriesSingleDim = req.numberOfNodes / req.blockSize;
+      	val totalWorkers = entriesSingleDim*entriesSingleDim;
+      	totalWorkers
+      }
+    );
+    meanGroupedWorkers.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-nodes${params._1}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      val xAxis = p.getAxis("x");
+      xAxis.setLabel("#blocks");
+      xAxis.setLogScale(true);
+      val yAxis = p.getAxis("y");
+      yAxis.setLabel("execution time (ms)");
+      yAxis.setLogScale(true);
+      p.setTitle(s"${b.name} (|V| = ${params._1})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
 }
 
 private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {

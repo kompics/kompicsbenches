@@ -111,6 +111,33 @@ class LocalTest(val runnerImpl: BenchmarkRunnerGrpc.BenchmarkRunner) extends Mat
       logger.info("Finished test ThroughputPingPong (gc)");
 
       /*
+       * Fibonacci
+       */
+      logger.info("Starting test Fibonacci");
+      val fibr = FibonacciRequest().withFibNumber(15);
+      val fibResF = benchStub.fibonacci(fibr);
+      checkResult("Fibonacci", fibResF);
+      logger.info("Finished test Fibonacci");
+
+      /*
+       * Chameneos
+       */
+      logger.info("Starting test Chameneos");
+      val chamr = ChameneosRequest().withNumberOfChameneos(10).withNumberOfMeetings(100);
+      val chamResF = benchStub.chameneos(chamr);
+      checkResult("Chameneos", chamResF);
+      logger.info("Finished test Chameneos");
+
+      /*
+       * All-Pairs Shortest Path
+       */
+      logger.info("Starting test AllPairsShortestPath");
+      val apspr = APSPRequest().withNumberOfNodes(12).withBlockSize(4);
+      val apspResF = benchStub.allPairsShortestPath(apspr);
+      checkResult("AllPairsShortestPath", apspResF);
+      logger.info("Finished test AllPairsShortestPath");
+
+      /*
        * Clean Up
        */
       logger.debug("Sending shutdown request to runner");

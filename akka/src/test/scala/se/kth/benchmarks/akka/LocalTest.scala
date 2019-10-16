@@ -12,7 +12,7 @@ import se.kth.benchmarks.test.{DistributedTest => DTest}
 import se.kth.benchmarks.akka.bench.Factory
 
 class LocalTest extends FunSuite with Matchers {
-  test("Local communication (untyped)") {
+  ignore("Local communication (untyped)") {
     val ltest = new se.kth.benchmarks.test.LocalTest(new BenchmarkRunnerImpl());
     ltest.test();
   }

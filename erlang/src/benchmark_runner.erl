@@ -43,8 +43,10 @@ run(Benchmark, Msg) ->
 		{ok, Data} ->
 			{ok, Data};
 		{error, Reason} ->
+			io:format(user, "Error during run:~p~n", [Reason]),
 			{error, Reason};
 		Other ->
+			io:format(user, "Error during run:~p~n", [Other]),
 			{error, io_lib:fwrite("Error during run:~p~n", [Other])}
 	end.
 

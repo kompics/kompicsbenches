@@ -676,6 +676,39 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         let b_res = self.benchmarks.streaming_windows();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
+
+    fn fibonacci(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::FibonacciRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got fib req: {:?}", p);
+        let b_res = self.benchmarks.fibonacci();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn chameneos(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::ChameneosRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got chameneos req: {:?}", p);
+        let b_res = self.benchmarks.chameneos();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn all_pairs_shortest_path(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::APSPRequest,
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got APSP req: {:?}", p);
+        let b_res = self.benchmarks.all_pairs_shortest_path();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
 }
 
 #[derive(Clone)]

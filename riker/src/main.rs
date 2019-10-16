@@ -4,7 +4,7 @@ use benchmark_suite_shared::downcast_msg;
 use benchmark_suite_shared::BenchmarkMain;
 use grpc;
 #[allow(unused_imports)]
-use slog::{crit, debug, error, info, warn};
+//use slog::{crit, debug, error, info, warn};
 use std::env;
 
 mod bench;

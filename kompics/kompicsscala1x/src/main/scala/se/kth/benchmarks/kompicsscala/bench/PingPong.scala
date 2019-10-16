@@ -10,6 +10,7 @@ import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.CountDownLatch
 import java.util.UUID
+import com.typesafe.scalalogging.StrictLogging
 
 object PingPong extends Benchmark {
   import scala.concurrent.ExecutionContext.Implicits.global;
@@ -21,7 +22,7 @@ object PingPong extends Benchmark {
   };
   override def newInstance(): Instance = new PingPongI;
 
-  class PingPongI extends Instance {
+  class PingPongI extends Instance with StrictLogging {
     private var num = -1L;
     private var system: KompicsSystem = null;
     private var pinger: UUID = null;
@@ -29,12 +30,14 @@ object PingPong extends Benchmark {
     private var latch: CountDownLatch = null;
 
     override def setup(c: Conf): Unit = {
+      logger.info(s"Setting up Instance with config: $c");
       this.num = c.numberOfMessages;
       this.system = KompicsSystemProvider.newKompicsSystem(threads = 2);
     }
     override def prepareIteration(): Unit = {
       assert(system != null);
       assert(num > 0);
+      logger.debug("Preparing iteration");
       //    val pongerF = system.createNotify[Ponger](Init.none[Ponger]);
       latch = new CountDownLatch(1);
       //    val pingerF = system.createNotify[Pinger](Init(latch, num));
@@ -61,6 +64,7 @@ object PingPong extends Benchmark {
       latch.await();
     }
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
+      logger.debug("Cleaning up iteration");
       if (latch != null) {
         latch = null;
       }
@@ -69,20 +73,21 @@ object PingPong extends Benchmark {
         pinger = null;
         killF
       } else {
-        Future.successful()
+        Future.successful(())
       }
       val kill2F = if (ponger != null) {
         val killF = system.killNotify(ponger);
         ponger = null;
         killF
       } else {
-        Future.successful()
+        Future.successful(())
       }
       Await.result(kill1F, Duration.Inf);
       Await.result(kill2F, Duration.Inf);
       if (lastIteration) {
         system.terminate();
         system = null;
+        logger.info("Cleaned up Instance");
       }
     }
   }
