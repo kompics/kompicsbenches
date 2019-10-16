@@ -27,7 +27,7 @@
   read_workload = 0.0 :: float(),
   write_workload = 0.0 :: float()}).
 -type client_conf() :: #client_conf{}.
--type client_data() :: [pid()].
+-type client_data() :: pid().
 
 -record(master_state, {
   config = #master_conf{} :: master_conf(),
@@ -99,15 +99,15 @@ new_client() ->
 -record(atomicreg_state, {
   read_workload :: float(),
   write_workload :: float(),
-  n :: integer(),
-  nodes :: [pid()],
+  n = 0 :: integer(),
+  nodes :: [pid()] | 'undefined',
   rank = -1 :: integer(),
-  min_key :: integer(),
-  max_key :: integer(),
-  run_id :: integer(),
+  min_key = -1 :: integer(),
+  max_key = -1 :: integer(),
+  run_id = -1 :: integer() | 'undefined',
   master :: pid() | 'undefined',
-  read_count :: integer(),
-  write_count :: integer(),
+  read_count :: integer() | 'undefined',
+  write_count :: integer() | 'undefined',
   register_state = maps:new() :: map(),
   register_readlist = maps:new() :: map()
 }).
@@ -141,7 +141,8 @@ master_prepare_iteration(Instance, ClientData) ->
   State = #atomicreg_state{read_workload = get_read_workload(master, Instance), write_workload = get_write_workload(master, Instance)},
   AtomicRegister = spawn_link(fun() -> atomic_register(State) end),
   ActiveNodes = [AtomicRegister | sublist(ClientData, NumClients = get_partition_size(Instance) - 1)],
-  send_init(ActiveNodes, 0, InitId = Instance#master_state.init_id, ActiveNodes, 0, get_num_keys(Instance) - 1),
+  NumKeys = get_num_keys(Instance),
+  send_init(ActiveNodes, 0, InitId = Instance#master_state.init_id, ActiveNodes, 0, NumKeys - 1),
   wait_for_init_acks(NumClients + 1, InitId),
   NewInstance = Instance#master_state{atomic_register = AtomicRegister, active_nodes = ActiveNodes, init_id = InitId + 1},
   io:fwrite("Preparation completed"),
@@ -193,7 +194,10 @@ wait_for_done(Remaining) when Remaining > 0 ->
   {ok, NewInstance :: client_instance(), ClientData :: client_data()}.
 client_setup(Instance, Conf) ->
   io:fwrite("Atomic Register(Client) Setup"),
-  logger:set_primary_config(level, all),
+  case logger:set_primary_config(level, all) of
+    ok -> ok;
+    {error, _} -> io:fwrite("Failed to set logger level~n")
+  end,
   ConfInstance = Instance#client_state{config = Conf},
   process_flag(trap_exit, true),
   State = #atomicreg_state{read_workload = get_read_workload(client, ConfInstance), write_workload = get_write_workload(client, ConfInstance)},
@@ -229,11 +233,11 @@ client_cleanup_iteration(Instance, LastIteration) ->
   wr = 0 :: integer(),
   value = 0 :: integer(),
   acks = 0 :: integer(),
-  readval  :: integer(),
-  writeval :: integer(),
+  readval = 0 :: integer(),
+  writeval = 0 :: integer(),
   rid = 0 :: integer(),
-  reading :: boolean(),
-  first_received_ts :: integer(),
+  reading = false :: boolean(),
+  first_received_ts = -1 :: integer(),
   skip_impose = true :: boolean()
 }).
 
@@ -268,7 +272,7 @@ atomic_register(State) ->
                   if
                     map_size(ReadList) == 0 ->
                       CurrentRegister#register_state{first_received_ts = Ts, readval = Value};
-                    CurrentRegister#register_state.skip_impose and CurrentRegister#register_state.first_received_ts /= Ts ->
+                    (CurrentRegister#register_state.skip_impose) andalso (CurrentRegister#register_state.first_received_ts /= Ts) ->
                       CurrentRegister#register_state{skip_impose = false};
                     true ->
                       CurrentRegister
@@ -410,7 +414,7 @@ invoke_operations(State) ->
   end.
 
 -spec read_response(State :: atomicreg_instance(), Key :: integer(), Value :: integer()) -> atomicreg_instance().
-read_response(State, Key, Value) ->
+read_response(State, _Key, _Value) ->
   ReadCount = State#atomicreg_state.read_count - 1,
   WriteCount = State#atomicreg_state.write_count,
   NewState = State#atomicreg_state{read_count = ReadCount},
