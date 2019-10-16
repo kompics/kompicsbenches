@@ -20,7 +20,7 @@
 
 %%%% On Master Instance %%%%%
 
--callback master_setup(MasterInstance :: term(), MasterConf :: term(), Meta :: deployment_metadata()) -> 
+-callback master_setup(MasterInstance :: term(), MasterConf :: term(), Meta :: deployment_metadata()) ->
 	{ok, NewMasterInstance :: term(), ClientConf :: term()} |
 	{error, Reason :: string()}.
 

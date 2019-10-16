@@ -21,13 +21,13 @@
 -type client_data() :: pid().
 
 -record(master_state, {
-	num = 0 :: integer(), 
-	pinger :: pid() | 'undefined', 
+	num = 0 :: integer(),
+	pinger :: pid() | 'undefined',
 	ponger :: pid() | 'undefined'}).
 
 -type master_instance() :: #master_state{}.
 
--record(client_state, { 
+-record(client_state, {
 	ponger :: pid() | 'undefined'}).
 
 -type client_instance() :: #client_state{}.
@@ -78,7 +78,7 @@ master_run_iteration(Instance) ->
 	receive
 		ok ->
 			{ok, Instance};
-		X -> 
+		X ->
 			io:fwrite("Got unexpected message during iteration: ~p!~n",[X]),
 			throw(X)
 	end.

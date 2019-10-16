@@ -133,4 +133,3 @@ decoder() -> benchmarks.
 'StreamingWindows'(_Message, Stream, _State) ->
     io:fwrite("Got StreamingWindows request.~n"),
   {test_result:not_implemented(), Stream}.
-

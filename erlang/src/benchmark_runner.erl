@@ -28,9 +28,9 @@ rse_target() ->
 start(RunnerAddr) ->
 	RunnerPort = socket_addr:port(RunnerAddr),
 	{ok, _Server} = grpc:start_server(
-		runner_server, 
-		tcp, 
-		RunnerPort, 
+		runner_server,
+		tcp,
+		RunnerPort,
 		#{'BenchmarkRunner' => #{handler => benchmarks_server}}),
 	io:fwrite("Benchmark server is running on TCP port=~b.~n",[RunnerPort]),
 	ok.
@@ -53,7 +53,7 @@ run(Benchmark, Msg) ->
 	{error, string()}.
 run_caught(Benchmark, Msg) ->
 	case Benchmark:msg_to_conf(Msg) of
-		{ok, Conf} ->		
+		{ok, Conf} ->
 			Instance = Benchmark:new_instance(),
 			{ok, SetupInstance} = Benchmark:setup(Instance, Conf),
 			{ok, PreparedFirstInstance} = Benchmark:prepare_iteration(SetupInstance),
@@ -67,7 +67,7 @@ run_caught(Benchmark, Msg) ->
 	end.
 
 
--spec run_counted(Benchmark :: module(), Instance, Count :: integer(), Res :: [float()]) -> 
+-spec run_counted(Benchmark :: module(), Instance, Count :: integer(), Res :: [float()]) ->
 	{ok, Instance, [float()]}.
 run_counted(_Benchmark, Instance, Count, Res) when Count =< 0 ->
 	{ok, Instance, Res};
@@ -83,7 +83,7 @@ run_counted(Benchmark, Instance, Count, Res) ->
 	{error, Instance, string()}.
 run_rse(_Benchmark, Instance, Count, Res) when Count >= ?MAX_RUNS ->
 	RSE = statistics:rse(Res),
-	if 
+	if
 		RSE > ?RSE_TARGET ->
 			{error, Instance, io_lib:fwrite("RSE target of ~f% was not met by value ~f% after ~b runs!~n",[?RSE_TARGET*100.0, RSE*100.0, Count])};
 		true ->
