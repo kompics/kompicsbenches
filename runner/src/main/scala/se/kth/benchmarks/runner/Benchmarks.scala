@@ -199,12 +199,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.chameneos(request)
     },
     space = ParameterSpacePB
-      .cross(List(32, 64, 128, 512, 1024, 2048, 4096), List(100.mio))
+      .cross(List(32, 64, 128, 512, 1024, 2048, 4096), List(10.mio))
       .msg[ChameneosRequest] {
         case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
       },
     testSpace = ParameterSpacePB
-      .cross(List(4, 8, 16, 32, 64, 128, 256, 512), List(1.mio))
+      .cross(List(4, 8, 16, 32, 64, 128, 256, 512), List(100.k))
       .msg[ChameneosRequest] {
         case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
       }
@@ -225,7 +225,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
         }
       },
     testSpace = ParameterSpacePB
-      .cross(List(128, 192, 256), List(8, 16, 32))
+      .cross(List(128, 192, 256), List(16, 32, 64))
       .msg[APSPRequest] {
         case (nn, bs) => {
           assert(nn % bs == 0, "BlockSize must evenly divide nodes!");

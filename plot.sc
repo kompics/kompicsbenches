@@ -123,7 +123,9 @@ private def plotBenchFib(b: Benchmark, res: Map[String, ImplGroupedResult[String
         p.setTerminal(epsf);
 	}
 	p.getAxis("x").setLabel("Fibonacci Index");
-	p.getAxis("y").setLabel("execution time (ms)");
+	val yAxis = p.getAxis("y")
+  yAxis.setLabel("execution time (ms)");
+  yAxis.setLogScale(true);
 	p.setTitle(b.name);
 	meanGroupedLong.foreach { case (key, res) =>
 		val dsp = new gplot.DataSetPlot(res);
@@ -361,8 +363,12 @@ private def plotBenchAPSP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
         epsf.setColor(true);
             p.setTerminal(epsf);
       }
-      p.getAxis("x").setLabel("#blocks");
-      p.getAxis("y").setLabel("execution time (ms)");
+      val xAxis = p.getAxis("x");
+      xAxis.setLabel("#blocks");
+      xAxis.setLogScale(true);
+      val yAxis = p.getAxis("y");
+      yAxis.setLabel("execution time (ms)");
+      yAxis.setLogScale(true);
       p.setTitle(s"${b.name} (|V| = ${params._1})");
       impls.foreach { case (key, res) =>
         val dsp = new gplot.DataSetPlot(res);

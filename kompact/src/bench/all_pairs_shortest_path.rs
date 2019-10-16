@@ -811,11 +811,15 @@ pub mod component_apsp {
     impl Provide<ControlPort> for BlockActor {
         fn handle(&mut self, event: ControlEvent) -> () {
             match event {
-            	ControlEvent::Start => {
-            		debug!(self.ctx.log(), "Got Start at block_id={}.", self.current_data.block_id());
-            		self.notify_neighbours();
-            	}
-            	_ => (), // ignore
+                ControlEvent::Start => {
+                    debug!(
+                        self.ctx.log(),
+                        "Got Start at block_id={}.",
+                        self.current_data.block_id()
+                    );
+                    self.notify_neighbours();
+                }
+                _ => (), // ignore
             }
         }
     }

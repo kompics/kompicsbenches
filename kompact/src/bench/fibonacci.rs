@@ -60,7 +60,7 @@ impl BenchmarkInstance for FibonacciI {
                 let fib_f = system.start_notify(&fib);
 
                 fib_f
-                    .wait_timeout(Duration::from_millis(1000))
+                    .wait_timeout(Duration::from_millis(30000)) // wait longer to be sure the system is cleaned out
                     .expect("FibonacciActor never started!");
 
                 self.fib = Some(fib);
@@ -88,7 +88,7 @@ impl BenchmarkInstance for FibonacciI {
 
     fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
         let _ = self.fib.take(); // kills itself, so just drop
-
+        std::thread::sleep(Duration::from_millis(500)); // reduce bleed over effect from still dying actors into next test
         if last_iteration {
             let system = self.system.take().unwrap();
             system

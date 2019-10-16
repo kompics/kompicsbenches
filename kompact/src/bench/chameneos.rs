@@ -366,14 +366,15 @@ pub mod mixed_chameneos {
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("ChameneosMallActor never started!");
                         let mall_port: ProvidedRef<MallPort> = mall.provided_ref();
-                        self.mall = Some(mall);
 
                         for i in 0usize..num_chameneos {
                             let initial_colour = ChameneosColour::for_id(i);
                             let chameneo = system.create(|| ChameneoActor::with(initial_colour));
                             chameneo.connect_to_provided(mall_port.clone());
+                            mall.connect_to_required(chameneo.required_ref());
                             self.chameneos.push(chameneo);
                         }
+                        self.mall = Some(mall);
                     } else {
                         unimplemented!();
                     }
@@ -436,9 +437,12 @@ pub mod mixed_chameneos {
         }
     }
 
+    #[derive(Debug, Clone)]
+    struct Exit;
+
     struct MallPort;
     impl Port for MallPort {
-        type Indication = Never;
+        type Indication = Exit;
         type Request = MallMsg;
     }
 
@@ -451,7 +455,6 @@ pub mod mixed_chameneos {
         Change {
             colour: ChameneosColour,
         },
-        Exit,
     }
     impl ChameneoMsg {
         fn meet(colour: ChameneosColour, chameneo: ActorRefStrong<ChameneoMsg>) -> ChameneoMsg {
@@ -473,6 +476,7 @@ pub mod mixed_chameneos {
         sum_meetings: u64,
         meetings_count: u64,
         num_faded: usize,
+        sent_exit: bool,
     }
 
     impl ChameneosMallActor {
@@ -491,6 +495,7 @@ pub mod mixed_chameneos {
                 sum_meetings: 0u64,
                 meetings_count: 0u64,
                 num_faded: 0usize,
+                sent_exit: false,
             }
         }
     }
@@ -519,9 +524,10 @@ pub mod mixed_chameneos {
                                 self.waiting_chameneo = Some(chameneo);
                             }
                         }
-                    } else {
-                        chameneo.tell(ChameneoMsg::Exit);
-                    }
+                    } else if !self.sent_exit {
+                        self.mall_port.trigger(Exit);
+                        self.sent_exit = true;
+                    } // else just drop, since we already sent exit
                 }
             }
         }
@@ -562,8 +568,10 @@ pub mod mixed_chameneos {
     }
 
     impl Require<MallPort> for ChameneoActor {
-        fn handle(&mut self, _msg: Never) -> () {
-            unreachable!("Can't instantiate Never type");
+        fn handle(&mut self, _msg: Exit) -> () {
+            self.colour = ChameneosColour::Faded;
+            self.mall_port.trigger(MallMsg::count(self.meetings));
+            self.ctx.suicide();
         }
     }
 
@@ -587,11 +595,6 @@ pub mod mixed_chameneos {
                     self.meetings += 1u64;
                     self.mall_port
                         .trigger(MallMsg::meet(self.colour, self.self_ref()));
-                }
-                ChameneoMsg::Exit => {
-                    self.colour = ChameneosColour::Faded;
-                    self.mall_port.trigger(MallMsg::count(self.meetings));
-                    self.ctx.suicide();
                 }
             }
         }
