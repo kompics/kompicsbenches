@@ -6,7 +6,7 @@ use kompact::prelude::*;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use synchronoise::CountdownEvent;
 
 pub mod actor_apsp {
@@ -156,7 +156,7 @@ pub mod actor_apsp {
     struct ManagerActor {
         ctx: ComponentContext<Self>,
         block_size: usize,
-        block_workers: Vec<Arc<Component<BlockActor>>>,
+        block_workers: Vec<Weak<Component<BlockActor>>>,
         latch: Option<Arc<CountdownEvent>>,
         assembly: Option<Vec<Vec<Arc<Block<f64>>>>>,
         missing_blocks: Option<usize>,
@@ -223,7 +223,7 @@ pub mod actor_apsp {
                         .tell(BlockMsg::Neighbours(neighbours));
                 }
             }
-            self.block_workers = block_actors.drain(..).flatten().collect();
+            self.block_workers = block_actors.drain(..).flatten().map(|ba| Arc::downgrade(&ba)).collect(); // don't prevent them from deallocation when they are done
             self.missing_blocks = Some(self.block_workers.len());
             self.assembly = Some(blocks); // initialise with unfinished blocks
         }
@@ -601,7 +601,7 @@ pub mod component_apsp {
         ctx: ComponentContext<Self>,
         manager_port: ProvidedPort<ManagerPort, Self>,
         block_size: usize,
-        block_workers: Vec<Arc<Component<BlockActor>>>,
+        block_workers: Vec<Weak<Component<BlockActor>>>,
         latch: Option<Arc<CountdownEvent>>,
         assembly: Option<Vec<Vec<Arc<Block<f64>>>>>,
         missing_blocks: Option<usize>,
@@ -667,10 +667,11 @@ pub mod component_apsp {
                     }
                 }
             }
-            self.block_workers = block_actors.drain(..).flatten().collect();
-            for worker in self.block_workers.iter() {
-                system.start(&worker);
+            let block_workers: Vec<Arc<Component<BlockActor>>> = block_actors.drain(..).flatten().collect();
+            for worker in block_workers.iter() {
+                system.start(worker);
             }
+            self.block_workers = block_workers.iter().map(|ba| Arc::downgrade(ba)).collect(); // don't prevent them from deallocation when they are done            
             self.missing_blocks = Some(self.block_workers.len());
             self.assembly = Some(blocks); // initialise with unfinished blocks
         }

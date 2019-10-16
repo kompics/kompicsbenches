@@ -96,8 +96,8 @@ pub mod actor_chameneos {
         fn run_iteration(&mut self) -> () {
             if let Some(ref system) = self.system {
                 let latch = self.latch.take().unwrap();
-                for chameneo in self.chameneos.iter() {
-                    system.start(chameneo);
+                for chameneo in self.chameneos.drain(..) {
+                    system.start(&chameneo);
                 }
                 latch.wait();
             } else {
@@ -107,7 +107,7 @@ pub mod actor_chameneos {
 
         fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
             let system = self.system.take().unwrap();
-            self.chameneos.clear(); // they stop themselves so just drop all
+            // self.chameneos.clear(); // they stop themselves and got drained when run
 
             if let Some(mall) = self.mall.take() {
                 let f = system.kill_notify(mall);
@@ -389,8 +389,8 @@ pub mod mixed_chameneos {
         fn run_iteration(&mut self) -> () {
             if let Some(ref system) = self.system {
                 let latch = self.latch.take().unwrap();
-                for chameneo in self.chameneos.iter() {
-                    system.start(chameneo);
+                for chameneo in self.chameneos.drain(..) {
+                    system.start(&chameneo);
                 }
                 latch.wait();
             } else {
@@ -400,7 +400,7 @@ pub mod mixed_chameneos {
 
         fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
             let system = self.system.take().unwrap();
-            self.chameneos.clear(); // they stop themselves so just drop all
+            // self.chameneos.clear(); // they stop themselves and got drained when run
 
             if let Some(mall) = self.mall.take() {
                 let f = system.kill_notify(mall);

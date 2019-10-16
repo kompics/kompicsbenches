@@ -165,7 +165,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       } else {
         awaitingStarted.get(cid) match {
           case Some(p) => p.success(())
-          case None    => log.error(s"Could not find starting component with id=$cid")
+          case None    => log.debug(s"Could not find starting component with id=$cid")
         }
       }
     }
@@ -177,7 +177,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       } else {
         awaitingKilled.remove(cid) match {
           case Some(p) => p.success(())
-          case None    => log.error(s"Could not find dying component with id=$cid")
+          case None    => log.debug(s"Could not find dying component with id=$cid")
         }
       }
     }

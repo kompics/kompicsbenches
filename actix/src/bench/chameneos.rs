@@ -94,7 +94,7 @@ impl BenchmarkInstance for ChameneosI {
 
     fn run_iteration(&mut self) -> () {
         let latch = self.latch.take().unwrap();
-        for chameneo in self.chameneos.iter() {
+        for chameneo in self.chameneos.drain(..) {
             chameneo.do_send(ChameneoMsg::Start);
         }
         latch.wait();
@@ -102,7 +102,7 @@ impl BenchmarkInstance for ChameneosI {
 
     fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
         let mut system = self.system.take().unwrap();
-        self.chameneos.clear(); // they stop themselves so just drop all
+        // self.chameneos.clear(); // they stop themselves and got drained when run
 
         if let Some(mall) = self.mall.take() {
             system.stop(mall).expect("Mall never died!");

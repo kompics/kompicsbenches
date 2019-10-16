@@ -97,7 +97,7 @@ impl BenchmarkInstance for ChameneosI {
 
     fn run_iteration(&mut self) -> () {
         let latch = self.latch.take().unwrap();
-        for chameneo in self.chameneos.iter() {
+        for chameneo in self.chameneos.drain(..) {
             chameneo.tell(ChameneoMsg::Start, None)
         }
         latch.wait();
