@@ -121,15 +121,17 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerImpl {
         p: benchmarks::ChameneosRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         println!("Got chameneos req: {:?}", p);
-        let f = run_async(move || {
-            let b = bench::chameneos::Chameneos::default();
-            run(&b, &p).into()
-        })
-        .map_err(|e| {
-            println!("Converting benchmark error into grpc error: {:?}", e);
-            e.into()
-        });
-        grpc::SingleResponse::no_metadata(f)
+        // skip because it takes toooooo long
+        // let f = run_async(move || {
+        //     let b = bench::chameneos::Chameneos::default();
+        //     run(&b, &p).into()
+        // })
+        // .map_err(|e| {
+        //     println!("Converting benchmark error into grpc error: {:?}", e);
+        //     e.into()
+        // });
+        // grpc::SingleResponse::no_metadata(f)
+        grpc::SingleResponse::completed(not_implemented())
     }
 
     fn all_pairs_shortest_path(
