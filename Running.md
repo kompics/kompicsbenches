@@ -13,6 +13,7 @@ Config
 ------
 
 - Check the `javaOpts` in `benchmarks.sc` and make sure the the `-Xmx` matches available memory on your system, so that the experiments do not start paging. Divide the memory between the number of nodes you are planning to run in `fakeRemote`!
+- If running `remote`, set `masterAddr` in `bench.sc` to an IP address (and port) that all nodes in `nodes.conf` can reach.
 
 Local Execution
 ---------------
