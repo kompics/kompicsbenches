@@ -273,7 +273,8 @@ private def plotBenchCham(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
   val meanGroupedParams = ImplResults.mapData(
     meanGroupedParamsTime,
     (req: ChameneosRequest, meanTime: Double) => {
-      val throughput = (req.numberOfMeetings.toDouble*1000.0)/meanTime; // meetings/s
+      val chameneos = req.numberOfChameneos.toDouble;
+      val throughput = (req.numberOfMeetings.toDouble*1000.0)/(meanTime * chameneos); // meetings/s per chameneo
       throughput
     }
   );
@@ -294,7 +295,7 @@ private def plotBenchCham(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
       val xAxis = p.getAxis("x");
       xAxis.setLabel("#chameneos");
       xAxis.setLogScale(false);
-      p.getAxis("y").setLabel("throughput (meetings/s)");
+      p.getAxis("y").setLabel("avg. throughput (meetings/s) per chameneo");
       p.setTitle(s"${b.name} (total #meetings = ${params._1})");
       impls.foreach { case (key, res) =>
         val dsp = new gplot.DataSetPlot(res);
