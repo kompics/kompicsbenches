@@ -78,7 +78,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
 	val nodes = readNodes(withNodes);
 	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
