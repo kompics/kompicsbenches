@@ -70,7 +70,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
              s"Invalid workload sum ${read_workload + write_workload} != 1.0");
       this.system =
-        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 1, serialization = serializers);
+        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 4, serialization = serializers);
       ClientParams(read_workload, write_workload)
     };
 
@@ -145,7 +145,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
     override def setup(c: ClientConf): ClientData = {
       system =
-        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 1, serialization = serializers);
+        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 4, serialization = serializers);
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
       atomicRegister =

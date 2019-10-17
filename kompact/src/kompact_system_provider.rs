@@ -55,7 +55,11 @@ impl KompactSystemProvider {
         system
     }
 
-    pub fn new_remote_system<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
+    pub fn new_remote_system<I: Into<String>>(&self, name: I) -> KompactSystem {
+        self.new_remote_system_with_threads(name, self.get_num_workers())
+    }
+
+    pub fn new_remote_system_with_threads<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
         let mut conf = KompactConfig::default();
@@ -89,7 +93,8 @@ impl KompactSystemProvider {
         } else if threads <= 64 {
             conf.scheduler(|t| crossbeam_workstealing_pool::large_pool(t))
         } else {
-            conf.scheduler(|t| crossbeam_workstealing_pool::dyn_pool(t))
+            panic!("DynPool doesn't work atm!");
+            //conf.scheduler(|t| crossbeam_workstealing_pool::dyn_pool(t))
         };
     }
 }

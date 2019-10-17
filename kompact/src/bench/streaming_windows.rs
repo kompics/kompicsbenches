@@ -202,7 +202,7 @@ impl DistributedBenchmarkMaster for StreamingWindowsMaster {
     ) -> Result<Self::ClientConf, BenchmarkError> {
         let params = Params::from_req(&c)?;
         let system = crate::kompact_system_provider::global()
-            .new_remote_system("streamingwindows", num_cpus::get());
+            .new_remote_system("streamingwindows");
 
         let mut sources: Vec<ActorPath> = Vec::new();
         for pid in 0..params.number_of_partitions {
@@ -330,7 +330,7 @@ impl DistributedBenchmarkClient for StreamingWindowsClient {
         println!("Setting up windowers.");
 
         let system = crate::kompact_system_provider::global()
-            .new_remote_system("streamingwindows", num_cpus::get());
+            .new_remote_system("streamingwindows");
 
         let window_size = c.window_size;
         let batch_size = c.batch_size;

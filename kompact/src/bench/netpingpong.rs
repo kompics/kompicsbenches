@@ -80,7 +80,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         _m: &DeploymentMetaData,
     ) -> Result<Self::ClientConf, BenchmarkError> {
         self.num = Some(c.number_of_messages);
-        let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
+        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("netpingpong", 1);
         self.system = Some(system);
         Ok(())
     }
@@ -175,7 +175,7 @@ impl DistributedBenchmarkClient for PingPongClient {
     fn setup(&mut self, _c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up ponger.");
 
-        let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
+        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("netpingpong", 1);
         let (ponger, unique_reg_f) = system.create_and_register(|| Ponger::new());
         let named_reg_f = system.register_by_alias(&ponger, "ponger");
         unique_reg_f.wait_expect(Duration::from_millis(1000), "Ponger failed to register!");
