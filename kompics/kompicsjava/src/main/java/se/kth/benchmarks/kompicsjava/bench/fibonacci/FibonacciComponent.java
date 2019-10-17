@@ -7,6 +7,7 @@ import se.sics.kompics.Fault;
 import se.sics.kompics.Positive;
 import se.sics.kompics.Negative;
 import se.sics.kompics.Kill;
+import se.sics.kompics.Killed;
 import se.sics.kompics.Start;
 import se.sics.kompics.Component;
 import se.sics.kompics.Channel;
@@ -28,6 +29,7 @@ public class FibonacciComponent extends ComponentDefinition {
     public FibonacciComponent(Init init) {
         this.latchOpt = init.latchOpt;
         // subscriptions
+        subscribe(killedHandler, control);
         subscribe(requestHandler, parentPort);
         subscribe(responseHandler, childPort);
     }
@@ -38,6 +40,18 @@ public class FibonacciComponent extends ComponentDefinition {
     private Component f1 = null;
     private Component f2 = null;
 
+    final Handler<Killed> killedHandler = new Handler<Killed>() {
+        @Override
+        public void handle(Killed event) {
+            if ((f1 != null) && (event.component.id() == f1.id())) {
+                f1 = null;
+            } else if ((f2 != null) && (event.component.id() == f2.id())) {
+                f2 = null;
+            }
+            maybeSuicide();
+        }
+    };
+
     final Handler<FibRequest> requestHandler = new Handler<FibRequest>() {
         @Override
         public void handle(FibRequest event) {
@@ -46,6 +60,7 @@ public class FibonacciComponent extends ComponentDefinition {
                 logger.debug("Got FibRequest with n={}", n);
                 if (n <= 2) {
                     sendResult(1L);
+                    suicide(); // shut down immediately
                 } else {
                     f1 = create(FibonacciComponent.class, new Init(Optional.empty()));
                     f2 = create(FibonacciComponent.class, new Init(Optional.empty()));
@@ -70,19 +85,10 @@ public class FibonacciComponent extends ComponentDefinition {
 
             if (numResponses == 2) {
                 sendResult(result);
+                maybeSuicide();
             }
         }
     };
-
-    @Override
-    public Fault.ResolveAction handleFault(Fault fault) {
-        if (fault.getEvent() instanceof Kill) {
-            logger.info("Ignoring duplicate Kill event.");
-            return Fault.ResolveAction.DESTROY;
-        } else {
-            return Fault.ResolveAction.ESCALATE;
-        }
-    }
 
     private void sendResult(long value) {
         if (this.latchOpt.isPresent()) {
@@ -92,7 +98,13 @@ public class FibonacciComponent extends ComponentDefinition {
         } else {
             trigger(new FibResponse(value), parentPort);
         }
-        suicide();
+    }
+
+    private void maybeSuicide() {
+        if ((numResponses == 2) && (f1 == null) && (f2 == null)) {
+            logger.debug("Both children died, shutting down");
+            suicide();
+        }
     }
 
     public static class Init extends se.sics.kompics.Init<FibonacciComponent> {

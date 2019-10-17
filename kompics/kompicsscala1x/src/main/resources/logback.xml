@@ -7,7 +7,9 @@
     </encoder>
   </appender>
 
-  <root level="warn">
+  <logger name="se.kth.benchmarks.kompicsscala.bench" level="INFO"/>
+
+  <root level="WARN">
     <appender-ref ref="STDOUT" />
   </root>
 </configuration>

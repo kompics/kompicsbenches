@@ -95,12 +95,30 @@ object Fibonacci extends Benchmark {
 
     private var result = 0L;
     private var numResponses = 0;
+    private var child1: Option[Component] = None;
+    private var child2: Option[Component] = None;
+
+    ctrl uponEvent {
+      case event: Killed => {
+        (child1, child2) match {
+          case (Some(f1), _) if event.component.id() == f1.id() => {
+            child1 = None;
+          }
+          case (_, Some(f2)) if event.component.id() == f2.id() => {
+            child2 = None;
+          }
+          case _ => () // ignore
+        }
+        maybeSuicide();
+      }
+    }
 
     parentPort uponEvent {
       case Request(n, this.myId) => {
         log.debug(s"Got Request with n=$n");
         if (n <= 2) {
           sendResult(1L);
+          suicide();
         } else {
           val f1 = this.create[FibonacciComponent](Init[FibonacciComponent](Left(Parent)));
           val f2 = this.create[FibonacciComponent](Init[FibonacciComponent](Left(Parent)));
@@ -111,6 +129,8 @@ object Fibonacci extends Benchmark {
           trigger(Start.event -> f2.control());
           trigger(Request(n - 1, f1.id()) -> childPort);
           trigger(Request(n - 2, f2.id()) -> childPort);
+          child1 = Some(f1);
+          child2 = Some(f2);
         }
       }
     }
@@ -122,17 +142,9 @@ object Fibonacci extends Benchmark {
         this.result += value;
 
         if (this.numResponses == 2) {
-          sendResult(this.result)
+          sendResult(this.result);
+          maybeSuicide();
         }
-      }
-    }
-
-    override def handleFault(fault: Fault): Fault.ResolveAction = {
-      if (fault.getEvent().isInstanceOf[Kill]) {
-        logger.info("Ignoring duplicate kill event.");
-        return Fault.ResolveAction.DESTROY;
-      } else {
-        return Fault.ResolveAction.ESCALATE;
       }
     }
 
@@ -144,7 +156,13 @@ object Fibonacci extends Benchmark {
           log.info(s"Final value was $value");
         }
       }
-      suicide();
+    }
+
+    private def maybeSuicide(): Unit = {
+      if ((numResponses == 2) && child1.isEmpty && child2.isEmpty) {
+        logger.debug("Both children died, shutting down");
+        suicide();
+      }
     }
   }
 }

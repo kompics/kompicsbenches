@@ -59,7 +59,6 @@ impl BenchmarkFactory for Factory {
     }
     fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(chameneos::Chameneos {}.into())
-        //Err(NotImplementedError::NotImplementable) // skip because it takes toooooo long
     }
 
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {

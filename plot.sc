@@ -293,7 +293,7 @@ private def plotBenchCham(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
       }
       val xAxis = p.getAxis("x");
       xAxis.setLabel("#chameneos");
-      xAxis.setLogScale(true);
+      xAxis.setLogScale(false);
       p.getAxis("y").setLabel("throughput (meetings/s)");
       p.setTitle(s"${b.name} (total #meetings = ${params._1})");
       impls.foreach { case (key, res) =>
