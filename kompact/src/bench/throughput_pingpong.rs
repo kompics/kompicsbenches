@@ -174,8 +174,7 @@ pub mod actor_pingpong {
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.params = Some(Params::from_req(c));
-            let system = crate::kompact_system_provider::global()
-                .new_system_with_threads("throughputpingpong", num_cpus::get());
+            let system = crate::kompact_system_provider::global().new_system("throughputpingpong");
             self.system = Some(system);
         }
 
@@ -549,8 +548,7 @@ pub mod component_pingpong {
 
         fn setup(&mut self, c: &Self::Conf) -> () {
             self.params = Some(Params::from_req(c));
-            let system = crate::kompact_system_provider::global()
-                .new_system_with_threads("throughputpingpong", num_cpus::get());
+            let system = crate::kompact_system_provider::global().new_system("throughputpingpong");
             self.system = Some(system);
         }
 

@@ -145,7 +145,7 @@ pub mod actor_atomicregister {
             self.partition_size = Some(c.partition_size);
             self.num_keys = Some(c.number_of_keys);
             let system =
-                crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
+                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
                 read_workload: c.read_workload,
@@ -295,7 +295,7 @@ pub mod actor_atomicregister {
         fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
             println!("Setting up Atomic Register(client)");
             let system =
-                crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
+                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                 AtomicRegisterActor::with(c.read_workload, c.write_workload)
             });
@@ -749,7 +749,7 @@ pub mod mixed_atomicregister {
             self.partition_size = Some(c.partition_size);
             self.num_keys = Some(c.number_of_keys);
             let system =
-                crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
+                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
                 read_workload: c.read_workload,
@@ -938,7 +938,7 @@ pub mod mixed_atomicregister {
         fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
             println!("Setting up Atomic Register(client)");
             let system =
-                crate::kompact_system_provider::global().new_remote_system("atomicregister", 1);
+                crate::kompact_system_provider::global().new_remote_system_with_threads("atomicregister", 4);
             /*** Setup Broadcast component ***/
             let (bcast_comp, unique_reg_f) = system.create_and_register(|| BroadcastComp::new());
             let bcast_comp_f = system.start_notify(&bcast_comp);

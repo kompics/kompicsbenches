@@ -78,7 +78,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.system = ActorSystemProvider.newRemoteTypedActorSystem[SystemSupervisor.SystemMessage](
         SystemSupervisor(),
         s"atomicreg_supervisor${randomUUID()}",
-        1,
+        4,
         serializers
       )
 
@@ -204,7 +204,7 @@ object AtomicRegister extends DistributedBenchmark {
       system = ActorSystemProvider.newRemoteTypedActorSystem[AtomicRegisterMessage](
         AtomicRegisterActor(read_workload, write_workload),
         s"atomicreg_client${randomUUID()}",
-        1,
+        4,
         serializers
       )
       val resolver = ActorRefResolver(system)

@@ -59,7 +59,7 @@ object AtomicRegister extends DistributedBenchmark {
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
              s"Invalid workload sum ${read_workload + write_workload} != 1.0");
 
-      this.system = KompicsSystemProvider.newRemoteKompicsSystem(1);
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(4);
       ClientParams(read_workload, write_workload)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
@@ -134,7 +134,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     override def setup(c: ClientConf): ClientData = {
       logger.info("Setting up Client");
-      system = KompicsSystemProvider.newRemoteKompicsSystem(1);
+      system = KompicsSystemProvider.newRemoteKompicsSystem(4);
       AtomicRegisterSerializer.register();
       PartitioningCompSerializer.register();
       val addr = system.networkAddress.get;

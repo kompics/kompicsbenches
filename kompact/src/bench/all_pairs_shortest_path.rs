@@ -223,7 +223,11 @@ pub mod actor_apsp {
                         .tell(BlockMsg::Neighbours(neighbours));
                 }
             }
-            self.block_workers = block_actors.drain(..).flatten().map(|ba| Arc::downgrade(&ba)).collect(); // don't prevent them from deallocation when they are done
+            self.block_workers = block_actors
+                .drain(..)
+                .flatten()
+                .map(|ba| Arc::downgrade(&ba))
+                .collect(); // don't prevent them from deallocation when they are done
             self.missing_blocks = Some(self.block_workers.len());
             self.assembly = Some(blocks); // initialise with unfinished blocks
         }
@@ -667,11 +671,12 @@ pub mod component_apsp {
                     }
                 }
             }
-            let block_workers: Vec<Arc<Component<BlockActor>>> = block_actors.drain(..).flatten().collect();
+            let block_workers: Vec<Arc<Component<BlockActor>>> =
+                block_actors.drain(..).flatten().collect();
             for worker in block_workers.iter() {
                 system.start(worker);
             }
-            self.block_workers = block_workers.iter().map(|ba| Arc::downgrade(ba)).collect(); // don't prevent them from deallocation when they are done            
+            self.block_workers = block_workers.iter().map(|ba| Arc::downgrade(ba)).collect(); // don't prevent them from deallocation when they are done
             self.missing_blocks = Some(self.block_workers.len());
             self.assembly = Some(blocks); // initialise with unfinished blocks
         }
