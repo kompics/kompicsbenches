@@ -240,7 +240,8 @@ run_distributed_benchmark_caught(Request, Data) ->
 		{ok, MasterConfig} ->
 			EmptyMaster = Benchmark:new_master(),
 			NumClients = length(Data#state.clients),
-			case Benchmark:master_setup(EmptyMaster, MasterConfig, NumClients) of
+			Meta = distributed_benchmark:meta_create(NumClients),
+			case Benchmark:master_setup(EmptyMaster, MasterConfig, Meta) of
 				{ok, SetupMaster, ClientConf} ->
 					SetupConf = distributed_native:new_setup_config(Benchmark, ClientConf),
 					ClientDataRes = benchmark_client:setup_all(get_clients(Data), SetupConf),

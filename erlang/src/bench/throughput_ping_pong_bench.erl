@@ -240,32 +240,3 @@ ponger() ->
 			io:fwrite("Ponger got unexpected message: ~p!~n",[X]),
 			throw(X) % don't accept weird stuff
 	end.
-
-
-%%%% TESTS %%%%
-
--ifdef(TEST).
-
--include_lib("eunit/include/eunit.hrl").
-
-static_throughput_ping_pong_test() ->
-	TPPR = #{
-		messages_per_pair => 100,
-		parallelism => 2,
-		pipeline_size => 20,
-		static_only => true
-	},
-	{ok, Result} = benchmarks_server:await_benchmark_result(?MODULE, TPPR, "ThroughputPingPong (Static)"),
-	true = test_result:is_success(Result) orelse test_result:is_rse_failure(Result).
-
-gc_throughput_ping_pong_test() ->
-	TPPR = #{
-		messages_per_pair => 100,
-		parallelism => 2,
-		pipeline_size => 20,
-		static_only => false
-	},
-	{ok, Result} = benchmarks_server:await_benchmark_result(?MODULE, TPPR, "ThroughputPingPong (GC)"),
-	true = test_result:is_success(Result) orelse test_result:is_rse_failure(Result).
-
--endif.

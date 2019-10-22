@@ -111,17 +111,3 @@ ponger() ->
 			io:fwrite("Ponger got unexpected message: ~p!~n",[X]),
 			throw(X) % don't accept weird stuff
 	end.
-
-
-%%%% TESTS %%%%
-
--ifdef(TEST).
-
--include_lib("eunit/include/eunit.hrl").
-
-ping_pong_test() ->
-	PPR = #{number_of_messages => 100},
-	{ok, Result} = benchmarks_server:await_benchmark_result(?MODULE, PPR, "PingPong"),
-	true = test_result:is_success(Result) orelse test_result:is_rse_failure(Result).
-
--endif.

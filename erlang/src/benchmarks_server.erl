@@ -9,7 +9,8 @@
          'NetPingPong'/3,
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
-         'AtomicRegister'/3]).
+         'AtomicRegister'/3,
+         'StreamingWindows'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -25,6 +26,13 @@
       write_workload => float() | infinity | '-infinity' | nan,
       partition_size => integer(),
       number_of_keys => integer()}.
+
+-type 'StreamingWindowsRequest'() ::
+    #{number_of_partitions => integer(),
+      batch_size => integer(),
+      window_size => string(),
+      number_of_windows => integer(),
+      window_size_amplification => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -66,6 +74,11 @@ decoder() -> benchmarks.
 %% This is a unary RPC
 'Ready'(_Message, Stream, _State) ->
     io:fwrite("Got ready request.~n"),
+    % io:fwrite("Stream was:~p ~n", [Stream]),
+    % Stream2 = grpc:set_headers(Stream, #{
+    %   <<"content-type">> => <<"application/grpc">>
+    % }),
+    % io:fwrite("Stream was later:~p ~n", [Stream2]),
     {#{status => true}, Stream}.
 
 -spec 'Shutdown'(Message::'ShutdownRequest'(), Stream::grpc:stream(), State::any()) ->
@@ -80,7 +93,10 @@ decoder() -> benchmarks.
 %% This is a unary RPC
 'PingPong'(Message, Stream, _State) ->
     io:fwrite("Got PingPong request.~n"),
-    {ok, Response} = await_benchmark_result(ping_pong_bench, Message, "PingPong"),
+    Res = benchmark_runner:run(ping_pong_bench,Message),
+    io:fwrite("Finished PingPong run with ~p.~n", [Res]),
+    Response = test_result:from_result(Res),
+    io:fwrite("Sending PingPong response ~p.~n", [Response]),
     {Response, Stream}.
 
 -spec 'NetPingPong'(Message::'PingPongRequest'(), Stream::grpc:stream(), State::any()) ->
@@ -93,10 +109,9 @@ decoder() -> benchmarks.
 -spec 'ThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'ThroughputPingPong'(Message, Stream, _State) ->
+'ThroughputPingPong'(_Message, Stream, _State) ->
     io:fwrite("Got ThroughputPingPong request.~n"),
-    {ok, Response} = await_benchmark_result(throughput_ping_pong_bench, Message, "ThroughputPingPong"),
-    {Response, Stream}.
+    {test_result:not_implemented(), Stream}.
 
 -spec 'NetThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
@@ -109,5 +124,12 @@ decoder() -> benchmarks.
   {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'AtomicRegister'(_Message, Stream, _State) ->
-  io:fwrite("Got AtomicRegister request request.~n"),
+  io:fwrite("Got AtomicRegister request.~n"),
+  {test_result:not_implemented(), Stream}.
+
+-spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'StreamingWindows'(_Message, Stream, _State) ->
+    io:fwrite("Got StreamingWindows request.~n"),
   {test_result:not_implemented(), Stream}.

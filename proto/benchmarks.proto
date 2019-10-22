@@ -12,6 +12,7 @@ service BenchmarkRunner {
 	rpc ThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc NetThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc AtomicRegister (AtomicRegisterRequest) returns (TestResult);
+	rpc StreamingWindows (StreamingWindowsRequest) returns (TestResult);
 }
 
 message PingPongRequest {
@@ -28,4 +29,12 @@ message AtomicRegisterRequest {
 	float write_workload = 2;
 	uint32 partition_size = 3;
 	uint64 number_of_keys = 4;
+}
+
+message StreamingWindowsRequest {
+	uint32 number_of_partitions = 1;
+	uint64 batch_size = 2;
+	string window_size = 3;
+	uint64 number_of_windows = 4;
+	uint64 window_size_amplification = 5;
 }

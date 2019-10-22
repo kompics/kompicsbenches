@@ -93,8 +93,8 @@ object BenchmarkRunner extends StrictLogging {
       bi.prepareIteration();
       results ::= measure(bi.runIteration);
       nRuns += 1;
-      // run at least MIN_RUNS to be able to calculate RSE using normal distribution
-      while (nRuns < MIN_RUNS) {
+      // run at least 20 to be able to calculate RSE
+      while (nRuns < 20) {
         bi.cleanupIteration(false, results.head);
         bi.prepareIteration();
         results ::= measure(bi.runIteration);

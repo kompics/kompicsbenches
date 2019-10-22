@@ -1,24 +1,11 @@
 -module(bench_helpers).
 
 -export([
-	isolate/1,
 	await_exit/1,
 	await_exit_all/1,
 	await_all/2,
 	benchmark_type/1
 	]).
-
--spec isolate(Fun :: fun(() -> T)) -> T.
-isolate(Fun) ->
-	Self = self(),
-	_Pid = spawn_link(fun() -> 
-		Res = Fun(),
-		Self ! {result, Res}
-	end),
-	receive
-		{result, Res} ->
-			Res
-	end.
 
 -spec await_exit(Pid :: pid()) ->
 	{ok, any()} |
@@ -42,13 +29,11 @@ await_exit_all(Pids) ->
 			NewPids = lists:delete(Pid, Pids),
 			if
 				length(NewPids) == length(Pids) ->
-					%io:format(user, "Process ~p exited, but was not found in ~p.~n", [Pid, Pids]),
 					{error, io_lib:fwrite("Process ~p exited, but was not found in ~p.~n", [Pid, Pids])};
 				true ->
 					await_exit_all(NewPids)
 			end;
 		X ->
-			%io:format(user, "Expected 'EXIT', but got: ~p.~n", [X]),
 			{error, {expected_exit_but_got, X}}
 	end.
 

@@ -13,4 +13,5 @@ object SerializerIds {
   val PARTITACTOR = 106;
   val TYPEDATOMICREG = 107;
   val TYPEDPARTITACTOR = 108;
+  val STREAMINGWINDOWS = 109;
 }

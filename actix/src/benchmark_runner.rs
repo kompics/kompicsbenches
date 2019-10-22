@@ -87,7 +87,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerImpl {
         _o: grpc::RequestOptions,
         _p: benchmarks::AtomicRegisterRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
-        unimplemented!();
+        grpc::SingleResponse::completed(not_implemented())
     }
 
+    fn streaming_windows(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::StreamingWindowsRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }

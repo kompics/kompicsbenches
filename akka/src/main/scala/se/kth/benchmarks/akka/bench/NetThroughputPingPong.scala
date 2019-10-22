@@ -63,11 +63,12 @@ object NetThroughputPingPong extends DistributedBenchmark {
       latch = new CountDownLatch(numPairs);
       run_id += 1
       if (staticOnly) {
-        pingers = pongers.zipWithIndex.map{
-          case (ponger, i) => system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
+        pingers = pongers.zipWithIndex.map {
+          case (ponger, i) =>
+            system.actorOf(Props(new StaticPinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       } else {
-        pingers = pongers.zipWithIndex.map{
+        pingers = pongers.zipWithIndex.map {
           case (ponger, i) => system.actorOf(Props(new Pinger(latch, numMsgs, pipeline, ponger)), s"pinger${run_id}_$i")
         };
       }

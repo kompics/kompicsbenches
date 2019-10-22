@@ -3,7 +3,6 @@ use super::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::prelude::*;
 use messages::{Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};
-use std::borrow::Borrow;
 use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
@@ -81,8 +80,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         _m: &DeploymentMetaData,
     ) -> Result<Self::ClientConf, BenchmarkError> {
         self.num = Some(c.number_of_messages);
-        let system = crate::kompact_system_provider::global()
-            .new_remote_system_with_threads("netpingpong", 1);
+        let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
         self.system = Some(system);
         Ok(())
     }
@@ -177,8 +175,7 @@ impl DistributedBenchmarkClient for PingPongClient {
     fn setup(&mut self, _c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up ponger.");
 
-        let system = crate::kompact_system_provider::global()
-            .new_remote_system_with_threads("netpingpong", 1);
+        let system = crate::kompact_system_provider::global().new_remote_system("pingpong", 1);
         let (ponger, unique_reg_f) = system.create_and_register(|| Ponger::new());
         let named_reg_f = system.register_by_alias(&ponger, "ponger");
         unique_reg_f.wait_expect(Duration::from_millis(1000), "Ponger failed to register!");
@@ -224,80 +221,6 @@ impl DistributedBenchmarkClient for PingPongClient {
     }
 }
 
-#[derive(Debug, Clone)]
-struct PingMsg;
-
-#[derive(Debug, Clone)]
-struct PongMsg;
-
-struct PingPongSer;
-const PING_PONG_SER: PingPongSer = PingPongSer {};
-const PING_ID: i8 = 1;
-const PONG_ID: i8 = 2;
-impl Serialiser<PingMsg> for PingPongSer {
-    fn serid(&self) -> u64 {
-        serialiser_ids::NETPP_ID
-    }
-    fn size_hint(&self) -> Option<usize> {
-        Some(9)
-    }
-    fn serialise(&self, _v: &PingMsg, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(PING_ID);
-        Result::Ok(())
-    }
-}
-
-impl Serialiser<PongMsg> for PingPongSer {
-    fn serid(&self) -> u64 {
-        serialiser_ids::NETPP_ID
-    }
-    fn size_hint(&self) -> Option<usize> {
-        Some(9)
-    }
-    fn serialise(&self, _v: &PongMsg, buf: &mut BufMut) -> Result<(), SerError> {
-        buf.put_i8(PONG_ID);
-        Result::Ok(())
-    }
-}
-impl Deserialiser<PingMsg> for PingPongSer {
-    fn deserialise(buf: &mut Buf) -> Result<PingMsg, SerError> {
-        if buf.remaining() < 1 {
-            return Err(SerError::InvalidData(format!(
-                "Serialised typed has 9bytes but only {}bytes remain in buffer.",
-                buf.remaining()
-            )));
-        }
-        match buf.get_i8() {
-            PING_ID => Ok(PingMsg),
-            PONG_ID => Err(SerError::InvalidType(
-                "Found PongMsg, but expected PingMsg.".into(),
-            )),
-            _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected PingMsg.".into(),
-            )),
-        }
-    }
-}
-impl Deserialiser<PongMsg> for PingPongSer {
-    fn deserialise(buf: &mut Buf) -> Result<PongMsg, SerError> {
-        if buf.remaining() < 1 {
-            return Err(SerError::InvalidData(format!(
-                "Serialised typed has 9bytes but only {}bytes remain in buffer.",
-                buf.remaining()
-            )));
-        }
-        match buf.get_i8() {
-            PONG_ID => Ok(PongMsg),
-            PING_ID => Err(SerError::InvalidType(
-                "Found PingMsg, but expected PongMsg.".into(),
-            )),
-            _ => Err(SerError::InvalidType(
-                "Found unkown id, but expected PongMsg.".into(),
-            )),
-        }
-    }
-}
-
 #[derive(ComponentDefinition)]
 struct Pinger {
     ctx: ComponentContext<Pinger>,
@@ -309,7 +232,7 @@ struct Pinger {
 impl Pinger {
     fn with(count: u64, latch: Arc<CountdownEvent>, ponger: ActorPath) -> Pinger {
         Pinger {
-            ctx: ComponentContext::uninitialised(),
+            ctx: ComponentContext::new(),
             latch,
             ponger,
             count_down: count,
@@ -317,35 +240,32 @@ impl Pinger {
     }
 }
 
-impl ComponentLifecycle for Pinger {
-    fn on_start(&mut self) -> Handled {
-        self.ctx.borrow().init_buffers(None, None);
-        Handled::Ok
+impl Provide<ControlPort> for Pinger {
+    fn handle(&mut self, _event: ControlEvent) -> () {
+        // ignore
     }
 }
 
 impl Actor for Pinger {
     type Message = &'static Run;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.ponger
-            .tell_serialised(STATIC_PING, self)
+            .tell_ser(STATIC_PING.serialised(), self)
             .expect("Should have serialised!");
-        Handled::Ok
     }
-    fn receive_network(&mut self, msg: NetMessage) -> Handled {
+    fn receive_network(&mut self, msg: NetMessage) -> () {
         match_deser! {msg; {
             _pong: StaticPong [StaticPong] => {
                 self.count_down -= 1;
                 if self.count_down > 0 {
-                    self.ponger.tell_serialised(STATIC_PING, self).expect("Should have serialised!");
+                    self.ponger.tell_ser(STATIC_PING.serialised(), self).expect("Should have serialised!");
                 } else {
                     self.latch.decrement().expect("Should decrement!");
                 }
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPong: {:?}", e),
         }}
-        Handled::Ok
     }
 }
 
@@ -357,33 +277,31 @@ struct Ponger {
 impl Ponger {
     fn new() -> Ponger {
         Ponger {
-            ctx: ComponentContext::uninitialised(),
+            ctx: ComponentContext::new(),
         }
     }
 }
 
-impl ComponentLifecycle for Ponger {
-    fn on_start(&mut self) -> Handled {
-        self.ctx.borrow().init_buffers(None, None);
-        Handled::Ok
+impl Provide<ControlPort> for Ponger {
+    fn handle(&mut self, _event: ControlEvent) -> () {
+        // ignore
     }
 }
 
 impl Actor for Ponger {
     type Message = Never;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
         unreachable!("Can't instantiate Never!");
     }
-    fn receive_network(&mut self, msg: NetMessage) -> Handled {
-        let sender = msg.sender.clone();
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        let sender = msg.sender().clone();
 
         match_deser! {msg; {
             _ping: StaticPing [StaticPing] => {
-                sender.tell_serialised(STATIC_PONG, self).expect("Should have serialised");
+                sender.tell_ser(STATIC_PONG.serialised(), self).expect("Should have serialised");
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
         }}
-        Handled::Ok
     }
 }

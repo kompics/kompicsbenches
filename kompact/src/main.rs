@@ -71,7 +71,6 @@ mod tests {
     use super::*;
     use benchmark_suite_shared::test_utils::test_implementation;
 
-    //#[ignore]
     #[test]
     fn test_actor() {
         let benchmarks = Box::new(bench::ActorFactory {});
@@ -84,7 +83,6 @@ mod tests {
         test_implementation(benchmarks);
     }
 
-    //#[ignore]
     #[test]
     fn test_mixed() {
         let benchmarks = Box::new(bench::MixedFactory {});

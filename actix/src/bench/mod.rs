@@ -1,9 +1,6 @@
 use super::*;
 use benchmark_suite_shared::benchmark::*;
 
-pub mod all_pairs_shortest_path;
-pub mod chameneos;
-pub mod fibonacci;
 pub mod pingpong;
 pub mod throughput_pingpong;
 

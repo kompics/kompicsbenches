@@ -21,9 +21,4 @@ Riker
 -----
 https://github.com/riker-rs/riker/
 
-- No networking implementation
-
-Erlang
-------
-
-- APSP uses `gb_trees` instead of `array`, because multidimensional arrays in erlang have terrible ergonomics. Trees have worse lookup/update performance, though.
+- Not networking implementation

@@ -45,26 +45,4 @@ class TypedBenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
 
   override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] =
     Future.successful(NotImplemented());
-
-  override def allPairsShortestPath(request: APSPRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(typed_bench.AllPairsShortestPath)(request);
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
-  override def chameneos(request: ChameneosRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(typed_bench.Chameneos)(request);
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
-  override def fibonacci(request: FibonacciRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(typed_bench.Fibonacci)(request);
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
 }

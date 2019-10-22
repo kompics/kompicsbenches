@@ -33,7 +33,6 @@ public class Windower extends ComponentDefinition {
 
     private long receivedSinceReady = 0L;
     private boolean running = false;
-    private boolean waitingOnFlushed = false;
 
     public Windower(Init init) {
         this.partitionId = init.partitionId;
@@ -79,10 +78,6 @@ public class Windower extends ComponentDefinition {
                     currentWindow.clear();
                     downstream = Optional.empty();
                     windowStartTS = 0l;
-                    if (waitingOnFlushed) {
-                        sendUpstream(new Flushed(partitionId));
-                        waitingOnFlushed = false;
-                    }
                 } else {
                     throw new RuntimeException("Got Stop while not running!");
                 }
@@ -116,11 +111,7 @@ public class Windower extends ComponentDefinition {
         @Override
         public void handle(Flush content, NetMessage context) {
             if (content.partitionId == partitionId) {
-                if (!running) { // delay flushing response until not running
-                    sendUpstream(new Flushed(partitionId));
-                } else {
-                    waitingOnFlushed = true;
-                }
+                sendUpstream(new Flushed(partitionId));
             }
         }
     };

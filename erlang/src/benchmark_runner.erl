@@ -8,8 +8,8 @@
 	run/2
 	]).
 
--define(MIN_RUNS, 20).
--define(MAX_RUNS, 150).
+-define(MIN_RUNS, 30).
+-define(MAX_RUNS, 100).
 -define(RSE_TARGET, 0.1). % 10% RSE
 
 -spec min_runs() -> integer().
@@ -43,10 +43,8 @@ run(Benchmark, Msg) ->
 		{ok, Data} ->
 			{ok, Data};
 		{error, Reason} ->
-			io:format(user, "Error during run:~p~n", [Reason]),
 			{error, Reason};
 		Other ->
-			io:format(user, "Error during run:~p~n", [Other]),
 			{error, io_lib:fwrite("Error during run:~p~n", [Other])}
 	end.
 

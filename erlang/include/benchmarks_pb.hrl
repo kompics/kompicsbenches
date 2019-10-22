@@ -34,6 +34,17 @@
         }).
 -endif.
 
+-ifndef('STREAMINGWINDOWSREQUEST_PB_H').
+-define('STREAMINGWINDOWSREQUEST_PB_H', true).
+-record('StreamingWindowsRequest',
+        {number_of_partitions = 0 :: non_neg_integer() | undefined, % = 1, 32 bits
+         batch_size = 0         :: non_neg_integer() | undefined, % = 2, 32 bits
+         window_size = []       :: iodata() | undefined, % = 3
+         number_of_windows = 0  :: non_neg_integer() | undefined, % = 4, 32 bits
+         window_size_amplification = 0 :: non_neg_integer() | undefined % = 5, 32 bits
+        }).
+-endif.
+
 -ifndef('TESTRESULT_PB_H').
 -define('TESTRESULT_PB_H', true).
 -record('TestResult',

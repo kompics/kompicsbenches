@@ -18,7 +18,7 @@ object Main {
       case "typed" => {
         import se.kth.benchmarks.akka.typed_bench.Factory
 
-        BenchmarkMain.runWith(arguments, Factory, new BenchmarkRunnerImpl(), (publicIf) => {
+        BenchmarkMain.runWith(arguments, Factory, new TypedBenchmarkRunnerImpl(), (publicIf) => {
           ActorSystemProvider.setPublicIf(publicIf)
         });
       }

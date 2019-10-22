@@ -4,6 +4,7 @@ use actix::*;
 use actix_system_provider::{ActixSystem, PoisonPill};
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use futures::Future;
+use std::fmt;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
@@ -104,7 +105,7 @@ impl BenchmarkInstance for PingPongI {
     }
 }
 
-#[derive(Message)]
+#[derive(Clone, Debug)]
 struct Start;
 impl Message for Start {
     type Result = ();
@@ -116,13 +117,16 @@ impl Message for Ping {
     type Result = ();
 }
 impl fmt::Debug for Ping {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Ping(<pinger>)")
     }
 }
 
 #[derive(Clone, Debug)]
 struct Pong;
+impl Message for Pong {
+    type Result = ();
+}
 
 struct Pinger {
     latch: Arc<CountdownEvent>,
@@ -137,7 +141,7 @@ impl Pinger {
             latch,
             ponger,
             count_down: count,
-            self_rec: None,
+            self_rec: None
         }
     }
     fn self_rec(&self) -> Recipient<Pong> {
@@ -150,10 +154,11 @@ impl Actor for Pinger {
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         println!("Pinger is alive");
+        self.self_rec = Some(ctx.address().recipient());
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        //println!("Pinger is stopped");
+        println!("Pinger is stopped");
         self.self_rec = None;
     }
 }
@@ -161,20 +166,18 @@ impl Actor for Pinger {
 impl Handler<Start> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Start, ctx: &mut Context<Self>) -> Self::Result {
-        let self_rec = ctx.address().recipient();
-        self.ponger.do_send(Ping(self_rec));
+    fn handle(&mut self, _msg: Start, _ctx: &mut Context<Self>) -> Self::Result {
+        self.ponger.do_send(Ping(self.self_rec()));
     }
 }
 
 impl Handler<Pong> for Pinger {
     type Result = ();
 
-    fn handle(&mut self, _msg: Pong, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: Pong, _ctx: &mut Context<Self>) -> Self::Result {
         if self.count_down > 0 {
             self.count_down -= 1;
-            let self_rec = ctx.address().recipient();
-            self.ponger.do_send(Ping(self_rec));
+            self.ponger.do_send(Ping(self.self_rec()));
         } else {
             let _ = self.latch.decrement();
         }
@@ -184,7 +187,7 @@ impl Handler<PoisonPill> for Pinger {
     type Result = ();
 
     fn handle(&mut self, _msg: PoisonPill, ctx: &mut Context<Self>) -> Self::Result {
-        //println!("PoisonPill received, shutting down.");
+        println!("PoisonPill received, shutting down.");
         ctx.stop();
     }
 }
@@ -192,7 +195,7 @@ impl Handler<PoisonPill> for Pinger {
 struct Ponger;
 
 impl Ponger {
-    fn new() -> Ponger{
+    fn new() -> Ponger {
         Ponger
     }
 }
@@ -201,7 +204,7 @@ impl Actor for Ponger {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
-        //println!("Ponger is alive");
+        println!("Ponger is alive");
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
@@ -214,7 +217,7 @@ impl Handler<Ping> for Ponger {
 
     fn handle(&mut self, msg: Ping, _ctx: &mut Context<Self>) -> Self::Result {
         let pinger = msg.0;
-        pinger.do_send(Pong);
+        pinger.do_send(Pong).expect("Pong didn't send.");
     }
 }
 
@@ -222,7 +225,7 @@ impl Handler<PoisonPill> for Ponger {
     type Result = ();
 
     fn handle(&mut self, _msg: PoisonPill, ctx: &mut Context<Self>) -> Self::Result {
-        //println!("PoisonPill received, shutting down.");
+        println!("PoisonPill received, shutting down.");
         ctx.stop();
     }
 }

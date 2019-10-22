@@ -96,6 +96,11 @@ class BenchmarkMaster(val runnerPort: Int, val masterPort: Int, val waitFor: Int
       runBenchmark(b, request)
     };
 
+    override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] = queueIfNotReady {
+      val b = benchmarks.streamingWindows;
+      runBenchmark(b, request)
+    }
+
     override def shutdown(request: ShutdownRequest): Future[ShutdownAck] = {
       logger.info(s"Got shutdown request with force=${request.force}");
 

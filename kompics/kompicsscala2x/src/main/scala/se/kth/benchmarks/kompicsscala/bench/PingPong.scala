@@ -69,14 +69,14 @@ object PingPong extends Benchmark {
         pinger = null;
         killF
       } else {
-        Future.successful(())
+        Future.successful()
       }
       val kill2F = if (ponger != null) {
         val killF = system.killNotify(ponger);
         ponger = null;
         killF
       } else {
-        Future.successful(())
+        Future.successful()
       }
       Await.result(kill1F, Duration.Inf);
       Await.result(kill2F, Duration.Inf);

@@ -1,11 +1,7 @@
 use super::*;
 use kompact::prelude::*;
-use kompact::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::io::Read;
-use protobuf::descriptor::FieldOptions_CType::STRING;
-use kompact::helpers::deserialise_actor_path;
 
 #[derive(ComponentDefinition)]
 pub struct PartitioningActor {
@@ -16,14 +12,19 @@ pub struct PartitioningActor {
     n: u32,
     nodes: Vec<ActorPath>,
     num_keys: u64,
-    partition_size: u32,
     init_ack_count: u32,
     done_count: u32,
 }
 
 impl PartitioningActor {
-    pub fn with(prepare_latch: Arc<CountdownEvent>, finished_latch: Arc<CountdownEvent>, init_id: u32, nodes: Vec<ActorPath>, num_keys: u64, partition_size: u32) -> PartitioningActor {
-        PartitioningActor{
+    pub fn with(
+        prepare_latch: Arc<CountdownEvent>,
+        finished_latch: Arc<CountdownEvent>,
+        init_id: u32,
+        nodes: Vec<ActorPath>,
+        num_keys: u64,
+    ) -> PartitioningActor {
+        PartitioningActor {
             ctx: ComponentContext::new(),
             prepare_latch,
             finished_latch,
@@ -31,7 +32,6 @@ impl PartitioningActor {
             n: nodes.len() as u32,
             nodes,
             num_keys,
-            partition_size,
             init_ack_count: 0,
             done_count: 0,
         }
@@ -40,14 +40,14 @@ impl PartitioningActor {
 
 impl Provide<ControlPort> for PartitioningActor {
     fn handle(&mut self, event: ControlEvent) -> () {
-        match event{
+        match event {
             ControlEvent::Start => {
                 let min_key: u64 = 0;
                 let max_key = self.num_keys - 1;
-//                info!(self.ctx.log(), "Sending init to nodes");
-                for (r, node) in (&self.nodes).iter().enumerate(){
+                //                info!(self.ctx.log(), "Sending init to nodes");
+                for (r, node) in (&self.nodes).iter().enumerate() {
                     let rank = r as u32;
-                    let init = Init{
+                    let init = Init {
                         rank,
                         init_id: self.init_id,
                         nodes: self.nodes.clone(),
@@ -62,44 +62,38 @@ impl Provide<ControlPort> for PartitioningActor {
     }
 }
 
-impl Actor for PartitioningActor{
-    fn receive_local(&mut self, sender: ActorRef, msg: Box<Any>) -> () {
-        if msg.is::<Run>() {
-//            info!(self.ctx.log(), "Telling nodes to run");
-            for node in &self.nodes{
-                node.tell((Run, PARTITIONING_ACTOR_SER), self);
-            }
+impl Actor for PartitioningActor {
+    type Message = Run;
+
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        for node in &self.nodes {
+            node.tell((Run, PARTITIONING_ACTOR_SER), self);
         }
     }
 
-    fn receive_message(&mut self, sender: ActorPath, ser_id: u64, buf: &mut Buf) -> () {
-        if ser_id == Serialiser::<InitAck>::serid(&PARTITIONING_ACTOR_SER){
-            let r: Result<InitAck, SerError> = PartitioningActorSer::deserialise(buf);
-            match r {
-                Ok(init_ack) => {
-                    self.init_ack_count += 1;
-//                    info!(self.ctx.log(), "Got init ack {}/{} from {}", &self.init_ack_count, &self.n, sender);
-                    if self.init_ack_count == self.n{
+    fn receive_network(&mut self, msg: NetMessage) -> () {
+        match_deser! {msg; {
+            _init_ack: InitAck [PartitioningActorSer] => {
+                self.init_ack_count += 1;
+                    //                    info!(self.ctx.log(), "Got init ack {}/{} from {}", &self.init_ack_count, &self.n, sender);
+                    if self.init_ack_count == self.n {
                         info!(self.ctx.log(), "Got init_ack from everybody!");
-                        self.prepare_latch.decrement();
+                        self.prepare_latch
+                            .decrement()
+                            .expect("Latch didn't decrement!");
                     }
-                }
-                Err(e) => error!(self.ctx.log(), "Error deserialising InitAck: {:?}", e),
-            }
-        }
-        else if ser_id == Serialiser::<Done>::serid(&PARTITIONING_ACTOR_SER){
-            let r: Result<Done, SerError> = PartitioningActorSer::deserialise(buf);
-            match r {
-                Ok(_done) => {
-                    self.done_count += 1;
+            },
+            _done: Done [PartitioningActorSer] => {
+                self.done_count += 1;
                     if self.done_count == self.n {
                         info!(self.ctx.log(), "Everybody is done");
-                        self.finished_latch.decrement();
+                        self.finished_latch
+                            .decrement()
+                            .expect("Latch didn't decrement!");
                     }
-                }
-                Err(e) => error!(self.ctx.log(), "Error deserialising Done: {:?}", e),
-            }
-        }
+            },
+            !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+        }}
     }
 }
 
@@ -128,28 +122,30 @@ const RUN_ID: i8 = 3;
 const DONE_ID: i8 = 4;
 
 impl Serialiser<Init> for PartitioningActorSer {
-    fn serid(&self) -> u64 {
+    fn ser_id(&self) -> SerId {
         serialiser_ids::PARTITIONING_INIT_MSG
     }
     fn size_hint(&self) -> Option<usize> {
         Some(1000)
-    }   // TODO dynamic buffer
+    } // TODO dynamic buffer
 
-    fn serialise(&self, i: &Init, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, i: &Init, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INIT_ID);
         buf.put_u32_be(i.rank);
         buf.put_u32_be(i.init_id);
         buf.put_u64_be(i.min_key);
         buf.put_u64_be(i.max_key);
         buf.put_u32_be(i.nodes.len() as u32);
-        for node in i.nodes.iter(){
-            node.serialise(buf);
+        for node in i.nodes.iter() {
+            node.serialise(buf)?;
         }
         Ok(())
     }
 }
 impl Deserialiser<Init> for PartitioningActorSer {
-    fn deserialise(buf: &mut Buf) -> Result<Init, SerError> {
+    const SER_ID: SerId = serialiser_ids::PARTITIONING_INIT_MSG;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<Init, SerError> {
         match buf.get_i8() {
             INIT_ID => {
                 let rank: u32 = buf.get_u32_be();
@@ -158,19 +154,17 @@ impl Deserialiser<Init> for PartitioningActorSer {
                 let max_key: u64 = buf.get_u64_be();
                 let nodes_len: u32 = buf.get_u32_be();
                 let mut nodes: Vec<ActorPath> = Vec::new();
-                let mut buffer = buf;
-                for _ in 0..nodes_len{
-                    if let Ok((b, actorpath)) = deserialise_actor_path(buffer){
-//                        println!("actorpath={}", &actorpath);
-                        nodes.push(actorpath);
-                        buffer = b;
-                    } else {
-                        return Err(SerError::InvalidType(
-                            "Could not deserialise data to ActorPath".into(),
-                        ));
-                    }
+                for _ in 0..nodes_len {
+                    let actorpath = ActorPath::deserialise(buf)?;
+                    nodes.push(actorpath);
                 }
-                let init = Init{ rank, init_id, nodes, min_key, max_key };
+                let init = Init {
+                    rank,
+                    init_id,
+                    nodes,
+                    min_key,
+                    max_key,
+                };
                 Ok(init)
             }
             _ => Err(SerError::InvalidType(
@@ -181,7 +175,7 @@ impl Deserialiser<Init> for PartitioningActorSer {
 }
 
 impl Serialiser<InitAck> for PartitioningActorSer {
-    fn serid(&self) -> u64 {
+    fn ser_id(&self) -> SerId {
         serialiser_ids::PARTITIONING_INIT_ACK_MSG
     }
 
@@ -189,15 +183,17 @@ impl Serialiser<InitAck> for PartitioningActorSer {
         Some(5)
     }
 
-    fn serialise(&self, init_ack: &InitAck, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, init_ack: &InitAck, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INITACK_ID);
         buf.put_u32_be(init_ack.0);
         Ok(())
     }
 }
 impl Deserialiser<InitAck> for PartitioningActorSer {
-    fn deserialise(buf: &mut Buf) -> Result<InitAck, SerError> {
-        match buf.get_i8(){
+    const SER_ID: SerId = serialiser_ids::PARTITIONING_INIT_ACK_MSG;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<InitAck, SerError> {
+        match buf.get_i8() {
             INITACK_ID => {
                 let init_id = buf.get_u32_be();
                 Ok(InitAck(init_id))
@@ -209,42 +205,52 @@ impl Deserialiser<InitAck> for PartitioningActorSer {
     }
 }
 
-impl Serialiser<Run> for PartitioningActorSer{
-    fn serid(&self) -> u64 {
+impl Serialiser<Run> for PartitioningActorSer {
+    fn ser_id(&self) -> SerId {
         serialiser_ids::PARTITIONING_RUN_MSG
     }
-    fn size_hint(&self) -> Option<usize> { Some(1) }
-    fn serialise(&self, v: &Run, buf: &mut BufMut) -> Result<(), SerError> {
+    fn size_hint(&self) -> Option<usize> {
+        Some(1)
+    }
+    fn serialise(&self, _v: &Run, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(RUN_ID);
         Ok(())
     }
 }
 
-impl Deserialiser<Run> for PartitioningActorSer{
-    fn deserialise(buf: &mut Buf) -> Result<Run, SerError> {
-       match buf.get_i8(){
-           RUN_ID => { Ok(Run) }
-           _ => Err(SerError::InvalidType(
-               "Found unkown id, but expected Run.".into(),
-           )),
-       }
+impl Deserialiser<Run> for PartitioningActorSer {
+    const SER_ID: SerId = serialiser_ids::PARTITIONING_RUN_MSG;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<Run, SerError> {
+        match buf.get_i8() {
+            RUN_ID => Ok(Run),
+            _ => Err(SerError::InvalidType(
+                "Found unkown id, but expected Run.".into(),
+            )),
+        }
     }
 }
 
-impl Serialiser<Done> for PartitioningActorSer{
-    fn serid(&self) -> u64 { serialiser_ids::PARTITIONING_DONE_MSG }
-    fn size_hint(&self) -> Option<usize> { Some(1) }
+impl Serialiser<Done> for PartitioningActorSer {
+    fn ser_id(&self) -> SerId {
+        serialiser_ids::PARTITIONING_DONE_MSG
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(1)
+    }
 
-    fn serialise(&self, v: &Done, buf: &mut BufMut) -> Result<(), SerError> {
+    fn serialise(&self, _v: &Done, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(DONE_ID);
         Ok(())
     }
 }
 
-impl Deserialiser<Done> for PartitioningActorSer{
-    fn deserialise(buf: &mut Buf) -> Result<Done, SerError> {
-        match buf.get_i8(){
-            DONE_ID => { Ok(Done) }
+impl Deserialiser<Done> for PartitioningActorSer {
+    const SER_ID: SerId = serialiser_ids::PARTITIONING_DONE_MSG;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<Done, SerError> {
+        match buf.get_i8() {
+            DONE_ID => Ok(Done),
             _ => Err(SerError::InvalidType(
                 "Found unkown id, but expected Run.".into(),
             )),

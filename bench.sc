@@ -28,7 +28,7 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 			relp("runner"),
 			javaBin,
 			Seq("-jar",
-				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString,
@@ -44,7 +44,7 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean): Benchm
 			relp("runner"),
 			javaBin,
 			Seq("-jar",
-				"target/scala-2.12/Benchmark Suite Runner-assembly-0.2.0-SNAPSHOT.jar",
+				"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
 				"--server", runnerAddr,
 				"--prefix", prefix,
 				"--output-folder", results.toString)
@@ -86,9 +86,9 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
+def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
 	val nodes = readNodes(withNodes);
-	val masters = runnersForImpl(impl.toUpperCase(), _.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -98,7 +98,7 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = remoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -125,11 +125,10 @@ def remote(withNodes: Path = defaultNodesFile, test: String = "", testing: Boole
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false, useOnly: String = ""): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
 	val remoteDir = tmp.dir();
-	val implUpperCase = impl.toUpperCase();
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
-	val masterBenches = runnersForImpl(implUpperCase, identity);
+	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
 	};
@@ -140,20 +139,17 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 		val dirName = s"${ip}-port-${p}";
 		val dir = remoteDir / dirName;
 		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
-		if (copyDirectories.size == 0) cp(pwd, dir);
-		else {
-			for (d <- copyDirectories) {
-				mkdir(dir / d)
-				cp.over(pwd / d, dir / d);
-			}
-			for (file <- copyFiles) cp.into(pwd / file, dir)
+		for (d <- copyDirectories) {
+			mkdir(dir / d);
+			cp.over(pwd / d, dir / d);
+		}
+		for (file <- copyFiles) {
+			os.copy(pwd / file, dir / file, createFolders = true);
 		}
 		println("done.");
 		NodeEntry(ip, p, dir.toString)
 	} toList;
-	var use_impl = implementations.filterKeys(useOnly.toUpperCase().split(" ").toSet)
-	if (use_impl.size == 0) use_impl = implementations
-	val masters = use_impl.values.filter(_.symbol.startsWith(test)).map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
+	val masters = masterBenches.map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -163,7 +159,7 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
-		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing, benchmarks);
+		val experimentRunner = getExperimentRunner(master.symbol, resultsdir, testing);
 		println(s"Starting run [${i+1}/$nRunners]: ${master.label}");
 		val start = System.currentTimeMillis();
 		val r = fakeRemoteExperiment(experimentRunner, master, runId, logdir, nodes);
@@ -192,8 +188,8 @@ def fakeRemote(withClients: Int = 1, test: String = "", testing: Boolean = false
 
 @doc("Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, impl: String = "*"): Unit = {
-	val runners = runnersForImpl(impl.toUpperCase(), _.localRunner(runnerAddr));
+def local(testing: Boolean = false, impls: Seq[String] = Seq.empty): Unit = {
+	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
@@ -204,7 +200,7 @@ def local(testing: Boolean = false, impl: String = "*"): Unit = {
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
 		try {
-			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, testing, benchmarks);
+			val experimentRunner = getExperimentRunner(r.symbol, resultsdir, testing);
 			println(s"Starting run [${i+1}/$nRunners]: ${r.label}");
 			val start = System.currentTimeMillis();
 			val runner = r.run(logdir);
@@ -236,7 +232,13 @@ private def runnersForImpl[T](impls: Seq[String], mapper: BenchmarkImpl => T): L
 	val runners: List[T] = if (impls.isEmpty) {
 		implementations.values.map(mapper).toList;
 	} else {
-			implementations.get(impl.toUpperCase()).map(i => List(mapper(i))).getOrElse(List.empty)
+		impls.map(_.toUpperCase).flatMap(impl => {
+			val res: Option[BenchmarkImpl] = implementations.get(impl);
+			if (res.isEmpty) {
+				Console.err.println(s"No benchmark found for impl ${impl}!");
+			}
+			res.map(mapper)
+		}).toList
 	};
 	if (runners.isEmpty) {
 		Console.err.println(s"No benchmarks found!");

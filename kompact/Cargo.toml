@@ -6,31 +6,23 @@ edition = "2018"
 
 [dependencies]
 kompact 				= { git = "https://github.com/kompics/kompact"}
-#kompact 				= { path = "../../kompact/core/" }
-#kompact 				= "0.8"
+#kompact 				= { path = "../../kompics-rust/core/" }
+#kompact 				= "0.6"
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
 futures         		= "0.1"
 futures-cpupool 		= "0.1"
 grpc 					= "0.6"
-synchronoise 			= "1.0"
+synchronoise 			= "0.4"
 slog 					= {version = "2.4", features = ["max_level_debug", "release_max_level_info"]}
 time 					= "0.1"
-#tokio-core 				= "0.1"
+tokio-core 				= "0.1"
 num_cpus 				= "1"
 parse_duration 			= "2"
 rand 					= {version = "0.7", features = ["small_rng"]}
-chrono                  = "0.4"
-
-#[dependencies.kompact]
-#git = "https://github.com/adamhass/kompact"
-#branch = "master"
-#default-features = false
-#features = ["ser_id_8", "silent_logging"]
-#version = "0.10"
 
 [dev-dependencies]
-uuid = { version = "0.8", features = ["v4"] }
+uuid = { version = "0.7", features = ["v4"] }
 
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]

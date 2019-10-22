@@ -3,6 +3,7 @@ package se.kth.benchmarks.akka
 import akka.actor._
 import akka.actor.typed.Behavior
 import com.typesafe.config.{Config, ConfigFactory}
+import com.typesafe.scalalogging.StrictLogging
 
 import scala.util.Properties._
 import scala.reflect.runtime.universe._
@@ -161,7 +162,7 @@ object ActorSystemProvider extends StrictLogging {
     getIntegerProp(propertyName) match {
       case Some(i) if i > 0 => i
       case _ => {
-        val byCores = rt.availableProcessors() // already includes HT
+        val byCores = rt.availableProcessors() * 2
         if (byCores > minNumThreads) byCores else minNumThreads
       }
     }
@@ -205,13 +206,17 @@ object ActorSystemProvider extends StrictLogging {
     typed.ActorSystem(behavior, name, conf)
   }
 
-  def newRemoteTypedActorSystem[T](behavior: typed.Behavior[T], name: String, threads: Int, serialization: SerializerBindings): typed.ActorSystem[T] = {
-    val confStr = ConfigFactory.parseString(remoteConfig(
-      corePoolSize = threads,
-      maxPoolSize = threads,
-      hostname = getPublicIf,
-      port = 0,
-      customSerializers = serialization));
+  def newRemoteTypedActorSystem[T](behavior: typed.Behavior[T],
+                                   name: String,
+                                   threads: Int,
+                                   serialization: SerializerBindings): typed.ActorSystem[T] = {
+    val confStr = ConfigFactory.parseString(
+      remoteConfig(corePoolSize = threads,
+                   maxPoolSize = threads,
+                   hostname = getPublicIf,
+                   port = 0,
+                   customSerializers = serialization)
+    );
     val conf = ConfigFactory.load(confStr);
     typed.ActorSystem[T](behavior, name, conf)
   }

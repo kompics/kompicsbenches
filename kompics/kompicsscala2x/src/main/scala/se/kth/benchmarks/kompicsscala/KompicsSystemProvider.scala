@@ -1,20 +1,29 @@
 package se.kth.benchmarks.kompicsscala
 
 import se.kth.benchmarks.BenchmarkException
-import se.sics.kompics.{ Channel, Component, Fault, FaultHandler, LoopbackPort, PortType, ComponentDefinition => JComponentDefinition, Init => JInit }
+import se.sics.kompics.{
+  Channel,
+  Component,
+  Fault,
+  FaultHandler,
+  LoopbackPort,
+  PortType,
+  ComponentDefinition => JComponentDefinition,
+  Init => JInit
+}
 import se.sics.kompics.config.Conversions
 import se.sics.kompics.sl._
-import se.sics.kompics.network.{ ListeningStatus, Network, NetworkControl, Transport }
-import se.sics.kompics.network.netty.{ NettyInit, NettyNetwork }
+import se.sics.kompics.network.{ListeningStatus, Network, NetworkControl, Transport}
+import se.sics.kompics.network.netty.{NettyInit, NettyNetwork}
 
-import scala.concurrent.{ Await, Future, Promise }
+import scala.concurrent.{Await, Future, Promise}
 import scala.concurrent.duration.Duration
 import java.util.UUID
 import java.net.ServerSocket
 
 import scala.reflect._
 import scala.collection.mutable
-import scala.util.{ Failure, Success, Try }
+import scala.util.{Failure, Success, Try}
 import com.google.common.collect.ImmutableSet
 
 import scala.compat.java8.OptionConverters._
@@ -98,8 +107,10 @@ object KompicsSystemProvider extends StrictLogging {
 case class NewComponent[C <: JComponentDefinition](c: Class[C], init: JInit[C], p: Promise[UUID]) extends KompicsEvent;
 case class StartComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
 case class KillComponent(id: UUID, p: Promise[Unit]) extends KompicsEvent;
-case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit]) extends KompicsEvent;
-case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent
+case class ConnectComponents[P <: PortType](port: Class[P], requirer: UUID, provider: UUID, p: Promise[Unit])
+    extends KompicsEvent;
+case class TriggerComponent(id: UUID, event: KompicsEvent, p: Promise[Unit]) extends KompicsEvent;
+case class RunOnComponent[T](id: UUID, fun: Component => T, p: Promise[T]) extends KompicsEvent;
 
 class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
 
@@ -153,8 +164,8 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
         replyPromise();
       } else {
         awaitingStarted.get(cid) match {
-          case Some(p) => p.success(())
-          case None    => log.debug(s"Could not find starting component with id=$cid")
+          case Some(p) => p.success()
+          case None    => log.error(s"Could not find starting component with id=$cid")
         }
       }
     }
@@ -165,8 +176,8 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
         logger.info("Network component is killed.");
       } else {
         awaitingKilled.remove(cid) match {
-          case Some(p) => p.success(())
-          case None    => log.debug(s"Could not find dying component with id=$cid")
+          case Some(p) => p.success()
+          case None    => log.error(s"Could not find dying component with id=$cid")
         }
       }
     }
@@ -238,13 +249,22 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       };
       p.complete(res)
     }
-    case TriggerComponent(cid, event, p) => handle {
+    case TriggerComponent(cid, event, p) => {
       children.get(cid) match {
         case Some(c) => {
           trigger(event -> c.control())
           p.success()
         }
-        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on"))
+        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on!"))
+      }
+    }
+    case RunOnComponent(cid, fun, p) => {
+      children.get(cid) match {
+        case Some(c) => {
+          val res = Try(fun(c));
+          p.complete(res)
+        }
+        case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to run function on!"))
       }
     }
   }
@@ -296,6 +316,12 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
   def triggerComponent(event: KompicsEvent, id: UUID): Future[Unit] = {
     val p = Promise[Unit];
     trigger(TriggerComponent(id, event, p) -> onSelf)
+    p.future
+  }
+
+  def runOnComponent[T](id: UUID)(f: Component => T): Future[T] = {
+    val p = Promise[T];
+    trigger(RunOnComponent(id, f, p) -> onSelf)
     p.future
   }
 

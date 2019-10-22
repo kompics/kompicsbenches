@@ -24,7 +24,7 @@ val results = pwd / 'results;
 val plots = pwd / 'plots;
 
 @main
-def main(show: Boolean = false, skip: Seq[String] = Nil): Unit = {
+def main(show: Boolean = false): Unit = {
 	if (!(exists! results)) {
 		println("No results to plot.");
 		return;
@@ -33,21 +33,18 @@ def main(show: Boolean = false, skip: Seq[String] = Nil): Unit = {
 		rm! plots;
 	}
 	mkdir! plots;
-  if (skip != Nil) {
-    println(s"Skipping implementations: ${skip.mkString(", ")}");
-  }
-	(ls! results).foreach(plotRun(_, show, skip.toSet));
+	(ls! results).foreach(plotRun(_, show));
 }
 
-private def plotRun(run: Path, show: Boolean, skip: Set[String]): Unit = {
+private def plotRun(run: Path, show: Boolean): Unit = {
 	println(s"Plotting Run '${run}'");
 	val summary = run / 'summary;
 	val output = plots / run.last;
 	mkdir! output;
-	(ls! summary).filter(_.toString.endsWith(".data")).foreach(plotData(_, output, show, skip));
+	(ls! summary).filter(_.toString.endsWith(".data")).foreach(plotData(_, output, show));
 }
 
-private def plotData(data: Path, output: Path, show: Boolean, skip: Set[String]): Unit = {
+private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 	println(s"Plotting Data '${data}'");
 	print("Loading data...");
 	//val rawData = read.lines! data;
@@ -56,7 +53,7 @@ private def plotData(data: Path, output: Path, show: Boolean, skip: Set[String])
 	reader.close()
 	println("done");
 	//println(rawData);
-	val mean = rawData.map(m => (m("IMPL"), m("PARAMS"), m("MEAN").toDouble)).filterNot(t => skip.contains(t._1));
+	val mean = rawData.map(m => (m("IMPL"), m("PARAMS"), m("MEAN").toDouble));
 	val meanGrouped = mean.groupBy(_._1).map { case (key, entries) =>
 		val params = entries.map(_._2);
 		val means = entries.map(_._3);
@@ -70,7 +67,8 @@ private def plotData(data: Path, output: Path, show: Boolean, skip: Set[String])
 			fileName match {
 				case "PINGPONG"|"NETPINGPONG" => plotBenchPP(bench, meanGrouped, output, show)
 				case "TPPINGPONG"|"NETTPPINGPONG" => plotBenchTPPP(bench, meanGrouped, output, show)
-        case "ATOMICREGISTER" => plotBenchAtomicReg(bench, meanGrouped, output, show)
+				case "ATOMICREGISTER" => plotBenchAtomicReg(bench, meanGrouped, output, show)
+				case "STREAMINGWINDOWS" => plotBenchSW(bench, meanGrouped, output, show)
 				case symbol => println(s"Could not find instructions for '${symbol}'! Skipping plot.")
 			}
 		}
@@ -107,6 +105,87 @@ private def plotBenchPP(b: Benchmark, res: Map[String, ImplGroupedResult[String]
 		p.addPlot(dsp);
 	}
 	p.plot();
+}
+
+private def plotBenchSW(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
+	val bench = b.asInstanceOf[BenchmarkWithSpace[StreamingWindowsRequest]];
+	val space = bench.space.asInstanceOf[ParameterSpacePB[StreamingWindowsRequest]];
+	val meanGroupedParamsTime = res.mapValues(_.mapParams(space.paramsFromCSV));
+	val meanGroupedParams = ImplResults.mapData(
+		meanGroupedParamsTime,
+		(req: StreamingWindowsRequest, meanTime: Double) => {
+			val totalWindows = req.numberOfWindows * req.numberOfPartitions;
+			val windowTime = meanTime/totalWindows;
+			windowTime
+		}
+	);
+  {
+    val meanGroupedNumberOfPartitions = ImplResults.slices(
+      meanGroupedParams,
+      (req: StreamingWindowsRequest) => (req.batchSize, req.windowSize, req.numberOfWindows, req.windowSizeAmplification),
+      (req: StreamingWindowsRequest) => req.numberOfPartitions
+    );
+    meanGroupedNumberOfPartitions.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-batchsize${params._1}-windowsize${params._2}-numwindows${params._3}-amplification${params._4}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      p.getAxis("x").setLabel("#partitions");
+      p.getAxis("y").setLabel("average wall time per window (ms)");
+      p.setTitle(s"${b.name} (batch = ${params._1} msgs, window = ${params._2}, #windows = ${params._3}, window amp. = ${params._4})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
+  {
+    val meanGroupedWindowSize = ImplResults.slices(
+      meanGroupedParams,
+      (req: StreamingWindowsRequest) => (req.numberOfPartitions, req.batchSize, req.windowSize, req.numberOfWindows),
+      (req: StreamingWindowsRequest) => {
+      	val lengthSec = scala.concurrent.duration.Duration(req.windowSize).toUnit(java.util.concurrent.TimeUnit.SECONDS);
+      	val unamplifiedSize = lengthSec * 0.008; // 8kB/s
+      	val amplifiedSize = (req.windowSizeAmplification.toDouble * unamplifiedSize);
+      	(amplifiedSize * 1000.0).round
+      }
+    );
+    meanGroupedWindowSize.foreach { case (params, impls) =>
+      val p = new JavaPlot();
+      if (!show) {
+        val outfile = output / s"${b.symbol}-numpartitions${params._1}-batchsize${params._2}-windowsize${params._3}-numwindows${params._4}.eps";
+        val epsf = new terminal.PostscriptTerminal(outfile.toString);
+        epsf.setColor(true);
+            p.setTerminal(epsf);
+      }
+      val xAxis = p.getAxis("x");
+      xAxis.setLabel("window size (kB)");
+      xAxis.setLogScale(true);
+      p.getAxis("y").setLabel("average wall time per window (ms)");
+      p.setTitle(s"${b.name} (#partitions = ${params._1}, batch = ${params._2} msgs, window = ${params._3}, #windows = ${params._4})");
+      impls.foreach { case (key, res) =>
+        val dsp = new gplot.DataSetPlot(res);
+        dsp.setTitle(res.implLabel);
+        val ps = new style.PlotStyle(style.Style.LINESPOINTS);
+        val colour = colourMap(key);
+        ps.setLineType(colour);
+        ps.setPointType(pointMap(key));
+        dsp.setPlotStyle(ps);
+        p.addPlot(dsp);
+      }
+      p.plot();
+    }
+  }
 }
 
 private def plotBenchAtomicReg(b: Benchmark, res: Map[String, ImplGroupedResult[String]], output: Path, show: Boolean): Unit = {
@@ -285,7 +364,7 @@ private def plotBenchTPPP(b: Benchmark, res: Map[String, ImplGroupedResult[Strin
 // From here: http://javaplot.panayotis.com/doc/com/panayotis/gnuplot/style/NamedPlotColor.html
 private val colourMap: Map[String, style.PlotColor] = Map(
 	"AKKA" -> style.NamedPlotColor.SKYBLUE,
-  "AKKATYPED" -> style.NamedPlotColor.ROYALBLUE,
+	"AKKATYPED" -> style.NamedPlotColor.ROYALBLUE,
 	"KOMPACTAC" -> style.NamedPlotColor.SEA_GREEN,
 	"KOMPACTCO" -> style.NamedPlotColor.SPRING_GREEN,
 	"KOMPACTMIX" -> style.NamedPlotColor.FOREST_GREEN,
@@ -311,5 +390,5 @@ private val colourMap2: Map[String, style.PlotColor] = Map(
 	"Riker" -> style.NamedPlotColor.MIDNIGHT_BLUE
 );
 
-private val pointMap: Map[String, Int] =
-	List("AKKA", "AKKATYPED", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "ACTIX").zipWithIndex.toMap.mapValues(_ + 1);
+private val pointMap: Map[String, Int] = 
+	List("AKKA", "AKKATYPED", "KOMPACTAC", "KOMPACTCO", "KOMPACTMIX", "KOMPICSJ", "KOMPICSSC", "KOMPICSSC2", "ACTIX", "ERLANG", "RIKER").zipWithIndex.toMap.mapValues(_ + 1);

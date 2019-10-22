@@ -1,15 +1,14 @@
 package se.kth.benchmarks.kompicsscala.bench
 
 import org.scalatest._
-import scala.util.{ Failure, Success, Try }
+import scala.util.{Failure, Success, Try}
 import se.kth.benchmarks.kompicsscala._
 import java.util.concurrent.CountDownLatch
 import se.kth.benchmarks.kompicsscala.bench.AtomicRegister._
 import se.sics.kompics.sl._
-import scala.concurrent.{Await, Promise}
+import scala.concurrent.Await
 import scala.concurrent.duration._
 import com.typesafe.scalalogging.StrictLogging
-import se.sics.kompics.config.Conversions
 
 class DistributedTest extends FunSuite with Matchers with StrictLogging {
 
@@ -62,7 +61,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     val pongDeserO = Serializers.fromBinary(buf, noHint);
     pongDeserO shouldBe a[NetMessage[_]];
     val pongDeser = pongDeserO.asInstanceOf[NetMessage[Pong.type]];
-    pongDeser should equal (pong);
+    pongDeser should equal(pong);
     /*
     buf.clear();
     // Atomic Register events
@@ -140,7 +139,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     valueDeser.ts should be (ts)
     valueDeser.wr should be (wr)
     valueDeser.value should be (v)
-    */
+   */
   }
 
   test("Throughput Network Ser/Deser") {
@@ -390,37 +389,5 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     latch.await();
 
     system.terminate();
-  }
-
-  test ("Kompics Scala2x Atomic Register Linearizability") {
-    import scala.collection.mutable.ListBuffer
-    import scala.collection.immutable.List
-    import scala.util.Random
-    import se.sics.kompics.sl.{Init => KompicsInit}
-    import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, isLinearizable}
-
-    val workloads = List((0.5f, 0.5f), (0.95f, 0.05f))
-    val r = Random
-    for ((read_workload, write_workload) <- workloads){
-      BenchNet.registerSerializers()
-      se.kth.benchmarks.kompicsjava.net.BenchNetSerializer.register()
-      Conversions.register(new se.kth.benchmarks.kompicsjava.net.NetAddressConverter())
-      PartitioningCompSerializer.register()
-      AtomicRegisterSerializer.register()
-
-      val num_keys: Long = r.nextInt(1000).toLong + 100L
-      val partition_size: Int = {
-        val i = r.nextInt(6) + 3
-        if (i % 2 == 0) i + 1 else i  // uneven partition size
-      }
-      val result_promise = Promise[List[KVTimestamp]]
-      val resultF = result_promise.future
-      logger.info(s"Atomic Register Linearizability Test with partition size: $partition_size, number of keys: $num_keys, r: $read_workload, w: $write_workload")
-      Kompics.createAndStart(classOf[KVLauncherComp], KompicsInit[KVLauncherComp](result_promise, partition_size, num_keys, read_workload, write_workload), 4)
-      val results: List[KVTimestamp] = Await.result(resultF, 30 seconds)
-      Kompics.shutdown()
-      val timestamps: Map[Long, List[KVTimestamp]] = results.groupBy(x => x.key)
-      timestamps.values.foreach(trace => isLinearizable(trace.sortBy(x => x.time), ListBuffer(0)) shouldBe true)
-    }
   }
 }

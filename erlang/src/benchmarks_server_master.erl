@@ -9,7 +9,8 @@
          'NetPingPong'/3,
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
-         'AtomicRegister'/3]).
+         'AtomicRegister'/3,
+         'StreamingWindows'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -25,6 +26,13 @@
       write_workload => float() | infinity | '-infinity' | nan,
       partition_size => integer(),
       number_of_keys => integer()}.
+
+-type 'StreamingWindowsRequest'() ::
+    #{number_of_partitions => integer(),
+      batch_size => integer(),
+      window_size => string(),
+      number_of_windows => integer(),
+      window_size_amplification => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -120,6 +128,14 @@ decoder() -> benchmarks.
 'AtomicRegister'(Message, Stream, _State) ->
     io:fwrite("Got AtomicRegister request.~n"),
     Response = await_benchmark_result(atomic_register_bench, Message),
+    {Response, Stream}.
+
+-spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'StreamingWindows'(Message, Stream, _State) ->
+    io:fwrite("Got StreamingWindows request.~n"),
+    Response = await_benchmark_result(streaming_windows_bench, Message),
     {Response, Stream}.
 
 -spec await_benchmark_result(Benchmark :: module(), Params :: term()) -> 'TestResult'().

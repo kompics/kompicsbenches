@@ -1,6 +1,5 @@
 //use super::*;
 
-use kompact::executors::*;
 use kompact::prelude::*;
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -25,7 +24,6 @@ pub struct KompactSystemProvider {
 
 mod consts {
     pub const NUM_WORKERS_DEFAULT: usize = 4;
-    pub const NUM_WORKERS_MAX: usize = 64;
 }
 
 impl KompactSystemProvider {
@@ -49,27 +47,17 @@ impl KompactSystemProvider {
         let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
-        Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         let system = conf.build().expect("KompactSystem");
         system
     }
 
-    pub fn new_remote_system<I: Into<String>>(&self, name: I) -> KompactSystem {
-        self.new_remote_system_with_threads(name, self.get_num_workers())
-    }
-
-    pub fn new_remote_system_with_threads<I: Into<String>>(
-        &self,
-        name: I,
-        threads: usize,
-    ) -> KompactSystem {
+    pub fn new_remote_system<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
         let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
-        Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
         let system = conf.build().expect("KompactSystem");
@@ -78,10 +66,8 @@ impl KompactSystemProvider {
 
     pub fn get_num_workers(&self) -> usize {
         let n = num_cpus::get();
-        if (n >= consts::NUM_WORKERS_DEFAULT) && (n <= consts::NUM_WORKERS_MAX) {
+        if n >= consts::NUM_WORKERS_DEFAULT {
             n
-        } else if n >= consts::NUM_WORKERS_DEFAULT {
-            consts::NUM_WORKERS_MAX
         } else {
             consts::NUM_WORKERS_DEFAULT
         }
@@ -89,17 +75,6 @@ impl KompactSystemProvider {
 
     pub fn get_public_if(&self) -> IpAddr {
         self.public_if
-    }
-
-    fn set_executor_for_threads(threads: usize, conf: &mut KompactConfig) -> () {
-        if threads <= 32 {
-            conf.executor(|t| crossbeam_workstealing_pool::small_pool(t))
-        } else if threads <= 64 {
-            conf.executor(|t| crossbeam_workstealing_pool::large_pool(t))
-        } else {
-            panic!("DynPool doesn't work atm!");
-            //conf.scheduler(|t| crossbeam_workstealing_pool::dyn_pool(t))
-        };
     }
 }
 

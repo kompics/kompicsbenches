@@ -144,7 +144,7 @@ pub mod actor_pingpong {
             ponger: ActorRef<StaticPingWithSender>,
         ) -> Pinger {
             Pinger {
-                ctx: ComponentContext::uninitialised(),
+                ctx: ComponentContext::new(),
                 latch,
                 ponger: ponger.hold().expect("Live ref"),
                 count_down: count,
@@ -152,12 +152,16 @@ pub mod actor_pingpong {
         }
     }
 
-    ignore_lifecycle!(Pinger);
+    impl Provide<ControlPort> for Pinger {
+        fn handle(&mut self, _event: ControlEvent) -> () {
+            // ignore
+        }
+    }
 
     impl Actor for Pinger {
         type Message = PingerMessage<&'static StaticPong>;
 
-        fn receive_local(&mut self, msg: Self::Message) -> Handled {
+        fn receive_local(&mut self, msg: Self::Message) -> () {
             match msg {
                 PingerMessage::Run => {
                     self.ponger.tell(WithSenderStrong::from(&STATIC_PING, self));
@@ -171,9 +175,8 @@ pub mod actor_pingpong {
                     }
                 }
             }
-            Handled::Ok
         }
-        fn receive_network(&mut self, msg: NetMessage) -> Handled {
+        fn receive_network(&mut self, msg: NetMessage) -> () {
             crit!(self.ctx.log(), "Got unexpected message: {:?}", msg);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -187,21 +190,24 @@ pub mod actor_pingpong {
     impl Ponger {
         fn new() -> Ponger {
             Ponger {
-                ctx: ComponentContext::uninitialised(),
+                ctx: ComponentContext::new(),
             }
         }
     }
 
-    ignore_lifecycle!(Ponger);
+    impl Provide<ControlPort> for Ponger {
+        fn handle(&mut self, _event: ControlEvent) -> () {
+            // ignore
+        }
+    }
 
     impl Actor for Ponger {
         type Message = StaticPingWithSender;
 
-        fn receive_local(&mut self, msg: Self::Message) -> Handled {
+        fn receive_local(&mut self, msg: Self::Message) -> () {
             msg.reply(PingerMessage::Pong(&STATIC_PONG));
-            Handled::Ok
         }
-        fn receive_network(&mut self, msg: NetMessage) -> Handled {
+        fn receive_network(&mut self, msg: NetMessage) -> () {
             crit!(self.ctx.log(), "Got unexpected message: {:?}", msg);
             unimplemented!(); // shouldn't happen during the test
         }
@@ -340,7 +346,7 @@ pub mod component_pingpong {
     #[derive(ComponentDefinition, Actor)]
     struct Pinger {
         ctx: ComponentContext<Pinger>,
-        ppp: RequiredPort<PingPongPort>,
+        ppp: RequiredPort<PingPongPort, Pinger>,
         latch: Arc<CountdownEvent>,
         count_down: u64,
     }
@@ -348,54 +354,58 @@ pub mod component_pingpong {
     impl Pinger {
         fn with(count: u64, latch: Arc<CountdownEvent>) -> Pinger {
             Pinger {
-                ctx: ComponentContext::uninitialised(),
-                ppp: RequiredPort::uninitialised(),
+                ctx: ComponentContext::new(),
+                ppp: RequiredPort::new(),
                 latch,
                 count_down: count,
             }
         }
     }
 
-    impl ComponentLifecycle for Pinger {
-        fn on_start(&mut self) -> Handled {
-            self.ppp.trigger(&STATIC_PING);
-            Handled::Ok
+    impl Provide<ControlPort> for Pinger {
+        fn handle(&mut self, event: ControlEvent) -> () {
+            match event {
+                ControlEvent::Start => self.ppp.trigger(&STATIC_PING),
+                _ => (), // ignore
+            }
         }
     }
 
     impl Require<PingPongPort> for Pinger {
-        fn handle(&mut self, _event: &StaticPong) -> Handled {
+        fn handle(&mut self, _event: &StaticPong) -> () {
             if self.count_down > 0 {
                 self.count_down -= 1;
                 self.ppp.trigger(&STATIC_PING);
             } else {
                 self.latch.decrement().expect("Should decrement!");
             }
-            Handled::Ok
         }
     }
 
     #[derive(ComponentDefinition, Actor)]
     struct Ponger {
         ctx: ComponentContext<Ponger>,
-        ppp: ProvidedPort<PingPongPort>,
+        ppp: ProvidedPort<PingPongPort, Ponger>,
     }
 
     impl Ponger {
         fn new() -> Ponger {
             Ponger {
-                ctx: ComponentContext::uninitialised(),
-                ppp: ProvidedPort::uninitialised(),
+                ctx: ComponentContext::new(),
+                ppp: ProvidedPort::new(),
             }
         }
     }
 
-    ignore_lifecycle!(Ponger);
+    impl Provide<ControlPort> for Ponger {
+        fn handle(&mut self, _event: ControlEvent) -> () {
+            // ignore
+        }
+    }
 
     impl Provide<PingPongPort> for Ponger {
-        fn handle(&mut self, _event: &StaticPing) -> Handled {
+        fn handle(&mut self, _event: &StaticPing) -> () {
             self.ppp.trigger(&STATIC_PONG);
-            Handled::Ok
         }
     }
 }

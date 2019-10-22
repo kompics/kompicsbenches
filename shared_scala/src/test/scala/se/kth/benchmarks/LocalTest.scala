@@ -58,10 +58,6 @@ class FailRunner(s: Stage) extends BenchmarkRunnerGrpc.BenchmarkRunner {
   override def atomicRegister(request: AtomicRegisterRequest): Future[TestResult] = Future.successful(NotImplemented());
   override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] =
     Future.successful(NotImplemented());
-
-  override def allPairsShortestPath(request: APSPRequest): Future[TestResult] = Future.successful(NotImplemented());
-  override def chameneos(request: ChameneosRequest): Future[TestResult] = Future.successful(NotImplemented());
-  override def fibonacci(request: FibonacciRequest): Future[TestResult] = Future.successful(NotImplemented());
 }
 
 object TestRunner extends BenchmarkRunnerGrpc.BenchmarkRunner {
@@ -99,26 +95,4 @@ object TestRunner extends BenchmarkRunnerGrpc.BenchmarkRunner {
 
   override def streamingWindows(request: StreamingWindowsRequest): Future[TestResult] =
     Future.successful(NotImplemented());
-
-  override def allPairsShortestPath(request: APSPRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(TestLocalBench)();
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
-  override def chameneos(request: ChameneosRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(TestLocalBench)();
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
-  override def fibonacci(request: FibonacciRequest): Future[TestResult] = {
-    Future {
-      val res = BenchmarkRunner.run(TestLocalBench)();
-      val msg = BenchmarkRunner.resultToTestResult(res);
-      msg
-    }
-  }
 }

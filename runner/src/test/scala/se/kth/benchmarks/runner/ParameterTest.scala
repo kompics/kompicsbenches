@@ -41,43 +41,4 @@ class ParameterTest extends FunSuite with Matchers {
     val pp_deser = space.paramsFromCSV(csv);
     pp_deser should equal(pp);
   }
-
-  test("Fibonaccy should CSV rountrip") {
-    val bench = Benchmarks.fibonacci;
-    Benchmarks.benchmarkLookup(bench.symbol) should be theSameInstanceAs bench;
-    val pp =
-      FibonacciRequest(fibNumber = 28);
-    val space = bench.space.asInstanceOf[ParameterSpacePB[FibonacciRequest]];
-    val descr = space.describe(pp);
-    val csv = descr.toCSV;
-    Console.err.println(s"Fibonacci CSV: $csv");
-    val pp_deser = space.paramsFromCSV(csv);
-    pp_deser should equal(pp);
-  }
-
-  test("Chameneos should CSV rountrip") {
-    val bench = Benchmarks.chameneos;
-    Benchmarks.benchmarkLookup(bench.symbol) should be theSameInstanceAs bench;
-    val pp =
-      ChameneosRequest(numberOfChameneos = 12, numberOfMeetings = 100000L);
-    val space = bench.space.asInstanceOf[ParameterSpacePB[ChameneosRequest]];
-    val descr = space.describe(pp);
-    val csv = descr.toCSV;
-    Console.err.println(s"Chameneos CSV: $csv");
-    val pp_deser = space.paramsFromCSV(csv);
-    pp_deser should equal(pp);
-  }
-
-  test("APSP should CSV rountrip") {
-    val bench = Benchmarks.allPairsShortestPath;
-    Benchmarks.benchmarkLookup(bench.symbol) should be theSameInstanceAs bench;
-    val pp =
-      APSPRequest(numberOfNodes = 128, blockSize = 8);
-    val space = bench.space.asInstanceOf[ParameterSpacePB[APSPRequest]];
-    val descr = space.describe(pp);
-    val csv = descr.toCSV;
-    Console.err.println(s"APSP CSV: $csv");
-    val pp_deser = space.paramsFromCSV(csv);
-    pp_deser should equal(pp);
-  }
 }

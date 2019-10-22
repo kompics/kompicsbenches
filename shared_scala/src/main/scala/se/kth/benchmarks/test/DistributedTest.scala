@@ -145,24 +145,67 @@ class DistributedTest(val benchFactory: BenchmarkFactory) extends Matchers with 
       checkResult("NetThroughputPingPong (gc)", tnpprResF2);
       logger.info("Finished test NetThroughputPingPong (gc)");
 
-    /*
-     * Clean Up
-     */
-    println("Sending shutdown request to master");
-    val sreq = ShutdownRequest().withForce(false);
-    val shutdownResF = benchStub.shutdown(sreq);
+      /*
+       * Atomic Register
+       */
+      logger.info("Starting test AtomicRegister");
+      val nnarr = AtomicRegisterRequest()
+        .withReadWorkload(0.5f)
+        .withWriteWorkload(0.5f)
+        .withPartitionSize(3)
+        .withNumberOfKeys(500);
+      val nnarResF = benchStub.atomicRegister(nnarr);
+      checkResult("Atomic Register", nnarResF);
+      logger.info("Finished test AtomicRegister");
 
-    println("Waiting for master to finish...");
-    masterThread.join();
-    println("Master is done.");
-    println("Waiting for client to finish...");
-    clientThread.join();
-    println("Client is done.");
+      /*
+       * Streaming Windows
+       */
+      logger.info("Starting test StreamingWindows");
+      val swr = StreamingWindowsRequest()
+        .withBatchSize(10)
+        .withNumberOfPartitions(2)
+        .withNumberOfWindows(2)
+        .withWindowSize("10ms")
+        .withWindowSizeAmplification(1000L);
+      val swResF = benchStub.streamingWindows(swr);
+      checkResult("Streaming Windows", swResF);
+      logger.info("Finished test StreamingWindows");
 
-    println(s"""
-%%%%%%%%%%%%%
-%% SUMMARY %%
-%%%%%%%%%%%%%
+      /*
+       * Clean Up
+       */
+      logger.debug("Sending shutdown request to master");
+      val sreq = ShutdownRequest().withForce(false);
+      val shutdownResF = benchStub.shutdown(sreq);
+
+      logger.debug("Waiting for master to finish...");
+      masterThread.join();
+      logger.debug("Master is done.");
+      logger.debug("Waiting for all clients to finish...");
+      clientThreads.foreach(t => t.join());
+      logger.debug("All clients are done.");
+    } catch {
+      case e: org.scalatest.exceptions.TestFailedException => throw e // let these pass through
+      case e: Throwable => {
+        logger.error("Error during test", e);
+        Console.err.println("Thrown error:");
+        e.printStackTrace(Console.err);
+        Console.err.println("Caused by:");
+        e.getCause().printStackTrace(Console.err);
+        fail(e);
+      }
+    } finally {
+      benchStub = null;
+      if (benchChannel != null) {
+        TestUtil.shutdownChannel(benchChannel);
+      }
+    }
+
+    logger.info(s"""
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% MASTER-CLIENT SUMMARY %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
 ${implemented.size} tests implemented: ${implemented.mkString(",")}
 ${notImplemented.size} tests not implemented: ${notImplemented.mkString(",")}
 """)

@@ -201,7 +201,8 @@ impl DistributedBenchmarkMaster for StreamingWindowsMaster {
         _m: &DeploymentMetaData,
     ) -> Result<Self::ClientConf, BenchmarkError> {
         let params = Params::from_req(&c)?;
-        let system = crate::kompact_system_provider::global().new_remote_system("streamingwindows");
+        let system = crate::kompact_system_provider::global()
+            .new_remote_system("streamingwindows", num_cpus::get());
 
         let mut sources: Vec<ActorPath> = Vec::new();
         for pid in 0..params.number_of_partitions {
@@ -328,7 +329,8 @@ impl DistributedBenchmarkClient for StreamingWindowsClient {
     fn setup(&mut self, mut c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up windowers.");
 
-        let system = crate::kompact_system_provider::global().new_remote_system("streamingwindows");
+        let system = crate::kompact_system_provider::global()
+            .new_remote_system("streamingwindows", num_cpus::get());
 
         let window_size = c.window_size;
         let batch_size = c.batch_size;
@@ -428,9 +430,9 @@ impl Serialisable for WindowerMsg {
                 value,
             } => {
                 buf.put_u8(Self::EVENT_FLAG);
-                buf.put_u64(*ts);
-                buf.put_u32(*partition_id);
-                buf.put_i64(*value);
+                buf.put_u64_be(*ts);
+                buf.put_u32_be(*partition_id);
+                buf.put_i64_be(*value);
             }
             WindowerMsg::Flush => buf.put_u8(Self::FLUSH_FLAG),
         }
@@ -449,9 +451,9 @@ impl Deserialiser<WindowerMsg> for WindowerMsg {
             Self::START_FLAG => Ok(WindowerMsg::Start),
             Self::STOP_FLAG => Ok(WindowerMsg::Stop),
             Self::EVENT_FLAG => {
-                let ts = buf.get_u64();
-                let pid = buf.get_u32();
-                let value = buf.get_i64();
+                let ts = buf.get_u64_be();
+                let pid = buf.get_u32_be();
+                let value = buf.get_i64_be();
                 Ok(WindowerMsg::event(ts, pid, value))
             }
             Self::FLUSH_FLAG => Ok(WindowerMsg::Flush),
@@ -484,7 +486,7 @@ impl Windower {
         let window_size_ms = window_size.as_millis() as u64; // see above for cast explanation
         let ready_mark = batch_size / 2;
         Windower {
-            ctx: ComponentContext::uninitialised(),
+            ctx: ComponentContext::new(),
             window_size_ms,
             batch_size,
             amplification,
@@ -543,7 +545,7 @@ impl Windower {
                 value: median,
             };
             downstream
-                .tell_serialised(msg, self)
+                .tell_ser(msg.serialised(), self)
                 .expect("Should serialise");
         } else {
             unimplemented!();
@@ -558,20 +560,20 @@ impl Windower {
                 batch_size: self.received_since_ready,
             };
             self.upstream
-                .tell_serialised(msg, self)
+                .tell_ser(msg.serialised(), self)
                 .expect("Should serialise");
             self.received_since_ready = 0u64;
         }
     }
 }
 
-ignore_lifecycle!(Windower);
+ignore_control!(Windower);
 
 impl NetworkActor for Windower {
     type Message = WindowerMsg;
     type Deserialiser = WindowerMsg;
 
-    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> Handled {
+    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> () {
         match msg {
             WindowerMsg::Start if !self.running => {
                 debug!(self.ctx.log(), "Got Start");
@@ -582,7 +584,7 @@ impl NetworkActor for Windower {
                     batch_size: self.batch_size,
                 };
                 self.upstream
-                    .tell_serialised(msg, self)
+                    .tell_ser(msg.serialised(), self)
                     .expect("Should serialise!");
             }
             WindowerMsg::Stop if self.running => {
@@ -613,12 +615,11 @@ impl NetworkActor for Windower {
             }
             WindowerMsg::Flush => {
                 self.upstream
-                    .tell_serialised(SourceMsg::Flushed, self)
+                    .tell_ser(SourceMsg::Flushed.serialised(), self)
                     .expect("Should serialise");
             }
             _ => unimplemented!("Unexpected message {:?} when running={}", msg, self.running),
         }
-        Handled::Ok
     }
 }
 
@@ -653,7 +654,7 @@ impl Serialisable for SourceMsg {
             SourceMsg::Next => unimplemented!("Next shouldn't be sent over network!"),
             SourceMsg::Ready { batch_size: bs } => {
                 buf.put_u8(Self::READY_FLAG);
-                buf.put_u64(*bs);
+                buf.put_u64_be(*bs);
             }
             SourceMsg::Flushed => buf.put_u8(Self::FLUSHED_FLAG),
         }
@@ -670,7 +671,7 @@ impl Deserialiser<SourceMsg> for SourceMsg {
         let flag = buf.get_u8();
         match flag {
             Self::READY_FLAG => {
-                let bs = buf.get_u64();
+                let bs = buf.get_u64_be();
                 Ok(SourceMsg::Ready { batch_size: bs })
             }
             Self::FLUSHED_FLAG => Ok(SourceMsg::Flushed),
@@ -694,7 +695,7 @@ impl StreamSource {
     pub fn with(partition_id: u32) -> StreamSource {
         let random = SmallRng::seed_from_u64(partition_id as u64);
         StreamSource {
-            ctx: ComponentContext::uninitialised(),
+            ctx: ComponentContext::new(),
             partition_id,
             random,
             downstream: None,
@@ -710,7 +711,7 @@ impl StreamSource {
             if let Some(ref downstream) = self.downstream {
                 let msg = WindowerMsg::event(self.current_ts, self.partition_id, self.random.gen());
                 downstream
-                    .tell_serialised(msg, self)
+                    .tell_ser(msg.serialised(), self)
                     .expect("Should serialise!");
             } else {
                 unimplemented!();
@@ -725,12 +726,12 @@ impl StreamSource {
         }
     }
 }
-ignore_lifecycle!(StreamSource);
+ignore_control!(StreamSource);
 impl NetworkActor for StreamSource {
     type Message = SourceMsg;
     type Deserialiser = SourceMsg;
 
-    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> Handled {
+    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> () {
         match msg {
             SourceMsg::Ready { batch_size } if !self.flushing => {
                 debug!(self.ctx().log(), "Got Ready!");
@@ -747,7 +748,7 @@ impl NetworkActor for StreamSource {
                 self.reply_on_flushed = Some(ask);
                 if let Some(downstream) = self.downstream.take() {
                     downstream
-                        .tell_serialised(WindowerMsg::Flush, self)
+                        .tell_ser(WindowerMsg::Flush.serialised(), self)
                         .expect("serialise!");
                 } else {
                     unimplemented!();
@@ -770,7 +771,6 @@ impl NetworkActor for StreamSource {
                 self.flushing
             ),
         }
-        Handled::Ok
     }
 }
 
@@ -812,9 +812,9 @@ impl Serialisable for SinkMsg {
                 partition_id,
                 value,
             } => {
-                buf.put_u64(*ts);
-                buf.put_u32(*partition_id);
-                buf.put_f64(*value);
+                buf.put_u64_be(*ts);
+                buf.put_u32_be(*partition_id);
+                buf.put_f64_be(*value);
             }
         }
         Ok(())
@@ -834,9 +834,9 @@ impl Deserialiser<SinkMsg> for SinkMsg {
                 buf.remaining()
             )))
         } else {
-            let ts = buf.get_u64();
-            let pid = buf.get_u32();
-            let value = buf.get_f64();
+            let ts = buf.get_u64_be();
+            let pid = buf.get_u32_be();
+            let value = buf.get_f64_be();
             Ok(SinkMsg::window(ts, pid, value))
         }
     }
@@ -857,7 +857,7 @@ impl StreamSink {
         upstream: ActorPath,
     ) -> StreamSink {
         StreamSink {
-            ctx: ComponentContext::uninitialised(),
+            ctx: ComponentContext::new(),
             latch,
             number_of_windows,
             upstream,
@@ -865,17 +865,17 @@ impl StreamSink {
         }
     }
 }
-ignore_lifecycle!(StreamSink);
+ignore_control!(StreamSink);
 impl NetworkActor for StreamSink {
     type Message = SinkMsg;
     type Deserialiser = SinkMsg;
 
-    fn receive(&mut self, _sender: Option<ActorPath>, msg: Self::Message) -> Handled {
+    fn receive(&mut self, _sender: Option<ActorPath>, msg: Self::Message) {
         match msg {
             SinkMsg::Run => {
                 debug!(self.ctx().log(), "Got Run");
                 self.upstream
-                    .tell_serialised(WindowerMsg::Start, self)
+                    .tell_ser(WindowerMsg::Start.serialised(), self)
                     .expect("Should serialise");
             }
             SinkMsg::WindowAggregate { value: median, .. } => {
@@ -884,7 +884,7 @@ impl NetworkActor for StreamSink {
                 if self.window_count == self.number_of_windows {
                     self.latch.decrement().expect("Latch should decrement");
                     self.upstream
-                        .tell_serialised(WindowerMsg::Stop, self)
+                        .tell_ser(WindowerMsg::Stop.serialised(), self)
                         .expect("Should serialise");
                     debug!(self.ctx().log(), "Done!");
                 } else {
@@ -895,6 +895,5 @@ impl NetworkActor for StreamSink {
                 }
             }
         }
-        Handled::Ok
     }
 }
