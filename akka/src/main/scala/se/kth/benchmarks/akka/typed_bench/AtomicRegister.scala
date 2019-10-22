@@ -70,7 +70,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
-      val numNodes = meta.numberOfClients;
+      val numNodes = meta.numberOfClients + 1;
       assert(partition_size <= numNodes, s"Invalid partition size $partition_size > $numNodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
@@ -78,7 +78,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.system = ActorSystemProvider.newRemoteTypedActorSystem[SystemSupervisor.SystemMessage](
         SystemSupervisor(),
         s"atomicreg_supervisor${randomUUID()}",
-        1,
+        4,
         serializers
       )
 
@@ -204,7 +204,7 @@ object AtomicRegister extends DistributedBenchmark {
       system = ActorSystemProvider.newRemoteTypedActorSystem[AtomicRegisterMessage](
         AtomicRegisterActor(read_workload, write_workload),
         s"atomicreg_client${randomUUID()}",
-        1,
+        4,
         serializers
       )
       val resolver = ActorRefResolver(system)

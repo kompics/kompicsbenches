@@ -48,12 +48,12 @@ object AtomicRegister extends DistributedBenchmark {
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
-      val num_nodes = meta.numberOfClients;
+      val num_nodes = meta.numberOfClients + 1;
       assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
              s"Invalid workload sum ${read_workload + write_workload} != 1.0");
-      this.system = KompicsSystemProvider.newRemoteKompicsSystem(1);
+      this.system = KompicsSystemProvider.newRemoteKompicsSystem(4);
       ClientParams(read_workload, write_workload)
     };
     override def prepareIteration(d: List[ClientData]): Unit = {
@@ -129,7 +129,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     override def setup(c: ClientConf): ClientData = {
       logger.info("Setting up Client");
-      system = KompicsSystemProvider.newRemoteKompicsSystem(1);
+      system = KompicsSystemProvider.newRemoteKompicsSystem(4);
       AtomicRegisterSerializer.register();
       JPartitioningCompSerializer.register();
       val addr = system.networkAddress.get;

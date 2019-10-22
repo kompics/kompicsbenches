@@ -247,7 +247,7 @@ atomic_register(State) ->
   CurrentRunId = State#atomicreg_state.run_id,
   receive
     {init, Rank, InitId, Nodes, Master, MinKey, MaxKey} ->
-      NewState = State#atomicreg_state{rank = Rank, run_id = InitId, nodes = Nodes, n = length(Nodes), master = Master, min_key = MinKey, max_key = MaxKey},
+      NewState = State#atomicreg_state{rank = Rank, run_id = InitId, nodes = Nodes, n = length(Nodes), master = Master, min_key = MinKey, max_key = MaxKey, register_readlist = maps:new(), register_state = maps:new()},
       Master ! {init_ack, InitId},
       atomic_register(NewState);
 
@@ -284,7 +284,7 @@ atomic_register(State) ->
           if
             map_size(NewReadList) > (State#atomicreg_state.n / 2) ->
               if
-                UpdatedCurrentRegister#register_state.reading and UpdatedCurrentRegister#register_state.skip_impose ->
+                (UpdatedCurrentRegister#register_state.reading) andalso (UpdatedCurrentRegister#register_state.skip_impose) ->
                   ReadVal = UpdatedCurrentRegister#register_state.readval,
                   NewRegisterState = UpdatedCurrentRegister#register_state{value = ReadVal},
                   NewRegisterStateMap = maps:put(Key, NewRegisterState, State#atomicreg_state.register_state),
@@ -420,7 +420,7 @@ read_response(State, _Key, _Value) ->
   WriteCount = State#atomicreg_state.write_count,
   NewState = State#atomicreg_state{read_count = ReadCount},
   if
-    (ReadCount == 0) and (WriteCount == 0) ->
+    (ReadCount == 0) andalso (WriteCount == 0) ->
       logger:info("DONE!!!"),
       State#atomicreg_state.master ! done,
       NewState;
@@ -434,7 +434,7 @@ write_response(State, _Key) ->
   ReadCount = State#atomicreg_state.read_count,
   NewState = State#atomicreg_state{write_count = WriteCount},
   if
-    (WriteCount == 0) and (ReadCount == 0) ->
+    (WriteCount == 0) andalso (ReadCount == 0) ->
       logger:info("DONE!!!"),
       State#atomicreg_state.master ! done,
       NewState;

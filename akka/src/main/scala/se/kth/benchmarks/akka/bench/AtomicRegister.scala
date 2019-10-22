@@ -64,13 +64,13 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
-      val numNodes = meta.numberOfClients;
+      val numNodes = meta.numberOfClients + 1;
       assert(partition_size <= numNodes, s"Invalid partition size $partition_size > $numNodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
              s"Invalid workload sum ${read_workload + write_workload} != 1.0");
       this.system =
-        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 1, serialization = serializers);
+        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 4, serialization = serializers);
       ClientParams(read_workload, write_workload)
     };
 
@@ -145,7 +145,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
     override def setup(c: ClientConf): ClientData = {
       system =
-        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 1, serialization = serializers);
+        ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 4, serialization = serializers);
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
       atomicRegister =
