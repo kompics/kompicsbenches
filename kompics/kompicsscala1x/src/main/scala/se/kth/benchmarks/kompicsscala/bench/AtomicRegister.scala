@@ -569,7 +569,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
-      val num_nodes = meta.numberOfClients;
+      val num_nodes = meta.numberOfClients + 1;
       assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
@@ -584,7 +584,6 @@ object AtomicRegister extends DistributedBenchmark {
       val addr = system.networkAddress.get;
       logger.trace(s"Atomic Register(Master) Path is $addr");
       val nodes = addr :: d;
-      val num_nodes = nodes.size;
       val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)); // TODO parallelism
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
@@ -817,13 +816,11 @@ object AtomicRegister extends DistributedBenchmark {
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
       if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
-
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
       if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
-
     }
 
     ctrl uponEvent {
