@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 package se.kth.benchmarks.akka.bench
 
 import se.kth.benchmarks._
@@ -10,3 +11,20 @@ object Factory extends BenchmarkFactory {
   override def atomicRegister(): DistributedBenchmark = AtomicRegister;
   override def streamingWindows(): DistributedBenchmark = StreamingWindows;
 }
+=======
+package se.kth.benchmarks.akka.bench
+
+import se.kth.benchmarks._
+
+object Factory extends BenchmarkFactory {
+  override def pingPong(): Benchmark = PingPong;
+  override def netPingPong(): DistributedBenchmark = NetPingPong;
+  override def netThroughputPingPong(): se.kth.benchmarks.DistributedBenchmark = NetThroughputPingPong;
+  override def throughputPingPong(): se.kth.benchmarks.Benchmark = ThroughputPingPong;
+  override def atomicRegister(): DistributedBenchmark = AtomicRegister;
+  override def streamingWindows(): DistributedBenchmark = StreamingWindows;
+  override def allPairsShortestPath(): se.kth.benchmarks.Benchmark = AllPairsShortestPath;
+  override def chameneos(): se.kth.benchmarks.Benchmark = Chameneos;
+  override def fibonacci: se.kth.benchmarks.Benchmark = Fibonacci;
+}
+>>>>>>> c92c44604e519dd0b6cc96f7ef122b9ca6b9cde1

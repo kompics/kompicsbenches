@@ -1,0 +1,7 @@
+### Can't make it debug log -.-
+
+#debug = true
+
+#[log]
+# max level to log
+#level = "debug"

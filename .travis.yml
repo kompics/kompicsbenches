@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # make sure protobuf library is installed for build to succeed
 before_install:
   - ./scripts/travis_install_protobuf.sh
@@ -139,3 +140,146 @@ matrix:
       scala: 2.12.8
       script:
         - ./scripts/run-scala-tests.sh
+=======
+# make sure protobuf library is installed for build to succeed
+before_install:
+  - ./scripts/travis_install_protobuf.sh
+
+matrix:
+  fast_finish: true
+
+  include:
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: openjdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      osx_image: xcode9.3
+      jdk: oraclejdk8
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk9
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      osx_image: xcode11
+      jdk: oraclejdk9
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      osx_image: xcode11
+      jdk: oraclejdk11
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk11
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk11
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: osx
+      osx_image: xcode11
+      jdk: oraclejdk12
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk12
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk14
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: rust
+      os: linux
+      rust: nightly
+      script:
+          - ./scripts/run-rust-tests.sh
+
+    - language: rust
+      os: osx
+      rust: nightly
+      script:
+          - ./scripts/run-rust-tests.sh
+
+    - language: erlang
+      os: linux
+      otp_release: 22.0
+      script:
+        - cd erlang
+        - make check
+        - cd ..
+
+  allow_failures:
+
+    - language: scala
+      os: osx
+      osx_image: xcode11
+      jdk: oraclejdk12 # also doesn't work well with SBT, yet
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk12 # also doesn't work well with SBT, yet
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+
+    - language: scala
+      os: linux
+      dist: trusty
+      jdk: oraclejdk14 # because it's not supported by SBT, apparently
+      scala: 2.12.8
+      script:
+        - ./scripts/run-scala-tests.sh
+>>>>>>> c92c44604e519dd0b6cc96f7ef122b9ca6b9cde1

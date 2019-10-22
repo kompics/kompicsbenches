@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <configuration>
   <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
     <!-- encoders are assigned the type
@@ -11,3 +12,20 @@
     <appender-ref ref="STDOUT" />
   </root>
 </configuration>
+=======
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <!-- encoders are assigned the type
+         ch.qos.logback.classic.encoder.PatternLayoutEncoder by default -->
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+
+  <logger name="se.kth.benchmarks.kompicsjava.bench" level="INFO"/>
+
+  <root level="WARN">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>
+>>>>>>> c92c44604e519dd0b6cc96f7ef122b9ca6b9cde1
