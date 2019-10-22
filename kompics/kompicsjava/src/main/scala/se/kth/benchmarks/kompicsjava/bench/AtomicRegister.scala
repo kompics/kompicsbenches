@@ -48,7 +48,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.write_workload = c.writeWorkload;
       this.partition_size = c.partitionSize;
       this.num_keys = c.numberOfKeys;
-      val num_nodes = meta.numberOfClients;
+      val num_nodes = meta.numberOfClients + 1;
       assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
