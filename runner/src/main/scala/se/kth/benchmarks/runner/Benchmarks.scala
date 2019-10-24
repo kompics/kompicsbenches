@@ -162,7 +162,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.atomicRegister(request)
     },
     space = ParameterSpacePB
-      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5, 7, 9), List(10L.k, 20L.k, 40L.k, 80L.k))
+      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5, 7), List(2.k, 10.k, 20.k, 40.k))
       .msg[AtomicRegisterRequest] {
         case ((read_workload, write_workload), p, k) =>
           AtomicRegisterRequest(readWorkload = read_workload,

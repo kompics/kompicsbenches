@@ -14,6 +14,7 @@ object Main {
   implicit val ec = ExecutionContext.global;
 
   def main(args: Array[String]): Unit = {
+    println(s"Got args: ${args.mkString("["," | ","]")}");
     val conf = new Conf(args);
     val (host, port) = conf.server();
 
@@ -50,10 +51,9 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
     default = Some(false)
   );
 
-  val benchmarks = opt[List[String]](
-    descr = "Only run benchmarks whose symbols appear in this list.",
-    default = Some(Nil)
-  );
+  val benchmarks = opt[String](
+    descr = "Only run benchmarks whose symbols appear in this list."
+  ).map(_.split(",").toList);
 
   requireOne(outputFolder, console);
 
