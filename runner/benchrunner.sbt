@@ -14,7 +14,7 @@ libraryDependencies ++= Seq(
     "com.lkroll.common" %% "common-data-tools" % "1.+",
     "ch.qos.logback" % "logback-classic" % "1.2.3",
     "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0",
-    "org.rogach" %% "scallop" % "3.1.2",
+    "org.rogach" %% "scallop" % "3.3.1",
     "org.scalatest" %% "scalatest" % "3.0.8" % "test",
     "com.panayotis.javaplot" % "javaplot" % "0.5.0" % "provided"
     //"com.thesamet.scalapb" %% "scalapb-runtime-grpc" % "0.8.2"

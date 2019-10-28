@@ -1,3 +1,29 @@
+<<<<<<< HEAD
+[package]
+name = "benchmark_suite_shared"
+version = "1.0.0"
+authors = ["Lars Kroll <lkroll@kth.se>"]
+edition = "2018"
+
+[dependencies]
+futures         = "0.1"
+protobuf        = "2"
+grpc 			= "0.6.1"
+tls-api 		= "0.1"
+slog 			= {version = "2.4", features = ["max_level_trace", "release_max_level_info"]}
+slog-term 		= "2.4"
+time 			= "0.1"
+crossbeam		= "0.6"
+# Logging for the grpc library
+log 			= { version = "0.4.6", features = ["max_level_info", "release_max_level_error"] }
+slog-stdlog 	= "3.0.2"
+slog-scope 		= "4.1.1"
+retry 			= "0.5.1"
+arraymap 		= "0.1.1"
+
+[build-dependencies]
+protoc-rust-grpc = "0.6.1"
+=======
 [package]
 name = "benchmark_suite_shared"
 version = "1.0.0"
@@ -23,3 +49,4 @@ rand 			= {version = "0.7", features = ["small_rng"]}
 
 [build-dependencies]
 protoc-rust-grpc = "0.6.1"
+>>>>>>> c92c44604e519dd0b6cc96f7ef122b9ca6b9cde1
