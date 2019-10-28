@@ -152,11 +152,7 @@ pub mod actor_pingpong {
         }
     }
 
-    impl Provide<ControlPort> for Pinger {
-        fn handle(&mut self, _event: ControlEvent) -> () {
-            // ignore
-        }
-    }
+    ignore_control!(Pinger);
 
     impl Actor for Pinger {
         type Message = PingerMessage<&'static StaticPong>;
@@ -195,11 +191,7 @@ pub mod actor_pingpong {
         }
     }
 
-    impl Provide<ControlPort> for Ponger {
-        fn handle(&mut self, _event: ControlEvent) -> () {
-            // ignore
-        }
-    }
+    ignore_control!(Ponger);
 
     impl Actor for Ponger {
         type Message = StaticPingWithSender;
@@ -397,11 +389,7 @@ pub mod component_pingpong {
         }
     }
 
-    impl Provide<ControlPort> for Ponger {
-        fn handle(&mut self, _event: ControlEvent) -> () {
-            // ignore
-        }
-    }
+    ignore_control!(Ponger);
 
     impl Provide<PingPongPort> for Ponger {
         fn handle(&mut self, _event: &StaticPing) -> () {

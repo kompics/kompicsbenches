@@ -127,7 +127,7 @@ impl DistributedBenchmarkMaster for PingPongMaster {
     ) -> Result<Self::ClientConf, BenchmarkError> {
         let params = Params::from_req(&c);
         let system = crate::kompact_system_provider::global()
-            .new_remote_system("throughputpingpong", num_cpus::get());
+            .new_remote_system("throughputpingpong");
         self.system = Some(system);
         let client_conf = ClientParams::new(params.num_pairs, params.static_only);
         self.params = Some(params);
@@ -247,7 +247,7 @@ impl DistributedBenchmarkClient for PingPongClient {
         println!("Setting up ponger.");
 
         let system = crate::kompact_system_provider::global()
-            .new_remote_system("throughputpingpong", num_cpus::get());
+            .new_remote_system("throughputpingpong");
         let (pongers, ponger_refs) = if c.static_only {
             let mut vpo = Vec::with_capacity(c.num_pongers as usize);
             let mut vpor = Vec::with_capacity(c.num_pongers as usize);

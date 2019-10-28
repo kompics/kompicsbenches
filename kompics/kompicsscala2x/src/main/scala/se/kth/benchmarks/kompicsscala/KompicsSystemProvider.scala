@@ -164,8 +164,8 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
         replyPromise();
       } else {
         awaitingStarted.get(cid) match {
-          case Some(p) => p.success()
-          case None    => log.error(s"Could not find starting component with id=$cid")
+          case Some(p) => p.success(())
+          case None    => log.debug(s"Could not find starting component with id=$cid")
         }
       }
     }
@@ -176,8 +176,8 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
         logger.info("Network component is killed.");
       } else {
         awaitingKilled.remove(cid) match {
-          case Some(p) => p.success()
-          case None    => log.error(s"Could not find dying component with id=$cid")
+          case Some(p) => p.success(())
+          case None    => log.debug(s"Could not find dying component with id=$cid")
         }
       }
     }
@@ -253,7 +253,7 @@ class KompicsSystem(init: Init[KompicsSystem]) extends ComponentDefinition {
       children.get(cid) match {
         case Some(c) => {
           trigger(event -> c.control())
-          p.success()
+          p.success(())
         }
         case None => p.failure(new BenchmarkException(s"Could not find component with id=$cid to trigger $event on!"))
       }

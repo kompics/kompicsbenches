@@ -10,7 +10,12 @@
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
          'AtomicRegister'/3,
-         'StreamingWindows'/3]).
+         'StreamingWindows'/3,
+         'Fibonacci'/3,
+         'Chameneos'/3,
+         'AllPairsShortestPath'/3]).
+
+-export([await_benchmark_result/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -33,6 +38,17 @@
       window_size => string(),
       number_of_windows => integer(),
       window_size_amplification => integer()}.
+
+-type 'FibonacciRequest'() ::
+    #{fib_number => integer()}.
+
+-type 'ChameneosRequest'() ::
+    #{number_of_chameneos => integer(),
+      number_of_meetings => integer()}.
+
+-type 'APSPRequest'() ::
+    #{number_of_nodes => integer(),
+      block_size => integer()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -74,11 +90,6 @@ decoder() -> benchmarks.
 %% This is a unary RPC
 'Ready'(_Message, Stream, _State) ->
     io:fwrite("Got ready request.~n"),
-    % io:fwrite("Stream was:~p ~n", [Stream]),
-    % Stream2 = grpc:set_headers(Stream, #{
-    %   <<"content-type">> => <<"application/grpc">>
-    % }),
-    % io:fwrite("Stream was later:~p ~n", [Stream2]),
     {#{status => true}, Stream}.
 
 -spec 'Shutdown'(Message::'ShutdownRequest'(), Stream::grpc:stream(), State::any()) ->
@@ -93,10 +104,7 @@ decoder() -> benchmarks.
 %% This is a unary RPC
 'PingPong'(Message, Stream, _State) ->
     io:fwrite("Got PingPong request.~n"),
-    Res = benchmark_runner:run(ping_pong_bench,Message),
-    io:fwrite("Finished PingPong run with ~p.~n", [Res]),
-    Response = test_result:from_result(Res),
-    io:fwrite("Sending PingPong response ~p.~n", [Response]),
+    {ok, Response} = await_benchmark_result(ping_pong_bench, Message, "PingPong"),
     {Response, Stream}.
 
 -spec 'NetPingPong'(Message::'PingPongRequest'(), Stream::grpc:stream(), State::any()) ->
@@ -109,9 +117,10 @@ decoder() -> benchmarks.
 -spec 'ThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'ThroughputPingPong'(_Message, Stream, _State) ->
+'ThroughputPingPong'(Message, Stream, _State) ->
     io:fwrite("Got ThroughputPingPong request.~n"),
-    {test_result:not_implemented(), Stream}.
+    {ok, Response} = await_benchmark_result(throughput_ping_pong_bench, Message, "ThroughputPingPong"),
+    {Response, Stream}.
 
 -spec 'NetThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
@@ -133,3 +142,36 @@ decoder() -> benchmarks.
 'StreamingWindows'(_Message, Stream, _State) ->
     io:fwrite("Got StreamingWindows request.~n"),
   {test_result:not_implemented(), Stream}.
+
+-spec 'Fibonacci'(Message::'FibonacciRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'Fibonacci'(Message, Stream, _State) ->
+    io:fwrite("Got Fibonacci request.~n"),
+    {ok, Response} = await_benchmark_result(fibonacci_bench, Message, "Fibonacci"),
+    {Response, Stream}.
+
+-spec 'Chameneos'(Message::'ChameneosRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'Chameneos'(Message, Stream, _State) ->
+    io:fwrite("Got Chameneos request.~n"),
+    {ok, Response} = await_benchmark_result(chameneos_bench, Message, "Chameneos"),
+    {Response, Stream}.
+
+-spec 'AllPairsShortestPath'(Message::'APSPRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'AllPairsShortestPath'(Message, Stream, _State) ->
+    io:fwrite("Got APSP request.~n"),
+    {ok, Response} = await_benchmark_result(all_pairs_shortest_path_bench, Message, "AllPairsShortestPath"),
+    {Response, Stream}.
+
+-spec await_benchmark_result(Bench :: module(), Message :: any(), Label :: string()) -> {ok, benchmarks:'TestResult'()}.
+await_benchmark_result(Bench, Message, Label) ->
+  io:fwrite("Got ~s request.~n", [Label]),
+  Res = bench_helpers:isolate(fun() -> benchmark_runner:run(Bench,Message) end),
+  io:fwrite("Finished ~s run with ~p.~n", [Label, Res]),
+  Response = test_result:from_result(Res),
+  io:fwrite("Sending ~s response ~p.~n", [Label, Response]),
+  {ok, Response}.

@@ -4,6 +4,7 @@ pub mod benchmark;
 pub mod benchmark_client;
 pub mod benchmark_master;
 pub mod benchmark_runner;
+pub mod helpers;
 pub mod kompics_benchmarks;
 
 pub use self::benchmark::*;
@@ -228,6 +229,9 @@ pub mod test_utils {
             }
         }
 
+        /*
+         * Ping Pong
+         */
         let mut ppr = benchmarks::PingPongRequest::new();
         ppr.set_number_of_messages(100);
         let ppres_f =
@@ -242,6 +246,9 @@ pub mod test_utils {
         //assert!(nppres.has_success(), "NetPingPong TestResult should have been a success!");
         check_result("NetPingPong", nppres);
 
+        /*
+         * (Net) Throughput Ping Pong
+         */
         let mut tppr = benchmarks::ThroughputPingPongRequest::new();
         tppr.set_messages_per_pair(100);
         tppr.set_pipeline_size(10);
@@ -288,7 +295,9 @@ pub mod test_utils {
         // );
         check_result("NetThroughputPingPong (GC)", ntppres2);
 
-        
+        /*
+         * Atomic Register
+         */
         let mut nnar_request = benchmarks::AtomicRegisterRequest::new();
         nnar_request.set_read_workload(0.5);
         nnar_request.set_write_workload(0.5);
@@ -301,6 +310,9 @@ pub mod test_utils {
         let nnares = nnares_f.wait().expect("nnar result");
         check_result("Atomic Register", nnares);
 
+        /*
+         * Streaming Windows
+         */
         let mut sw_request = benchmarks::StreamingWindowsRequest::new();
         sw_request.set_batch_size(10);
         sw_request.set_number_of_partitions(2);
@@ -313,6 +325,38 @@ pub mod test_utils {
             .drop_metadata();
         let swres = swres_f.wait().expect("sw result");
         check_result("Streaming Windows", swres);
+
+        /*
+         * Fibonacci
+         */
+        let mut fibr = benchmarks::FibonacciRequest::new();
+        fibr.set_fib_number(15);
+        let fibres_f = bench_stub.fibonacci(grpc::RequestOptions::default(), fibr).drop_metadata();
+        let fibres = fibres_f.wait().expect("fib result");
+        check_result("Fibonacci", fibres);
+
+        /*
+         * Chameneos
+         */
+        let mut chamr = benchmarks::ChameneosRequest::new();
+        chamr.set_number_of_chameneos(10);
+        chamr.set_number_of_meetings(100);
+        let chamres_f =
+            bench_stub.chameneos(grpc::RequestOptions::default(), chamr).drop_metadata();
+        let chamres = chamres_f.wait().expect("cham result");
+        check_result("Chameneos", chamres);
+
+        /*
+         * All-Pairs Shortest Path
+         */
+        let mut apspr = benchmarks::APSPRequest::new();
+        apspr.set_number_of_nodes(12);
+        apspr.set_block_size(4);
+        let apspres_f = bench_stub
+            .all_pairs_shortest_path(grpc::RequestOptions::default(), apspr)
+            .drop_metadata();
+        let apspres = apspres_f.wait().expect("apsp result");
+        check_result("AllPairsShortestPath", apspres);
 
         info!(logger, "Sending shutdown request to master");
         let mut sreq = messages::ShutdownRequest::new();
@@ -433,6 +477,9 @@ pub mod test_utils {
             }
         }
 
+        /*
+         * Ping Pong
+         */
         let mut ppr = benchmarks::PingPongRequest::new();
         ppr.set_number_of_messages(100);
         let ppres_f =
@@ -440,6 +487,9 @@ pub mod test_utils {
         let ppres = ppres_f.wait().expect("pp result");
         check_result("PingPong", ppres);
 
+        /*
+         * Throughput Ping Pong
+         */
         let mut tppr = benchmarks::ThroughputPingPongRequest::new();
         tppr.set_messages_per_pair(100);
         tppr.set_pipeline_size(10);
@@ -461,6 +511,38 @@ pub mod test_utils {
         //     "ThroughputPingPong (GC) TestResult should have been a success!"
         // );
         check_result("ThroughputPingPong (GC)", tppres2);
+
+        /*
+         * Fibonacci
+         */
+        let mut fibr = benchmarks::FibonacciRequest::new();
+        fibr.set_fib_number(15);
+        let fibres_f = bench_stub.fibonacci(grpc::RequestOptions::default(), fibr).drop_metadata();
+        let fibres = fibres_f.wait().expect("fib result");
+        check_result("Fibonacci", fibres);
+
+        /*
+         * Chameneos
+         */
+        let mut chamr = benchmarks::ChameneosRequest::new();
+        chamr.set_number_of_chameneos(10);
+        chamr.set_number_of_meetings(100);
+        let chamres_f =
+            bench_stub.chameneos(grpc::RequestOptions::default(), chamr).drop_metadata();
+        let chamres = chamres_f.wait().expect("cham result");
+        check_result("Chameneos", chamres);
+
+        /*
+         * All-Pairs Shortest Path
+         */
+        let mut apspr = benchmarks::APSPRequest::new();
+        apspr.set_number_of_nodes(12);
+        apspr.set_block_size(4);
+        let apspres_f = bench_stub
+            .all_pairs_shortest_path(grpc::RequestOptions::default(), apspr)
+            .drop_metadata();
+        let apspres = apspres_f.wait().expect("apsp result");
+        check_result("AllPairsShortestPath", apspres);
 
         info!(logger, "Sending shutdown request to runner");
         runner_shutdown.store(true, Ordering::Relaxed);
@@ -661,6 +743,26 @@ mod tests {
         ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(TestDistributedBench::new().into())
         }
+
+        fn streaming_windows(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(TestDistributedBench::new().into())
+        }
+
+        fn fibonacci(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+            Ok(TestLocalBench {}.into())
+        }
+
+        fn chameneos(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+            Ok(TestLocalBench {}.into())
+        }
+
+        fn all_pairs_shortest_path(
+            &self,
+        ) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
+            Ok(TestLocalBench {}.into())
+        }
     }
 
     impl benchmarks_grpc::BenchmarkRunner for TestFactory {
@@ -748,6 +850,72 @@ mod tests {
         ) -> grpc::SingleResponse<messages::TestResult>
         {
             grpc::SingleResponse::completed(benchmark_runner::not_implemented())
+        }
+
+        fn streaming_windows(
+            &self,
+            _o: grpc::RequestOptions,
+            _p: benchmarks::StreamingWindowsRequest,
+        ) -> grpc::SingleResponse<messages::TestResult>
+        {
+            grpc::SingleResponse::completed(benchmark_runner::not_implemented())
+        }
+
+        fn fibonacci(
+            &self,
+            _o: grpc::RequestOptions,
+            p: benchmarks::FibonacciRequest,
+        ) -> grpc::SingleResponse<messages::TestResult>
+        {
+            println!("Got fibonacci req: {:?}", p);
+            let bench = benchmark::BenchmarkFactory::fibonacci(self);
+            let f = benchmark_runner::run_async(move || match bench {
+                Ok(b) => b.run(Box::new(p)).into(),
+                Err(e) => Err(BenchmarkError::NotImplemented(e)).into(),
+            })
+            .map_err(|e| {
+                println!("Converting benchmark error into grpc error: {:?}", e);
+                e.into()
+            });
+            grpc::SingleResponse::no_metadata(f)
+        }
+
+        fn chameneos(
+            &self,
+            _o: grpc::RequestOptions,
+            p: benchmarks::ChameneosRequest,
+        ) -> grpc::SingleResponse<messages::TestResult>
+        {
+            println!("Got chameneos req: {:?}", p);
+            let bench = benchmark::BenchmarkFactory::chameneos(self);
+            let f = benchmark_runner::run_async(move || match bench {
+                Ok(b) => b.run(Box::new(p)).into(),
+                Err(e) => Err(BenchmarkError::NotImplemented(e)).into(),
+            })
+            .map_err(|e| {
+                println!("Converting benchmark error into grpc error: {:?}", e);
+                e.into()
+            });
+            grpc::SingleResponse::no_metadata(f)
+        }
+
+        fn all_pairs_shortest_path(
+            &self,
+            _o: grpc::RequestOptions,
+            p: benchmarks::APSPRequest,
+        ) -> grpc::SingleResponse<messages::TestResult>
+        {
+            println!("Got APSP req: {:?}", p);
+            let bench = benchmark::BenchmarkFactory::all_pairs_shortest_path(self);
+            let f = benchmark_runner::run_async(move || match bench {
+                Ok(b) => b.run(Box::new(p)).into(),
+                Err(e) => Err(BenchmarkError::NotImplemented(e)).into(),
+            })
+            .map_err(|e| {
+                println!("Converting benchmark error into grpc error: {:?}", e);
+                e.into()
+            });
+            grpc::SingleResponse::no_metadata(f)
         }
     }
 

@@ -4,7 +4,6 @@ use actix::*;
 use actix_system_provider::{ActixSystem, PoisonPill};
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use futures::Future;
-use std::fmt;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
@@ -105,28 +104,19 @@ impl BenchmarkInstance for PingPongI {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Message)]
 struct Start;
-impl Message for Start {
-    type Result = ();
-}
 
-#[derive(Clone)]
+#[derive(Message)]
 struct Ping(Recipient<Pong>);
-impl Message for Ping {
-    type Result = ();
-}
-impl fmt::Debug for Ping {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ping(<pinger>)")
-    }
-}
+// impl fmt::Debug for Ping {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "Ping(<pinger>)")
+//     }
+// }
 
-#[derive(Clone, Debug)]
+#[derive(Message)]
 struct Pong;
-impl Message for Pong {
-    type Result = ();
-}
 
 struct Pinger {
     latch: Arc<CountdownEvent>,
@@ -141,7 +131,7 @@ impl Pinger {
             latch,
             ponger,
             count_down: count,
-            self_rec: None
+            self_rec: None,
         }
     }
     fn self_rec(&self) -> Recipient<Pong> {
@@ -153,12 +143,12 @@ impl Actor for Pinger {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        println!("Pinger is alive");
+        //println!("Pinger is alive");
         self.self_rec = Some(ctx.address().recipient());
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        println!("Pinger is stopped");
+        //println!("Pinger is stopped");
         self.self_rec = None;
     }
 }
@@ -187,7 +177,7 @@ impl Handler<PoisonPill> for Pinger {
     type Result = ();
 
     fn handle(&mut self, _msg: PoisonPill, ctx: &mut Context<Self>) -> Self::Result {
-        println!("PoisonPill received, shutting down.");
+        //println!("PoisonPill received, shutting down.");
         ctx.stop();
     }
 }
@@ -204,11 +194,11 @@ impl Actor for Ponger {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
-        println!("Ponger is alive");
+        //println!("Ponger is alive");
     }
 
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        println!("Ponger is stopped");
+        //println!("Ponger is stopped");
     }
 }
 
@@ -225,7 +215,7 @@ impl Handler<PoisonPill> for Ponger {
     type Result = ();
 
     fn handle(&mut self, _msg: PoisonPill, ctx: &mut Context<Self>) -> Self::Result {
-        println!("PoisonPill received, shutting down.");
+        //println!("PoisonPill received, shutting down.");
         ctx.stop();
     }
 }

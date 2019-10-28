@@ -2,14 +2,14 @@ package se.kth.benchmarks.runner
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
-import scala.concurrent.{ Future, ExecutionContext, Await }
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration._
-import scala.util.{ Try, Success, Failure }
+import scala.util.{Failure, Success, Try}
 import se.kth.benchmarks.Statistics;
 
 import com.lkroll.common.macros.Macros
-import com.typesafe.scalalogging.{ LazyLogging, StrictLogging }
-import java.io.{ File, PrintWriter, FileWriter }
+import com.typesafe.scalalogging.{LazyLogging, StrictLogging}
+import java.io.{File, FileWriter, PrintWriter}
 
 object Runner {
 
@@ -53,6 +53,21 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
     val ready = awaitReady();
     if (ready) {
       Benchmarks.benchmarks.foreach(runOne);
+    }
+  }
+
+  def runOnly(benchmarks: List[String]): Unit = {
+    val benchSet = benchmarks.toSet;
+    val selected = Benchmarks.benchmarks.filter(bench => benchSet.contains(bench.symbol));
+    if (selected.isEmpty) {
+      logger.error(s"No benchmarks were selected by list ${benchmarks.mkString("[", ",", "]")}! Shutting down.");
+      System.exit(1);
+    } else {
+      logger.info(s"Selected the following benchmarks to be run: ${selected.map(_.name).mkString("[", ", ", "]")}");
+      val ready = awaitReady();
+      if (ready) {
+        selected.foreach(runOne);
+      }
     }
   }
 
@@ -165,7 +180,8 @@ class SummarySink(prefix: String, folder: File) extends DataSink with LazyLoggin
     val expFile = experimentFile(bench);
     this.withAppender(expFile) { w =>
       val ci = stats.symmetricConfidenceInterval95;
-      val row = s"${prefix},${params.toCSV},${stats.sampleMean},${stats.sampleStandardDeviation},${stats.standardErrorOfTheMean},${stats.relativeErrorOfTheMean},${ci._1},${ci._2}";
+      val row =
+        s"${prefix},${params.toCSV},${stats.sampleMean},${stats.sampleStandardDeviation},${stats.standardErrorOfTheMean},${stats.relativeErrorOfTheMean},${ci._1},${ci._2}";
       w.println(row);
     }
   }

@@ -4,9 +4,11 @@ import ammonite.ops._
 import ammonite.ops.ImplicitWd._
 import scala.concurrent.duration._
 
-case class Builder(label: String, env: Path, exec: Path, args: Seq[Shellable], cleanArgs: Seq[Shellable]) {
-	def run(): CommandResult = %%.applyDynamic(exec.toString)(args: _*)(env);
-	def clean(): CommandResult = %%.applyDynamic(exec.toString)(cleanArgs: _*)(env);
+case class Builder(label: String, env: Path, environment: Map[String, String], exec: Path, args: Seq[Shellable], cleanArgs: Seq[Shellable]) {
+        lazy val cmd = Command(Vector.empty, environment, Shellout.executeStream);
+
+	def run(): CommandResult = cmd.applyDynamic(exec.toString)(args: _*)(env);
+	def clean(): CommandResult = cmd.applyDynamic(exec.toString)(cleanArgs: _*)(env);
 }
 
 def relps(s: String): String = relp(s).toString;
@@ -26,18 +28,23 @@ def binp(s: Symbol): Path = {
 
 //val sbt = root / 'usr / 'local / 'bin / 'sbt;
 val sbt = binp('sbt); //root / 'usr / 'bin / 'sbt;
+val sbtEnv: Map[String, String] = Map.empty;
 val cargo = binp('cargo); //root / 'home / 'sario / ".cargo" / 'bin / 'cargo;
+//val cargoBuildOpts = Seq[Shellable](RUSTFLAGS="-C target-cpu=native");
+val cargoBuildCmd = Seq[Shellable]("build", "--release");// ++ cargoBuildOpts;
+val cargoEnv: Map[String, String] = Map("RUSTFLAGS" -> "-C target-cpu=native");
 val make = binp('make);
+val makeEnv: Map[String, String] = Map.empty;
 
 val builders: List[Builder] = List(
-	Builder("Shared Library Scala", relp("shared_scala"), sbt, Seq("publishLocal"), Seq("clean")),
-	Builder("Experiment Runner", relp("runner"), sbt, Seq("assembly", "publishLocal"), Seq("clean")),
-	Builder("Akka", relp("akka"), sbt, Seq("assembly"), Seq("clean")),
-	Builder("Kompics", relp("kompics"), sbt, Seq("assembly"), Seq("clean")),
-	Builder("Kompact", relp("kompact"), cargo, Seq("build", "--release"), Seq("clean")),
-	Builder("Actix", relp("actix"), cargo, Seq("build", "--release"), Seq("clean")),
-	Builder("Erlang", relp("erlang"), make, Seq(), Seq("clean")),
-	Builder("Riker", relp("riker"), cargo, Seq("build", "--release"), Seq("clean")),
+	Builder("Shared Library Scala", relp("shared_scala"), sbtEnv, sbt, Seq("publishLocal"), Seq("clean")),
+	Builder("Experiment Runner", relp("runner"), sbtEnv, sbt, Seq("assembly", "publishLocal"), Seq("clean")),
+	Builder("Akka", relp("akka"), sbtEnv, sbt, Seq("assembly"), Seq("clean")),
+	Builder("Kompics", relp("kompics"), sbtEnv, sbt, Seq("assembly"), Seq("clean")),
+	Builder("Kompact", relp("kompact"), cargoEnv, cargo, cargoBuildCmd, Seq("clean")),
+	Builder("Actix", relp("actix"), cargoEnv, cargo,  cargoBuildCmd, Seq("clean")),
+	Builder("Erlang", relp("erlang"), makeEnv, make, Seq(), Seq("clean")),
+	Builder("Riker", relp("riker"), cargoEnv, cargo,  cargoBuildCmd, Seq("clean")),
 );
 
 @main

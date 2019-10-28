@@ -4,52 +4,41 @@ use actix::*;
 use actix_system_provider::{ActixSystem, PoisonPill};
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::ThroughputPingPongRequest;
 use futures::Future;
-use std::fmt;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
-#[derive(Clone, Debug)]
+#[derive(Message)]
 pub struct Start;
-impl Message for Start {
-    type Result = ();
-}
 
-#[derive(Clone)]
+#[derive(Message)]
 struct StaticPing(Recipient<StaticPong>);
-impl Message for StaticPing {
-    type Result = ();
-}
-impl fmt::Debug for StaticPing {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "StaticPing(<pinger>)")
-    }
-}
+// impl fmt::Debug for StaticPing {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "StaticPing(<pinger>)")
+//     }
+// }
 
-#[derive(Clone, Debug)]
+#[derive(Message)]
 struct StaticPong;
-impl Message for StaticPong {
-    type Result = ();
-}
-#[derive(Clone)]
+
+#[derive(Message)]
 pub struct Ping {
     pub index: u64,
     pub src: Recipient<Pong>,
 }
-impl fmt::Debug for Ping {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Ping(<pinger>)")
-    }
-}
+// impl fmt::Debug for Ping {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "Ping(<pinger>)")
+//     }
+// }
 
 impl Ping {
     pub fn new(index: u64, src: Recipient<Pong>) -> Ping {
         Ping { index, src }
     }
 }
-impl Message for Ping {
-    type Result = ();
-}
-#[derive(Clone, Debug)]
+
+#[derive(Message)]
 pub struct Pong {
     pub index: u64,
 }
@@ -57,9 +46,6 @@ impl Pong {
     pub fn new(index: u64) -> Pong {
         Pong { index }
     }
-}
-impl Message for Pong {
-    type Result = ();
 }
 
 pub struct Params {

@@ -253,6 +253,7 @@ object StreamingWindows extends DistributedBenchmark {
 
     private var receivedSinceReady: Long = 0L;
     private var running: Boolean = false;
+    private var waitingOnFlushed = false;
 
     net uponEvent {
       case context @ NetMessage(_, Start(this.partitionId)) =>
@@ -275,6 +276,10 @@ object StreamingWindows extends DistributedBenchmark {
             currentWindow.clear();
             downstream = None;
             windowStartTS = 0L;
+            if (waitingOnFlushed) {
+              sendUpstream(Flushed(this.partitionId));
+              waitingOnFlushed = false;
+            }
           } else {
             ??? // nope!
           }
@@ -301,7 +306,11 @@ object StreamingWindows extends DistributedBenchmark {
         }
       case context @ NetMessage(_, Flush(this.partitionId)) =>
         handle {
-          sendUpstream(Flushed(this.partitionId));
+          if (!running) { // delay flushing response until not running
+            sendUpstream(Flushed(this.partitionId));
+          } else {
+            waitingOnFlushed = true;
+          }
         }
     }
 

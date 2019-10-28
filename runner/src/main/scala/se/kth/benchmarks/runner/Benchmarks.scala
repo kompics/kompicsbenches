@@ -177,6 +177,63 @@ object Benchmarks extends ParameterDescriptionImplicits {
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
       }
   );
+
+  val fibonacci = Benchmark(
+    name = "Fibonacci",
+    symbol = "FIBONACCI",
+    invoke = (stub, request: FibonacciRequest) => {
+      stub.fibonacci(request)
+    },
+    space = ParameterSpacePB
+      .mapped(26 to 32 by 1)
+      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n)),
+    testSpace = ParameterSpacePB
+      .mapped(22 to 28 by 1)
+      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n))
+  );
+
+  val chameneos = Benchmark(
+    name = "Chameneos",
+    symbol = "CHAMENEOS",
+    invoke = (stub, request: ChameneosRequest) => {
+      stub.chameneos(request)
+    },
+    space = ParameterSpacePB
+      .cross(List(2, 3, 4, 5, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 128), List(2.mio))
+      .msg[ChameneosRequest] {
+        case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
+      },
+    testSpace = ParameterSpacePB
+      .cross(List(2, 3, 4, 5, 6, 7, 8, 16), List(100.k))
+      .msg[ChameneosRequest] {
+        case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
+      }
+  );
+
+  val allPairsShortestPath = Benchmark(
+    name = "All-Pairs Shortest Path",
+    symbol = "APSP",
+    invoke = (stub, request: APSPRequest) => {
+      stub.allPairsShortestPath(request)
+    },
+    space = ParameterSpacePB
+      .cross(List(128, 256, 512, 1024), List(16, 32, 64))
+      .msg[APSPRequest] {
+        case (nn, bs) => {
+          assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
+          APSPRequest(numberOfNodes = nn, blockSize = bs)
+        }
+      },
+    testSpace = ParameterSpacePB
+      .cross(List(128, 192, 256), List(16, 32, 64))
+      .msg[APSPRequest] {
+        case (nn, bs) => {
+          assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
+          APSPRequest(numberOfNodes = nn, blockSize = bs)
+        }
+      }
+  );
+
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];
   lazy val benchmarkLookup: Map[String, Benchmark] = benchmarks.map(b => (b.symbol -> b)).toMap;
 }
