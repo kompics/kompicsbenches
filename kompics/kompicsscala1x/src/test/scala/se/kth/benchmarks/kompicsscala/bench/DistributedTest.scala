@@ -3,12 +3,13 @@ package se.kth.benchmarks.kompicsscala.bench
 import org.scalatest._
 import scala.util.{Failure, Success, Try}
 import se.kth.benchmarks.kompicsscala._
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 import se.kth.benchmarks.kompicsscala.bench.AtomicRegister._
 import se.sics.kompics.sl._
-import scala.concurrent.Await
+import scala.concurrent.{Await, Promise}
 import scala.concurrent.duration._
 import com.typesafe.scalalogging.StrictLogging
+import se.sics.kompics.network.netty.NettyNetwork
 
 class DistributedTest extends FunSuite with Matchers with StrictLogging {
 
@@ -389,5 +390,81 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     latch.await();
 
     system.terminate();
+  }
+
+  test ("Kompics Atomic Register Linearizability") {
+    import scala.collection.immutable.List
+    import AtomicRegister._
+    import PartitioningComp._
+    import se.sics.kompics.sl.{Init => KompicsInit}
+    import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead}
+    import se.sics.kompics.network.netty._
+    import se.sics.kompics.network.Network
+
+    def isLinearizable(trace: List[KVTimestamp]): Boolean = {
+      val sorted_trace = trace.sortBy(x => x.time)
+      var latestValue: Int = 0
+      sorted_trace.foreach{
+        ts =>
+          if (ts.operation == TestRead && ts.value != latestValue){
+            false
+          }
+          else {
+            latestValue = ts.value
+          }
+      }
+       true
+    }
+
+    class LauncherComponent(init: KompicsInit[LauncherComponent]) extends ComponentDefinition{
+      val KompicsInit(results_promise: Promise[List[KVTimestamp]],
+                      partition_size: Int,
+                      num_keys: Long,
+                      read_workload: Float,
+                      write_workload: Float) = init
+
+      ctrl uponEvent {
+        case _: Start =>
+          handle {
+            val nodes = for (_ <- 0 to partition_size) yield {
+              val addr = NetAddress.from("127.0.0.1", 0).get
+              val net = create(classOf[NettyNetwork], new NettyInit(addr))
+              val beb_comp = create(classOf[BEBComp],  KompicsInit[BEBComp](addr))
+              val atomicreg_comp = create(classOf[AtomicRegisterComp], KompicsInit[AtomicRegisterComp](read_workload, write_workload))
+              connect[Network](net -> beb_comp)
+              connect[Network](net -> atomicreg_comp)
+              connect[BestEffortBroadcast](beb_comp -> atomicreg_comp)
+              addr
+            }
+            val prepare_latch = new CountDownLatch(1)
+            val p_comp_addr = NetAddress.from("127.0.0.1", 0).get
+            val p_comp_net = create(classOf[NettyNetwork], new NettyInit(p_comp_addr))
+            val p_comp = create(classOf[PartitioningComp], KompicsInit[PartitioningComp](Some(prepare_latch), None, 1, nodes.toList, num_keys, partition_size, true, Some(results_promise)))
+            connect[Network](p_comp_net -> p_comp)
+            prepare_latch.await(5, TimeUnit.SECONDS)
+            trigger(Run -> p_comp.control())
+          }
+      }
+    }
+    val read_workload = 0.5f  // TODO 95-5 workload
+    val write_workload = 0.5f
+    val partition_size = 3
+    val num_keys = 1000
+    val result_promise = Promise[List[KVTimestamp]]
+    val resultF = result_promise.future
+    try {
+      Kompics.createAndStart(classOf[LauncherComponent], KompicsInit[LauncherComponent](result_promise, partition_size, num_keys, read_workload, write_workload))
+    } catch {
+      case _: Throwable => logger.error("Something went wrong") // TODO
+    }
+
+    resultF.onComplete{
+      case Success(ts: List[KVTimestamp]) =>
+        val timestamps: Map[Long, List[KVTimestamp]] = ts.groupBy(x => x.key)
+        timestamps.values.foreach(trace => isLinearizable(trace) shouldBe true)
+        logger.info("Got results")
+      case Failure(_) =>
+        logger.info("Failed to get results")
+    }
   }
 }

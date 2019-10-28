@@ -14,13 +14,15 @@ import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import se.sics.kompics.sl._
 import se.sics.kompics.sl.{Init => KompicsInit}
-import se.kth.benchmarks.kompicsscala.PartitioningComp.{Done, Init, InitAck, Run}
+import se.kth.benchmarks.kompicsscala.PartitioningComp.{TestDone, Done, Init, InitAck, Run}
 
 import scala.collection.mutable
 import scala.concurrent.Await
 import scala.util.{Random, Success, Try}
-
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.collection.mutable.ListBuffer
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead, Write => TestWrite}
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -85,7 +87,7 @@ object AtomicRegister extends DistributedBenchmark {
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
       val partitioningCompF = system.createNotify[PartitioningComp](
-        KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+        KompicsInit(Some(prepare_latch), Some(finished_latch), init_id, nodes, num_keys, partition_size, false, None)
       ); // only wait for InitAck from clients
       partitioningComp = Await.result(partitioningCompF, 5.second);
       val partitioningComp_net_connF = system.connectNetwork(partitioningComp);
@@ -241,6 +243,10 @@ object AtomicRegister extends DistributedBenchmark {
     var master: NetAddress = _
     var current_run_id: Int = -1
 
+    /* Linearizability test variables */
+    var testing: Boolean = false
+    var timestamps = ListBuffer[KVTimestamp]()
+
     private def newIteration(i: Init): Unit = {
       current_run_id = i.init_id
       nodes = i.nodes
@@ -297,14 +303,24 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
 
+    private def sendDone(): Unit = {
+      if (!testing) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
+      else trigger(NetMessage.viaTCP(selfAddr, master)(TestDone(timestamps.toList)) -> net)
+    }
+
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
+      if (testing) timestamps += KVTimestamp(key, TestRead, read_value, System.currentTimeMillis())
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
+      if (testing){
+        val write_value = selfRank  // we always write with our rank
+        timestamps += KVTimestamp(key, TestWrite, write_value, System.currentTimeMillis())
+      }
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     ctrl uponEvent {
