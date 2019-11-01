@@ -423,7 +423,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
       PartitioningCompSerializer.register()
       AtomicRegisterSerializer.register()
 
-      val num_keys: Long = r.nextInt(3000).toLong + 500L
+      val num_keys: Long = r.nextInt(2000).toLong + 500L
       val partition_size: Int = {
         val i = r.nextInt(4) + 3
         if (i % 2 == 0) i + 1 else i  // uneven partition size
