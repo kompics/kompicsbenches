@@ -18,8 +18,8 @@ import scala.concurrent.Promise
 class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDefinition {
   val net = requires[Network];
 
-  val KompicsInit(prepare_latch: Option[CountDownLatch],
-                  finished_latch: Option[CountDownLatch],
+  val KompicsInit(prepare_latch: Option[CountDownLatch] @unchecked,
+                  finished_latch: Option[CountDownLatch] @unchecked,
                   init_id: Int,
                   nodes: List[NetAddress] @unchecked,
                   num_keys: Long,
@@ -31,16 +31,17 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
   var init_ack_count: Int = 0;
   var done_count = 0;
   var test_results = ListBuffer[KVTimestamp]()
-  lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
-
+  val selfAddr = if (!testing) cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY) else cfg.getValue[NetAddress]("self-address")
   ctrl uponEvent {
     case _: Start =>
       handle {
         assert(selfAddr != null)
+        logger.info(s"p_comp addr=$selfAddr")
         val min_key: Long = 0L
         val max_key: Long = num_keys - 1
         for ((node, rank) <- active_nodes.zipWithIndex) {
-          trigger(NetMessage.viaTCP(selfAddr, node)(Init(rank, init_id, active_nodes, min_key, max_key, testing)) -> net)
+          logger.info(s"Sending init to ($node, $rank)")
+          trigger(NetMessage.viaTCP(selfAddr, node)(Init(rank, init_id, active_nodes, min_key, max_key)) -> net)
         }
       }
     case Run =>
@@ -81,7 +82,7 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
 }
 
 object PartitioningComp {
-  case class Init(rank: Int, init_id: Int, nodes: List[NetAddress], min: Long, max: Long, testing: Boolean) extends KompicsEvent;
+  case class Init(rank: Int, init_id: Int, nodes: List[NetAddress], min: Long, max: Long) extends KompicsEvent;
   case class InitAck(init_id: Int) extends KompicsEvent;
   case object Run extends KompicsEvent;
   case object Done extends KompicsEvent;
@@ -102,6 +103,7 @@ object PartitioningCompSerializer extends Serializer {
     Serializers.register(this, "partitioningcomp")
     Serializers.register(classOf[Init], "partitioningcomp")
     Serializers.register(classOf[InitAck], "partitioningcomp")
+    Serializers.register(classOf[TestDone],"partitioningcomp")
     Serializers.register(Run.getClass, "partitioningcomp")
     Serializers.register(Done.getClass, "partitioningcomp")
   }
@@ -116,7 +118,6 @@ object PartitioningCompSerializer extends Serializer {
         buf.writeInt(i.init_id)
         buf.writeLong(i.min)
         buf.writeLong(i.max)
-        buf.writeBoolean(i.testing)
         buf.writeInt(i.nodes.size)
         for (node <- i.nodes) {
           val ip = node.getIp().getAddress
@@ -155,7 +156,6 @@ object PartitioningCompSerializer extends Serializer {
         val init_id = buf.readInt()
         val min = buf.readLong()
         val max = buf.readLong()
-        val testing = buf.readBoolean()
         val n = buf.readInt()
         var nodes = new ListBuffer[NetAddress]
         for (_ <- 0 until n) {
@@ -165,7 +165,7 @@ object PartitioningCompSerializer extends Serializer {
           val port: Int = buf.readUnsignedShort()
           nodes += NetAddress(new InetSocketAddress(addr, port))
         }
-        Init(rank, init_id, nodes.toList, min, max, testing)
+        Init(rank, init_id, nodes.toList, min, max)
       }
       case INIT_ACK_FLAG => InitAck(buf.readInt())
       case RUN_FLAG      => Run
