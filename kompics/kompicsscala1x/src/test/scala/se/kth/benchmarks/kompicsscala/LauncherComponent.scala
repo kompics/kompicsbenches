@@ -9,10 +9,9 @@ import se.kth.benchmarks.kompicsscala.bench.AtomicRegister.AtomicRegisterComp
 import se.kth.benchmarks.test.KVTestUtil.KVTimestamp
 import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.{NettyInit, NettyNetwork}
-import se.sics.kompics.sl.{ComponentDefinition, Config, Kompics, KompicsEvent, Start, handle, Init => KompicsInit}
-import se.sics.kompics.config.{ConfigUpdate, ConfigValue}
+import se.sics.kompics.sl.{ComponentDefinition, Kompics, KompicsEvent, Start, handle, Init => KompicsInit}
 
-import scala.collection.immutable.{HashMap, List}
+import scala.collection.immutable.List
 import scala.concurrent.Promise
 
 class LauncherComponent(init: KompicsInit[LauncherComponent]) extends ComponentDefinition{
