@@ -14,13 +14,15 @@ import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
 import se.sics.kompics.sl._
 import se.sics.kompics.sl.{Init => KompicsInit}
-import se.kth.benchmarks.kompicsscala.PartitioningComp.{Done, Init, InitAck, Run}
+import se.kth.benchmarks.kompicsscala.PartitioningComp.{TestDone, Done, Init, InitAck, Run}
 
 import scala.collection.mutable
 import scala.concurrent.Await
 import scala.util.{Random, Success, Try}
-
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.collection.mutable.ListBuffer
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead, Write => TestWrite}
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -68,8 +70,8 @@ object AtomicRegister extends DistributedBenchmark {
       val addr = system.networkAddress.get;
       logger.trace(s"Atomic Register(Master) Path is $addr");
       val nodes = addr :: d;
-      val num_nodes = nodes.size;
-      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload)); // TODO parallelism
+      val testing = false
+      val atomicRegisterIdF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload, testing));
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -86,7 +88,7 @@ object AtomicRegister extends DistributedBenchmark {
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
       val partitioningCompF = system.createNotify[PartitioningComp](
-        KompicsInit(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+        KompicsInit(prepare_latch, Some(finished_latch), init_id, nodes, num_keys, partition_size, None)
       ); // only wait for InitAck from clients
       partitioningComp = Await.result(partitioningCompF, 5.second);
       val partitioningComp_net_connF = system.connectNetwork(partitioningComp);
@@ -141,7 +143,8 @@ object AtomicRegister extends DistributedBenchmark {
       logger.trace(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
-      val atomicRegisterF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload));
+      val testing = false
+      val atomicRegisterF = system.createNotify[AtomicRegisterComp](KompicsInit(read_workload, write_workload, testing));
       atomicRegister = Await.result(atomicRegisterF, 5.seconds);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -224,7 +227,7 @@ object AtomicRegister extends DistributedBenchmark {
     val net = requires[Network]
     val beb = requires[BestEffortBroadcast]
 
-    val KompicsInit(read_workload: Float, write_workload: Float) = init
+    val KompicsInit(read_workload: Float, write_workload: Float, testing: Boolean) = init
     var nodes: List[NetAddress] = _
     var n = 0
     val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
@@ -241,6 +244,8 @@ object AtomicRegister extends DistributedBenchmark {
     var write_count: Long = 0
     var master: NetAddress = _
     var current_run_id: Int = -1
+
+    var timestamps = ListBuffer[KVTimestamp]()  // for linearizability test
 
     private def newIteration(i: Init): Unit = {
       current_run_id = i.init_id
@@ -284,8 +289,7 @@ object AtomicRegister extends DistributedBenchmark {
       val num_keys = max_key - min_key + 1
       val num_reads = (num_keys * read_workload).toLong
       val num_writes = (num_keys * write_workload).toLong
-
-      logger.info(s"Invoking operations: $num_reads reads and $num_writes writes. Keys: $min_key - $max_key. n=$n")
+      //      logger.info(s"Invoking operations: $num_reads reads and $num_writes writes. Keys: $min_key - $max_key. n=$n")
       read_count = num_reads
       write_count = num_writes
 
@@ -298,16 +302,24 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
 
+    private def sendDone(): Unit = {
+      if (!testing) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
+      else trigger(NetMessage.viaTCP(selfAddr, master)(TestDone(timestamps.toList)) -> net)
+    }
+
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
-
+      if (testing) timestamps += KVTimestamp(key, TestRead, read_value, System.currentTimeMillis())
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) trigger(NetMessage.viaTCP(selfAddr, master)(Done) -> net)
-
+      if (testing){
+        val write_value = selfRank  // we always write with our rank
+        timestamps += KVTimestamp(key, TestWrite, write_value, System.currentTimeMillis())
+      }
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     ctrl uponEvent {
@@ -367,8 +379,7 @@ object AtomicRegister extends DistributedBenchmark {
                 register_readlist(v.key).clear()
                 readResponse(v.key, current_register.readval)
               } else {
-                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1) // TODO must check rank as well if same ts
-                current_register.readval = readvalue
+                var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)
                 register_readlist(v.key).clear()
                 var bcastvalue = readvalue
                 if (!current_register.reading) {
@@ -398,7 +409,6 @@ object AtomicRegister extends DistributedBenchmark {
             }
           }
         }
-
       }
 
       case NetMessage(_, Run) => {

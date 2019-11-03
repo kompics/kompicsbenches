@@ -88,7 +88,7 @@ object AtomicRegister extends DistributedBenchmark {
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
       val partitioningCompF = system.createNotify[PartitioningComp](
-        KompicsInit(Some(prepare_latch), Some(finished_latch), init_id, nodes, num_keys, partition_size, testing, None)
+        KompicsInit(prepare_latch, Some(finished_latch), init_id, nodes, num_keys, partition_size, None)
       ); // only wait for InitAck from clients
       partitioningComp = Await.result(partitioningCompF, 5.second);
       val partitioningComp_net_connF = system.connectNetwork(partitioningComp);
@@ -230,7 +230,7 @@ object AtomicRegister extends DistributedBenchmark {
     val KompicsInit(read_workload: Float, write_workload: Float, testing: Boolean) = init
     var nodes: List[NetAddress] = _
     var n = 0
-    val selfAddr = if (!testing) cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY) else cfg.getValue[NetAddress]("self-address")
+    val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
     var selfRank: Int = -1
 
     var min_key: Long = -1
@@ -327,7 +327,6 @@ object AtomicRegister extends DistributedBenchmark {
       case _: Start =>
         handle {
           assert(selfAddr != null)
-          logger.info(s"atomic reg selfaddr= $selfAddr")
         }
     }
 
@@ -386,7 +385,7 @@ object AtomicRegister extends DistributedBenchmark {
                   register_readlist(v.key).clear()
                   readResponse(v.key, current_register.readval)
                 } else {
-                  var (maxts, rr, readvalue) = readlist.values.maxBy(_._1) // TODO must check rank as well if same ts
+                  var (maxts, rr, readvalue) = readlist.values.maxBy(_._1)
                   current_register.readval = readvalue
                   register_readlist(v.key).clear()
                   var bcastvalue = readvalue
