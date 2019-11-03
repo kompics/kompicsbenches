@@ -18,29 +18,26 @@ import scala.concurrent.Promise
 class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDefinition {
   val net = requires[Network];
 
-  val KompicsInit(prepare_latch: Option[CountDownLatch] @unchecked,
+  val KompicsInit(prepare_latch: CountDownLatch,
                   finished_latch: Option[CountDownLatch] @unchecked,
                   init_id: Int,
                   nodes: List[NetAddress] @unchecked,
                   num_keys: Long,
                   partition_size: Int,
-                  testing: Boolean,
                   test_promise: Option[Promise[List[KVTimestamp]]] @unchecked) = init;
   val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes;
   val n = active_nodes.size;
   var init_ack_count: Int = 0;
   var done_count = 0;
   var test_results = ListBuffer[KVTimestamp]()
-  val selfAddr = if (!testing) cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY) else cfg.getValue[NetAddress]("self-address")
+  val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
   ctrl uponEvent {
     case _: Start =>
       handle {
         assert(selfAddr != null)
-        logger.info(s"p_comp addr=$selfAddr")
         val min_key: Long = 0L
         val max_key: Long = num_keys - 1
         for ((node, rank) <- active_nodes.zipWithIndex) {
-          logger.info(s"Sending init to ($node, $rank)")
           trigger(NetMessage.viaTCP(selfAddr, node)(Init(rank, init_id, active_nodes, min_key, max_key)) -> net)
         }
       }
@@ -53,11 +50,11 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
   }
 
   net uponEvent {
-    case NetMessage(_, InitAck(init_id)) =>
+    case NetMessage(_, InitAck(_)) =>
       handle {
         init_ack_count += 1
         if (init_ack_count == n) {
-            prepare_latch.get.countDown()
+            prepare_latch.countDown()
         }
       }
     case NetMessage(_, Done) =>
@@ -72,11 +69,7 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
       handle {
         done_count += 1
         test_results ++= timestamps
-        if (done_count == n) {
-          logger.info("Test is done")
-          if (testing) test_promise.get.success(test_results.toList)
-          else finished_latch.get.countDown()
-        }
+        if (done_count == n) test_promise.get.success(test_results.toList)
       }
   }
 }

@@ -13,7 +13,7 @@ import java.util.concurrent.CountDownLatch
 import NetPingPong._
 import se.sics.kompics.sl._
 
-import scala.concurrent.Await
+import scala.concurrent.{Await, Promise}
 import scala.concurrent.duration._
 import com.typesafe.scalalogging.StrictLogging
 
@@ -316,5 +316,56 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     latch.await();
 
     system.terminate();
+  }
+
+  test ("Kompics Java Atomic Register Linearizability") {
+    import scala.collection.immutable.List
+    import scala.util.Random
+    import se.sics.kompics.sl.{Init => KompicsInit}
+    import se.sics.kompics.config.Conversions
+    import se.kth.benchmarks.kompicsscala.BenchNet
+    import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead}
+    import se.kth.benchmarks.kompicsjava.KVLauncherComp
+    import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
+    import se.kth.benchmarks.kompicsjava.bench.atomicregister.AtomicRegisterSerializer
+
+    def isLinearizable(trace: List[KVTimestamp]): Boolean = {
+      val sorted_trace = trace.sortBy(x => x.time)
+      var latestValue: Int = 0
+      sorted_trace.foreach{
+        ts =>
+          if (ts.operation == TestRead && ts.value != latestValue){
+            false
+          }
+          else {
+            latestValue = ts.value
+          }
+      }
+      true
+    }
+
+    val workloads = List((0.5f, 0.5f), (0.95f, 0.05f))
+    val r = Random
+    for ((read_workload, write_workload) <- workloads){
+      BenchNet.registerSerializers()
+      se.kth.benchmarks.kompicsjava.net.BenchNetSerializer.register()
+      Conversions.register(new se.kth.benchmarks.kompicsjava.net.NetAddressConverter())
+      JPartitioningCompSerializer.register()
+      AtomicRegisterSerializer.register()
+
+      val num_keys: Long = r.nextInt(2000).toLong + 500L
+      val partition_size: Int = {
+        val i = r.nextInt(4) + 3
+        if (i % 2 == 0) i + 1 else i  // uneven partition size
+      }
+      val result_promise = Promise[List[KVTimestamp]]
+      val resultF = result_promise.future
+      logger.info(s"Atomic Register Linearizable Test with partition size: $partition_size, number of keys: $num_keys, r: $read_workload, w: $write_workload")
+      Kompics.createAndStart(classOf[KVLauncherComp], KompicsInit[KVLauncherComp](result_promise, partition_size, num_keys, read_workload, write_workload), 4)
+      val results: List[KVTimestamp] = Await.result(resultF, 30 seconds)
+      Kompics.shutdown()
+      val timestamps: Map[Long, List[KVTimestamp]] = results.groupBy(x => x.key)
+      timestamps.values.foreach(trace => isLinearizable(trace) shouldBe true)
+    }
   }
 }

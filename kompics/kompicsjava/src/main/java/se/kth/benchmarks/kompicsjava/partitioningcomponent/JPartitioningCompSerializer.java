@@ -4,6 +4,8 @@ import io.netty.buffer.ByteBuf;
 import se.kth.benchmarks.kompics.SerializerHelper;
 import se.kth.benchmarks.kompicsjava.net.NetAddress;
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.*;
+import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.TestDone;
+import se.kth.benchmarks.test.KVTestUtil;
 import se.sics.kompics.network.netty.serialization.Serializer;
 import se.sics.kompics.network.netty.serialization.Serializers;
 
@@ -22,13 +24,16 @@ public class JPartitioningCompSerializer implements Serializer {
         Serializers.register(InitAck.class, "partitioningcomp");
         Serializers.register(Run.class, "partitioningcomp");
         Serializers.register(Done.class, "partitioningcomp");
+        Serializers.register(TestDone.class, "partitioningcomp");
     }
 
     private static final byte INIT_FLAG = 1;
     private static final byte INIT_ACK_FLAG = 2;
     private static final byte RUN_FLAG = 3;
     private static final byte DONE_FLAG = 4;
-
+    private static final byte TESTDONE_FLAG = 5;
+    private static final byte TESTREAD_FLAG = 6;
+    private static final byte TESTWRITE_FLAG = 7;
 
     @Override
     public int identifier() {
@@ -60,6 +65,21 @@ public class JPartitioningCompSerializer implements Serializer {
         }
         else if (o instanceof Done){
             buf.writeByte(DONE_FLAG);
+        }
+        else if (o instanceof TestDone){
+            TestDone td = (TestDone) o;
+            buf.writeByte(TESTDONE_FLAG);
+            buf.writeInt(td.timestamps.size());
+            for (KVTestUtil.KVTimestamp ts : td.timestamps){
+                buf.writeLong(ts.key());
+                if (ts.operation() instanceof KVTestUtil.Read$){
+                    buf.writeByte(TESTREAD_FLAG);
+                } else {
+                    buf.writeByte(TESTWRITE_FLAG);
+                }
+                buf.writeInt(ts.value());
+                buf.writeLong(ts.time());
+            }
         }
         else {
             throw SerializerHelper.notSerializable(o.getClass().getName());
@@ -95,6 +115,22 @@ public class JPartitioningCompSerializer implements Serializer {
             }
             case RUN_FLAG: return Run.event;
             case DONE_FLAG: return Done.event;
+            case TESTDONE_FLAG: {
+                LinkedList<KVTestUtil.KVTimestamp> results = new LinkedList<>();
+                int n = buf.readInt();
+                for (int i = 0; i < n; i++){
+                    long key = buf.readLong();
+                    byte operation = buf.readByte();
+                    int value = buf.readInt();
+                    long time = buf.readLong();
+                    if (operation == TESTREAD_FLAG){
+                        results.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.Read$.MODULE$, value, time));
+                    } else {
+                        results.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.Write$.MODULE$, value, time));
+                    }
+                }
+                return new TestDone(results);
+            }
             default: {
                 throw SerializerHelper.notSerializable("Invalid flag: " + flag);
             }

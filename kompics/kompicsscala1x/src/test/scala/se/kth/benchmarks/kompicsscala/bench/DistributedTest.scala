@@ -393,7 +393,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     system.terminate();
   }
 
-  test ("Kompics Atomic Register Linearizability") {
+  test ("Kompics Scala Atomic Register Linearizability") {
     import scala.collection.immutable.List
     import scala.util.Random
     import se.sics.kompics.sl.{Init => KompicsInit}
@@ -431,7 +431,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
       val result_promise = Promise[List[KVTimestamp]]
       val resultF = result_promise.future
       logger.info(s"Atomic Register Linearizable Test with partition size: $partition_size, number of keys: $num_keys, r: $read_workload, w: $write_workload")
-      Kompics.createAndStart(classOf[LauncherComponent], KompicsInit[LauncherComponent](result_promise, partition_size, num_keys, read_workload, write_workload), 4)
+      Kompics.createAndStart(classOf[KVLauncherComp], KompicsInit[KVLauncherComp](result_promise, partition_size, num_keys, read_workload, write_workload), 4)
       val results: List[KVTimestamp] = Await.result(resultF, 30 seconds)
       Kompics.shutdown()
       val timestamps: Map[Long, List[KVTimestamp]] = results.groupBy(x => x.key)
