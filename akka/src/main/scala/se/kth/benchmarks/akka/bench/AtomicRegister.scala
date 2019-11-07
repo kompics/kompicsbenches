@@ -12,14 +12,17 @@ import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
 
-import PartitioningActor._
+import se.kth.benchmarks.akka.PartitioningActor
+import se.kth.benchmarks.akka.PartitioningEvents._
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 import java.util.UUID.randomUUID
+
 import com.typesafe.scalalogging.StrictLogging
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead, Write => TestWrite}
 
 object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
@@ -75,8 +78,9 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
+      val testing = false
       atomicRegister =
-        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg$init_id");
+        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload, testing)), s"atomicreg$init_id");
       val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system);
       logger.debug(s"Atomic Register(Master) path is $atomicRegPath")
       val nodes = ClientRef(atomicRegPath) :: d;
@@ -85,7 +89,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
       partitioningActor = system.actorOf(
-        Props(new PartitioningActor(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)),
+        Props(new PartitioningActor(prepare_latch, Some(finished_latch), init_id, nodes, num_keys, partition_size, None)),
         s"partitioningactor$init_id"
       );
       partitioningActor ! Start;
@@ -148,8 +152,9 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
         ActorSystemProvider.newRemoteActorSystem(name = "atomicregister", threads = 4, serialization = serializers);
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
+      val testing = false
       atomicRegister =
-        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload)), s"atomicreg${randomUUID()}");
+        system.actorOf(Props(new AtomicRegisterActor(read_workload, write_workload, testing)), s"atomicreg${randomUUID()}");
       val path = ActorSystemProvider.actorPathForRef(atomicRegister, system);
       logger.debug(s"Atomic Register Path is $path");
       ClientRef(path)
@@ -208,7 +213,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
     var skip_impose = true
   }
 
-  class AtomicRegisterActor(read_workload: Float, write_workload: Float) extends Actor {
+  class AtomicRegisterActor(read_workload: Float, write_workload: Float, testing: Boolean) extends Actor {
     implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
       o.mkOrderingOps(x); // for tuple comparison
 
@@ -229,6 +234,9 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
     var write_count: Long = 0
     var master: ActorRef = _
     var current_run_id: Int = -1
+
+    /* Linearizability test variables */
+    var timestamps = ListBuffer[KVTimestamp]()
 
     private def bcast(receivers: List[ActorRef], msg: AtomicRegisterMessage): Unit = {
       for (node <- receivers) node ! msg
@@ -291,14 +299,24 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       }
     }
 
+    private def sendDone(): Unit = {
+      if (!testing) master ! Done
+      else master ! TestDone(timestamps.toList)
+    }
+
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) master ! Done
+      if (testing) timestamps += KVTimestamp(key, TestRead, read_value, System.currentTimeMillis())
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) master ! Done
+      if (testing){
+        val write_value = selfRank  // we always write with our rank
+        timestamps += KVTimestamp(key, TestWrite, write_value, System.currentTimeMillis())
+      }
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     override def receive = {
