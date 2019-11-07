@@ -324,25 +324,10 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
     import se.sics.kompics.sl.{Init => KompicsInit}
     import se.sics.kompics.config.Conversions
     import se.kth.benchmarks.kompicsscala.BenchNet
-    import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead}
+    import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, isLinearizable}
     import se.kth.benchmarks.kompicsjava.KVLauncherComp
     import se.kth.benchmarks.kompicsjava.partitioningcomponent.JPartitioningCompSerializer
     import se.kth.benchmarks.kompicsjava.bench.atomicregister.AtomicRegisterSerializer
-
-    def isLinearizable(trace: List[KVTimestamp]): Boolean = {
-      val sorted_trace = trace.sortBy(x => x.time)
-      var latestValue: Int = 0
-      sorted_trace.foreach{
-        ts =>
-          if (ts.operation == TestRead && ts.value != latestValue){
-            false
-          }
-          else {
-            latestValue = ts.value
-          }
-      }
-      true
-    }
 
     val workloads = List((0.5f, 0.5f), (0.95f, 0.05f))
     val r = Random
@@ -360,7 +345,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
       }
       val result_promise = Promise[List[KVTimestamp]]
       val resultF = result_promise.future
-      logger.info(s"Atomic Register Linearizable Test with partition size: $partition_size, number of keys: $num_keys, r: $read_workload, w: $write_workload")
+      logger.info(s"Atomic Register Linearizability Test with partition size: $partition_size, number of keys: $num_keys, r: $read_workload, w: $write_workload")
       Kompics.createAndStart(classOf[KVLauncherComp], KompicsInit[KVLauncherComp](result_promise, partition_size, num_keys, read_workload, write_workload), 4)
       val results: List[KVTimestamp] = Await.result(resultF, 30 seconds)
       Kompics.shutdown()
