@@ -22,7 +22,7 @@ import scala.util.Try
 import java.util.UUID.randomUUID
 
 import com.typesafe.scalalogging.StrictLogging
-import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead, Write => TestWrite}
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
 
 object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
@@ -84,7 +84,6 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       val atomicRegPath = ActorSystemProvider.actorPathForRef(atomicRegister, system);
       logger.debug(s"Atomic Register(Master) path is $atomicRegPath")
       val nodes = ClientRef(atomicRegPath) :: d;
-      val num_nodes = nodes.size;
       init_id += 1;
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
@@ -268,6 +267,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
+      if (testing) timestamps += KVTimestamp(key, ReadInvokation, None, System.currentTimeMillis(), selfRank)
       bcast(nodes, Read(current_run_id, key, register.rid))
     }
 
@@ -279,6 +279,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
+      if (testing) timestamps += KVTimestamp(key, WriteInvokation, Some(selfRank), System.currentTimeMillis(), selfRank)
       bcast(nodes, Read(current_run_id, key, register.rid))
     }
 
@@ -306,7 +307,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (testing) timestamps += KVTimestamp(key, TestRead, read_value, System.currentTimeMillis())
+      if (testing) timestamps += KVTimestamp(key, ReadResponse, Some(read_value), System.currentTimeMillis(), selfRank)
       if (read_count == 0 && write_count == 0) sendDone()
     }
 
@@ -314,7 +315,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
       write_count -= 1
       if (testing){
         val write_value = selfRank  // we always write with our rank
-        timestamps += KVTimestamp(key, TestWrite, write_value, System.currentTimeMillis())
+        timestamps += KVTimestamp(key, WriteResponse, Some(write_value), System.currentTimeMillis(), selfRank)
       }
       if (read_count == 0 && write_count == 0) sendDone()
     }
