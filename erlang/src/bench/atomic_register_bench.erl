@@ -234,7 +234,7 @@ client_cleanup_iteration(Instance, LastIteration) ->
 -record(register_state, {
   ts = 0 :: integer(),
   wr = 0 :: integer(),
-  value = -1 :: integer(),
+  value = 0 :: integer(),
   acks = 0 :: integer(),
   readval = 0 :: integer(),
   writeval = 0 :: integer(),
@@ -484,11 +484,9 @@ wait_for_testdone(0, TestResults) -> TestResults;
 wait_for_testdone(N, TestResults) ->
   receive
     {Op, Key, Value, Ts, Sender} ->
-%%      io:format("Got timestamp for Key=~w, map=~w~n", [Key, TestResults]),
       OldTimestamps = maps:get(Key, TestResults, []),
       UpdatedTimestamps = [{Op, Value, Ts, Sender} | OldTimestamps],
       UpdatedTestResults = maps:put(Key, UpdatedTimestamps, TestResults),
-%%      io:format("Updated map=~w~n", [UpdatedTestResults]),
       wait_for_testdone(N, UpdatedTestResults);
 
     done -> wait_for_testdone(N-1, TestResults)
@@ -496,7 +494,7 @@ wait_for_testdone(N, TestResults) ->
 
 is_linearizable(Trace) ->
   SortedTrace = lists:keysort(3, Trace),
-  wing_gong(SortedTrace, [-1]).
+  wing_gong(SortedTrace, [0]).
 
 all_linearizable([]) -> true;
 all_linearizable([H|T]) ->

@@ -315,6 +315,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
   }
 
   test ("Kompics Scala2x Atomic Register Linearizability") {
+    import scala.collection.mutable.ListBuffer
     import scala.collection.immutable.List
     import scala.util.Random
     import se.sics.kompics.sl.{Init => KompicsInit}
@@ -329,7 +330,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
       PartitioningCompSerializer.register()
       AtomicRegisterSerializer.register()
 
-      val num_keys: Long = r.nextInt(1900).toLong + 100L
+      val num_keys: Long = r.nextInt(1000).toLong + 100L
       val partition_size: Int = {
         val i = r.nextInt(6) + 3
         if (i % 2 == 0) i + 1 else i  // uneven partition size
@@ -341,8 +342,7 @@ class DistributedTest extends FunSuite with Matchers with StrictLogging {
       val results: List[KVTimestamp] = Await.result(resultF, 30 seconds)
       Kompics.shutdown()
       val timestamps: Map[Long, List[KVTimestamp]] = results.groupBy(x => x.key)
-      timestamps.values.foreach(trace => isLinearizable(trace) shouldBe true)
+      timestamps.values.foreach(trace => isLinearizable(trace.sortBy(x => x.time), ListBuffer(0)) shouldBe true)
     }
   }
-
 }

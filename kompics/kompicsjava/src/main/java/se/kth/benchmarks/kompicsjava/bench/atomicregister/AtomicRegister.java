@@ -1,5 +1,6 @@
 package se.kth.benchmarks.kompicsjava.bench.atomicregister;
 
+import scala.Option;
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.*;
 import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.*;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBDeliver;
@@ -95,6 +96,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register_readList.get(key).clear();
         register.reading = true;
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.ReadInvokation$.MODULE$, Option.empty(), System.currentTimeMillis(), selfRank));
         trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
@@ -106,6 +108,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register.reading = false;
         register_readList.get(key).clear();
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.WriteInvokation$.MODULE$, Option.apply(selfRank), System.currentTimeMillis(), selfRank));
         trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
@@ -132,13 +135,13 @@ public class AtomicRegister extends ComponentDefinition {
 
     private void readResponse(long key, int read_value){
         read_count--;
-        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.Read$.MODULE$, read_value, System.currentTimeMillis()));
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.ReadResponse$.MODULE$, Option.apply(read_value), System.currentTimeMillis(), selfRank));
         if (read_count == 0 && write_count == 0) sendDone();
     }
 
     private void writeResponse(long key){
         write_count--;
-        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.Write$.MODULE$, selfRank, System.currentTimeMillis()));
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.WriteResponse$.MODULE$, Option.apply(selfRank), System.currentTimeMillis(), selfRank));
         if (read_count == 0 && write_count == 0) sendDone();
     }
 
