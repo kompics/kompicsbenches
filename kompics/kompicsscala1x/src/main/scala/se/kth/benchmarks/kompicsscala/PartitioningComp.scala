@@ -7,7 +7,7 @@ import java.util.concurrent.CountDownLatch
 import io.netty.buffer.ByteBuf
 import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
-import se.sics.kompics.sl.{ComponentDefinition, KompicsEvent, Start, handle, Init => KompicsInit}
+import se.sics.kompics.sl.{handle, ComponentDefinition, KompicsEvent, Start, Init => KompicsInit}
 import PartitioningComp.{Done, Init, InitAck, Run, TestDone}
 import se.kth.benchmarks.test.KVTestUtil._
 
@@ -89,8 +89,10 @@ object PartitioningCompSerializer extends Serializer {
   private val DONE_FLAG: Byte = 4
   private val TESTDONE_FLAG: Byte = 5
   /* Bytes to represent test read and write operations of a KVTimestamp*/
-  private val TESTWRITE_FLAG: Byte = 6
-  private val TESTREAD_FLAG: Byte = 7
+  private val WRITEINVOKATION_FLAG: Byte = 6
+  private val READINVOKATION_FLAG: Byte = 7
+  private val WRITERESPONSE_FLAG: Byte = 8
+  private val READRESPONSE_FLAG: Byte = 9
 
   def register(): Unit = {
     Serializers.register(this, "partitioningcomp")
@@ -131,11 +133,24 @@ object PartitioningCompSerializer extends Serializer {
         for (ts <- td.timestamps){
           buf.writeLong(ts.key)
           ts.operation match {
-            case Read => buf.writeByte(TESTREAD_FLAG)
-            case Write => buf.writeByte(TESTWRITE_FLAG)
+            case ReadInvokation => {
+              buf.writeByte(READINVOKATION_FLAG)
+            }
+            case ReadResponse => {
+              buf.writeByte(READRESPONSE_FLAG)
+              buf.writeInt(ts.value.get)
+            }
+            case WriteInvokation => {
+              buf.writeByte(WRITEINVOKATION_FLAG)
+              buf.writeInt(ts.value.get)
+            }
+            case WriteResponse => {
+              buf.writeByte(WRITERESPONSE_FLAG)
+              buf.writeInt(ts.value.get)
+            }
           }
-          buf.writeInt(ts.value)
           buf.writeLong(ts.time)
+          buf.writeInt(ts.sender)
         }
       }
     }
@@ -169,12 +184,23 @@ object PartitioningCompSerializer extends Serializer {
         for (_ <- 0 until n){
           val key = buf.readLong()
           val operation = buf.readByte()
-          val value = buf.readInt()
-          val time = buf.readLong()
-          if (operation == TESTREAD_FLAG){
-            results += KVTimestamp(key, Read, value, time)
-          } else {
-            results += KVTimestamp(key, Write, value, time)
+          operation match {
+            case READINVOKATION_FLAG => {
+              val time = buf.readLong()
+              val sender = buf.readInt()
+              results += KVTimestamp(key, ReadInvokation, None, time, sender)
+            }
+            case _ => {
+              val op = operation match {
+                case READRESPONSE_FLAG => ReadResponse
+                case WRITEINVOKATION_FLAG => WriteInvokation
+                case WRITERESPONSE_FLAG => WriteResponse
+              }
+              val value = buf.readInt()
+              val time = buf.readLong()
+              val sender = buf.readInt()
+              results += KVTimestamp(key, op, Some(value), time, sender)
+            }
           }
         }
         TestDone(results.toList)

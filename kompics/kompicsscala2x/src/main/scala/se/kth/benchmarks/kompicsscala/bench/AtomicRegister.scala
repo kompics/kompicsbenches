@@ -22,7 +22,7 @@ import scala.util.{Random, Success, Try}
 import com.typesafe.scalalogging.StrictLogging
 
 import scala.collection.mutable.ListBuffer
-import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read => TestRead, Write => TestWrite}
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -59,7 +59,7 @@ object AtomicRegister extends DistributedBenchmark {
       assert(partition_size <= num_nodes, s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
       assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
       assert((1.0 - (read_workload + write_workload)) < 0.00001,
-             s"Invalid workload sum ${read_workload + write_workload} != 1.0");
+        s"Invalid workload sum ${read_workload + write_workload} != 1.0");
 
       this.system = KompicsSystemProvider.newRemoteKompicsSystem(4);
       ClientParams(read_workload, write_workload)
@@ -269,6 +269,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
+      if (testing) timestamps += KVTimestamp(key, ReadInvokation, None, System.currentTimeMillis(), selfRank)
       //      logger.info(s"Invoking Read key=$key")
       trigger(BEBRequest(nodes, Read(current_run_id, key, register.rid)) -> beb)
     }
@@ -281,6 +282,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
+      if (testing) timestamps += KVTimestamp(key, WriteInvokation, Some(selfRank), System.currentTimeMillis(), selfRank)
       //      logger.info(s"Invoking Write key=$key")
       trigger(BEBRequest(nodes, Read(current_run_id, key, register.rid)) -> beb)
     }
@@ -309,7 +311,7 @@ object AtomicRegister extends DistributedBenchmark {
 
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (testing) timestamps += KVTimestamp(key, TestRead, read_value, System.currentTimeMillis())
+      if (testing) timestamps += KVTimestamp(key, ReadResponse, Some(read_value), System.currentTimeMillis(), selfRank)
       if (read_count == 0 && write_count == 0) sendDone()
     }
 
@@ -317,7 +319,7 @@ object AtomicRegister extends DistributedBenchmark {
       write_count -= 1
       if (testing){
         val write_value = selfRank  // we always write with our rank
-        timestamps += KVTimestamp(key, TestWrite, write_value, System.currentTimeMillis())
+        timestamps += KVTimestamp(key, WriteResponse, Some(write_value), System.currentTimeMillis(), selfRank)
       }
       if (read_count == 0 && write_count == 0) sendDone()
     }
