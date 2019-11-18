@@ -15,7 +15,8 @@ import PartitioningEvents._
 
 import scala.util.{Failure, Success}
 import akka.actor.ActorLogging
-import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, Read, Write}
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
+
 import scala.collection.immutable.List
 
 class PartitioningActor(prepare_latch: CountDownLatch,
@@ -119,8 +120,10 @@ object PartitioningActorSerializer {
   val TESTDONE_FLAG: Byte = 5
   val IDENTIFY_FLAG: Byte = 6
   /* Bytes to represent test read and write operations of a KVTimestamp*/
-  val TESTWRITE_FLAG: Byte = 7
-  val TESTREAD_FLAG: Byte = 8
+  val WRITEINVOKATION_FLAG: Byte = 6
+  val READINVOKATION_FLAG: Byte = 7
+  val WRITERESPONSE_FLAG: Byte = 8
+  val READRESPONSE_FLAG: Byte = 9
 }
 
 class PartitioningActorSerializer extends Serializer {
@@ -155,11 +158,22 @@ class PartitioningActorSerializer extends Serializer {
         for (ts <- td.timestamps){
           bs.putLong(ts.key)
           ts.operation match {
-            case Read => bs.putByte(TESTREAD_FLAG)
-            case Write => bs.putByte(TESTWRITE_FLAG)
+            case ReadInvokation => bs.putByte(READINVOKATION_FLAG)
+            case ReadResponse => {
+              bs.putByte(READRESPONSE_FLAG)
+              bs.putInt(ts.value.get)
+            }
+            case WriteInvokation => {
+              bs.putByte(WRITEINVOKATION_FLAG)
+              bs.putInt(ts.value.get)
+            }
+            case WriteResponse => {
+              bs.putByte(WRITERESPONSE_FLAG)
+              bs.putInt(ts.value.get)
+            }
           }
-          bs.putInt(ts.value)
           bs.putLong(ts.time)
+          bs.putInt(ts.sender)
         }
         bs.result().toArray
       }
@@ -193,12 +207,23 @@ class PartitioningActorSerializer extends Serializer {
         for (_ <- 0 until n){
           val key = buf.getLong
           val operation = buf.get
-          val value = buf.getInt
-          val time = buf.getLong
-          if (operation == TESTREAD_FLAG){
-            results += KVTimestamp(key, Read, value, time)
-          } else {
-            results += KVTimestamp(key, Write, value, time)
+          operation match {
+            case READINVOKATION_FLAG => {
+              val time = buf.getLong
+              val sender = buf.getInt
+              results += KVTimestamp(key, ReadInvokation, None, time, sender)
+            }
+            case _ => {
+              val op = operation match {
+                case READRESPONSE_FLAG => ReadResponse
+                case WRITEINVOKATION_FLAG => WriteInvokation
+                case WRITERESPONSE_FLAG => WriteResponse
+              }
+              val value = buf.getInt
+              val time = buf.getLong
+              val sender = buf.getInt
+              results += KVTimestamp(key, op, Some(value), time, sender)
+            }
           }
         }
         TestDone(results.toList)
