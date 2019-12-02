@@ -61,8 +61,9 @@ object AtomicRegister extends DistributedBenchmark {
       assert(system != null);
       val addr = system.networkAddress.get;
       logger.trace(s"Atomic Register(Master) Path is $addr");
+      val testing = false
       val atomicRegisterIdF =
-        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload));
+        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload, testing));
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);
@@ -76,12 +77,11 @@ object AtomicRegister extends DistributedBenchmark {
       Await.result(beb_ar_connF, 5.seconds);
       /* connect Iteration prepare component */
       val nodes = addr :: d;
-      val num_nodes = nodes.size;
       init_id += 1;
       prepare_latch = new CountDownLatch(1);
       finished_latch = new CountDownLatch(1);
       val partitioningCompF = system.createNotify[JPartitioningComp](
-        Init(prepare_latch, finished_latch, init_id, nodes, num_keys, partition_size)
+        Init(prepare_latch, Some(finished_latch), init_id, nodes, num_keys, partition_size, None)
       );
       partitioning_comp = Await.result(partitioningCompF, 5.second);
       val partitioningComp_net_connF = system.connectNetwork(partitioning_comp);
@@ -136,8 +136,9 @@ object AtomicRegister extends DistributedBenchmark {
       logger.trace(s"Atomic Register(Client) Path is $addr");
       this.read_workload = c.read_workload;
       this.write_workload = c.write_workload;
+      val testing = false
       val atomicRegisterIdF =
-        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload))
+        system.createNotify[JAtomicRegister](new JAtomicRegister.Init(read_workload, write_workload, testing))
       atomicRegister = Await.result(atomicRegisterIdF, 5.second);
       /* connect network */
       val connF = system.connectNetwork(atomicRegister);

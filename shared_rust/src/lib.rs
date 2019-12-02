@@ -18,7 +18,6 @@ use std::{
     thread,
     time::Duration,
 };
-
 //pub(crate) type BenchLogger = Logger;
 
 pub struct BenchmarkMain;
@@ -113,6 +112,7 @@ pub mod test_utils {
             Arc,
         },
     };
+    use itertools::Itertools;
 
     pub fn test_implementation<F>(benchmarks: Box<F>)
     where F: BenchmarkFactory + Clone + 'static {
@@ -566,6 +566,100 @@ pub mod test_utils {
             not_implemented.len(),
             not_implemented
         );
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub enum KVOperation{
+        ReadInvokation,
+        ReadResponse,
+        WriteInvokation,
+        WriteResponse
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub struct KVTimestamp {
+        pub key: u64,
+        pub operation: KVOperation,
+        pub value: Option<u32>,
+        pub time: i64,
+        pub sender: u32
+    }
+
+    pub fn all_linearizable(timestamps: &Vec<KVTimestamp>) -> bool {
+
+        for (_key, mut trace) in timestamps.into_iter().map(|x| (x.key, *x)).into_group_map(){
+            trace.sort_by_key(|x| x.time);
+            let mut s: Vec<u32> = vec!(0);
+            if !is_linearizable(&trace, s.as_mut()){
+                return false;
+            }
+        }
+        true
+    }
+
+    fn is_linearizable(h: &Vec<KVTimestamp>, s: &mut Vec<u32>) -> bool {
+        match h.is_empty() {
+            true => true,
+            false => {
+                let minimal_ops = get_minimal_ops(h);
+                for op in minimal_ops{
+                    let response_val = get_response_value(op, h).unwrap();
+                    match op.operation{
+                        KVOperation::WriteInvokation | KVOperation::WriteResponse => {
+//                            println!("current value={}, write {}", s.last().unwrap(), response_val);
+                            let removed_op_trace = remove_op(op, h);
+                            s.push(response_val);
+                            if is_linearizable(&removed_op_trace, s) {
+                                return true;
+                            }
+                            else {
+                                s.pop();
+                            }
+                        },
+                        KVOperation::ReadInvokation | KVOperation::ReadResponse => {
+//                            println!("current value={}, read {}", s.last().unwrap(), response_val);
+                            let removed_op_trace = remove_op(op, h);
+                            if s.last().unwrap() == &response_val && is_linearizable(&removed_op_trace, s){
+                                return true;
+                            }
+                        }
+                    }
+
+                }
+                false
+            }
+        }
+    }
+
+    fn get_minimal_ops(trace: &Vec<KVTimestamp>) -> Vec<&KVTimestamp> {
+        let mut minimal_ops = Vec::new();
+        for entry in trace {
+            match entry.operation {
+                KVOperation::ReadInvokation | KVOperation::WriteInvokation => minimal_ops.push(entry),
+                _ => break
+            }
+        }
+        minimal_ops.clone()
+    }
+
+    fn get_response_value(invokation: &KVTimestamp, trace: &Vec<KVTimestamp>) -> Option<u32> {
+        match invokation.operation {
+            KVOperation::ReadInvokation => {
+                 let f = trace.iter().find(|&&x| x.operation == KVOperation::ReadResponse && x.sender == invokation.sender);
+                 match f {
+                     Some(ts) => ts.value,
+                     _ => None
+                 }
+             }
+            _ => invokation.value
+        }
+    }
+
+    fn remove_op(entry: &KVTimestamp, trace: &Vec<KVTimestamp>) -> Vec<KVTimestamp>{
+        let mut cloned: Vec<KVTimestamp> = trace.clone();
+        cloned.retain(|&x| x.sender != entry.sender);
+        assert!(cloned.len() < trace.len());
+        cloned
     }
 }
 

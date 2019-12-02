@@ -2,27 +2,31 @@ use super::*;
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
+use benchmark_suite_shared::test_utils::{KVTimestamp, KVOperation};
 
 #[derive(ComponentDefinition)]
 pub struct PartitioningActor {
     ctx: ComponentContext<PartitioningActor>,
     prepare_latch: Arc<CountdownEvent>,
-    finished_latch: Arc<CountdownEvent>,
+    finished_latch: Option<Arc<CountdownEvent>>,
     init_id: u32,
     n: u32,
     nodes: Vec<ActorPath>,
     num_keys: u64,
     init_ack_count: u32,
     done_count: u32,
+    test_promise: Option<KPromise<Vec<KVTimestamp>>>,
+    test_results: Vec<KVTimestamp>,
 }
 
 impl PartitioningActor {
     pub fn with(
         prepare_latch: Arc<CountdownEvent>,
-        finished_latch: Arc<CountdownEvent>,
+        finished_latch: Option<Arc<CountdownEvent>>,
         init_id: u32,
         nodes: Vec<ActorPath>,
         num_keys: u64,
+        test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     ) -> PartitioningActor {
         PartitioningActor {
             ctx: ComponentContext::new(),
@@ -34,6 +38,8 @@ impl PartitioningActor {
             num_keys,
             init_ack_count: 0,
             done_count: 0,
+            test_promise,
+            test_results: Vec::new(),
         }
     }
 }
@@ -88,9 +94,21 @@ impl Actor for PartitioningActor {
                     if self.done_count == self.n {
                         info!(self.ctx.log(), "Everybody is done");
                         self.finished_latch
+                            .as_ref()
+                            .unwrap()
                             .decrement()
                             .expect("Latch didn't decrement!");
                     }
+            },
+            td: TestDone [PartitioningActorSer] => {
+                self.done_count += 1;
+                self.test_results.extend(td.0);
+                if self.done_count == self.n {
+                    self.test_promise.take()
+                                     .unwrap()
+                                     .fulfill(self.test_results.clone())
+                                     .expect("Could not fulfill promise with test results");
+                }
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }}
@@ -113,6 +131,8 @@ pub struct InitAck(pub u32);
 pub struct Run;
 #[derive(Clone, Debug)]
 pub struct Done;
+#[derive(Clone, Debug)]
+pub struct TestDone(pub Vec<KVTimestamp>);
 
 pub struct PartitioningActorSer;
 pub const PARTITIONING_ACTOR_SER: PartitioningActorSer = PartitioningActorSer {};
@@ -120,6 +140,13 @@ const INIT_ID: i8 = 1;
 const INITACK_ID: i8 = 2;
 const RUN_ID: i8 = 3;
 const DONE_ID: i8 = 4;
+const TESTDONE_ID: i8 = 5;
+/* bytes to differentiate KVOperations*/
+const READ_INV: i8 = 6;
+const READ_RESP: i8 = 7;
+const WRITE_INV: i8 = 8;
+const WRITE_RESP: i8 = 9;
+
 
 impl Serialiser<Init> for PartitioningActorSer {
     fn ser_id(&self) -> SerId {
@@ -257,3 +284,74 @@ impl Deserialiser<Done> for PartitioningActorSer {
         }
     }
 }
+
+impl Serialiser<TestDone> for PartitioningActorSer {
+    fn ser_id(&self) -> SerId {
+        serialiser_ids::PARTITIONING_TESTDONE_MSG
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(100000)
+    }
+
+    fn serialise(&self, td: &TestDone, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        let timestamps = &td.0;
+        buf.put_i8(TESTDONE_ID);
+        buf.put_u32_be(timestamps.len() as u32);
+        for ts in timestamps{
+            buf.put_u64_be(ts.key);
+            match ts.operation {
+                KVOperation::ReadInvokation => buf.put_i8(READ_INV),
+                KVOperation::ReadResponse => {
+                    buf.put_i8(READ_RESP);
+                    buf.put_u32_be(ts.value.unwrap());
+                },
+                KVOperation::WriteInvokation => {
+                    buf.put_i8(WRITE_INV);
+                    buf.put_u32_be(ts.value.unwrap());
+                },
+                KVOperation::WriteResponse => {
+                    buf.put_i8(WRITE_RESP);
+                    buf.put_u32_be(ts.value.unwrap());
+                },
+            }
+            buf.put_i64_be(ts.time);
+            buf.put_u32_be(ts.sender);
+        }
+
+        Ok(())
+    }
+}
+
+impl Deserialiser<TestDone> for PartitioningActorSer {
+    const SER_ID: SerId = serialiser_ids::PARTITIONING_TESTDONE_MSG;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<TestDone, SerError> {
+        match buf.get_i8() {
+            TESTDONE_ID => {
+                let n: u32 = buf.get_u32_be();
+                let mut timestamps: Vec<KVTimestamp> = Vec::new();
+                for _ in 0..n {
+                    let key = buf.get_u64_be();
+                    let (operation, value) = match buf.get_i8() {
+                        READ_INV => (KVOperation::ReadInvokation, None),
+                        READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32_be())),
+                        WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32_be())),
+                        WRITE_RESP => (KVOperation::WriteResponse, Some(buf.get_u32_be())),
+                        _ => panic!("Found unknown KVOperation id"),
+                    };
+                    let time = buf.get_i64_be();
+                    let sender = buf.get_u32_be();
+                    let ts = KVTimestamp{key, operation, value, time, sender};
+                    timestamps.push(ts);
+                }
+                let test_done = TestDone{ 0: timestamps };
+                Ok(test_done)
+            }
+            _ => Err(SerError::InvalidType(
+                "Found unkown id, but expected Init.".into(),
+            )),
+        }
+    }
+}
+
+
