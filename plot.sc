@@ -24,7 +24,7 @@ val results = pwd / 'results;
 val plots = pwd / 'plots;
 
 @main
-def main(show: Boolean = false): Unit = {
+def main(show: Boolean = false, skip: Seq[String] = Nil): Unit = {
 	if (!(exists! results)) {
 		println("No results to plot.");
 		return;
@@ -33,18 +33,21 @@ def main(show: Boolean = false): Unit = {
 		rm! plots;
 	}
 	mkdir! plots;
-	(ls! results).foreach(plotRun(_, show));
+  if (skip != Nil) {
+    println(s"Skipping implementations: ${skip.mkString(", ")}");
+  }
+	(ls! results).foreach(plotRun(_, show, skip.toSet));
 }
 
-private def plotRun(run: Path, show: Boolean): Unit = {
+private def plotRun(run: Path, show: Boolean, skip: Set[String]): Unit = {
 	println(s"Plotting Run '${run}'");
 	val summary = run / 'summary;
 	val output = plots / run.last;
 	mkdir! output;
-	(ls! summary).filter(_.toString.endsWith(".data")).foreach(plotData(_, output, show));
+	(ls! summary).filter(_.toString.endsWith(".data")).foreach(plotData(_, output, show, skip));
 }
 
-private def plotData(data: Path, output: Path, show: Boolean): Unit = {
+private def plotData(data: Path, output: Path, show: Boolean, skip: Set[String]): Unit = {
 	println(s"Plotting Data '${data}'");
 	print("Loading data...");
 	//val rawData = read.lines! data;
@@ -53,7 +56,7 @@ private def plotData(data: Path, output: Path, show: Boolean): Unit = {
 	reader.close()
 	println("done");
 	//println(rawData);
-	val mean = rawData.map(m => (m("IMPL"), m("PARAMS"), m("MEAN").toDouble));
+	val mean = rawData.map(m => (m("IMPL"), m("PARAMS"), m("MEAN").toDouble)).filterNot(t => skip.contains(t._1));
 	val meanGrouped = mean.groupBy(_._1).map { case (key, entries) =>
 		val params = entries.map(_._2);
 		val means = entries.map(_._3);
