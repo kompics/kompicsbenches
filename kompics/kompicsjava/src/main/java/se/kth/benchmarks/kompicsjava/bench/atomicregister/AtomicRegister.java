@@ -1,5 +1,6 @@
 package se.kth.benchmarks.kompicsjava.bench.atomicregister;
 
+import scala.Option;
 import se.kth.benchmarks.kompicsjava.partitioningcomponent.events.*;
 import se.kth.benchmarks.kompicsjava.bench.atomicregister.events.*;
 import se.kth.benchmarks.kompicsjava.broadcast.BEBDeliver;
@@ -9,6 +10,7 @@ import se.kth.benchmarks.kompicsjava.net.NetAddress;
 import se.kth.benchmarks.kompicsjava.net.NetMessage;
 
 import se.kth.benchmarks.kompicsscala.KompicsSystemProvider;
+import se.kth.benchmarks.test.KVTestUtil;
 import se.sics.kompics.ClassMatchedHandler;
 import se.sics.kompics.ComponentDefinition;
 import se.sics.kompics.Handler;
@@ -18,6 +20,7 @@ import se.sics.kompics.network.Network;
 
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 
 public class AtomicRegister extends ComponentDefinition {
@@ -25,10 +28,12 @@ public class AtomicRegister extends ComponentDefinition {
     public static class Init extends se.sics.kompics.Init<AtomicRegister> {
         private final float read_workload;
         private final float write_workload;
+        private final boolean testing;
 
-        public Init(float read_workload, float write_workload) {
+        public Init(float read_workload, float write_workload, boolean testing) {
             this.read_workload = read_workload;
             this.write_workload = write_workload;
+            this.testing = testing;
         }
     }
 
@@ -49,13 +54,18 @@ public class AtomicRegister extends ComponentDefinition {
     private long write_count;
     private float read_workload;
     private float write_workload;
+    private boolean testing;
     private NetAddress master;
     private int current_run_id = -1;
+
+    private LinkedList<KVTestUtil.KVTimestamp> timestamps;
 
     public AtomicRegister(Init init) {
         selfAddr = config().getValue(KompicsSystemProvider.SELF_ADDR_KEY(), NetAddress.class);
         read_workload = init.read_workload;
         write_workload = init.write_workload;
+        testing = init.testing;
+        if (testing) timestamps = new LinkedList<>();
         subscribe(startHandler, control);
         subscribe(readRequestHandler, beb);
         subscribe(writeRequestHandler, beb);
@@ -86,6 +96,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register_readList.get(key).clear();
         register.reading = true;
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.ReadInvokation$.MODULE$, Option.empty(), System.currentTimeMillis(), selfRank));
         trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
@@ -97,6 +108,7 @@ public class AtomicRegister extends ComponentDefinition {
         register.acks = 0;
         register.reading = false;
         register_readList.get(key).clear();
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.WriteInvokation$.MODULE$, Option.apply(selfRank), System.currentTimeMillis(), selfRank));
         trigger(new BEBRequest(nodes, new Read(current_run_id, key, register.rid)), beb);
     }
 
@@ -116,14 +128,21 @@ public class AtomicRegister extends ComponentDefinition {
         }
     }
 
+    private void sendDone(){
+        if (!testing) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Done.event), net);
+        else trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), new se.kth.benchmarks.kompicsjava.partitioningcomponent.events.TestDone(timestamps)), net);
+    }
+
     private void readResponse(long key, int read_value){
         read_count--;
-        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Done.event), net);
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.ReadResponse$.MODULE$, Option.apply(read_value), System.currentTimeMillis(), selfRank));
+        if (read_count == 0 && write_count == 0) sendDone();
     }
 
     private void writeResponse(long key){
         write_count--;
-        if (read_count == 0 && write_count == 0) trigger(se.kth.benchmarks.kompicsscala.NetMessage.viaTCP(selfAddr.asScala(), master.asScala(), se.kth.benchmarks.kompicsjava.partitioningcomponent.events.Done.event), net);
+        if (testing) timestamps.addLast(new KVTestUtil.KVTimestamp(key, KVTestUtil.WriteResponse$.MODULE$, Option.apply(selfRank), System.currentTimeMillis(), selfRank));
+        if (read_count == 0 && write_count == 0) sendDone();
     }
 
     private Handler<Start> startHandler = new Handler<Start>() {

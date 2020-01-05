@@ -7,7 +7,7 @@ import akka.actor.typed.scaladsl.AskPattern._
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 
 import scala.util.{Failure, Success, Try}
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
 import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
 import java.util.UUID.randomUUID
@@ -15,19 +15,18 @@ import java.util.UUID.randomUUID
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import scalapb.GeneratedMessage
 import se.kth.benchmarks.{DeploymentMetaData, DistributedBenchmark}
-import se.kth.benchmarks.akka.{
-  ActorSystemProvider,
-  SerializerBindings,
-  SerializerIds,
-  TypedPartitioningActor,
-  TypedPartitioningActorSerializer
-}
-import se.kth.benchmarks.akka.TypedPartitioningActor.{Done, InitAck, PartitioningMessage, Start}
+import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds, TypedPartitioningActor, TypedPartitioningActorSerializer}
+import se.kth.benchmarks.akka.TypedPartitioningActor.{Done, InitAck, PartitioningMessage, Start, TestDone}
 import se.kth.benchmarks.akka.bench.AtomicRegister.{AtomicRegisterState, FailedPreparationException}
+import se.kth.benchmarks.akka.typed_bench.AtomicRegister.SystemSupervisor.SystemMessage
 
 import scala.collection.mutable
 import scala.util.Try
 import com.typesafe.scalalogging.StrictLogging
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
+
+import scala.collection.immutable.List
+import scala.collection.mutable.ListBuffer
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -87,11 +86,12 @@ object AtomicRegister extends DistributedBenchmark {
 
     override def prepareIteration(d: List[ClientData]): Unit = {
       logger.debug("Preparing iteration");
-      system ! StartAtomicRegister(read_workload, write_workload)
+      val testing = false
       init_id += 1
+      system ! StartAtomicRegister(read_workload, write_workload, testing, init_id)
       prepare_latch = new CountDownLatch(1)
       finished_latch = new CountDownLatch(1)
-      system ! StartPartitioningActor(prepare_latch, finished_latch, init_id, d, num_keys, partition_size)
+      system ! StartPartitioningActor(prepare_latch, Some(finished_latch), init_id, d, num_keys, partition_size, None)
       val timeout = 100
       val timeunit = TimeUnit.SECONDS
       val successful_prep = prepare_latch.await(timeout, timeunit)
@@ -126,70 +126,6 @@ object AtomicRegister extends DistributedBenchmark {
         }
       }
     }
-
-    object SystemSupervisor {
-      def apply(): Behavior[SystemMessage] = Behaviors.setup(context => new SystemSupervisor(context))
-
-      sealed trait SystemMessage
-
-      case class StartPartitioningActor(prepare_latch: CountDownLatch,
-                                        finished_latch: CountDownLatch,
-                                        init_id: Int,
-                                        nodes: List[ClientRef],
-                                        num_keys: Long,
-                                        partition_size: Int)
-          extends SystemMessage
-      case class StartAtomicRegister(read_workload: Float, write_workload: Float) extends SystemMessage
-      case class StopActors(ref: ActorRef[OperationSucceeded.type]) extends SystemMessage
-      case object RunIteration extends SystemMessage
-      case object OperationSucceeded
-    }
-
-    class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
-
-      val resolver = ActorRefResolver(context.system)
-      var atomicRegister: ActorRef[AtomicRegisterMessage] = null
-      var partitioningActor: ActorRef[PartitioningMessage] = null
-
-      override def onMessage(msg: SystemMessage): Behavior[SystemMessage] = {
-        msg match {
-          case StartAtomicRegister(r, w) => {
-            atomicRegister = context.spawn[AtomicRegisterMessage](AtomicRegisterActor(r, w), s"typed_atomicreg$init_id")
-            this.context.log.debug(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
-          }
-          case s: StartPartitioningActor => {
-            val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
-            val nodes = atomicRegRef :: s.nodes
-            val num_nodes = nodes.size
-            assert(partition_size <= num_nodes,
-                   s"Invalid partition size $partition_size > $num_nodes (number of nodes).");
-            assert(partition_size > 0, s"Invalid partition size $partition_size <= 0.");
-            assert((1.0 - (read_workload + write_workload)) < 0.00001,
-                   s"Invalid workload sum ${read_workload + write_workload} != 1.0");
-            partitioningActor = context.spawn[PartitioningMessage](
-              TypedPartitioningActor(s.prepare_latch, s.finished_latch, s.init_id, nodes, s.num_keys, s.partition_size),
-              s"typed_itactor$init_id"
-            )
-            partitioningActor ! Start
-          }
-          case StopActors(ref) => {
-            if (atomicRegister != null) {
-              context.stop(atomicRegister)
-              atomicRegister = null
-            }
-            if (partitioningActor != null) {
-              context.stop(partitioningActor)
-              partitioningActor = null
-            }
-            ref ! OperationSucceeded
-          }
-          case RunIteration => {
-            partitioningActor ! TypedPartitioningActor.Run
-          }
-        }
-        this
-      }
-    }
   }
 
   class ClientImpl extends Client with StrictLogging {
@@ -201,8 +137,9 @@ object AtomicRegister extends DistributedBenchmark {
       logger.info("Setting up Client");
       this.read_workload = c.read_workload
       this.write_workload = c.write_workload
+      val testing = false
       system = ActorSystemProvider.newRemoteTypedActorSystem[AtomicRegisterMessage](
-        AtomicRegisterActor(read_workload, write_workload),
+        AtomicRegisterActor(read_workload, write_workload, testing),
         s"atomicreg_client${randomUUID()}",
         4,
         serializers
@@ -228,6 +165,66 @@ object AtomicRegister extends DistributedBenchmark {
           case ex: Exception       => logger.error(s"Failed to terminate ActorSystem", ex)
         }
       }
+    }
+  }
+
+  object SystemSupervisor {
+    def apply(): Behavior[SystemMessage] = Behaviors.setup(context => new SystemSupervisor(context))
+
+    trait SystemMessage
+
+    case class StartPartitioningActor(prepare_latch: CountDownLatch,
+                                      finished_latch: Option[CountDownLatch],
+                                      init_id: Int,
+                                      nodes: List[ClientRef],
+                                      num_keys: Long,
+                                      partition_size: Int,
+                                      test_promise: Option[Promise[List[KVTimestamp]]] @unchecked)
+      extends SystemMessage
+    case class StartAtomicRegister(read_workload: Float, write_workload: Float, testing: Boolean, init_id: Int) extends SystemMessage
+    case class StopActors(ref: ActorRef[OperationSucceeded.type]) extends SystemMessage
+    case object RunIteration extends SystemMessage
+    case object OperationSucceeded
+  }
+
+  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
+    import SystemSupervisor._
+
+    val resolver = ActorRefResolver(context.system)
+    var atomicRegister: ActorRef[AtomicRegisterMessage] = null
+    var partitioningActor: ActorRef[PartitioningMessage] = null
+
+    override def onMessage(msg: SystemMessage): Behavior[SystemMessage] = {
+      msg match {
+        case StartAtomicRegister(r, w, t, init_id) => {
+          atomicRegister = context.spawn[AtomicRegisterMessage](AtomicRegisterActor(r, w, t), s"typed_atomicreg$init_id")
+          this.context.log.debug(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
+        }
+        case s: StartPartitioningActor => {
+          val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
+          val nodes = atomicRegRef :: s.nodes
+          partitioningActor = context.spawn[PartitioningMessage](
+            TypedPartitioningActor(s.prepare_latch, s.finished_latch, s.init_id, nodes, s.num_keys, s.partition_size, s.test_promise),
+            s"typed_itactor${s.init_id}"
+          )
+          partitioningActor ! Start
+        }
+        case StopActors(ref) => {
+          if (atomicRegister != null) {
+            context.stop(atomicRegister)
+            atomicRegister = null
+          }
+          if (partitioningActor != null) {
+            context.stop(partitioningActor)
+            partitioningActor = null
+          }
+          ref ! OperationSucceeded
+        }
+        case RunIteration => {
+          partitioningActor ! TypedPartitioningActor.Run
+        }
+      }
+      this
     }
   }
 
@@ -264,11 +261,11 @@ object AtomicRegister extends DistributedBenchmark {
   case class Ack(run_id: Int, key: Long, rid: Int) extends AtomicRegisterMessage
 
   object AtomicRegisterActor {
-    def apply(read_workload: Float, write_workload: Float): Behavior[AtomicRegisterMessage] =
-      Behaviors.setup(context => new AtomicRegisterActor(context, read_workload, write_workload))
+    def apply(read_workload: Float, write_workload: Float, testing: Boolean): Behavior[AtomicRegisterMessage] =
+      Behaviors.setup(context => new AtomicRegisterActor(context, read_workload, write_workload, testing))
   }
 
-  class AtomicRegisterActor(context: ActorContext[AtomicRegisterMessage], read_workload: Float, write_workload: Float)
+  class AtomicRegisterActor(context: ActorContext[AtomicRegisterMessage], read_workload: Float, write_workload: Float, testing: Boolean)
       extends AbstractBehavior[AtomicRegisterMessage] {
     implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
       o.mkOrderingOps(x); // for tuple comparison
@@ -293,6 +290,9 @@ object AtomicRegister extends DistributedBenchmark {
     val resolver = ActorRefResolver(context.system)
     val selfRef = ClientRef(resolver.toSerializationFormat(context.self))
 
+    /* Linearizability test variables */
+    var timestamps = ListBuffer[KVTimestamp]()
+
     private def getActorRef[T](c: ClientRef): ActorRef[T] = {
       resolver.resolveActorRef(c.ref)
     }
@@ -307,6 +307,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register_readlist(key).clear()
       register.reading = true
+      if (testing) timestamps += KVTimestamp(key, ReadInvokation, None, System.currentTimeMillis(), selfRank)
       bcast(nodes, Read(selfRef, current_run_id, key, register.rid))
     }
 
@@ -318,6 +319,7 @@ object AtomicRegister extends DistributedBenchmark {
       register.acks = 0
       register.reading = false
       register_readlist(key).clear()
+      if (testing) timestamps += KVTimestamp(key, WriteInvokation, Some(selfRank), System.currentTimeMillis(), selfRank)
       bcast(nodes, Read(selfRef, current_run_id, key, register.rid))
     }
 
@@ -338,15 +340,21 @@ object AtomicRegister extends DistributedBenchmark {
       }
     }
 
+    private def sendDone(): Unit = {
+      if (!testing) master ! Done
+      else master ! TestDone(timestamps.toList)
+    }
+
     private def readResponse(key: Long, read_value: Int): Unit = {
       read_count -= 1
-      if (read_count == 0 && write_count == 0) master ! Done
-
+      if (testing) timestamps += KVTimestamp(key, ReadResponse, Some(read_value), System.currentTimeMillis(), selfRank)
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     private def writeResponse(key: Long): Unit = {
       write_count -= 1
-      if (read_count == 0 && write_count == 0) master ! Done
+      if (testing) timestamps += KVTimestamp(key, WriteResponse, Some(selfRank), System.currentTimeMillis(), selfRank)
+      if (read_count == 0 && write_count == 0) sendDone()
     }
 
     override def onMessage(msg: AtomicRegisterMessage): Behavior[AtomicRegisterMessage] = {

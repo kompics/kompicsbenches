@@ -9,19 +9,23 @@ import akka.util.ByteString
 import se.kth.benchmarks.akka.bench.AtomicRegister.ClientRef
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.{Await, Future}
+import scala.concurrent.{Await, Future, Promise}
 import scala.concurrent.duration._
-import PartitioningActor.{Start, Done, ResolvedNodes, _}
+import PartitioningEvents._
 
 import scala.util.{Failure, Success}
 import akka.actor.ActorLogging
+import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
+
+import scala.collection.immutable.List
 
 class PartitioningActor(prepare_latch: CountDownLatch,
-                        finished_latch: CountDownLatch,
+                        finished_latch: Option[CountDownLatch],
                         init_id: Int,
                         nodes: List[ClientRef],
                         num_keys: Long,
-                        partition_size: Int)
+                        partition_size: Int,
+                        test_promise: Option[Promise[List[KVTimestamp]]] @unchecked)
     extends Actor
     with ActorLogging {
   implicit val ec = scala.concurrent.ExecutionContext.global;
@@ -31,6 +35,7 @@ class PartitioningActor(prepare_latch: CountDownLatch,
   val n = active_nodes.size
   var init_ack_count: Int = 0
   var done_count = 0
+  var test_results = ListBuffer[KVTimestamp]()
 
   override def receive: Receive = {
     case Start => {
@@ -82,31 +87,43 @@ class PartitioningActor(prepare_latch: CountDownLatch,
     case Done => {
       done_count += 1
       if (done_count == n) {
-        finished_latch.countDown()
+        finished_latch.get.countDown()
       }
+    }
+    case TestDone(timestamps) => {
+      done_count += 1
+      test_results ++= timestamps
+      if (done_count == n) test_promise.get.success(test_results.toList)
     }
 
   }
 }
 
-object PartitioningActor {
+object PartitioningEvents {
   case object Start
   case class ResolvedNodes(actorRefs: List[ActorRef])
   case class Init(rank: Int, init_id: Int, nodes: List[ClientRef], min: Long, max: Long)
   case class InitAck(init_id: Int)
   case object Run
   case object Done
+  case class TestDone(timestamps: List[KVTimestamp])
   case object Identify
 }
 
 object PartitioningActorSerializer {
   val NAME = "partitioningactor"
 
-  private val INIT_FLAG: Byte = 1
-  private val INIT_ACK_FLAG: Byte = 2
-  private val RUN_FLAG: Byte = 3
-  private val DONE_FLAG: Byte = 4
-  private val IDENTIFY_FLAG: Byte = 5
+  val INIT_FLAG: Byte = 1
+  val INIT_ACK_FLAG: Byte = 2
+  val RUN_FLAG: Byte = 3
+  val DONE_FLAG: Byte = 4
+  val TESTDONE_FLAG: Byte = 5
+  val IDENTIFY_FLAG: Byte = 6
+  /* Bytes to represent test read and write operations of a KVTimestamp*/
+  val WRITEINVOKATION_FLAG: Byte = 6
+  val READINVOKATION_FLAG: Byte = 7
+  val WRITERESPONSE_FLAG: Byte = 8
+  val READRESPONSE_FLAG: Byte = 9
 }
 
 class PartitioningActorSerializer extends Serializer {
@@ -135,6 +152,31 @@ class PartitioningActorSerializer extends Serializer {
       case ack: InitAck => {
         ByteString.createBuilder.putByte(INIT_ACK_FLAG).putInt(ack.init_id).result().toArray
       }
+      case td: TestDone => {
+        val bs = ByteString.createBuilder.putByte(TESTDONE_FLAG)
+        bs.putInt(td.timestamps.size)
+        for (ts <- td.timestamps){
+          bs.putLong(ts.key)
+          ts.operation match {
+            case ReadInvokation => bs.putByte(READINVOKATION_FLAG)
+            case ReadResponse => {
+              bs.putByte(READRESPONSE_FLAG)
+              bs.putInt(ts.value.get)
+            }
+            case WriteInvokation => {
+              bs.putByte(WRITEINVOKATION_FLAG)
+              bs.putInt(ts.value.get)
+            }
+            case WriteResponse => {
+              bs.putByte(WRITERESPONSE_FLAG)
+              bs.putInt(ts.value.get)
+            }
+          }
+          bs.putLong(ts.time)
+          bs.putInt(ts.sender)
+        }
+        bs.result().toArray
+      }
       case Run      => Array(RUN_FLAG)
       case Done     => Array(DONE_FLAG)
       case Identify => Array(IDENTIFY_FLAG)
@@ -158,6 +200,33 @@ class PartitioningActorSerializer extends Serializer {
           nodes += ClientRef(cRef)
         }
         Init(rank, initId, nodes.toList, min, max)
+      }
+      case TESTDONE_FLAG => {
+        var results = new ListBuffer[KVTimestamp]()
+        val n = buf.getInt
+        for (_ <- 0 until n){
+          val key = buf.getLong
+          val operation = buf.get
+          operation match {
+            case READINVOKATION_FLAG => {
+              val time = buf.getLong
+              val sender = buf.getInt
+              results += KVTimestamp(key, ReadInvokation, None, time, sender)
+            }
+            case _ => {
+              val op = operation match {
+                case READRESPONSE_FLAG => ReadResponse
+                case WRITEINVOKATION_FLAG => WriteInvokation
+                case WRITERESPONSE_FLAG => WriteResponse
+              }
+              val value = buf.getInt
+              val time = buf.getLong
+              val sender = buf.getInt
+              results += KVTimestamp(key, op, Some(value), time, sender)
+            }
+          }
+        }
+        TestDone(results.toList)
       }
       case INIT_ACK_FLAG => InitAck(buf.getInt)
       case RUN_FLAG      => Run

@@ -231,7 +231,7 @@ private def plotBenchAtomicReg(b: Benchmark, res: Map[String, ImplGroupedResult[
   val meanGroupedParams = ImplResults.mapData(
     meanGroupedParamsTime,
     (req: AtomicRegisterRequest, meanTime: Double) => {
-      val totalMessages = req.numberOfKeys * req.partitionSize;
+      val totalMessages = req.numberOfKeys;
       val throughput = (totalMessages.toDouble*1000.0)/meanTime; // msgs/s
       throughput
     }

@@ -7,26 +7,30 @@ import java.util.concurrent.CountDownLatch
 import io.netty.buffer.ByteBuf
 import se.sics.kompics.network.Network
 import se.sics.kompics.network.netty.serialization.{Serializer, Serializers}
-import se.sics.kompics.sl.{ComponentDefinition, Init => KompicsInit, KompicsEvent, Start, handle}
-import PartitioningComp.{Done, Init, InitAck, Run}
+import se.sics.kompics.sl.{handle, ComponentDefinition, KompicsEvent, Start, Init => KompicsInit}
+import PartitioningComp.{Done, Init, InitAck, Run, TestDone}
+import se.kth.benchmarks.test.KVTestUtil._
 
 import scala.collection.mutable.ListBuffer
+import scala.collection.immutable.List
+import scala.concurrent.Promise
 
 class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDefinition {
   val net = requires[Network];
 
   val KompicsInit(prepare_latch: CountDownLatch,
-                  finished_latch: CountDownLatch,
+                  finished_latch: Option[CountDownLatch] @unchecked,
                   init_id: Int,
                   nodes: List[NetAddress] @unchecked,
                   num_keys: Long,
-                  partition_size: Int) = init;
+                  partition_size: Int,
+                  test_promise: Option[Promise[List[KVTimestamp]]] @unchecked) = init;
   val active_nodes = if (partition_size < nodes.size) nodes.slice(0, partition_size) else nodes;
   val n = active_nodes.size;
   var init_ack_count: Int = 0;
   var done_count = 0;
-  lazy val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY);
-
+  var test_results = ListBuffer[KVTimestamp]()
+  val selfAddr = cfg.getValue[NetAddress](KompicsSystemProvider.SELF_ADDR_KEY)
   ctrl uponEvent {
     case _: Start => {
       assert(selfAddr != null)
@@ -44,17 +48,23 @@ class PartitioningComp(init: KompicsInit[PartitioningComp]) extends ComponentDef
   }
 
   net uponEvent {
-    case NetMessage(_, InitAck(init_id)) => {
+    case NetMessage(_, InitAck(_)) => {
       init_ack_count += 1
       if (init_ack_count == n) {
         prepare_latch.countDown()
       }
     }
-    case NetMessage(header, Done) => {
+    case NetMessage(_, Done) => {
       done_count += 1
       if (done_count == n) {
-        logger.info("Everybody is done")
-        finished_latch.countDown()
+        finished_latch.get.countDown()
+      }
+    }
+    case NetMessage(_, TestDone(timestamps)) => {
+      done_count += 1
+      test_results ++= timestamps
+      if (done_count == n) {
+        test_promise.get.success(test_results.toList)
       }
     }
   }
@@ -65,6 +75,7 @@ object PartitioningComp {
   case class InitAck(init_id: Int) extends KompicsEvent;
   case object Run extends KompicsEvent;
   case object Done extends KompicsEvent;
+  case class TestDone(timestamps: List[KVTimestamp]) extends KompicsEvent;
 }
 
 object PartitioningCompSerializer extends Serializer {
@@ -72,11 +83,18 @@ object PartitioningCompSerializer extends Serializer {
   private val INIT_ACK_FLAG: Byte = 2
   private val RUN_FLAG: Byte = 3
   private val DONE_FLAG: Byte = 4
+  private val TESTDONE_FLAG: Byte = 5
+  /* Bytes to represent test read and write operations of a KVTimestamp*/
+  private val WRITEINVOKATION_FLAG: Byte = 6
+  private val READINVOKATION_FLAG: Byte = 7
+  private val WRITERESPONSE_FLAG: Byte = 8
+  private val READRESPONSE_FLAG: Byte = 9
 
   def register(): Unit = {
     Serializers.register(this, "partitioningcomp")
     Serializers.register(classOf[Init], "partitioningcomp")
     Serializers.register(classOf[InitAck], "partitioningcomp")
+    Serializers.register(classOf[TestDone],"partitioningcomp")
     Serializers.register(Run.getClass, "partitioningcomp")
     Serializers.register(Done.getClass, "partitioningcomp")
   }
@@ -105,6 +123,32 @@ object PartitioningCompSerializer extends Serializer {
       }
       case Run  => buf.writeByte(RUN_FLAG)
       case Done => buf.writeByte(DONE_FLAG)
+      case td: TestDone => {
+        buf.writeByte(TESTDONE_FLAG)
+        buf.writeInt(td.timestamps.size)
+        for (ts <- td.timestamps){
+          buf.writeLong(ts.key)
+          ts.operation match {
+            case ReadInvokation => {
+              buf.writeByte(READINVOKATION_FLAG)
+            }
+            case ReadResponse => {
+              buf.writeByte(READRESPONSE_FLAG)
+              buf.writeInt(ts.value.get)
+            }
+            case WriteInvokation => {
+              buf.writeByte(WRITEINVOKATION_FLAG)
+              buf.writeInt(ts.value.get)
+            }
+            case WriteResponse => {
+              buf.writeByte(WRITERESPONSE_FLAG)
+              buf.writeInt(ts.value.get)
+            }
+          }
+          buf.writeLong(ts.time)
+          buf.writeInt(ts.sender)
+        }
+      }
     }
   }
 
@@ -130,7 +174,33 @@ object PartitioningCompSerializer extends Serializer {
       case INIT_ACK_FLAG => InitAck(buf.readInt())
       case RUN_FLAG      => Run
       case DONE_FLAG     => Done
-
+      case TESTDONE_FLAG => {
+        var results = new ListBuffer[KVTimestamp]()
+        val n = buf.readInt()
+        for (_ <- 0 until n){
+          val key = buf.readLong()
+          val operation = buf.readByte()
+          operation match {
+            case READINVOKATION_FLAG => {
+              val time = buf.readLong()
+              val sender = buf.readInt()
+              results += KVTimestamp(key, ReadInvokation, None, time, sender)
+            }
+            case _ => {
+              val op = operation match {
+                case READRESPONSE_FLAG => ReadResponse
+                case WRITEINVOKATION_FLAG => WriteInvokation
+                case WRITERESPONSE_FLAG => WriteResponse
+              }
+              val value = buf.readInt()
+              val time = buf.readLong()
+              val sender = buf.readInt()
+              results += KVTimestamp(key, op, Some(value), time, sender)
+            }
+          }
+        }
+        TestDone(results.toList)
+      }
       case _ => {
         Console.err.print(s"Got invalid ser flag: $flag");
         null
