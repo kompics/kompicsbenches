@@ -9,6 +9,10 @@ object StandardStyle extends StyleSheet {
   initStyleSheet()
 
   val headline = cls(
-    color := "#FF0000"
+    textDecoration := "underline"
   );
+
+  val hidden = cls {
+    display := "none"
+  }
 }

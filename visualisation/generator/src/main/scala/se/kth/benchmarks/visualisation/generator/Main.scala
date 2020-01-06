@@ -8,20 +8,76 @@ import scala.reflect.io.Directory
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.PrintWriter
+import scala.util.{Failure, Success, Try}
+import java.io.FileFilter
 
 object Main extends StrictLogging {
   def main(args: Array[String]): Unit = {
     val conf = new Conf(args);
-    logger.debug(s"severing=${conf.serve()} to ${conf.target()} (force? ${conf.force()})");
+    logger.debug(s"Generating from ${conf.source()} to ${conf.target()} (force? ${conf.force()})");
 
     val target = prepareFolder(conf);
-    copyJs(target);
-    textToFile(StandardStyle.styleSheetText, "standard.css", target);
-    val index = textToFile(IndexPage.generate(), "index.html", target);
-    logger.info("**** All done! ****");
-    if (conf.open()) {
-      Runtime.getRuntime().exec(s"open ${index.getAbsolutePath()}");
+    val index_res = for {
+      _js <- resourceToFile("public/benchmark-suite-plotting-opt.js", "benchmark-suite-plotting.js", target)
+        .recoverWith {
+          case ex =>
+            logger.warn("Failed assembled JS", ex);
+            val res: Try[File] =
+              resourceToFile("public/benchmark-suite-plotting-fastopt.js", "benchmark-suite-plotting.js", target)
+                .flatMap(js => {
+                  logger.info("Succeeded with run JS. Also copying mapping file...");
+                  resourceToFile("public/benchmark-suite-plotting-fastopt.js.map",
+                                 "benchmark-suite-plotting-fastopt.js.map",
+                                 target).map(_ => js)
+                });
+            res
+        };
+      _main <- resourceToFile("public/main.css", "main.css", target);
+      _bootstrap <- resourceToFile("public/bootstrap.min.css", "bootstrap.min.css", target);
+      _standard <- textToFile(StandardStyle.styleSheetText, "standard.css", target);
+      plots <- generatePlots(conf.source(), target);
+      index <- textToFile(IndexPage(plots).generate(), "index.html", target)
+    } yield index;
+    index_res match {
+      case Success(index) => {
+        logger.info("**** All done! ****");
+        if (conf.open()) {
+          Runtime.getRuntime().exec(s"open ${index.getAbsolutePath()}");
+        }
+      }
+      case Failure(ex) => {
+        logger.error("A failure occurred during generation", ex);
+        System.exit(1);
+      }
     }
+  }
+
+  private def generatePlots(source: Path, target: File): Try[List[Plot]] = {
+    val targetPath = target.toPath();
+    val sources: Try[List[File]] = Try {
+      val normalised = source.toAbsolutePath().normalize().resolve("summary").toFile();
+      assert(normalised.exists(), s"Path $normalised does not exist!");
+      assert(normalised.canRead(), s"Can't read in ${normalised}!");
+      normalised
+        .listFiles(new FileFilter {
+          override def accept(file: File): Boolean = {
+            file.isFile() && file.getName().endsWith(".data")
+          }
+        })
+        .toList
+    };
+    sources.flatMap(files => {
+      val empty: Try[List[Plot]] = Try(List.empty[Plot]);
+      files.foldLeft(empty) { (accTry: Try[List[Plot]], sourceFile: File) =>
+        accTry.flatMap(acc => {
+          for {
+            plotted <- Plotter.fromSource(sourceFile);
+            written <- textToFile(plotted.text, plotted.fileName, target)
+            //file <- Try(written.toPath().relativize(targetPath).toString())
+          } yield Plot(plotted.title, plotted.fileName) :: acc
+        })
+      }
+    })
   }
 
   private def prepareFolder(conf: Conf): File = {
@@ -79,80 +135,67 @@ object Main extends StrictLogging {
     folder
   }
 
-  private def textToFile(text: String, name: String, target: File): File = {
+  private def textToFile(text: String, name: String, target: File): Try[File] = {
     val file = target.toPath().resolve(name).toFile();
     assert(file.createNewFile(), s"Could not create file $name");
     val output = new PrintWriter(file);
-    try {
+    val res = Try {
       output.write(text);
-    } finally {
-      output.close();
-    }
-    logger.info(s"Wrote $file");
-    file
+      logger.info(s"Wrote $file");
+      file
+    };
+    output.close();
+    res
   }
 
-  private def copyJs(target: File): Unit = {
-    import java.nio.charset.StandardCharsets;
-
-    logger.debug("Trying for assembled JS");
-    var mapStream: InputStream = null;
+  private def resourceToFile(resource: String, name: String, target: File): Try[File] = {
     var inputStream = this
       .getClass()
       .getClassLoader()
-      .getResourceAsStream(
-        "public/benchmark-suite-plotting-opt.js"
-      );
-    if (inputStream == null) {
-      logger.debug("Trying for run JS");
-      inputStream = this
-        .getClass()
-        .getClassLoader()
-        .getResourceAsStream(
-          "public/benchmark-suite-plotting-fastopt.js"
-        );
-      mapStream = this
-        .getClass()
-        .getClassLoader()
-        .getResourceAsStream(
-          "public/benchmark-suite-plotting-fastopt.js.map"
-        );
-    }
-    if (inputStream == null) {
-      logger.error("JS not found. Unable to proceed.");
-      System.exit(1);
-    }
-    // val data = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-    // println(s"Got data");
-    val jsFile = target.toPath().resolve("benchmark-suite-plotting.js").toFile();
-    assert(jsFile.createNewFile(), "Could not create JS file");
-    val output = new FileOutputStream(jsFile);
-    try {
+      .getResourceAsStream(resource);
+    val file = target.toPath().resolve(name).toFile();
+    var output: FileOutputStream = null;
+    val res = Try {
+      assert(file.createNewFile(), s"Could not create file $file");
+      output = new FileOutputStream(file);
       val res = inputStream.transferTo(output);
-      assert(res > 0L, "Copy did not succeed");
-    } finally {
       inputStream.close();
+      inputStream = null;
       output.close();
-    }
-    logger.info(s"Copied JS Data to $jsFile");
-    if (mapStream != null) {
-      val mapFile = target.toPath().resolve("benchmark-suite-plotting-fastopt.js.map").toFile();
-      assert(mapFile.createNewFile(), "Could not create JS Map file");
-      val output = new FileOutputStream(mapFile);
-      try {
-        val res = mapStream.transferTo(output);
-        assert(res > 0L, "Copy did not succeed");
-      } finally {
-        mapStream.close();
-        output.close();
+      output = null;
+      assert(res > 0L, "Copy did not succeed");
+      logger.info(s"Wrote $file");
+      file
+    }.recoverWith {
+      case _: NullPointerException => {
+        if (inputStream != null) {
+          inputStream.close();
+        }
+        if (output != null) {
+          output.close();
+        }
+        file.delete(); // cleanup
+        Failure(new RuntimeException(s"Invalid resource path: $resource"))
       }
-      logger.info(s"Copied JS Map to $mapFile");
-    }
+      case ex => {
+        if (inputStream != null) {
+          inputStream.close();
+        }
+        if (output != null) {
+          output.close();
+        }
+        file.delete(); // cleanup
+        Failure(ex)
+      }
+    };
+    res
   }
+
 }
 
 class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
-  val serve = toggle(default = Some(false), descrYes = "Serve the generated site locally.");
+  //val serve = toggle(default = Some(false), descrYes = "Serve the generated site locally.");
+  val source = opt[Path](descr = "The directory with Experiment Results to generate interactive plots for.")
   val target = opt[Path](default = Some(Paths.get(".", "deploy")),
                          descr = "The folder to generate content into. Will be created, if it does not exist.");
   val force = toggle(
@@ -161,5 +204,7 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
     descrNo = "Fail if the target folder is not empty."
   );
   val open = toggle(default = Some(false), descrYes = "Open the generated index file after completion.");
+
+  requireOne(source);
   verify()
 }
