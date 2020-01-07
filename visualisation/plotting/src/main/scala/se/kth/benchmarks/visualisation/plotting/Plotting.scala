@@ -25,6 +25,22 @@ object Plotting {
     });
   }
   @JSExport
+  def plotSeries(plotTitle: String,
+                 xAxisLabel: String,
+                 xAxisCategories: js.Array[String],
+                 yAxisLabel: String,
+                 seriesData: js.Array[AnySeries],
+                 target: dom.html.Element): Unit = {
+    jQuery(target).highcharts(new HighchartsConfig {
+      override val chart: Cfg[Chart] = Chart(`type` = "line");
+      override val title: Cfg[Title] = Title(text = plotTitle);
+      override val xAxis: CfgArray[XAxis] =
+        js.Array(XAxis(title = XAxisTitle(text = xAxisLabel), categories = xAxisCategories));
+      override val yAxis: CfgArray[YAxis] = js.Array(YAxis(title = YAxisTitle(text = yAxisLabel)));
+      override val series: SeriesCfg = seriesData;
+    });
+  }
+  @JSExport
   def test(): Unit = {
     val container = div("Test").render;
     dom.document.body.appendChild(container);

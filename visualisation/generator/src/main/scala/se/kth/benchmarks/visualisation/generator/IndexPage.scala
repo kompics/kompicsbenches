@@ -1,27 +1,11 @@
 package se.kth.benchmarks.visualisation.generator
 
 import scalatags.Text.all._
-import scalatags.generic.Attr
 
 case class IndexPage(plots: List[Plot]) {
-  def generate(): String = "<!DOCTYPE html>" + page.render;
+  def generate(): String = Frame.embed(page);
 
-  val integrity: Attr = Attr("integrity");
-  val crossorigin: Attr = Attr("crossorigin");
-
-  lazy val page = html(
-    head(
-      scalatags.Text.tags2.title("MPP Suite Index"),
-      link(rel := "stylesheet", `type` := "text/css", href := "bootstrap.min.css"),
-      link(rel := "stylesheet", `type` := "text/css", href := "main.css"),
-      link(rel := "stylesheet", `type` := "text/css", href := "standard.css"),
-      script(src := "https://code.jquery.com/jquery-1.12.4.min.js",
-             integrity := "sha256-ZosEbRLbNQzLpnKIkEdrPv7lOy9C27hHQ+Xp8a4MxAQ=",
-             crossorigin := "anonymous"),
-      script(src := "https://code.highcharts.com/highcharts.js", crossorigin := "anonymous"),
-      script(src := "https://code.highcharts.com/modules/data.js", crossorigin := "anonymous"),
-      script(src := "benchmark-suite-plotting.js")
-    ),
+  lazy val page =
     body(
       h1(StandardStyle.headline, "MPP Suite Experiment Run"),
       h2("Experiments"),
@@ -67,6 +51,5 @@ case class IndexPage(plots: List[Plot]) {
         // });
         """)
       )
-    )
-  );
+    );
 }

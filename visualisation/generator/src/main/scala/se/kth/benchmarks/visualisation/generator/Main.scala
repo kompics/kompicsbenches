@@ -73,7 +73,6 @@ object Main extends StrictLogging {
           for {
             plotted <- Plotter.fromSource(sourceFile);
             written <- textToFile(plotted.text, plotted.fileName, target)
-            //file <- Try(written.toPath().relativize(targetPath).toString())
           } yield Plot(plotted.title, plotted.fileName) :: acc
         })
       }
