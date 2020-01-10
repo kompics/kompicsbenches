@@ -10,6 +10,7 @@ object BootstrapStyle {
   val bgLight = cls := "bg-light";
   val container = cls := "container";
   val containerFluid = cls := "container-fluid";
+  val floatRight = cls := "float-right";
   val listGroup = cls := "list-group";
   val listGroupItem = cls := "list-group-item";
   val listGroupItemAction = cls := "list-group-item-action";
@@ -22,4 +23,7 @@ object BootstrapStyle {
   val navItem = cls := "nav-item";
   val navLink = cls := "nav-link";
   val flexColumn = cls := "flex-column";
+  val btn = cls := "btn";
+  val btnSecondary = cls := "btn-secondary";
+  val btnSmall = cls := "btn-sm";
 }

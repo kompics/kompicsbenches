@@ -1,7 +1,7 @@
 
-logs/
-results/
-plots/
+/logs/
+/results/
+/plots/
 
 bin/
 

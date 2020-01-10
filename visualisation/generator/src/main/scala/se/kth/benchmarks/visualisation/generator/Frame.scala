@@ -52,4 +52,14 @@ object Frame {
         content
       )
     ).render;
+
+  val backToTopButton = div(
+    BootstrapStyle.floatRight,
+    button(`type` := "button",
+           BootstrapStyle.btn,
+           BootstrapStyle.btnSecondary,
+           BootstrapStyle.btnSmall,
+           "back to top",
+           onclick := "Plotting.backToTop();")
+  );
 }

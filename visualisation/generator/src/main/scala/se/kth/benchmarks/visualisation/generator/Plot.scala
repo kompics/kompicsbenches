@@ -6,6 +6,7 @@ import scala.util.{Failure, Success, Try}
 import scalatags.Text.all._
 import scala.reflect._
 import scala.collection.mutable
+import scala.collection.immutable
 import com.github.tototoshi.csv._
 import se.kth.benchmarks.runner.{Benchmark, Benchmarks}
 import scalatags.Text
@@ -30,6 +31,9 @@ object Plotter extends StrictLogging {
     data.benchmark.symbol match {
       case "PINGPONG" | "NETPINGPONG"     => plots.PingPong.plot(data)
       case "TPPINGPONG" | "NETTPPINGPONG" => plots.ThroughputPingPong.plot(data)
+      case "FIBONACCI"                    => plots.Fibonacci.plot(data)
+      case "CHAMENEOS"                    => plots.Chameneos.plot(data)
+      case "APSP"                         => plots.AllPairsShortestPath.plot(data)
       case _                              => PlotGroup.Empty // TODO
     }
   }
@@ -81,6 +85,7 @@ object PlotGroup {
     override def render: Tag =
       div(
         div(id := s"container-${plot.id}"),
+        Frame.backToTopButton,
         script(s"""
   var series = ${toSeriesArray(plot.seriesData)};
   Plotting.plotSeries('${plot.title}', '${plot.xAxisLabel}', ${plot.xAxisCategories.mkJsString},'${plot.yAxisLabel}', series, document.getElementById('container-${plot.id}'));
@@ -162,6 +167,7 @@ object PlotGroup {
       div(
         div(plot.fixedParams.mkString(", ")),
         div(id := s"container-${plot.id}"),
+        Frame.backToTopButton,
         script(s"""
   var series = ${toSeriesArray(plot.seriesData)};
   Plotting.plotSeries('${plot.title}', '${plot.xAxisLabel}', ${plot.xAxisCategories.mkJsString},'${plot.yAxisLabel}', series, document.getElementById('container-${plot.id}'));
@@ -179,6 +185,7 @@ object PlotGroup {
         div(primary.fixedParams.mkString(", ")),
         div(id := secondaryContainerId),
         div(id := primaryContainerId),
+        Frame.backToTopButton,
         script(s"""
   var primarySeries = ${toSeriesArray(primary.seriesData)};
   var secondarySeries = ${toSeriesArray(secondary.seriesData)};
@@ -218,6 +225,16 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
   def mapParams[P: ClassTag](f: Params => P): ImplGroupedResult[P] = {
     this.copy(params = this.params.map(f))
   }
+  def sortParams(implicit ev: Ordering[Params]): ImplGroupedResult[Params] = {
+    val sorted = this.params.zip(this.stats).sortBy(_._1);
+    val (newParams, newStats) = sorted.unzip;
+    this.copy(params = newParams, stats = newStats)
+  }
+  def sortParamsBy[T: Ordering](extract: Params => T): ImplGroupedResult[Params] = {
+    val sorted = this.params.zip(this.stats).sortBy(t => extract(t._1));
+    val (newParams, newStats) = sorted.unzip;
+    this.copy(params = newParams, stats = newStats)
+  }
   def paramSet[T: Ordering: ClassTag](f: Params => T): mutable.TreeSet[T] = {
     val mapped = params.map(f);
     mutable.TreeSet(mapped: _*)
@@ -225,15 +242,16 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
   def map2D[T: Ordering: ClassTag](f: Params => T, labels: Array[T]): DataSeries = {
     assert(labels.length >= params.length, "There shouldn't be params for no labels.");
     assert(labels.length >= stats.length, "There shouldn't be values for no labels.");
+    val sorted = this.mapParams(f).sortParams;
     val series = Array.ofDim[Double](labels.length);
     var localOffset = 0;
     for (i <- 0 until labels.length) {
       val expected = labels(i);
       val localPosition = i - localOffset;
       if (params.length > localPosition) {
-        val actual = f(params(localPosition));
+        val actual = sorted.params(localPosition);
         if (actual == expected) {
-          series(i) = stats(localPosition).sampleMean;
+          series(i) = sorted.stats(localPosition).sampleMean;
         } else {
           series(i) = Double.NaN;
           localOffset += 1;
@@ -252,14 +270,14 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
                                               calc: (Params, Statistics) => Double): DataSeries = {
     assert(labels.length >= params.length, "There shouldn't be params for no labels.");
     assert(labels.length >= stats.length, "There shouldn't be values for no labels.");
+    val sorted = this.mapParams(p => (f(p), p)).sortParamsBy(_._1);
     val series = Array.ofDim[Double](labels.length);
     var localOffset = 0;
     for (i <- 0 until labels.length) {
       val expected = labels(i);
       val localPosition = i - localOffset;
       if (params.length > localPosition) {
-        val actualParams = params(localPosition);
-        val actual = f(actualParams);
+        val (actual, actualParams) = sorted.params(localPosition);
         if (actual == expected) {
           series(i) = calc(actualParams, stats(localPosition));
         } else {
@@ -302,9 +320,9 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
     ErrorBarSeries(meta, series)
   }
 
-  def groupBy[T: Ordering](grouper: Params => T): Map[T, ImplGroupedResult[Params]] = {
+  def groupBy[T: Ordering](grouper: Params => T): immutable.SortedMap[T, ImplGroupedResult[Params]] = {
     val indexedParams = params.zipWithIndex;
-    val builder = mutable.TreeMap.empty[T, (mutable.ListBuffer[Params], mutable.ListBuffer[Statistics])];
+    var builder = mutable.TreeMap.empty[T, (mutable.ListBuffer[Params], mutable.ListBuffer[Statistics])];
     val statsArray = stats.toArray;
     indexedParams.foreach {
       case (p, i) =>
@@ -314,10 +332,15 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
         entry._1 += p;
         entry._2 += stats;
     }
-    builder.mapValues(t => ImplGroupedResult(implLabel, t._1.toList, t._2.toList)).toMap
+    val immutableBuilder = immutable.TreeMap.newBuilder[T, ImplGroupedResult[Params]];
+    for ((k, t) <- builder) {
+      immutableBuilder += (k -> ImplGroupedResult(implLabel, t._1.toList, t._2.toList));
+    }
+    immutableBuilder.result()
   }
 
-  def slices[T: Ordering, P: ClassTag](grouper: Params => T, mapper: Params => P): Map[T, ImplGroupedResult[P]] = {
+  def slices[T: Ordering, P: ClassTag](grouper: Params => T,
+                                       mapper: Params => P): immutable.SortedMap[T, ImplGroupedResult[P]] = {
     this.groupBy(grouper).mapValues(_.mapParams(mapper))
   }
 }
@@ -381,8 +404,10 @@ case class BenchmarkData[Params](benchmark: Benchmark, results: Map[String, Impl
     set.toArray
   }
 
-  def slices[T: Ordering, P: ClassTag](grouper: Params => T,
-                                       mapper: Params => P): Map[T, Map[String, ImplGroupedResult[P]]] = {
+  def slices[T: Ordering, P: ClassTag](
+      grouper: Params => T,
+      mapper: Params => P
+  ): immutable.SortedMap[T, immutable.SortedMap[String, ImplGroupedResult[P]]] = {
     val builder = mutable.TreeMap.empty[T, mutable.TreeMap[String, ImplGroupedResult[P]]];
     val sliced = results.mapValues(_.slices(grouper, mapper));
     sliced.foreach {
@@ -393,7 +418,15 @@ case class BenchmarkData[Params](benchmark: Benchmark, results: Map[String, Impl
             entry += (impl -> slice);
         }
     }
-    builder.mapValues(_.toMap).toMap
+    val immutableBuilder = immutable.TreeMap.newBuilder[T, immutable.SortedMap[String, ImplGroupedResult[P]]];
+    for ((k, t) <- builder) {
+      val innerBuilder = immutable.TreeMap.newBuilder[String, ImplGroupedResult[P]];
+      for ((kinner, tinner) <- t) {
+        innerBuilder += (kinner -> tinner);
+      }
+      immutableBuilder += (k -> innerBuilder.result());
+    }
+    immutableBuilder.result()
   }
 }
 
