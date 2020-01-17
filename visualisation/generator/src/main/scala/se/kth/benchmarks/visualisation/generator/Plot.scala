@@ -34,6 +34,8 @@ object Plotter extends StrictLogging {
       case "FIBONACCI"                    => plots.Fibonacci.plot(data)
       case "CHAMENEOS"                    => plots.Chameneos.plot(data)
       case "APSP"                         => plots.AllPairsShortestPath.plot(data)
+      case "ATOMICREGISTER"               => plots.AtomicRegister.plot(data)
+      case "STREAMINGWINDOWS"             => plots.StreamingWindows.plot(data)
       case _                              => PlotGroup.Empty // TODO
     }
   }

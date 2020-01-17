@@ -40,7 +40,10 @@ lazy val generator = (project in file("generator"))
       "com.typesafe.scala-logging" %% "scala-logging" % "3.+",
       "ch.qos.logback" % "logback-classic" % "1.2.3",
       "com.github.tototoshi" %% "scala-csv" % "1.3.6",
-      "se.kth.benchmarks" %% "benchmark-suite-runner" % "0.3.0-SNAPSHOT",
+      "se.kth.benchmarks" %% "benchmark-suite-runner" % "0.3.0-SNAPSHOT" excludeAll(
+        //ExclusionRule(organization = "io.grpc"),
+        ExclusionRule(organization = "io.netty")
+      ),
       "org.scalatest" %% "scalatest" % "3.1.0" % "test"
     ),
     scalaJSProjects := Seq(plotting),
@@ -50,7 +53,13 @@ lazy val generator = (project in file("generator"))
     fork := true,
     sourceGenerators in Compile += Def.task {
       convertScripts(baseDirectory.value, (sourceManaged in Compile).value / "scripts")
-    }.taskValue
+    }.taskValue,
+    assemblyMergeStrategy in assembly := {
+      case "logback.xml"        => MergeStrategy.first
+      case x =>
+        val oldStrategy = (assemblyMergeStrategy in assembly).value
+        oldStrategy(x)
+    }
   );
 
 // TODO make this incremental
