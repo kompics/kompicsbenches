@@ -1,0 +1,7 @@
+IMPL,PARAMS,MEAN,SSD,SEM,RSE,CI95LO,CI95UP
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 100!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 1!N!,99.1210189010989,93.85705067729378,9.838892304444773,0.09926141209526745,79.83678998438715,118.40524781781066
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 100!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 125!N!,242.04255100000003,23.206453085203044,4.2368992781503545,0.01750477038291649,233.73822841482533,250.34687358517473
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 100!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 12500!N!,16852.514337599998,1774.0875624863577,323.90259232104466,0.01921983781365958,16217.665256650751,17487.363418549245
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 1000!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 1!N!,73.26293556179779,68.58286377579482,7.26976902071075,0.09922847023483859,59.014188281204724,87.51168284239085
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 1000!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 125!N!,126.86062013333336,11.409220141925765,2.083029078425011,0.016419824183704138,122.77788313962033,130.94335712704637
+KOMPICSSC2,number_of_partitions: 1!N!batch_size: 1000!N!window_size: ""1 second""!N!number_of_windows: 10!N!window_size_amplification: 12500!N!,16235.1161037,1450.252465654717,264.77866317219156,0.016309009524844004,15716.149923882505,16754.082283517495
