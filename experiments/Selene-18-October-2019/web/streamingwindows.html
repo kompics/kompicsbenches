@@ -1,0 +1,145 @@
+<!DOCTYPE html><html><head><title>MPP Suite Index</title><link rel="stylesheet" type="text/css" href="bootstrap.min.css" /><link rel="stylesheet" type="text/css" href="main.css" /><link rel="stylesheet" type="text/css" href="standard.css" /><script src="https://code.jquery.com/jquery-1.12.4.min.js" integrity="sha256-ZosEbRLbNQzLpnKIkEdrPv7lOy9C27hHQ+Xp8a4MxAQ=" crossorigin="anonymous"></script><script src="https://code.highcharts.com/highcharts.js" crossorigin="anonymous"></script><script src="https://code.highcharts.com/highcharts-more.js" crossorigin="anonymous"></script><script src="https://code.highcharts.com/modules/exporting.js" crossorigin="anonymous"></script><script src="https://code.highcharts.com/modules/export-data.js" crossorigin="anonymous"></script><script src="https://code.highcharts.com/modules/data.js" crossorigin="anonymous"></script><script src="benchmark-suite-plotting.js"></script></head><body><div class="container-fluid"><h1 class="text-center">MPP Suite Experiment Run</h1><nav aria-label="breadcrumb"><ol class="breadcrumb"><li class="breadcrumb-item"><a href="index.html">Experiments</a></li><li class="active breadcrumb-item" aria-current="page">Streaming Windows</li></ol></nav></div><div class="container-fluid"><h2>Streaming Windows</h2><div><div class="navbar navbar-light mpp-navBox flex-column"><div class="mpp-navBoxInner"><h4>Plot Axes</h4><ul class="nav flex-column"><li class="nav-item"><a class="mpp-navLink" href="#number-of-partitions">Number of Partitions</a></li><li class="nav-item"><a class="mpp-navLink" href="#window-size">Window Size</a></li></ul></div></div><div><h3 id="number-of-partitions">By Number of Partitions</h3><div class="navbar navbar-light mpp-navBox flex-column"><div class="mpp-navBoxInner"><h4>Plots</h4><ul class="nav flex-column"><li class="nav-item"><a class="mpp-navLink" href="#number-of-partitions-plot-0">Plot #0</a><span>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 1</span></li><li class="nav-item"><a class="mpp-navLink" href="#number-of-partitions-plot-1">Plot #1</a><span>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 13</span></li><li class="nav-item"><a class="mpp-navLink" href="#number-of-partitions-plot-2">Plot #2</a><span>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 125</span></li><li class="nav-item"><a class="mpp-navLink" href="#number-of-partitions-plot-3">Plot #3</a><span>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 1250</span></li></ul></div></div><div><h4 id="number-of-partitions-plot-0">Plot #0 by Number of Partitions</h4><div><div>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 1</div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1-calculated"></div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [128.25324859016396,215.75064913333333]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[115.57952210356811, 140.92697507675982],[210.47943889515906, 221.0218593715076]]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [101.99764699999996,174.25707663333336]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[91.8185551211286, 112.17673887887132],[169.83962157518684, 178.67453169147987]]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,80.31090000000002]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,[80.19171378088225, 80.43008621911778]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [59.91339323333333,110.61914633333329]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[59.17904250106817, 60.647743965598494],[109.67642055097186, 111.56187211569473]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [114.15160589999998,165.9985841666667]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[97.69933098288575, 130.6038808171142],[161.75092452018873, 170.24624381314464]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [157.67147271000002,247.00044056666667]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[133.37058352521328, 181.97236189478676],[239.35861837596477, 254.64226275736857]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [116.8551854285714,178.02915816666663]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[105.19353822026387, 128.51683263687895],[172.93079724917965, 183.12751908415362]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [12.825324859016396,10.787532456666666]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [10.199764699999996,8.712853831666667]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,4.015545000000001]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [5.991339323333333,5.530957316666664]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [11.415160589999997,8.299929208333335]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [15.767147271000002,12.350022028333333]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [11.68551854285714,8.901457908333331]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'number of partitions', ['1','2'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'number of partitions', ['1','2'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1-calculated'));
+  </script></div></div><div><h4 id="number-of-partitions-plot-1">Plot #1 by Number of Partitions</h4><div><div>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 13</div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-13-calculated"></div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-13-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [111.70760083333332,null]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[107.34267091782266, 116.07253074884397],null]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [95.42668833333333,null]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[89.66583241601175, 101.18754425065491],null]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [69.30523333333332,121.54186666666668]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[69.0865915663707, 69.52387510029594],[120.5982723892855, 122.48546094404786]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [59.84788066666667,112.1233119333333]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[59.31621928520989, 60.37954204812345],[110.84761566017158, 113.39900820649501]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [97.1947826,160.67686276666666]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[87.91727013849518, 106.47229506150481],[158.04527617992719, 163.30844935340613]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [121.75834089,271.05358613333334]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[106.68701267794098, 136.82966910205903],[251.89262658243902, 290.21454568422763]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [100.97742100000002,1707.6635167000013]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[93.88969323530598, 108.06514876469406],[1153.1876162205083, 2262.1394171794946]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [11.170760083333331,null]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [9.542668833333334,null]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [6.930523333333332,6.077093333333334]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [5.984788066666667,5.606165596666665]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [9.719478259999999,8.033843138333333]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [12.175834089,13.552679306666667]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [10.097742100000001,85.38317583500006]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'number of partitions', ['1','2'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-13-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'number of partitions', ['1','2'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-13-calculated'));
+  </script></div></div><div><h4 id="number-of-partitions-plot-2">Plot #2 by Number of Partitions</h4><div><div>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 125</div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-125-calculated"></div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-125-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [124.24249719999997,241.02556703333332]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[122.77843988123165, 125.7065545187683],[225.74085058592976, 256.31028348073687]]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [97.32082660000002,241.84357275000002]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[96.04034336669417, 98.60130983330586],[182.12005927172788, 301.56708622827216]]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [315.7203333333334,377.56853333333333]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[314.5540545528226, 316.88661211384414],[375.55531565678166, 379.581751009885]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [72.11899453333332,116.12503430000001]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[71.41788959419401, 72.82009947247263],[115.11810554123652, 117.1319630587635]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [79.47626523333334,391.5658387099998]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[77.4107773256791, 81.54175314098757],[282.98879001225373, 500.1428874077459]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [133.32175485714288,246.1957310666667]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[120.04283069652978, 146.60067901775597],[240.98583716933325, 251.40562496400014]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [106.57989350000001,215.4575136666667]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[103.29456071374018, 109.86522628625984],[196.98756136475612, 233.92746596857728]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [12.424249719999997,12.051278351666666]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [9.732082660000001,12.092178637500002]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [31.572033333333337,18.878426666666666]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [7.2118994533333325,5.806251715]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [7.947626523333334,19.57829193549999]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [13.332175485714288,12.309786553333335]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [10.657989350000001,10.772875683333336]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'number of partitions', ['1','2'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-125-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'number of partitions', ['1','2'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-125-calculated'));
+  </script></div></div><div><h4 id="number-of-partitions-plot-3">Plot #3 by Number of Partitions</h4><div><div>batch size = 100, window size = 1 second, number of windows = 10, window size amplification = 1250</div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1250-calculated"></div><div id="container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1250-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [1086.8999927666666,1832.9525916000002]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[1068.4839455484562, 1105.316039984877],[1605.0906588781568, 2060.8145243218437]]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [2218.0283451900004,1623.7571419374997]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[1851.5861760133157, 2584.470514366685],[1462.4057453049618, 1785.1085385700376]]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [3437.1911333333333,3657.2304666666664]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[3419.6346717195916, 3454.747594947075],[3644.719125260526, 3669.7418080728066]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [185.73835726666672,239.82728956666662]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[184.1846145352386, 187.29209999809484],[237.92461909543212, 241.72996003790112]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [1239.3387203199998,644.6811169]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[961.2154057561985, 1517.4620348838012],[531.5748765150911, 757.7873572849089]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [3206.55357443,1971.7773989354835]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[2506.750628030537, 3906.356520829463],[1779.500359804814, 2164.054438066153]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [1018.8631627333331,1814.69588957]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[1001.0427036467152, 1036.683621819951],[1622.34944719753, 2007.04233194247]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [108.68999927666667,91.64762958000001]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [221.80283451900004,81.18785709687498]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [343.7191133333333,182.8615233333333]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [18.573835726666672,11.991364478333331]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [123.93387203199998,32.234055845]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [320.655357443,98.58886994677417]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [101.8863162733333,90.73479447849999]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'number of partitions', ['1','2'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1250-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'number of partitions', ['1','2'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-bs-100-ws-1 second-nw-10-amp-1250-calculated'));
+  </script></div></div></div><div><h3 id="window-size">By Window Size</h3><div class="navbar navbar-light mpp-navBox flex-column"><div class="mpp-navBoxInner"><h4>Plots</h4><ul class="nav flex-column"><li class="nav-item"><a class="mpp-navLink" href="#window-size-plot-0">Plot #0</a><span>number of partitions = 1, batch size = 100, number of windows = 10</span></li><li class="nav-item"><a class="mpp-navLink" href="#window-size-plot-1">Plot #1</a><span>number of partitions = 2, batch size = 100, number of windows = 10</span></li></ul></div></div><div><h4 id="window-size-plot-0">Plot #0 by Window Size</h4><div><div>number of partitions = 1, batch size = 100, number of windows = 10</div><div id="container-streamingwindows-np-1-bs-100-nw-10-calculated"></div><div id="container-streamingwindows-np-1-bs-100-nw-10-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [128.25324859016396,111.70760083333332,124.24249719999997,1086.8999927666666]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[115.57952210356811, 140.92697507675982],[107.34267091782266, 116.07253074884397],[122.77843988123165, 125.7065545187683],[1068.4839455484562, 1105.316039984877]]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [101.99764699999996,95.42668833333333,97.32082660000002,2218.0283451900004]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[91.8185551211286, 112.17673887887132],[89.66583241601175, 101.18754425065491],[96.04034336669417, 98.60130983330586],[1851.5861760133157, 2584.470514366685]]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,69.30523333333332,315.7203333333334,3437.1911333333333]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,[69.0865915663707, 69.52387510029594],[314.5540545528226, 316.88661211384414],[3419.6346717195916, 3454.747594947075]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [59.91339323333333,59.84788066666667,72.11899453333332,185.73835726666672]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[59.17904250106817, 60.647743965598494],[59.31621928520989, 60.37954204812345],[71.41788959419401, 72.82009947247263],[184.1846145352386, 187.29209999809484]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [114.15160589999998,97.1947826,79.47626523333334,1239.3387203199998]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[97.69933098288575, 130.6038808171142],[87.91727013849518, 106.47229506150481],[77.4107773256791, 81.54175314098757],[961.2154057561985, 1517.4620348838012]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [157.67147271000002,121.75834089,133.32175485714288,3206.55357443]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[133.37058352521328, 181.97236189478676],[106.68701267794098, 136.82966910205903],[120.04283069652978, 146.60067901775597],[2506.750628030537, 3906.356520829463]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [116.8551854285714,100.97742100000002,106.57989350000001,1018.8631627333331]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[105.19353822026387, 128.51683263687895],[93.88969323530598, 108.06514876469406],[103.29456071374018, 109.86522628625984],[1001.0427036467152, 1036.683621819951]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [12.825324859016396,11.170760083333331,12.424249719999997,108.68999927666667]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [10.199764699999996,9.542668833333334,9.732082660000001,221.80283451900004]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [null,6.930523333333332,31.572033333333337,343.7191133333333]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [5.991339323333333,5.984788066666667,7.2118994533333325,18.573835726666672]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [11.415160589999997,9.719478259999999,7.947626523333334,123.93387203199998]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [15.767147271000002,12.175834089,13.332175485714288,320.655357443]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [11.68551854285714,10.097742100000001,10.657989350000001,101.8863162733333]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'window size (kB)', ['8','104','1000','10000'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-np-1-bs-100-nw-10-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'window size (kB)', ['8','104','1000','10000'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-np-1-bs-100-nw-10-calculated'));
+  </script></div></div><div><h4 id="window-size-plot-1">Plot #1 by Window Size</h4><div><div>number of partitions = 2, batch size = 100, number of windows = 10</div><div id="container-streamingwindows-np-2-bs-100-nw-10-calculated"></div><div id="container-streamingwindows-np-2-bs-100-nw-10-primary"></div><div class="float-right"><button type="button" class="btn btn-secondary btn-sm" onclick="Plotting.backToTop();">back to top</button></div><script>
+  var primarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [215.75064913333333,null,241.02556703333332,1832.9525916000002]},
+{name:'Akka error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[210.47943889515906, 221.0218593715076],null,[225.74085058592976, 256.31028348073687],[1605.0906588781568, 2060.8145243218437]]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [174.25707663333336,null,241.84357275000002,1623.7571419374997]},
+{name:'Akka Typed error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[169.83962157518684, 178.67453169147987],null,[182.12005927172788, 301.56708622827216],[1462.4057453049618, 1785.1085385700376]]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [80.31090000000002,121.54186666666668,377.56853333333333,3657.2304666666664]},
+{name:'Erlang error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[80.19171378088225, 80.43008621911778],[120.5982723892855, 122.48546094404786],[375.55531565678166, 379.581751009885],[3644.719125260526, 3669.7418080728066]]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [110.61914633333329,112.1233119333333,116.12503430000001,239.82728956666662]},
+{name:'Kompact Actor error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[109.67642055097186, 111.56187211569473],[110.84761566017158, 113.39900820649501],[115.11810554123652, 117.1319630587635],[237.92461909543212, 241.72996003790112]]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [165.9985841666667,160.67686276666666,391.5658387099998,644.6811169]},
+{name:'Kompics Java error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[161.75092452018873, 170.24624381314464],[158.04527617992719, 163.30844935340613],[282.98879001225373, 500.1428874077459],[531.5748765150911, 757.7873572849089]]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [247.00044056666667,271.05358613333334,246.1957310666667,1971.7773989354835]},
+{name:'Kompics Scala 1.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[239.35861837596477, 254.64226275736857],[251.89262658243902, 290.21454568422763],[240.98583716933325, 251.40562496400014],[1779.500359804814, 2164.054438066153]]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [178.02915816666663,1707.6635167000013,215.4575136666667,1814.69588957]},
+{name:'Kompics Scala 2.x error',type:'errorbar',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [[172.93079724917965, 183.12751908415362],[1153.1876162205083, 2262.1394171794946],[196.98756136475612, 233.92746596857728],[1622.34944719753, 2007.04233194247]]}];
+  var secondarySeries = [{name:'Akka',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [10.787532456666666,null,12.051278351666666,91.64762958000001]},
+{name:'Akka Typed',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [8.712853831666667,null,12.092178637500002,81.18785709687498]},
+{name:'Erlang',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [4.015545000000001,6.077093333333334,18.878426666666666,182.8615233333333]},
+{name:'Kompact Actor',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [5.530957316666664,5.606165596666665,5.806251715,11.991364478333331]},
+{name:'Kompics Java',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [8.299929208333335,8.033843138333333,19.57829193549999,32.234055845]},
+{name:'Kompics Scala 1.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [12.350022028333333,13.552679306666667,12.309786553333335,98.58886994677417]},
+{name:'Kompics Scala 2.x',tooltip:{valueDecimals: 2, valueSuffix: 'ms'},data: [8.901457908333331,85.38317583500006,10.772875683333336,90.73479447849999]}];
+  Plotting.plotSeries('Streaming Windows (Execution Time)', 'window size (kB)', ['8','104','1000','10000'],'execution time (ms)', primarySeries, document.getElementById('container-streamingwindows-np-2-bs-100-nw-10-primary'));
+  Plotting.plotSeries('Streaming Windows (Execution Time Per Window)', 'window size (kB)', ['8','104','1000','10000'],'average wall time per window (ms)', secondarySeries, document.getElementById('container-streamingwindows-np-2-bs-100-nw-10-calculated'));
+  </script></div></div></div></div></div></body></html>

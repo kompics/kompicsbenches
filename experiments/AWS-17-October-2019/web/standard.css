@@ -1,0 +1,21 @@
+.mpp-headline{
+  text-decoration: underline;
+}
+
+.mpp-hidden{
+  display: none;
+}
+
+.mpp-navLink{
+  padding: .5rem 1rem;
+}
+
+.mpp-navBox{
+  align-items: flex-start!important;
+}
+
+.mpp-navBoxInner{
+  background-color: #e9ecef;
+  border-radius: 6px;
+  padding: 5px;
+}
