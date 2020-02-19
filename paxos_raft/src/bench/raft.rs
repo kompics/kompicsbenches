@@ -3,17 +3,13 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 //use kompact_benchmarks::partitioning_actor::*;
 use std::collections::HashMap;
-use tikv_raft::eraftpb::ConfState;
-use tikv_raft::storage::MemStorage;
-use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg};
+use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, storage::MemStorage};
 use protobuf::{Message as PbMessage, parse_from_bytes};
 use super::super::serialiser_ids as serialiser_ids;
 use std::time::Duration;
 use uuid::Uuid;
-use std::sync::Arc;
-use synchronoise::CountdownEvent;
 
-const CONFICCHANGE_ID: u64 = 0; // use 0 for configuration change
+const CONFIGCHANGE_ID: u64 = 0; // use 0 for configuration change
 
 trait RaftStorage: tikv_raft::storage::Storage {
     // TODO
@@ -32,7 +28,6 @@ impl RaftStorage for MemStorage {
 pub mod raft {
     // TODO add parameter in protoc to use memory or disk
     use super::*;
-    use protobuf::reflect::ProtobufValue;
 
     struct MessagingPort;
 
@@ -46,6 +41,7 @@ pub mod raft {
         ctx: ComponentContext<Communicator>,
         raft_port: ProvidedPort<MessagingPort, Communicator>,
         peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
+        cached_client: Option<ActorPath>    // cached client to send SequenceResp to
     }
 
     impl Communicator {
@@ -53,17 +49,15 @@ pub mod raft {
             Communicator {
                 ctx: ComponentContext::new(),
                 raft_port: ProvidedPort::new(),
-                peers: HashMap::new()
+                peers: HashMap::new(),
+                cached_client: None
             }
         }
     }
 
     impl Provide<ControlPort> for Communicator {
-        fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
-            match event {
-                ControlEvent::Start => println!("Hello from Communicator"),
-                _ => {},
-            }
+        fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
+            // ignore
         }
     }
 
@@ -81,6 +75,10 @@ pub mod raft {
                 CommunicatorMsg::ProposalForward(pf) => {
                     let receiver = self.peers.get(&pf.leader_id).expect("Could not find actorpath to leader in ProposalForward");
                     receiver.tell((CommunicatorMsg::Proposal(pf.proposal.to_owned()), RaftSer), self);
+                },
+                CommunicatorMsg::SequenceResp(_) => {
+                    let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
+                    receiver.tell((msg.to_owned(), RaftSer), self);
                 }
                 _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
             }
@@ -110,6 +108,10 @@ pub mod raft {
                     match comm_msg {
                         CommunicatorMsg::TikvRaftMsg(rm) => self.raft_port.trigger(RaftCompMsg::TikvRaftMsg(rm)),
                         CommunicatorMsg::Proposal(p) => self.raft_port.trigger(RaftCompMsg::Proposal(p)),
+                        CommunicatorMsg::SequenceReq(sr) => {
+                            self.cached_client = Some(client);
+                            self.raft_port.trigger(RaftCompMsg::SequenceReq(sr));
+                        }
                         _ => error!(self.ctx.log(), "Got unexpected msg: {:?}", comm_msg),
                     }
                 },
@@ -127,10 +129,11 @@ pub mod raft {
         reconfig_client: Option<ActorPath>,
         config: Config,
         storage: S,
+        decided_sequence: Vec<u64>
     }
 
     impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Provide<ControlPort> for RaftComp<S>{
-        fn handle(&mut self, event: ControlEvent) -> () {
+        fn handle(&mut self, _event: ControlEvent) -> () {
             // ignore
         }
     }
@@ -138,6 +141,16 @@ pub mod raft {
     impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<MessagingPort> for RaftComp<S> {
         fn handle(&mut self, msg: RaftCompMsg) -> () {
             match msg {
+                RaftCompMsg::CreateTikvRaft(ctr) => {
+                    self.config.id = ctr.id;
+                    self.raft_node = Some(RawNode::new(&self.config, self.storage.clone()).expect("Failed to create TikvRaftNode"));
+                    if self.config.id == 1 {    // leader
+                        let raft_node = self.raft_node.as_mut().unwrap();
+                        raft_node.raft.become_candidate();
+                        raft_node.raft.become_leader();
+                    }
+                    self.start_timers();
+                }
                 RaftCompMsg::TikvRaftMsg(rm) => {
                     self.step(rm);
                 }
@@ -149,7 +162,6 @@ pub mod raft {
                     else {
                         let leader_id = raft_node.raft.leader_id;
                         if leader_id > 0 {
-                            debug!(self.ctx.log(), "{}", format!("Forwarding proposal to leader_id: {}", &leader_id));
                             let pf = ProposalForward::with(leader_id, p);
                             self.communication_port.trigger(CommunicatorMsg::ProposalForward(pf));
                         } else {
@@ -159,17 +171,10 @@ pub mod raft {
                         }
                     }
                 }
-                RaftCompMsg::CreateTikvRaft(ctr) => {
-                    self.config.id = ctr.id;
-                    self.raft_node = Some(RawNode::new(&self.config, self.storage.clone()).expect("Failed to create TikvRaftNode"));
-//                    info!(self.ctx.log(), "Created RawNode {}", &ctr.id);
-                    if self.config.id == 1 {    // leader
-                        let raft_node = self.raft_node.as_mut().unwrap();
-                        raft_node.raft.become_candidate();
-                        raft_node.raft.become_leader();
-//                        self.add_all_nodes(ctr.num_nodes.expect("No num_nodes given to leader"));
-                    }
-                    self.start_timers();
+                RaftCompMsg::SequenceReq(_) => {
+                    let sequence = self.decided_sequence.clone();
+                    let sr = SequenceResp{ node_id: self.config.id, sequence };
+                    self.communication_port.trigger(CommunicatorMsg::SequenceResp(sr));
                 }
             }
         }
@@ -183,16 +188,9 @@ pub mod raft {
                 communication_port: RequiredPort::new(),
                 reconfig_client: None,
                 config,
-                storage
+                storage,
+                decided_sequence: Vec::new()
             }
-        }
-
-        fn add_all_nodes(&mut self, num_nodes: u64){
-            let raft_node = self.raft_node.as_mut().unwrap();
-            for i in 1..num_nodes+1 {
-                raft_node.raft.add_node(i).expect(&format!("Failed to add node {}", i));
-            }
-
         }
 
         fn start_timers(&mut self){
@@ -212,7 +210,6 @@ pub mod raft {
 
         // Step a raft message, initialize the raft if need.
         fn step(&mut self, msg: TikvRaftMsg) {
-//            info!(self.ctx.log(), "RaftComp stepping msg {:?}", &msg.get_msg_type());
             let _ = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp").step(msg);
         }
 
@@ -293,26 +290,28 @@ pub mod raft {
                         let mut cc = ConfChange::default();
                         cc.merge_from_bytes(&entry.data).unwrap();
                         let node_id = cc.node_id;
-                        match cc.get_change_type() {
-                            ConfChangeType::AddNode => raft_node.raft.add_node(node_id).unwrap(),
-                            ConfChangeType::RemoveNode => raft_node.raft.remove_node(node_id).unwrap(),
-                            ConfChangeType::AddLearnerNode => raft_node.raft.add_learner(node_id).unwrap(),
+                        let change_type = cc.get_change_type();
+                        match &change_type {
+                            ConfChangeType::AddNode => raft_node.raft.add_node(node_id.clone()).unwrap(),
+                            ConfChangeType::RemoveNode => raft_node.raft.remove_node(node_id.clone()).unwrap(),
+                            ConfChangeType::AddLearnerNode => raft_node.raft.add_learner(node_id.clone()).unwrap(),
                             ConfChangeType::BeginMembershipChange
                             | ConfChangeType::FinalizeMembershipChange => unimplemented!(),
                         }
-                        let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
                         // TODO
-                        //store.wl().set_conf_state(cs, None);
+                        /*let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
+                        store.wl().set_conf_state(cs, None);*/
                         if raft_node.raft.state == StateRole::Leader && self.reconfig_client.is_some() {
-                            let client = self.reconfig_client.clone().expect("Should have cached Reconfiguration client");
-                            let pr = ProposalResp::succeeded_configchange(client);
+                            let client = self.reconfig_client.clone().unwrap();
+                            let pr = ProposalResp::succeeded_configchange(client, node_id, change_type, entry.get_term(), entry.get_index());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
                         }
                     } else {
                         // For normal proposals, extract the key-value pair and then
                         // insert them into the kv engine.
                         let des_proposal = Proposal::deserialize_normal(&entry.data);
-                        // TODO write to disk for LogCabin comparison?
+                        // TODO write to disk instead for LogCabin comparison
+                        self.decided_sequence.push(des_proposal.id);
                         if raft_node.raft.state == StateRole::Leader {
                             let pr = ProposalResp::succeeded_normal(des_proposal, entry.get_term(), entry.get_index());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
@@ -348,33 +347,61 @@ pub mod raft {
     #[derive(ComponentDefinition)]
     struct Client {
         ctx: ComponentContext<Self>,
-        finished_promise: KPromise<Vec<u64>>,
+        finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
         num_proposals: u64,
         raft_nodes: HashMap<u64, ActorPath>,
-        decided_sequence: Vec<u64>,
+        test_results: HashMap<u64, Vec<u64>>,
+        test_reconfig: Option<(Vec<u64>, Vec<u64>)>,
+        query_node: u64
     }
 
     impl Client {
-        fn with(finished_promise: KPromise<Vec<u64>>, num_proposals: u64, raft_nodes: HashMap<u64, ActorPath>) -> Client {
+        fn with(finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
+                num_proposals: u64,
+                raft_nodes: HashMap<u64, ActorPath>,
+                test_reconfig: Option<(Vec<u64>, Vec<u64>)>,
+                query_node: u64
+        ) -> Client {
             Client {
                 ctx: ComponentContext::new(),
                 finished_promise,
                 num_proposals,
                 raft_nodes,
-                decided_sequence: Vec::with_capacity(num_proposals as usize)
+                test_results: HashMap::new(),
+                test_reconfig,
+                query_node
             }
         }
+
+        fn propose_remove_node(&self, remove_node: u64) -> () {
+            let mut conf_change = ConfChange::default();
+            conf_change.node_id = remove_node;
+            conf_change.set_change_type(ConfChangeType::RemoveNode);
+            let p = Proposal::conf_change(remove_node, self.ctx.actor_path(), &conf_change);
+            let raft_node = self.raft_nodes.get(&remove_node).expect("Could not find actorpath to raft node!");
+            raft_node.tell((CommunicatorMsg::Proposal(p), RaftSer), self);
+        }
+
+        fn propose_add_node(&self, add_node: u64) {
+            let mut conf_change = ConfChange::default();
+            conf_change.node_id = add_node;
+            conf_change.set_change_type(ConfChangeType::AddNode);
+            let p = Proposal::conf_change(add_node, self.ctx.actor_path(), &conf_change);
+            let raft_node = self.raft_nodes.get(&self.query_node).expect("Could not find actorpath to raft node!");
+            raft_node.tell((CommunicatorMsg::Proposal(p), RaftSer), self);
+        }
+
     }
 
     impl Provide<ControlPort> for Client {
         fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
             match event {
                 ControlEvent::Start => {
+                    self.test_results.insert(0, Vec::new());
                     for i in 0..self.num_proposals {
                         let ap = self.ctx.actor_path();
                         let p = Proposal::normal(i, ap);
-                        let raft_node = self.raft_nodes.get(&2).expect("Could not find actorpath to raft node!");
-//                        let ap = self.ctx.actor_path();
+                        let raft_node = self.raft_nodes.get(&self.query_node).expect("Could not find actorpath to raft node!");
                         raft_node.tell((CommunicatorMsg::Proposal(p), RaftSer), self);
                     }
                 }
@@ -386,36 +413,98 @@ pub mod raft {
     impl Actor for Client {
         type Message = ();
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, _msg: Self::Message) -> () {
             // ignore
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
+            use std::thread;
+
             match_deser!{msg; {
                 cm: CommunicatorMsg [RaftSer] => {
                     match cm {
                         CommunicatorMsg::ProposalResp(pr) => {
-                            if pr.succeeded {
-                                info!(self.ctx.log(), "Succesful proposal!");
-                                self.decided_sequence.push(pr.id);
-                                if (self.decided_sequence.len() as u64) == self.num_proposals {
-                                    info!(self.ctx.log(), "Got all results!");
-                                    info!(self.ctx.log(), "{:?}", self.decided_sequence);
-                                    self.finished_promise
-                                        .to_owned()
-                                        .fulfill(self.decided_sequence.clone())
-                                        .expect("Failed to fulfill finished promise");
+                            match &pr.conf_change {
+                                Some((node_id, change_type)) => {
+                                    match change_type {
+                                        ConfChangeType::AddNode => {
+                                            info!(self.ctx.log(), "{}", format!("Successfully added node {}", node_id));
+                                            let test_reconfig = self.test_reconfig.as_mut().expect("No reconfiguration found");
+                                            match test_reconfig.1.pop() {
+                                                Some(remove_node) => self.propose_remove_node(remove_node),
+                                                None => { // Reconfiguration completed, try proposing normally again
+                                                    thread::sleep(Duration::from_secs(2));
+                                                    let ap = self.ctx.actor_path();
+                                                    let p = Proposal::normal(self.num_proposals, ap);
+                                                    let raft_node = self.raft_nodes.get(&self.query_node).expect("Could not find actorpath to raft node!");
+                                                    raft_node.tell((CommunicatorMsg::Proposal(p), RaftSer), self);
+                                                }
+                                            }
+                                        }
+                                        ConfChangeType::RemoveNode => {
+                                            info!(self.ctx.log(), "{}", format!("Successfully removed node {}", node_id));
+                                            let add_node = self.test_reconfig
+                                                                  .as_mut()
+                                                                  .expect("No reconfiguration found")
+                                                                  .0
+                                                                  .pop()
+                                                                  .expect("Got no node when popping add nodes");
+                                            self.propose_add_node(add_node);
+                                        }
+                                        ConfChangeType::AddLearnerNode => {
+                                            error!(self.ctx.log(), "Got unexpected AddLearnerNode response");
+                                        }
+                                        _ => {
+                                            error!(self.ctx.log(), "Got unexpected ConfChangeType")
+                                        }
+                                    }
+                                },
+                                None => {   // normal ProposalResp
+                                    let decided_sequence = self.test_results.get_mut(&0).unwrap();
+                                    decided_sequence.push(pr.id);
+                                    if (decided_sequence.len() as u64) == self.num_proposals {
+                                        match &self.test_reconfig {
+                                            Some(_) => {    // done with all proposals, now start reconfiguration
+                                               info!(self.ctx.log(), "Done with all proposals, starting reconfiguration now...");
+                                               let remove_node = self.test_reconfig
+                                                         .as_mut()
+                                                         .expect("No reconfiguration found")
+                                                         .1
+                                                         .pop()
+                                                         .expect("Got no node when popping remove nodes");
+                                                self.propose_remove_node(remove_node);
+                                            }
+                                            None => {
+                                                self.finished_promise
+                                                    .to_owned()
+                                                    .fulfill(self.test_results.clone())
+                                                    .expect("Failed to fulfill finished promise");
+                                            }
+                                        }
+                                    } else if (decided_sequence.len() as u64) > self.num_proposals { // normal proposal after reconfig worked
+                                        info!(self.ctx.log(), "Normal propose after reconfiguration worked!");
+                                        for (_, actorpath) in &self.raft_nodes {  // get sequence of ALL (past or present) nodes
+                                            let req = SequenceReq;
+                                            actorpath.tell((CommunicatorMsg::SequenceReq(req), RaftSer), self);
+                                        }
+                                    }
                                 }
                             }
-                            else {
-                                error!(self.ctx.log(), "Client proposal failed...")
-                            }
                         },
+                        CommunicatorMsg::SequenceResp(sr) => {
+                            self.test_results.insert(sr.node_id, sr.sequence);
+                            if (self.test_results.len() - 1) == self.raft_nodes.len() {    // got all sequences from everybody, we're done
+                                self.finished_promise
+                                .to_owned()
+                                .fulfill(self.test_results.clone())
+                                .expect("Failed to fulfill finished promise after getting all sequences");
+                            }
+                        }
                         _ => error!(self.ctx.log(), "Client received unexpected msg"),
                     }
                 },
 
-                !Err(e) => error!(self.ctx.log(), "Failed to deserialise msg in Client"),
+                !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
             }
             }
         }
@@ -435,10 +524,20 @@ pub mod raft {
     }
 
     #[derive(Clone, Debug)]
+    struct SequenceReq;
+
+    #[derive(Clone, Debug)]
+    struct SequenceResp {
+        node_id: u64,
+        sequence: Vec<u64>
+    }
+
+    #[derive(Clone, Debug)]
     enum RaftCompMsg {
         CreateTikvRaft(CreateTikvRaft),
         TikvRaftMsg(TikvRaftMsg),
-        Proposal(Proposal)
+        Proposal(Proposal),
+        SequenceReq(SequenceReq),
     }
 
     #[derive(Clone, Debug)]
@@ -446,7 +545,9 @@ pub mod raft {
         TikvRaftMsg(TikvRaftMsg),
         Proposal(Proposal),
         ProposalResp(ProposalResp),
-        ProposalForward(ProposalForward)
+        ProposalForward(ProposalForward),
+        SequenceReq(SequenceReq),
+        SequenceResp(SequenceResp)
     }
 
     #[derive(Clone, Debug)]
@@ -495,18 +596,29 @@ pub mod raft {
         id: u64,
         client: Option<ActorPath>,  // client don't need it when receiving it
         succeeded: bool,
+        conf_change: Option<(u64, ConfChangeType)>,
         // do we actually need these?
         term_index: Option<(u64, u64)>
     }
 
     impl ProposalResp {
         fn failed(proposal: Proposal) -> ProposalResp {
-            ProposalResp {
+            let mut pr = ProposalResp {
                 id: proposal.id,
                 client: Some(proposal.client),
                 succeeded: false,
-                term_index: None
+                term_index: None,
+                conf_change: None
+            };
+            match proposal.conf_change {
+                Some(cf) => {
+                    let node_id = cf.get_node_id();
+                    let change_type = cf.get_change_type();
+                    pr.conf_change = Some((node_id, change_type));
+                }
+                None => {}
             }
+            pr
         }
 
         fn succeeded_normal(proposal: Proposal, term: u64, index: u64) -> ProposalResp {
@@ -514,16 +626,18 @@ pub mod raft {
                 id: proposal.id,
                 client: Some(proposal.client),
                 succeeded: true,
-                term_index: Some((term, index))
+                term_index: Some((term, index)),
+                conf_change: None
             }
         }
 
-        fn succeeded_configchange(client: ActorPath) -> ProposalResp {
+        fn succeeded_configchange(client: ActorPath, node_id: u64, change_type: ConfChangeType, term: u64, index: u64) -> ProposalResp {
             ProposalResp {
-                id: CONFICCHANGE_ID,
+                id: CONFIGCHANGE_ID,
                 client: Some(client),
                 succeeded: true,
-                term_index: None
+                term_index: Some((term, index)),
+                conf_change: Some((node_id, change_type))
             }
         }
     }
@@ -546,9 +660,15 @@ pub mod raft {
     const PROPOSAL_ID: u8 = 0;
     const PROPOSALRESP_ID: u8 = 1;
     const RAFT_MSG_ID: u8 = 2;
+    const SEQREQ_ID: u8 = 3;
+    const SEQRESP_ID: u8 = 4;
 
     const PROPOSAL_FAILED: u8 = 0;
     const PROPOSAL_SUCCESS: u8 = 1;
+
+    const CHANGETYPE_ADD_NODE: u8 = 0;
+    const CHANGETYPE_REMOVE_NODE: u8 = 1;
+    const CHANGETYPE_ADD_LEARNER: u8 = 2;
 
     struct RaftSer;
 
@@ -558,7 +678,7 @@ pub mod raft {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(100) // TODO: Set it dynamically? 33 is for the largest message(Value)
+            Some(200) // TODO: Set it dynamically? 33 is for the largest message(Value)
         }
 
         fn serialise(&self, enm: &CommunicatorMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -596,6 +716,32 @@ pub mod raft {
                         buf.put_u64_be(index);
                     } else {
                         buf.put_u8(PROPOSAL_FAILED);
+                    }
+                    match &pr.conf_change {
+                        Some((node_id, change_type)) => {
+                            buf.put_u64_be(*node_id);
+                            match change_type {
+                                ConfChangeType::AddNode => buf.put_u8(CHANGETYPE_ADD_NODE),
+                                ConfChangeType::RemoveNode => buf.put_u8(CHANGETYPE_REMOVE_NODE),
+                                ConfChangeType::AddLearnerNode => buf.put_u8(CHANGETYPE_ADD_LEARNER),
+                                _ => return Err(SerError::InvalidType("Tried to serialise unknown ConfChangeType".into()))
+                            }
+                        }
+                        None => { buf.put_u64_be(0) }
+                    }
+                    Ok(())
+                },
+                CommunicatorMsg::SequenceReq(_) => {
+                    buf.put_u8(SEQREQ_ID);
+                    Ok(())
+                },
+                CommunicatorMsg::SequenceResp(sr) => {
+                    buf.put_u8(SEQRESP_ID);
+                    buf.put_u64_be(sr.node_id);
+                    let seq_len = sr.sequence.len() as u32;
+                    buf.put_u32_be(seq_len);
+                    for i in &sr.sequence {
+                        buf.put_u64_be(*i);
                     }
                     Ok(())
                 },
@@ -637,28 +783,56 @@ pub mod raft {
                 },
                 PROPOSALRESP_ID => {
                     let id = buf.get_u64_be();
-                    if buf.get_u8() > 0 {
-                        let succeeded = true;
-                        let term = buf.get_u64_be();
-                        let index = buf.get_u64_be();
-                        let pr = ProposalResp {
-                            id,
-                            succeeded,
-                            client: None,
-                            term_index: Some((term, index))
-                        };
-                        Ok(CommunicatorMsg::ProposalResp(pr))
-                    } else {
-                        let succeeded = false;
-                        let pr = ProposalResp {
-                            id,
-                            succeeded,
-                            client: None,
-                            term_index: None
-                        };
-                        Ok(CommunicatorMsg::ProposalResp(pr))
+                    let succeeded: bool = match buf.get_u8() {
+                        0 => false,
+                        _ => true,
+                    };
+                    let term_index = match &succeeded {
+                        true => {
+                            let term = buf.get_u64_be();
+                            let index = buf.get_u64_be();
+                            Some((term, index))
+                        }
+                        false => None
+                    };
+                    let mut pr = ProposalResp {
+                        id,
+                        succeeded,
+                        client: None,
+                        term_index,
+                        conf_change: None,
+                    };
+                    let node_id = buf.get_u64_be();
+                    match &node_id {
+                        0 => {},
+                        _ => {
+                            match buf.get_u8() {
+                                CHANGETYPE_ADD_NODE => {
+                                    pr.conf_change = Some((node_id, ConfChangeType::AddNode));
+                                },
+                                CHANGETYPE_REMOVE_NODE => {
+                                    pr.conf_change = Some((node_id, ConfChangeType::RemoveNode));
+                                },
+                                CHANGETYPE_ADD_LEARNER => {
+                                    pr.conf_change = Some((node_id, ConfChangeType::AddLearnerNode));
+                                },
+                                _ => {},
+                            };
+                        }
                     }
+                    Ok(CommunicatorMsg::ProposalResp(pr))
                 },
+                SEQREQ_ID => Ok(CommunicatorMsg::SequenceReq(SequenceReq)),
+                SEQRESP_ID => {
+                    let node_id = buf.get_u64_be();
+                    let sequence_len = buf.get_u32_be();
+                    let mut sequence: Vec<u64> = Vec::new();
+                    for _ in 0..sequence_len {
+                        sequence.push(buf.get_u64_be());
+                    }
+                    let sr = SequenceResp{ node_id, sequence};
+                    Ok(CommunicatorMsg::SequenceResp(sr))
+                }
                 _ => {
                     Err(SerError::InvalidType(
                         "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),
@@ -678,6 +852,67 @@ pub mod raft {
                 election_tick: 10,
                 heartbeat_tick: 3,
                 ..Default::default()
+            }
+        }
+
+        fn create_raft_nodes(n: u64,
+                             systems: &mut Vec<KompactSystem>,
+                             peers: &mut HashMap<u64, ActorPath>,
+                             communicators: &mut Vec<ActorRef<Init>>,
+                             configuration: Vec<u64>)
+        {
+            for i in 1..n+1 {
+                let system =
+                    kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("raft{}", i), 4);
+
+                /*** Setup RaftComp ***/
+                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
+                    RaftComp::with(example_config(), MemStorage::new_with_conf_state((configuration.clone(), vec![])))
+                });
+                let raft_comp_f = system.start_notify(&raft_comp);
+                raft_comp_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("RaftComp never started!");
+                unique_reg_f.wait_expect(
+                    Duration::from_millis(1000),
+                    "RaftComp failed to register!",
+                );
+
+                /*** Setup communicator ***/
+                let (communicator, unique_reg_f) =
+                    system.create_and_register(|| { Communicator::new() });
+
+                let named_reg_f = system.register_by_alias(
+                    &communicator,
+                    format!("communicator{}", i),
+                );
+
+                unique_reg_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("Communicator never registered!")
+                    .expect("Communicator to register!");
+
+                named_reg_f.wait_expect(
+                    Duration::from_millis(1000),
+                    "Communicator failed to register!",
+                );
+
+                let communicator_f = system.start_notify(&communicator);
+                communicator_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("Communicator never started!");
+
+                biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
+                    .expect("Could not connect components!");
+
+                /*** Add self to peers map ***/
+                let self_path = ActorPath::Named(NamedPath::with_system(
+                    system.system_path(),
+                    vec![format!("communicator{}", i).into()],
+                ));
+                systems.push(system);
+                peers.insert(i, self_path);
+                communicators.push(communicator.actor_ref());
             }
         }
 
@@ -769,11 +1004,13 @@ pub mod raft {
             }
             /*** ProposalResp ***/
             let succeeded = true;
+            let change_type = ConfChangeType::AddNode;
             let pr = ProposalResp {
                 id,
                 client: None,
                 succeeded,
-                term_index: Some((term, index))
+                term_index: Some((term, index)),
+                conf_change: Some((id, change_type))
             };
             let mut b1: Vec<u8> = vec![];
             if RaftSer.serialise(&CommunicatorMsg::ProposalResp(pr), &mut b1).is_err(){panic!("Failed to serailise ProposalResp")};
@@ -785,10 +1022,12 @@ pub mod raft {
                             let des_succeeded = pr.succeeded;
                             let des_term_index = pr.term_index;
                             let des_client = pr.client;
+                            let des_conf_change = pr.conf_change;
                             assert_eq!(id, des_id);
                             assert_eq!(None, des_client);
                             assert_eq!(succeeded, des_succeeded);
                             assert_eq!(Some((term, index)), des_term_index);
+                            assert_eq!(Some((id, change_type)), des_conf_change);
                             println!("Ser/Des ProposalResp passed");
                         }
                         _ => panic!("Deserialised message should be ProposalResp")
@@ -811,86 +1050,44 @@ pub mod raft {
         }
 
         #[test]
-        fn kompact_raft_test(){
+        fn kompact_raft_normal_proposal_test(){
             use super::*;
-            use std::{thread, time};
+            use std::{thread, time, time::Instant};
 
             let mut systems: Vec<KompactSystem> = Vec::new();
             let mut peers: HashMap<u64, ActorPath> = HashMap::new();
-            let mut actor_refs: Vec<ActorRef<Init>> = Vec::new();
+            let mut communicators: Vec<ActorRef<Init>> = Vec::new();
             let n: u64 = 3;
-            let num_proposals = 10;
+            let num_proposals = 100;
+            let mut configuration: Vec<u64> = Vec::new();
+            for i in 1..n+1 { configuration.push(i) }
+            create_raft_nodes(n, &mut systems, &mut peers, &mut communicators, configuration);
 
-            for i in 1..n+1 {
-                let system =
-                    kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("raft{}", i), 4);
-
-                /*** Setup RaftComp ***/
-                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::with(example_config(), MemStorage::new_with_conf_state((vec![1,2,3], vec![])))
-                });
-                let raft_comp_f = system.start_notify(&raft_comp);
-                raft_comp_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("RaftComp never started!");
-                unique_reg_f.wait_expect(
-                    Duration::from_millis(1000),
-                    "RaftComp failed to register!",
-                );
-
-                /*** Setup communicator ***/
-                let (communicator, unique_reg_f) =
-                    system.create_and_register(|| { Communicator::new() });
-
-                let named_reg_f = system.register_by_alias(
-                    &communicator,
-                    format!("communicator{}", i),
-                );
-
-                unique_reg_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Communicator never registered!")
-                    .expect("Communicator to register!");
-
-                named_reg_f.wait_expect(
-                    Duration::from_millis(1000),
-                    "Communicator failed to register!",
-                );
-
-                let communicator_f = system.start_notify(&communicator);
-                communicator_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Communicator never started!");
-
-                biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
-                    .expect("Could not connect components!");
-
-                /*** Add self to peers map ***/
-                let self_path = ActorPath::Named(NamedPath::with_system(
-                    system.system_path(),
-                    vec![format!("communicator{}", i).into()],
-                ));
-                systems.push(system);
-                peers.insert(i, self_path);
-                actor_refs.push(communicator.actor_ref());
-            }
-            for (id, actor_ref) in actor_refs.iter().enumerate() {
+            for (id, actor_ref) in communicators.iter().enumerate() {
                 actor_ref.tell(Init{ id: (id+1) as u64, peers: peers.clone()});
             }
             thread::sleep(Duration::from_secs(1));
-            let (p, f) = kpromise::<Vec<u64>>();
+            let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
             let (client, unique_reg_f) = systems[0].create_and_register( || {
-                Client::with(p, num_proposals, peers.clone())
+                Client::with(p, num_proposals, peers.clone(), None, 1)
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
                 "Client failed to register!"
             );
+            let now = Instant::now();   // for testing with logcabin
             let client_f = systems[0].start_notify(&client);
-            client_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Client never started!");
-            let decided_sequence = f.wait_timeout(Duration::from_secs(10)).expect("Failed to get results");
+            client_f.wait_timeout(Duration::from_millis(1000))
+                    .expect("Client never started!");
+
+            let decided_sequence = f.wait_timeout(Duration::from_secs(10))
+                                               .expect("Failed to get results")
+                                               .get(&0)
+                                               .expect("Client's sequence should be in 0...")
+                                               .to_owned();
+
+            let exec_time = now.elapsed().as_millis();
+            println!("Execution time: {}", &exec_time);
             for system in systems {
                 system
                     .shutdown()
@@ -904,6 +1101,63 @@ pub mod raft {
                 assert_eq!(true, found);
             }
         }
+
+        #[test]
+        fn kompact_raft_reconfig_test(){
+            use super::*;
+            use std::{thread, time, time::Instant};
+
+            let mut systems: Vec<KompactSystem> = Vec::new();
+            let mut peers: HashMap<u64, ActorPath> = HashMap::new();
+            let mut communicators: Vec<ActorRef<Init>> = Vec::new();
+            let n: u64 = 5; // use n nodes in total (includes nodes to be added and removed)
+            let quorum = 2;
+            let num_proposals = 10;
+            let add_nodes: Vec<u64> = vec![4, 5];
+            let remove_nodes: Vec<u64> = vec![2, 3];
+            let reconfig = Some((add_nodes, remove_nodes));
+
+            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, vec![1,2,3]);
+
+            for (id, actor_ref) in communicators.iter().enumerate() {
+                actor_ref.tell(Init{ id: (id+1) as u64, peers: peers.clone()});
+            }
+            thread::sleep(Duration::from_secs(1));
+            let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
+            let (client, unique_reg_f) = systems[0].create_and_register( || {
+                Client::with(p, num_proposals - 1, peers.clone(), reconfig, 1)
+            });
+            unique_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "Client failed to register!"
+            );
+            let now = Instant::now();   // for testing with logcabin
+            let client_f = systems[0].start_notify(&client);
+            client_f.wait_timeout(Duration::from_millis(1000))
+                .expect("Client never started!");
+
+            let all_sequences = f.wait_timeout(Duration::from_secs(15)).expect("Failed to get results");
+
+            let exec_time = now.elapsed().as_millis();
+            println!("Execution time: {}", &exec_time);
+
+            let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
+            for system in systems {
+                system
+                    .shutdown()
+                    .expect("Kompact didn't shut down properly");
+            }
+            let client_seq_len = client_sequence.len();
+            assert_eq!(num_proposals, client_seq_len as u64);
+            let mut counter = 0;
+            for i in 1..n+1 {
+//                println!("Node {}: {:?}", i, all_sequences.get(&i).unwrap());
+                let sequence = all_sequences.get(&i).unwrap();
+                let len = sequence.len();
+                assert!(client_sequence.starts_with(sequence));
+                if len == client_seq_len { counter += 1; }
+            }
+            assert!(counter >= quorum);
+        }
     }
 }
-
