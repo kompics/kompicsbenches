@@ -8,6 +8,7 @@ use protobuf::{Message as PbMessage, parse_from_bytes};
 use super::super::serialiser_ids as serialiser_ids;
 use std::time::Duration;
 use uuid::Uuid;
+use self::tikv_raft::Error;
 
 const CONFIGCHANGE_ID: u64 = 0; // use 0 for configuration change
 
@@ -16,7 +17,6 @@ trait RaftStorage: tikv_raft::storage::Storage {
 //    fn read(&self) -> [tikv_raft::eraftpb::Entry];
 //    fn write(&self, entries: &[tikv_raft::eraftpb::Entry]) -> bool;
     fn append_log(&self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error>;
-
 }
 
 impl RaftStorage for MemStorage {
@@ -129,7 +129,6 @@ pub mod raft {
         reconfig_client: Option<ActorPath>,
         config: Config,
         storage: S,
-        decided_sequence: Vec<u64>
     }
 
     impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Provide<ControlPort> for RaftComp<S>{
@@ -172,7 +171,15 @@ pub mod raft {
                     }
                 }
                 RaftCompMsg::SequenceReq(_) => {
-                    let sequence = self.decided_sequence.clone();
+                    let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
+                    let raft_entries: Vec<Entry> = raft_node.raft.raft_log.all_entries();
+                    let mut sequence: Vec<u64> = Vec::new();
+                    for entry in raft_entries {
+                        if entry.get_entry_type() == EntryType::EntryNormal && (&entry.data.len() > &0) {
+                            let value = Proposal::deserialize_normal(&entry.data);
+                            sequence.push(value.id)
+                        }
+                    }
                     let sr = SequenceResp{ node_id: self.config.id, sequence };
                     self.communication_port.trigger(CommunicatorMsg::SequenceResp(sr));
                 }
@@ -189,7 +196,6 @@ pub mod raft {
                 reconfig_client: None,
                 config,
                 storage,
-                decided_sequence: Vec::new()
             }
         }
 
@@ -311,7 +317,6 @@ pub mod raft {
                         // insert them into the kv engine.
                         let des_proposal = Proposal::deserialize_normal(&entry.data);
                         // TODO write to disk instead for LogCabin comparison
-                        self.decided_sequence.push(des_proposal.id);
                         if raft_node.raft.state == StateRole::Leader {
                             let pr = ProposalResp::succeeded_normal(des_proposal, entry.get_term(), entry.get_index());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
@@ -513,7 +518,7 @@ pub mod raft {
     /*** All messages and their serializers ***/
     #[derive(Clone, Debug)]
     struct Init {   // TODO: CommunicatorMsg::Init
-    id: u64,
+        id: u64,
         peers: HashMap<u64, ActorPath>,
     }
 
@@ -678,7 +683,7 @@ pub mod raft {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(200) // TODO: Set it dynamically? 33 is for the largest message(Value)
+            Some(200) // TODO: Set it dynamically?
         }
 
         fn serialise(&self, enm: &CommunicatorMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
