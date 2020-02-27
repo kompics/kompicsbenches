@@ -6,24 +6,13 @@ use std::collections::HashMap;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, storage::MemStorage};
 use protobuf::{Message as PbMessage, parse_from_bytes};
 use super::super::serialiser_ids as serialiser_ids;
-use std::time::Duration;
+use std::{time::Duration, path::PathBuf, fs::OpenOptions, io::Write, ops::Range, convert::TryInto, fs::File, mem::size_of, sync::Arc};
 use uuid::Uuid;
 use self::tikv_raft::Error;
+use memmap::MmapMut;
+use super::super::raft_storage::{RaftStorage, DiskStorage};
 
 const CONFIGCHANGE_ID: u64 = 0; // use 0 for configuration change
-
-trait RaftStorage: tikv_raft::storage::Storage {
-    // TODO
-//    fn read(&self) -> [tikv_raft::eraftpb::Entry];
-//    fn write(&self, entries: &[tikv_raft::eraftpb::Entry]) -> bool;
-    fn append_log(&self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error>;
-}
-
-impl RaftStorage for MemStorage {
-    fn append_log(&self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error> {
-        self.wl().append(entries)
-    }
-}
 
 pub mod raft {
     // TODO add parameter in protoc to use memory or disk
@@ -257,13 +246,14 @@ pub mod raft {
             if !raft_node.has_ready() {
                 return;
             }
-            let store = raft_node.raft.raft_log.store.clone();
+            let mut store = raft_node.raft.raft_log.store.clone();
 
             // Get the `Ready` with `RawNode::ready` interface.
             let mut ready = raft_node.ready();
 
             // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
             // raft logs to the latest position.
+            // TODO serialise first?? check if appendable before passing in serialised entries
             if let Err(e) = store.append_log(ready.entries()) {
                 eprintln!("persist raft log fail: {:?}, need to retry or panic", e);
                 return;
@@ -325,15 +315,13 @@ pub mod raft {
 
                 }
                 if let Some(last_committed) = committed_entries.last() {
-                    //TODO
-                    /*let mut s = store.wl();
-                    s.mut_hard_state().commit = last_committed.index;
-                    s.mut_hard_state().term = last_committed.term;*/
+                    store.set_hard_state(last_committed.index, last_committed.term).expect("Failed to set hardstate");
                 }
             }
             // Call `RawNode::advance` interface to update position flags in the raft.
             raft_node.advance(ready);
         }
+
     }
 
 
@@ -851,6 +839,7 @@ pub mod raft {
     mod tests {
         use std::str::FromStr;
         use super::*;
+        use std::fs::remove_dir_all;
 
         fn example_config() -> Config {
             Config {
@@ -864,15 +853,17 @@ pub mod raft {
                              systems: &mut Vec<KompactSystem>,
                              peers: &mut HashMap<u64, ActorPath>,
                              communicators: &mut Vec<ActorRef<Init>>,
-                             configuration: Vec<u64>)
+                             configuration: Vec<u64>,
+                             dir: &str)
         {
             for i in 1..n+1 {
                 let system =
                     kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("raft{}", i), 4);
-
+                let storage = DiskStorage::new_with_conf_state(&format!("{}{}", dir, i), (configuration.clone(), vec![]));
+//                let storage =  MemStorage::new_with_conf_state((configuration.clone(), vec![]));
                 /*** Setup RaftComp ***/
                 let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::with(example_config(), MemStorage::new_with_conf_state((configuration.clone(), vec![])))
+                    RaftComp::with(example_config(), storage)
                 });
                 let raft_comp_f = system.start_notify(&raft_comp);
                 raft_comp_f
@@ -1063,10 +1054,11 @@ pub mod raft {
             let mut peers: HashMap<u64, ActorPath> = HashMap::new();
             let mut communicators: Vec<ActorRef<Init>> = Vec::new();
             let n: u64 = 3;
-            let num_proposals = 100;
+            let num_proposals = 1000;
             let mut configuration: Vec<u64> = Vec::new();
             for i in 1..n+1 { configuration.push(i) }
-            create_raft_nodes(n, &mut systems, &mut peers, &mut communicators, configuration);
+            let dir = "normal_test";
+            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, vec![1,2,3], &format!("{}/{}", dir, "storage_node"));
 
             for (id, actor_ref) in communicators.iter().enumerate() {
                 actor_ref.tell(Init{ id: (id+1) as u64, peers: peers.clone()});
@@ -1080,7 +1072,7 @@ pub mod raft {
                 Duration::from_millis(1000),
                 "Client failed to register!"
             );
-            let now = Instant::now();   // for testing with logcabin
+//            let now = Instant::now();   // for testing with logcabin
             let client_f = systems[0].start_notify(&client);
             client_f.wait_timeout(Duration::from_millis(1000))
                     .expect("Client never started!");
@@ -1091,8 +1083,7 @@ pub mod raft {
                                                .expect("Client's sequence should be in 0...")
                                                .to_owned();
 
-            let exec_time = now.elapsed().as_millis();
-            println!("Execution time: {}", &exec_time);
+//            let exec_time = now.elapsed().as_millis();
             for system in systems {
                 system
                     .shutdown()
@@ -1105,6 +1096,14 @@ pub mod raft {
                 let found = iter.find(|&&x| x == i).is_some();
                 assert_eq!(true, found);
             }
+            remove_dir_all(dir).expect("Failed to remove test storage files");
+            /*let mut f = File::create("results.out").expect("Failed to create results file");
+            let s = format!("{} nodes, {} proposals took {} ms", n, num_proposals, exec_time);
+            f.write_all(s.as_bytes()).unwrap();
+            f.sync_all().unwrap();
+            for i in 1..n+1 {
+                remove_dir_all(format!("{}{}", &dir, i)).expect("Failed to remove test storage files");
+            }*/
         }
 
         #[test]
@@ -1116,13 +1115,15 @@ pub mod raft {
             let mut peers: HashMap<u64, ActorPath> = HashMap::new();
             let mut communicators: Vec<ActorRef<Init>> = Vec::new();
             let n: u64 = 5; // use n nodes in total (includes nodes to be added and removed)
-            let quorum = 2;
+            let active_n: u64 = 3;
+            let quorum = active_n/2 + 1;
             let num_proposals = 10;
             let add_nodes: Vec<u64> = vec![4, 5];
             let remove_nodes: Vec<u64> = vec![2, 3];
             let reconfig = Some((add_nodes, remove_nodes));
+            let dir = "reconfig_test";
 
-            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, vec![1,2,3]);
+            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, vec![1,2,3], &format!("{}/{}", dir, "storage_node"));
 
             for (id, actor_ref) in communicators.iter().enumerate() {
                 actor_ref.tell(Init{ id: (id+1) as u64, peers: peers.clone()});
@@ -1141,10 +1142,7 @@ pub mod raft {
             client_f.wait_timeout(Duration::from_millis(1000))
                 .expect("Client never started!");
 
-            let all_sequences = f.wait_timeout(Duration::from_secs(15)).expect("Failed to get results");
-
-            let exec_time = now.elapsed().as_millis();
-            println!("Execution time: {}", &exec_time);
+            let all_sequences = f.wait_timeout(Duration::from_secs(30)).expect("Failed to get results");
 
             let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
             for system in systems {
@@ -1162,7 +1160,10 @@ pub mod raft {
                 assert!(client_sequence.starts_with(sequence));
                 if len == client_seq_len { counter += 1; }
             }
-            assert!(counter >= quorum);
+            if counter < quorum {
+                panic!("Majority should have decided sequence: counter: {}, quorum: {}", counter, quorum);
+            }
+            remove_dir_all(dir).expect("Failed to remove test storage files");
         }
     }
 }

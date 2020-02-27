@@ -23,6 +23,7 @@ parse_duration 			= "2"
 rand 					= {version = "0.7", features = ["small_rng"]}
 chrono                  = "0.4"
 uuid = { version = "0.7", features = ["v4"] }
+memmap = "0.7.0"
 
 #[dev-dependencies]
 #uuid = { version = "0.7", features = ["v4"] }
