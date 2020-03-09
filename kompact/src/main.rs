@@ -12,6 +12,7 @@ mod benchmark_runner;
 pub mod kompact_system_provider;
 pub mod partitioning_actor;
 pub mod serialiser_ids;
+pub mod atomic_bcast_client;
 
 fn main() {
     let mut args: Vec<String> = env::args().collect();

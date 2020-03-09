@@ -43,6 +43,8 @@ pub trait BenchmarkRunner {
     fn chameneos(&self, o: ::grpc::RequestOptions, p: super::benchmarks::ChameneosRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 
     fn all_pairs_shortest_path(&self, o: ::grpc::RequestOptions, p: super::benchmarks::APSPRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
+
+    fn atomic_broadcast(&self, o: ::grpc::RequestOptions, p: super::benchmarks::AtomicBroadcastRequest) -> ::grpc::SingleResponse<super::messages::TestResult>;
 }
 
 // client
@@ -60,6 +62,7 @@ pub struct BenchmarkRunnerClient {
     method_Fibonacci: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::FibonacciRequest, super::messages::TestResult>>,
     method_Chameneos: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::ChameneosRequest, super::messages::TestResult>>,
     method_AllPairsShortestPath: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::APSPRequest, super::messages::TestResult>>,
+    method_AtomicBroadcast: ::std::sync::Arc<::grpc::rt::MethodDescriptor<super::benchmarks::AtomicBroadcastRequest, super::messages::TestResult>>,
 }
 
 impl ::grpc::ClientStub for BenchmarkRunnerClient {
@@ -132,6 +135,12 @@ impl ::grpc::ClientStub for BenchmarkRunnerClient {
                 req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
                 resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
             }),
+            method_AtomicBroadcast: ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                name: "/kompics.benchmarks.BenchmarkRunner/AtomicBroadcast".to_string(),
+                streaming: ::grpc::rt::GrpcStreaming::Unary,
+                req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+            }),
         }
     }
 }
@@ -179,6 +188,10 @@ impl BenchmarkRunner for BenchmarkRunnerClient {
 
     fn all_pairs_shortest_path(&self, o: ::grpc::RequestOptions, p: super::benchmarks::APSPRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
         self.grpc_client.call_unary(o, p, self.method_AllPairsShortestPath.clone())
+    }
+
+    fn atomic_broadcast(&self, o: ::grpc::RequestOptions, p: super::benchmarks::AtomicBroadcastRequest) -> ::grpc::SingleResponse<super::messages::TestResult> {
+        self.grpc_client.call_unary(o, p, self.method_AtomicBroadcast.clone())
     }
 }
 
@@ -322,6 +335,18 @@ impl BenchmarkRunnerServer {
                     {
                         let handler_copy = handler_arc.clone();
                         ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.all_pairs_shortest_path(o, p))
+                    },
+                ),
+                ::grpc::rt::ServerMethod::new(
+                    ::std::sync::Arc::new(::grpc::rt::MethodDescriptor {
+                        name: "/kompics.benchmarks.BenchmarkRunner/AtomicBroadcast".to_string(),
+                        streaming: ::grpc::rt::GrpcStreaming::Unary,
+                        req_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                        resp_marshaller: Box::new(::grpc::protobuf::MarshallerProtobuf),
+                    }),
+                    {
+                        let handler_copy = handler_arc.clone();
+                        ::grpc::rt::MethodHandlerUnary::new(move |o, p| handler_copy.atomic_broadcast(o, p))
                     },
                 ),
             ],

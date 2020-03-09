@@ -1587,6 +1587,322 @@ impl ::protobuf::reflect::ProtobufValue for APSPRequest {
     }
 }
 
+#[derive(PartialEq,Clone,Default)]
+pub struct AtomicBroadcastRequest {
+    // message fields
+    pub algorithm: ::std::string::String,
+    pub number_of_nodes: u32,
+    pub number_of_proposals: u64,
+    pub proposals_in_parallel: u64,
+    pub reconfiguration: ::std::string::String,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a AtomicBroadcastRequest {
+    fn default() -> &'a AtomicBroadcastRequest {
+        <AtomicBroadcastRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AtomicBroadcastRequest {
+    pub fn new() -> AtomicBroadcastRequest {
+        ::std::default::Default::default()
+    }
+
+    // string algorithm = 1;
+
+
+    pub fn get_algorithm(&self) -> &str {
+        &self.algorithm
+    }
+    pub fn clear_algorithm(&mut self) {
+        self.algorithm.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_algorithm(&mut self, v: ::std::string::String) {
+        self.algorithm = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_algorithm(&mut self) -> &mut ::std::string::String {
+        &mut self.algorithm
+    }
+
+    // Take field
+    pub fn take_algorithm(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.algorithm, ::std::string::String::new())
+    }
+
+    // uint32 number_of_nodes = 2;
+
+
+    pub fn get_number_of_nodes(&self) -> u32 {
+        self.number_of_nodes
+    }
+    pub fn clear_number_of_nodes(&mut self) {
+        self.number_of_nodes = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_nodes(&mut self, v: u32) {
+        self.number_of_nodes = v;
+    }
+
+    // uint64 number_of_proposals = 3;
+
+
+    pub fn get_number_of_proposals(&self) -> u64 {
+        self.number_of_proposals
+    }
+    pub fn clear_number_of_proposals(&mut self) {
+        self.number_of_proposals = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_proposals(&mut self, v: u64) {
+        self.number_of_proposals = v;
+    }
+
+    // uint64 proposals_in_parallel = 4;
+
+
+    pub fn get_proposals_in_parallel(&self) -> u64 {
+        self.proposals_in_parallel
+    }
+    pub fn clear_proposals_in_parallel(&mut self) {
+        self.proposals_in_parallel = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_proposals_in_parallel(&mut self, v: u64) {
+        self.proposals_in_parallel = v;
+    }
+
+    // string reconfiguration = 5;
+
+
+    pub fn get_reconfiguration(&self) -> &str {
+        &self.reconfiguration
+    }
+    pub fn clear_reconfiguration(&mut self) {
+        self.reconfiguration.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_reconfiguration(&mut self, v: ::std::string::String) {
+        self.reconfiguration = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_reconfiguration(&mut self) -> &mut ::std::string::String {
+        &mut self.reconfiguration
+    }
+
+    // Take field
+    pub fn take_reconfiguration(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.reconfiguration, ::std::string::String::new())
+    }
+}
+
+impl ::protobuf::Message for AtomicBroadcastRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.algorithm)?;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.number_of_nodes = tmp;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.number_of_proposals = tmp;
+                },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.proposals_in_parallel = tmp;
+                },
+                5 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfiguration)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if !self.algorithm.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.algorithm);
+        }
+        if self.number_of_nodes != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.number_of_nodes, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.number_of_proposals != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.number_of_proposals, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.proposals_in_parallel != 0 {
+            my_size += ::protobuf::rt::value_size(4, self.proposals_in_parallel, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if !self.reconfiguration.is_empty() {
+            my_size += ::protobuf::rt::string_size(5, &self.reconfiguration);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if !self.algorithm.is_empty() {
+            os.write_string(1, &self.algorithm)?;
+        }
+        if self.number_of_nodes != 0 {
+            os.write_uint32(2, self.number_of_nodes)?;
+        }
+        if self.number_of_proposals != 0 {
+            os.write_uint64(3, self.number_of_proposals)?;
+        }
+        if self.proposals_in_parallel != 0 {
+            os.write_uint64(4, self.proposals_in_parallel)?;
+        }
+        if !self.reconfiguration.is_empty() {
+            os.write_string(5, &self.reconfiguration)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> AtomicBroadcastRequest {
+        AtomicBroadcastRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "algorithm",
+                    |m: &AtomicBroadcastRequest| { &m.algorithm },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.algorithm },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "number_of_nodes",
+                    |m: &AtomicBroadcastRequest| { &m.number_of_nodes },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.number_of_nodes },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "number_of_proposals",
+                    |m: &AtomicBroadcastRequest| { &m.number_of_proposals },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.number_of_proposals },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "proposals_in_parallel",
+                    |m: &AtomicBroadcastRequest| { &m.proposals_in_parallel },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.proposals_in_parallel },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "reconfiguration",
+                    |m: &AtomicBroadcastRequest| { &m.reconfiguration },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.reconfiguration },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<AtomicBroadcastRequest>(
+                    "AtomicBroadcastRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static AtomicBroadcastRequest {
+        static mut instance: ::protobuf::lazy::Lazy<AtomicBroadcastRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const AtomicBroadcastRequest,
+        };
+        unsafe {
+            instance.get(AtomicBroadcastRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for AtomicBroadcastRequest {
+    fn clear(&mut self) {
+        self.algorithm.clear();
+        self.number_of_nodes = 0;
+        self.number_of_proposals = 0;
+        self.proposals_in_parallel = 0;
+        self.reconfiguration.clear();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for AtomicBroadcastRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AtomicBroadcastRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x10benchmarks.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\"\
     ?\n\x0fPingPongRequest\x12,\n\x12number_of_messages\x18\x01\x20\x01(\x04\
@@ -1608,24 +1924,31 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     equest\x12.\n\x13number_of_chameneos\x18\x01\x20\x01(\rR\x11numberOfCham\
     eneos\x12,\n\x12number_of_meetings\x18\x02\x20\x01(\x04R\x10numberOfMeet\
     ings\"T\n\x0bAPSPRequest\x12&\n\x0fnumber_of_nodes\x18\x01\x20\x01(\rR\r\
-    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize2\xe0\
-    \x07\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks.Rea\
-    dyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.\
-    kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAc\
-    k\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kom\
-    pics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks\
-    .PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\x12Through\
-    putPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.ko\
-    mpics.benchmarks.TestResult\x12f\n\x15NetThroughputPingPong\x12-.kompics\
-    .benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestRes\
-    ult\x12[\n\x0eAtomicRegister\x12).kompics.benchmarks.AtomicRegisterReque\
-    st\x1a\x1e.kompics.benchmarks.TestResult\x12_\n\x10StreamingWindows\x12+\
-    .kompics.benchmarks.StreamingWindowsRequest\x1a\x1e.kompics.benchmarks.T\
-    estResult\x12Q\n\tFibonacci\x12$.kompics.benchmarks.FibonacciRequest\x1a\
-    \x1e.kompics.benchmarks.TestResult\x12Q\n\tChameneos\x12$.kompics.benchm\
-    arks.ChameneosRequest\x1a\x1e.kompics.benchmarks.TestResult\x12W\n\x14Al\
-    lPairsShortestPath\x12\x1f.kompics.benchmarks.APSPRequest\x1a\x1e.kompic\
-    s.benchmarks.TestResultb\x06proto3\
+    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xec\
+    \x01\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
+    R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\rR\rnumberOfNode\
+    s\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfProposa\
+    ls\x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\x04R\x13proposalsInP\
+    arallel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguration\
+    2\xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmark\
+    s.ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\
+    \x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.Shut\
+    downAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
+    \x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.be\
+    nchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\
+    \x12ThroughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\
+    \x1a\x1e.kompics.benchmarks.TestResult\x12f\n\x15NetThroughputPingPong\
+    \x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.bench\
+    marks.TestResult\x12[\n\x0eAtomicRegister\x12).kompics.benchmarks.Atomic\
+    RegisterRequest\x1a\x1e.kompics.benchmarks.TestResult\x12_\n\x10Streamin\
+    gWindows\x12+.kompics.benchmarks.StreamingWindowsRequest\x1a\x1e.kompics\
+    .benchmarks.TestResult\x12Q\n\tFibonacci\x12$.kompics.benchmarks.Fibonac\
+    ciRequest\x1a\x1e.kompics.benchmarks.TestResult\x12Q\n\tChameneos\x12$.k\
+    ompics.benchmarks.ChameneosRequest\x1a\x1e.kompics.benchmarks.TestResult\
+    \x12W\n\x14AllPairsShortestPath\x12\x1f.kompics.benchmarks.APSPRequest\
+    \x1a\x1e.kompics.benchmarks.TestResult\x12]\n\x0fAtomicBroadcast\x12*.ko\
+    mpics.benchmarks.AtomicBroadcastRequest\x1a\x1e.kompics.benchmarks.TestR\
+    esultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

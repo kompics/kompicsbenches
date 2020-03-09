@@ -171,7 +171,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
                                 numberOfKeys = k)
       },
     testSpace = ParameterSpacePB
-      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
+      .cross(List((0.5f, 0.5f)), List(3), List(100))
+      //      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
       .msg[AtomicRegisterRequest] {
         case ((rwl, wwl), p, k) =>
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
@@ -231,6 +232,38 @@ object Benchmarks extends ParameterDescriptionImplicits {
           assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
           APSPRequest(numberOfNodes = nn, blockSize = bs)
         }
+      }
+  );
+
+  val atomicBroadcast = Benchmark(
+    name = "Atomic Broadcast",
+    symbol = "ATOMICBROADCAST",
+    invoke = (stub, request: AtomicBroadcastRequest) => {
+      stub.atomicBroadcast(request)
+    },
+    space = ParameterSpacePB
+      .cross(List("paxos", "raft"), List(3, 5, 7, 9), List(10L.k, 20L.k, 40L.k, 80L.k), List(1L, 1L.k, 10L.k), List("off", "one", "majority"))
+      .msg[AtomicBroadcastRequest] {
+        case (a, nn, np, pp, r) =>
+          AtomicBroadcastRequest(
+            algorithm = a,
+            numberOfNodes = nn,
+            numberOfProposals = np,
+            proposalsInParallel = pp,
+            reconfiguration = r
+          )
+      },
+    testSpace = ParameterSpacePB
+      .cross(List("raft"), List(3), List(1000), List(1), List("off"))
+      .msg[AtomicBroadcastRequest] {
+        case (a, nn, np, pp, r) =>
+          AtomicBroadcastRequest(
+            algorithm = a,
+            numberOfNodes = nn,
+            numberOfProposals = np,
+            proposalsInParallel = pp,
+            reconfiguration = r
+          )
       }
   );
 

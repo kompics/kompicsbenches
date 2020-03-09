@@ -284,6 +284,7 @@ object TestFactory extends BenchmarkFactory {
   override def allPairsShortestPath(): Benchmark = TestLocalBench;
   override def chameneos(): Benchmark = TestLocalBench;
   override def fibonacci: Benchmark = TestLocalBench;
+  override def atomicBroadcast(): DistributedBenchmark = TestDistributedBench;
 }
 
 class FailFactory(val masterFailAt: Option[Stage], val clientFailAt: Option[Stage]) extends BenchmarkFactory {
@@ -301,4 +302,5 @@ class FailFactory(val masterFailAt: Option[Stage], val clientFailAt: Option[Stag
   override def allPairsShortestPath(): Benchmark = ???;
   override def chameneos(): Benchmark = ???;
   override def fibonacci: Benchmark = ???;
+  override def atomicBroadcast(): DistributedBenchmark = ???;
 }

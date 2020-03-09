@@ -857,6 +857,12 @@ mod tests {
         ) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
             Ok(TestLocalBench {}.into())
         }
+
+        fn atomic_broadcast(
+            &self
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(TestDistributedBench::new().into())
+        }
     }
 
     impl benchmarks_grpc::BenchmarkRunner for TestFactory {
@@ -1010,6 +1016,10 @@ mod tests {
                 e.into()
             });
             grpc::SingleResponse::no_metadata(f)
+        }
+
+        fn atomic_broadcast(&self, o: RequestOptions, p: AtomicBroadcastRequest) -> SingleResponse<TestResult> {
+            grpc::SingleResponse::completed(benchmark_runner::not_implemented())
         }
     }
 
