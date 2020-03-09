@@ -17,3 +17,5 @@ pub const STATIC_PONG_ID: SerId = 53;
 pub const SW_SOURCE_ID: SerId = 54;
 pub const SW_SINK_ID: SerId = 55;
 pub const SW_WINDOWER_ID: SerId = 56;
+
+pub const RAFT_ID: SerId = 57;

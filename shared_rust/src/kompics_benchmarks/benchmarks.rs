@@ -722,6 +722,1187 @@ impl ::protobuf::reflect::ProtobufValue for AtomicRegisterRequest {
     }
 }
 
+#[derive(PartialEq,Clone,Default)]
+pub struct StreamingWindowsRequest {
+    // message fields
+    pub number_of_partitions: u32,
+    pub batch_size: u64,
+    pub window_size: ::std::string::String,
+    pub number_of_windows: u64,
+    pub window_size_amplification: u64,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a StreamingWindowsRequest {
+    fn default() -> &'a StreamingWindowsRequest {
+        <StreamingWindowsRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl StreamingWindowsRequest {
+    pub fn new() -> StreamingWindowsRequest {
+        ::std::default::Default::default()
+    }
+
+    // uint32 number_of_partitions = 1;
+
+
+    pub fn get_number_of_partitions(&self) -> u32 {
+        self.number_of_partitions
+    }
+    pub fn clear_number_of_partitions(&mut self) {
+        self.number_of_partitions = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_partitions(&mut self, v: u32) {
+        self.number_of_partitions = v;
+    }
+
+    // uint64 batch_size = 2;
+
+
+    pub fn get_batch_size(&self) -> u64 {
+        self.batch_size
+    }
+    pub fn clear_batch_size(&mut self) {
+        self.batch_size = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_batch_size(&mut self, v: u64) {
+        self.batch_size = v;
+    }
+
+    // string window_size = 3;
+
+
+    pub fn get_window_size(&self) -> &str {
+        &self.window_size
+    }
+    pub fn clear_window_size(&mut self) {
+        self.window_size.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_window_size(&mut self, v: ::std::string::String) {
+        self.window_size = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_window_size(&mut self) -> &mut ::std::string::String {
+        &mut self.window_size
+    }
+
+    // Take field
+    pub fn take_window_size(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.window_size, ::std::string::String::new())
+    }
+
+    // uint64 number_of_windows = 4;
+
+
+    pub fn get_number_of_windows(&self) -> u64 {
+        self.number_of_windows
+    }
+    pub fn clear_number_of_windows(&mut self) {
+        self.number_of_windows = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_windows(&mut self, v: u64) {
+        self.number_of_windows = v;
+    }
+
+    // uint64 window_size_amplification = 5;
+
+
+    pub fn get_window_size_amplification(&self) -> u64 {
+        self.window_size_amplification
+    }
+    pub fn clear_window_size_amplification(&mut self) {
+        self.window_size_amplification = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_window_size_amplification(&mut self, v: u64) {
+        self.window_size_amplification = v;
+    }
+}
+
+impl ::protobuf::Message for StreamingWindowsRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.number_of_partitions = tmp;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.batch_size = tmp;
+                },
+                3 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.window_size)?;
+                },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.number_of_windows = tmp;
+                },
+                5 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.window_size_amplification = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.number_of_partitions != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.number_of_partitions, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.batch_size != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.batch_size, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if !self.window_size.is_empty() {
+            my_size += ::protobuf::rt::string_size(3, &self.window_size);
+        }
+        if self.number_of_windows != 0 {
+            my_size += ::protobuf::rt::value_size(4, self.number_of_windows, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.window_size_amplification != 0 {
+            my_size += ::protobuf::rt::value_size(5, self.window_size_amplification, ::protobuf::wire_format::WireTypeVarint);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if self.number_of_partitions != 0 {
+            os.write_uint32(1, self.number_of_partitions)?;
+        }
+        if self.batch_size != 0 {
+            os.write_uint64(2, self.batch_size)?;
+        }
+        if !self.window_size.is_empty() {
+            os.write_string(3, &self.window_size)?;
+        }
+        if self.number_of_windows != 0 {
+            os.write_uint64(4, self.number_of_windows)?;
+        }
+        if self.window_size_amplification != 0 {
+            os.write_uint64(5, self.window_size_amplification)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> StreamingWindowsRequest {
+        StreamingWindowsRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "number_of_partitions",
+                    |m: &StreamingWindowsRequest| { &m.number_of_partitions },
+                    |m: &mut StreamingWindowsRequest| { &mut m.number_of_partitions },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "batch_size",
+                    |m: &StreamingWindowsRequest| { &m.batch_size },
+                    |m: &mut StreamingWindowsRequest| { &mut m.batch_size },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "window_size",
+                    |m: &StreamingWindowsRequest| { &m.window_size },
+                    |m: &mut StreamingWindowsRequest| { &mut m.window_size },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "number_of_windows",
+                    |m: &StreamingWindowsRequest| { &m.number_of_windows },
+                    |m: &mut StreamingWindowsRequest| { &mut m.number_of_windows },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "window_size_amplification",
+                    |m: &StreamingWindowsRequest| { &m.window_size_amplification },
+                    |m: &mut StreamingWindowsRequest| { &mut m.window_size_amplification },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<StreamingWindowsRequest>(
+                    "StreamingWindowsRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static StreamingWindowsRequest {
+        static mut instance: ::protobuf::lazy::Lazy<StreamingWindowsRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const StreamingWindowsRequest,
+        };
+        unsafe {
+            instance.get(StreamingWindowsRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for StreamingWindowsRequest {
+    fn clear(&mut self) {
+        self.number_of_partitions = 0;
+        self.batch_size = 0;
+        self.window_size.clear();
+        self.number_of_windows = 0;
+        self.window_size_amplification = 0;
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for StreamingWindowsRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for StreamingWindowsRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct FibonacciRequest {
+    // message fields
+    pub fib_number: u32,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a FibonacciRequest {
+    fn default() -> &'a FibonacciRequest {
+        <FibonacciRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl FibonacciRequest {
+    pub fn new() -> FibonacciRequest {
+        ::std::default::Default::default()
+    }
+
+    // uint32 fib_number = 1;
+
+
+    pub fn get_fib_number(&self) -> u32 {
+        self.fib_number
+    }
+    pub fn clear_fib_number(&mut self) {
+        self.fib_number = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_fib_number(&mut self, v: u32) {
+        self.fib_number = v;
+    }
+}
+
+impl ::protobuf::Message for FibonacciRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.fib_number = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.fib_number != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.fib_number, ::protobuf::wire_format::WireTypeVarint);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if self.fib_number != 0 {
+            os.write_uint32(1, self.fib_number)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> FibonacciRequest {
+        FibonacciRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "fib_number",
+                    |m: &FibonacciRequest| { &m.fib_number },
+                    |m: &mut FibonacciRequest| { &mut m.fib_number },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<FibonacciRequest>(
+                    "FibonacciRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static FibonacciRequest {
+        static mut instance: ::protobuf::lazy::Lazy<FibonacciRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const FibonacciRequest,
+        };
+        unsafe {
+            instance.get(FibonacciRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for FibonacciRequest {
+    fn clear(&mut self) {
+        self.fib_number = 0;
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for FibonacciRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for FibonacciRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct ChameneosRequest {
+    // message fields
+    pub number_of_chameneos: u32,
+    pub number_of_meetings: u64,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a ChameneosRequest {
+    fn default() -> &'a ChameneosRequest {
+        <ChameneosRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl ChameneosRequest {
+    pub fn new() -> ChameneosRequest {
+        ::std::default::Default::default()
+    }
+
+    // uint32 number_of_chameneos = 1;
+
+
+    pub fn get_number_of_chameneos(&self) -> u32 {
+        self.number_of_chameneos
+    }
+    pub fn clear_number_of_chameneos(&mut self) {
+        self.number_of_chameneos = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_chameneos(&mut self, v: u32) {
+        self.number_of_chameneos = v;
+    }
+
+    // uint64 number_of_meetings = 2;
+
+
+    pub fn get_number_of_meetings(&self) -> u64 {
+        self.number_of_meetings
+    }
+    pub fn clear_number_of_meetings(&mut self) {
+        self.number_of_meetings = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_meetings(&mut self, v: u64) {
+        self.number_of_meetings = v;
+    }
+}
+
+impl ::protobuf::Message for ChameneosRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.number_of_chameneos = tmp;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.number_of_meetings = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.number_of_chameneos != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.number_of_chameneos, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.number_of_meetings != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.number_of_meetings, ::protobuf::wire_format::WireTypeVarint);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if self.number_of_chameneos != 0 {
+            os.write_uint32(1, self.number_of_chameneos)?;
+        }
+        if self.number_of_meetings != 0 {
+            os.write_uint64(2, self.number_of_meetings)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> ChameneosRequest {
+        ChameneosRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "number_of_chameneos",
+                    |m: &ChameneosRequest| { &m.number_of_chameneos },
+                    |m: &mut ChameneosRequest| { &mut m.number_of_chameneos },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "number_of_meetings",
+                    |m: &ChameneosRequest| { &m.number_of_meetings },
+                    |m: &mut ChameneosRequest| { &mut m.number_of_meetings },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<ChameneosRequest>(
+                    "ChameneosRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static ChameneosRequest {
+        static mut instance: ::protobuf::lazy::Lazy<ChameneosRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ChameneosRequest,
+        };
+        unsafe {
+            instance.get(ChameneosRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for ChameneosRequest {
+    fn clear(&mut self) {
+        self.number_of_chameneos = 0;
+        self.number_of_meetings = 0;
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for ChameneosRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for ChameneosRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct APSPRequest {
+    // message fields
+    pub number_of_nodes: u32,
+    pub block_size: u32,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a APSPRequest {
+    fn default() -> &'a APSPRequest {
+        <APSPRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl APSPRequest {
+    pub fn new() -> APSPRequest {
+        ::std::default::Default::default()
+    }
+
+    // uint32 number_of_nodes = 1;
+
+
+    pub fn get_number_of_nodes(&self) -> u32 {
+        self.number_of_nodes
+    }
+    pub fn clear_number_of_nodes(&mut self) {
+        self.number_of_nodes = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_nodes(&mut self, v: u32) {
+        self.number_of_nodes = v;
+    }
+
+    // uint32 block_size = 2;
+
+
+    pub fn get_block_size(&self) -> u32 {
+        self.block_size
+    }
+    pub fn clear_block_size(&mut self) {
+        self.block_size = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_block_size(&mut self, v: u32) {
+        self.block_size = v;
+    }
+}
+
+impl ::protobuf::Message for APSPRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.number_of_nodes = tmp;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.block_size = tmp;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if self.number_of_nodes != 0 {
+            my_size += ::protobuf::rt::value_size(1, self.number_of_nodes, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.block_size != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.block_size, ::protobuf::wire_format::WireTypeVarint);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if self.number_of_nodes != 0 {
+            os.write_uint32(1, self.number_of_nodes)?;
+        }
+        if self.block_size != 0 {
+            os.write_uint32(2, self.block_size)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> APSPRequest {
+        APSPRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "number_of_nodes",
+                    |m: &APSPRequest| { &m.number_of_nodes },
+                    |m: &mut APSPRequest| { &mut m.number_of_nodes },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "block_size",
+                    |m: &APSPRequest| { &m.block_size },
+                    |m: &mut APSPRequest| { &mut m.block_size },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<APSPRequest>(
+                    "APSPRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static APSPRequest {
+        static mut instance: ::protobuf::lazy::Lazy<APSPRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const APSPRequest,
+        };
+        unsafe {
+            instance.get(APSPRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for APSPRequest {
+    fn clear(&mut self) {
+        self.number_of_nodes = 0;
+        self.block_size = 0;
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for APSPRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for APSPRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
+#[derive(PartialEq,Clone,Default)]
+pub struct AtomicBroadcastRequest {
+    // message fields
+    pub algorithm: ::std::string::String,
+    pub number_of_nodes: u32,
+    pub number_of_proposals: u64,
+    pub proposals_in_parallel: u64,
+    pub reconfiguration: ::std::string::String,
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a AtomicBroadcastRequest {
+    fn default() -> &'a AtomicBroadcastRequest {
+        <AtomicBroadcastRequest as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl AtomicBroadcastRequest {
+    pub fn new() -> AtomicBroadcastRequest {
+        ::std::default::Default::default()
+    }
+
+    // string algorithm = 1;
+
+
+    pub fn get_algorithm(&self) -> &str {
+        &self.algorithm
+    }
+    pub fn clear_algorithm(&mut self) {
+        self.algorithm.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_algorithm(&mut self, v: ::std::string::String) {
+        self.algorithm = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_algorithm(&mut self) -> &mut ::std::string::String {
+        &mut self.algorithm
+    }
+
+    // Take field
+    pub fn take_algorithm(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.algorithm, ::std::string::String::new())
+    }
+
+    // uint32 number_of_nodes = 2;
+
+
+    pub fn get_number_of_nodes(&self) -> u32 {
+        self.number_of_nodes
+    }
+    pub fn clear_number_of_nodes(&mut self) {
+        self.number_of_nodes = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_nodes(&mut self, v: u32) {
+        self.number_of_nodes = v;
+    }
+
+    // uint64 number_of_proposals = 3;
+
+
+    pub fn get_number_of_proposals(&self) -> u64 {
+        self.number_of_proposals
+    }
+    pub fn clear_number_of_proposals(&mut self) {
+        self.number_of_proposals = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_number_of_proposals(&mut self, v: u64) {
+        self.number_of_proposals = v;
+    }
+
+    // uint64 proposals_in_parallel = 4;
+
+
+    pub fn get_proposals_in_parallel(&self) -> u64 {
+        self.proposals_in_parallel
+    }
+    pub fn clear_proposals_in_parallel(&mut self) {
+        self.proposals_in_parallel = 0;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_proposals_in_parallel(&mut self, v: u64) {
+        self.proposals_in_parallel = v;
+    }
+
+    // string reconfiguration = 5;
+
+
+    pub fn get_reconfiguration(&self) -> &str {
+        &self.reconfiguration
+    }
+    pub fn clear_reconfiguration(&mut self) {
+        self.reconfiguration.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_reconfiguration(&mut self, v: ::std::string::String) {
+        self.reconfiguration = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_reconfiguration(&mut self) -> &mut ::std::string::String {
+        &mut self.reconfiguration
+    }
+
+    // Take field
+    pub fn take_reconfiguration(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.reconfiguration, ::std::string::String::new())
+    }
+}
+
+impl ::protobuf::Message for AtomicBroadcastRequest {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                1 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.algorithm)?;
+                },
+                2 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint32()?;
+                    self.number_of_nodes = tmp;
+                },
+                3 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.number_of_proposals = tmp;
+                },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_uint64()?;
+                    self.proposals_in_parallel = tmp;
+                },
+                5 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfiguration)?;
+                },
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        if !self.algorithm.is_empty() {
+            my_size += ::protobuf::rt::string_size(1, &self.algorithm);
+        }
+        if self.number_of_nodes != 0 {
+            my_size += ::protobuf::rt::value_size(2, self.number_of_nodes, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.number_of_proposals != 0 {
+            my_size += ::protobuf::rt::value_size(3, self.number_of_proposals, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if self.proposals_in_parallel != 0 {
+            my_size += ::protobuf::rt::value_size(4, self.proposals_in_parallel, ::protobuf::wire_format::WireTypeVarint);
+        }
+        if !self.reconfiguration.is_empty() {
+            my_size += ::protobuf::rt::string_size(5, &self.reconfiguration);
+        }
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        if !self.algorithm.is_empty() {
+            os.write_string(1, &self.algorithm)?;
+        }
+        if self.number_of_nodes != 0 {
+            os.write_uint32(2, self.number_of_nodes)?;
+        }
+        if self.number_of_proposals != 0 {
+            os.write_uint64(3, self.number_of_proposals)?;
+        }
+        if self.proposals_in_parallel != 0 {
+            os.write_uint64(4, self.proposals_in_parallel)?;
+        }
+        if !self.reconfiguration.is_empty() {
+            os.write_string(5, &self.reconfiguration)?;
+        }
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> AtomicBroadcastRequest {
+        AtomicBroadcastRequest::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static mut descriptor: ::protobuf::lazy::Lazy<::protobuf::reflect::MessageDescriptor> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const ::protobuf::reflect::MessageDescriptor,
+        };
+        unsafe {
+            descriptor.get(|| {
+                let mut fields = ::std::vec::Vec::new();
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "algorithm",
+                    |m: &AtomicBroadcastRequest| { &m.algorithm },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.algorithm },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                    "number_of_nodes",
+                    |m: &AtomicBroadcastRequest| { &m.number_of_nodes },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.number_of_nodes },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "number_of_proposals",
+                    |m: &AtomicBroadcastRequest| { &m.number_of_proposals },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.number_of_proposals },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                    "proposals_in_parallel",
+                    |m: &AtomicBroadcastRequest| { &m.proposals_in_parallel },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.proposals_in_parallel },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "reconfiguration",
+                    |m: &AtomicBroadcastRequest| { &m.reconfiguration },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.reconfiguration },
+                ));
+                ::protobuf::reflect::MessageDescriptor::new::<AtomicBroadcastRequest>(
+                    "AtomicBroadcastRequest",
+                    fields,
+                    file_descriptor_proto()
+                )
+            })
+        }
+    }
+
+    fn default_instance() -> &'static AtomicBroadcastRequest {
+        static mut instance: ::protobuf::lazy::Lazy<AtomicBroadcastRequest> = ::protobuf::lazy::Lazy {
+            lock: ::protobuf::lazy::ONCE_INIT,
+            ptr: 0 as *const AtomicBroadcastRequest,
+        };
+        unsafe {
+            instance.get(AtomicBroadcastRequest::new)
+        }
+    }
+}
+
+impl ::protobuf::Clear for AtomicBroadcastRequest {
+    fn clear(&mut self) {
+        self.algorithm.clear();
+        self.number_of_nodes = 0;
+        self.number_of_proposals = 0;
+        self.proposals_in_parallel = 0;
+        self.reconfiguration.clear();
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for AtomicBroadcastRequest {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for AtomicBroadcastRequest {
+    fn as_ref(&self) -> ::protobuf::reflect::ProtobufValueRef {
+        ::protobuf::reflect::ProtobufValueRef::Message(self)
+    }
+}
+
 static file_descriptor_proto_data: &'static [u8] = b"\
     \n\x10benchmarks.proto\x12\x12kompics.benchmarks\x1a\x0emessages.proto\"\
     ?\n\x0fPingPongRequest\x12,\n\x12number_of_messages\x18\x01\x20\x01(\x04\
@@ -733,18 +1914,41 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     read_workload\x18\x01\x20\x01(\x02R\x0creadWorkload\x12%\n\x0ewrite_work\
     load\x18\x02\x20\x01(\x02R\rwriteWorkload\x12%\n\x0epartition_size\x18\
     \x03\x20\x01(\rR\rpartitionSize\x12$\n\x0enumber_of_keys\x18\x04\x20\x01\
-    (\x04R\x0cnumberOfKeys2\x80\x05\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\
-    \x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.benchmarks.ReadyRespon\
-    se\x12P\n\x08Shutdown\x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.ko\
-    mpics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.\
-    PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingP\
-    ong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.T\
-    estResult\x12c\n\x12ThroughputPingPong\x12-.kompics.benchmarks.Throughpu\
-    tPingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12f\n\x15NetThro\
-    ughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e\
-    .kompics.benchmarks.TestResult\x12[\n\x0eAtomicRegister\x12).kompics.ben\
-    chmarks.AtomicRegisterRequest\x1a\x1e.kompics.benchmarks.TestResultb\x06\
-    proto3\
+    (\x04R\x0cnumberOfKeys\"\xf3\x01\n\x17StreamingWindowsRequest\x120\n\x14\
+    number_of_partitions\x18\x01\x20\x01(\rR\x12numberOfPartitions\x12\x1d\n\
+    \nbatch_size\x18\x02\x20\x01(\x04R\tbatchSize\x12\x1f\n\x0bwindow_size\
+    \x18\x03\x20\x01(\tR\nwindowSize\x12*\n\x11number_of_windows\x18\x04\x20\
+    \x01(\x04R\x0fnumberOfWindows\x12:\n\x19window_size_amplification\x18\
+    \x05\x20\x01(\x04R\x17windowSizeAmplification\"1\n\x10FibonacciRequest\
+    \x12\x1d\n\nfib_number\x18\x01\x20\x01(\rR\tfibNumber\"p\n\x10ChameneosR\
+    equest\x12.\n\x13number_of_chameneos\x18\x01\x20\x01(\rR\x11numberOfCham\
+    eneos\x12,\n\x12number_of_meetings\x18\x02\x20\x01(\x04R\x10numberOfMeet\
+    ings\"T\n\x0bAPSPRequest\x12&\n\x0fnumber_of_nodes\x18\x01\x20\x01(\rR\r\
+    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xec\
+    \x01\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
+    R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\rR\rnumberOfNode\
+    s\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfProposa\
+    ls\x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\x04R\x13proposalsInP\
+    arallel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguration\
+    2\xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmark\
+    s.ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\
+    \x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.Shut\
+    downAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
+    \x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.be\
+    nchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\
+    \x12ThroughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\
+    \x1a\x1e.kompics.benchmarks.TestResult\x12f\n\x15NetThroughputPingPong\
+    \x12-.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.bench\
+    marks.TestResult\x12[\n\x0eAtomicRegister\x12).kompics.benchmarks.Atomic\
+    RegisterRequest\x1a\x1e.kompics.benchmarks.TestResult\x12_\n\x10Streamin\
+    gWindows\x12+.kompics.benchmarks.StreamingWindowsRequest\x1a\x1e.kompics\
+    .benchmarks.TestResult\x12Q\n\tFibonacci\x12$.kompics.benchmarks.Fibonac\
+    ciRequest\x1a\x1e.kompics.benchmarks.TestResult\x12Q\n\tChameneos\x12$.k\
+    ompics.benchmarks.ChameneosRequest\x1a\x1e.kompics.benchmarks.TestResult\
+    \x12W\n\x14AllPairsShortestPath\x12\x1f.kompics.benchmarks.APSPRequest\
+    \x1a\x1e.kompics.benchmarks.TestResult\x12]\n\x0fAtomicBroadcast\x12*.ko\
+    mpics.benchmarks.AtomicBroadcastRequest\x1a\x1e.kompics.benchmarks.TestR\
+    esultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

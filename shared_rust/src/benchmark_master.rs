@@ -709,6 +709,16 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         let b_res = self.benchmarks.all_pairs_shortest_path();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
+
+    fn atomic_broadcast(&self,
+                        _o: grpc::RequestOptions,
+                        p: benchmarks::AtomicBroadcastRequest
+    ) -> grpc::SingleResponse<messages::TestResult>
+    {
+        info!(self.logger, "Got Atomic Broadcast req: {:?}", p);
+        let b_res = self.benchmarks.atomic_broadcast();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
 }
 
 #[derive(Clone)]

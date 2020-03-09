@@ -12,6 +12,7 @@ pub mod netpingpong;
 pub mod pingpong;
 pub mod streaming_windows;
 pub mod throughput_pingpong;
+pub mod atomic_broadcast;
 
 pub trait ReceiveRun {
     fn recipient(&self) -> kompact::prelude::Recipient<&'static messages::Run>;
@@ -70,6 +71,10 @@ impl BenchmarkFactory for ComponentFactory {
     }
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(all_pairs_shortest_path::component_apsp::AllPairsShortestPath {}.into())
+    }
+
+    fn atomic_broadcast(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
     }
 }
 
@@ -135,6 +140,10 @@ impl BenchmarkFactory for ActorFactory {
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(all_pairs_shortest_path::actor_apsp::AllPairsShortestPath {}.into())
     }
+
+    fn atomic_broadcast(&self) -> Result<Box<AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
 }
 pub fn mixed() -> Box<dyn BenchmarkFactory> {
     Box::new(MixedFactory {})
@@ -146,6 +155,9 @@ impl BenchmarkFactory for MixedFactory {
         match label {
             atomicregister::mixed_atomicregister::AtomicRegister::LABEL => {
                 self.atomic_register().map_into()
+            }
+            atomic_broadcast::AtomicBroadcast::LABEL => {
+                self.atomic_broadcast().map_into()
             }
             _ => Err(NotImplementedError::NotFound),
         }
@@ -190,5 +202,9 @@ impl BenchmarkFactory for MixedFactory {
     }
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Err(NotImplementedError::FutureWork)
+    }
+
+    fn atomic_broadcast(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(atomic_broadcast::AtomicBroadcast {}.into())
     }
 }

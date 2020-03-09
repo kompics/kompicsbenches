@@ -16,6 +16,7 @@ service BenchmarkRunner {
 	rpc Fibonacci (FibonacciRequest) returns (TestResult);
 	rpc Chameneos (ChameneosRequest) returns (TestResult);
 	rpc AllPairsShortestPath (APSPRequest) returns (TestResult);
+	rpc AtomicBroadcast (AtomicBroadcastRequest) returns (TestResult);
 }
 
 message PingPongRequest {
@@ -54,4 +55,12 @@ message ChameneosRequest {
 message APSPRequest {
 	uint32 number_of_nodes = 1;
 	uint32 block_size = 2;
+}
+
+message AtomicBroadcastRequest {
+	string algorithm = 1;
+	uint32 number_of_nodes = 2;
+	uint64 number_of_proposals = 3;
+	uint64 proposals_in_parallel = 4;
+	string reconfiguration = 5;
 }

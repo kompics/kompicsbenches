@@ -21,9 +21,13 @@ num_cpus 				= "1"
 parse_duration 			= "2"
 rand 					= {version = "0.7", features = ["small_rng"]}
 chrono                  = "0.4"
+raft                    = "0.6.0-alpha"
+uuid                    = { version = "0.7", features = ["v4"] }
+memmap                  = "0.7.0"
+
 
 [dev-dependencies]
-uuid = { version = "0.7", features = ["v4"] }
+#uuid = { version = "0.7", features = ["v4"] }
 
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]

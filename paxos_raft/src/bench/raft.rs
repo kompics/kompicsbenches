@@ -15,7 +15,6 @@ use super::super::raft_storage::{RaftStorage, DiskStorage};
 const CONFIGCHANGE_ID: u64 = 0; // use 0 for configuration change
 
 pub mod raft {
-    // TODO add parameter in protoc to use memory or disk
     use super::*;
 
     struct MessagingPort;
@@ -82,10 +81,10 @@ pub mod raft {
             let ctr = match &msg.id {
                 1 => {
                     let num_nodes = self.peers.len() as u64;
-                    CreateTikvRaft{ id: msg.id, num_nodes: Some(num_nodes)}
+                    CreateTikvRaft{ id: msg.id }
                 }
 
-                _ => CreateTikvRaft{ id: msg.id, num_nodes: None}
+                _ => CreateTikvRaft{ id: msg.id }
             };
             self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));
         }
@@ -153,7 +152,7 @@ pub mod raft {
                             let pf = ProposalForward::with(leader_id, p);
                             self.communication_port.trigger(CommunicatorMsg::ProposalForward(pf));
                         } else {
-                            // no leader... let client node config change failed
+                            // no leader... let client node proposal failed
                             let pr = ProposalResp::failed(p);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
                         }
@@ -203,7 +202,6 @@ pub mod raft {
                 .tick();
         }
 
-        // Step a raft message, initialize the raft if need.
         fn step(&mut self, msg: TikvRaftMsg) {
             let _ = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp").step(msg);
         }
@@ -253,7 +251,6 @@ pub mod raft {
 
             // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
             // raft logs to the latest position.
-            // TODO serialise first?? check if appendable before passing in serialised entries
             if let Err(e) = store.append_log(ready.entries()) {
                 eprintln!("persist raft log fail: {:?}, need to retry or panic", e);
                 return;
@@ -270,7 +267,6 @@ pub mod raft {
 
             // Send out the messages come from the node.
             for msg in ready.messages.drain(..) {
-//                info!(self.ctx.log(), "Communicator sending some message...");
                 self.communication_port.trigger(CommunicatorMsg::TikvRaftMsg(msg));
             }
 
@@ -303,10 +299,8 @@ pub mod raft {
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
                         }
                     } else {
-                        // For normal proposals, extract the key-value pair and then
-                        // insert them into the kv engine.
+                        // For normal proposals, reply to client
                         let des_proposal = Proposal::deserialize_normal(&entry.data);
-                        // TODO write to disk instead for LogCabin comparison
                         if raft_node.raft.state == StateRole::Leader {
                             let pr = ProposalResp::succeeded_normal(des_proposal, entry.get_term(), entry.get_index());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
@@ -513,7 +507,6 @@ pub mod raft {
     #[derive(Clone, Debug)]
     struct CreateTikvRaft {
         id: u64,
-        num_nodes: Option<u64>
     }
 
     #[derive(Clone, Debug)]
@@ -1058,7 +1051,7 @@ pub mod raft {
             let mut configuration: Vec<u64> = Vec::new();
             for i in 1..n+1 { configuration.push(i) }
             let dir = "normal_test";
-            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, vec![1,2,3], &format!("{}/{}", dir, "storage_node"));
+            create_raft_nodes(n, &mut systems, &mut peers,&mut communicators, configuration, &format!("{}/{}", dir, "storage_node"));
 
             for (id, actor_ref) in communicators.iter().enumerate() {
                 actor_ref.tell(Init{ id: (id+1) as u64, peers: peers.clone()});
@@ -1117,7 +1110,7 @@ pub mod raft {
             let n: u64 = 5; // use n nodes in total (includes nodes to be added and removed)
             let active_n: u64 = 3;
             let quorum = active_n/2 + 1;
-            let num_proposals = 10;
+            let num_proposals = 20;
             let add_nodes: Vec<u64> = vec![4, 5];
             let remove_nodes: Vec<u64> = vec![2, 3];
             let reconfig = Some((add_nodes, remove_nodes));
@@ -1137,12 +1130,11 @@ pub mod raft {
                 Duration::from_millis(1000),
                 "Client failed to register!"
             );
-            let now = Instant::now();   // for testing with logcabin
             let client_f = systems[0].start_notify(&client);
             client_f.wait_timeout(Duration::from_millis(1000))
                 .expect("Client never started!");
 
-            let all_sequences = f.wait_timeout(Duration::from_secs(30)).expect("Failed to get results");
+            let all_sequences = f.wait_timeout(Duration::from_secs(60)).expect("Failed to get results");
 
             let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
             for system in systems {
@@ -1154,11 +1146,12 @@ pub mod raft {
             assert_eq!(num_proposals, client_seq_len as u64);
             let mut counter = 0;
             for i in 1..n+1 {
-//                println!("Node {}: {:?}", i, all_sequences.get(&i).unwrap());
                 let sequence = all_sequences.get(&i).unwrap();
-                let len = sequence.len();
+//                println!("Node {}: {:?}", i, sequence);
                 assert!(client_sequence.starts_with(sequence));
-                if len == client_seq_len { counter += 1; }
+                if sequence.starts_with(&client_sequence) {
+                    counter += 1;
+                }
             }
             if counter < quorum {
                 panic!("Majority should have decided sequence: counter: {}, quorum: {}", counter, quorum);

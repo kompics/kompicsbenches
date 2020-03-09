@@ -12,6 +12,7 @@ mod bench;
 //mod benchmark_runner;
 mod raft_test;
 pub mod serialiser_ids;
+pub mod raft_storage;
 
 fn main() {
 //    let mut args: Vec<String> = env::args().collect();
