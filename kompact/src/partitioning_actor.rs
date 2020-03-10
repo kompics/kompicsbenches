@@ -50,9 +50,8 @@ impl Provide<ControlPort> for PartitioningActor {
             ControlEvent::Start => {
                 let min_key: u64 = 0;
                 let max_key = self.num_keys - 1;
-                info!(self.ctx.log(), "{}", format!("Sending init to {} nodes", self.n));
                 for (r, node) in (&self.nodes).iter().enumerate() {
-                    let rank = r as u32 + 1;
+                    let rank = r as u32 + 1;    // index from 1 for raft...
                     let init = Init {
                         rank,
                         init_id: self.init_id,

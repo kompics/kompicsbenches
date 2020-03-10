@@ -109,17 +109,19 @@ const OFF: u32 = 0;
 const ONE: u32 = 1;
 const MAJORITY: u32 = 2;
 
+type Storage = DiskStorage;
+
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
     num_nodes: Option<u32>,
-    num_proposals: Option<u64>,
-    num_parallel_proposals: Option<u64>,
+    num_proposals: Option<u32>,
+    num_parallel_proposals: Option<u32>,
     reconfiguration: Option<u32>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
 //    paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
-    raft_components: Option<(Arc<Component<RaftComp<MemStorage>>>, Arc<Component<Communicator>>)>,
+    raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
     client_comp: Option<Arc<Component<Client>>>
 }
 
@@ -203,9 +205,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     }
                     Some(Algorithm::Raft) => {
                         let conf_state = get_initial_conf(self.num_nodes.unwrap() as u64);
-                        let storage = MemStorage::new_with_conf_state(conf_state);
-//                        let dir = "./diskstorage";
-//                        let storage = DiskStorage::new_with_conf_state(dir, conf_state);
+//                        let storage = MemStorage::new_with_conf_state(conf_state.clone());
+                        let dir = "./diskstorage";
+                        let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                         let config = Config {
                             election_tick: 10,
                             heartbeat_tick: 3,
@@ -213,7 +215,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         };
                         /*** Setup RaftComp ***/
                         let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                            RaftComp::with(config, storage)
+                            RaftComp::with(config,  storage)
                         });
                         let raft_comp_f = system.start_notify(&raft_comp);
                         raft_comp_f
@@ -317,7 +319,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("ClientComp never started!");
                 let finished_latch = self.finished_latch.take().unwrap();
-                finished_latch.wait_timeout(Duration::from_secs(15));
+//                let count = finished_latch.wait_timeout(Duration::from_secs(15));
+//                if count > 0 {
+//                    println!("EXPERIMENT TIMEOUT");
+//                }
+                finished_latch.wait();
             }
             _ => unimplemented!()
         }
@@ -326,10 +332,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
     fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
         println!("Cleaning up Atomic Broadcast (master) side");
         let system = self.system.take().unwrap();
-        //TODO
-        /*if self.paxos_comp.is_some() {
-
-        }*/
 
         if self.raft_components.is_some() {
             let (raft_comp, communicator) = self.raft_components.take().unwrap();
@@ -361,15 +363,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    //    paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
-    raft_components: Option<(Arc<Component<RaftComp<MemStorage>>>, Arc<Component<Communicator>>)>,
+//        paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
+    raft_comp: Option<Arc<Component<RaftComp<Storage>>>>,
+    raft_communicator: Option<Arc<Component<Communicator>>>,
+//    raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
+    conf_state: Option<(Vec<u64>, Vec<u64>)>
 }
 
 impl AtomicBroadcastClient {
     fn new() -> AtomicBroadcastClient {
         AtomicBroadcastClient {
             system: None,
-            raft_components: None
+            raft_comp: None,
+            raft_communicator: None,
+            conf_state: None,
         }
     }
 }
@@ -387,28 +394,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 unimplemented!()
             }
             Algorithm::Raft => {
-//                let conf_state = get_initial_conf(3);
                 let conf_state = get_initial_conf(c.last_node_id as u64);
-                let storage = MemStorage::new_with_conf_state(conf_state);
-//                let dir = "./diskstorage";
-//                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
-                let config = Config {
-                    election_tick: 10,
-                    heartbeat_tick: 3,
-                    ..Default::default()
-                };
-                /*** Setup RaftComp ***/
-                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::with(config, storage)
-                });
-                let raft_comp_f = system.start_notify(&raft_comp);
-                raft_comp_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("RaftComp never started!");
-                unique_reg_f.wait_expect(
-                    Duration::from_millis(1000),
-                    "RaftComp failed to register!",
-                );
+                self.conf_state = Some(conf_state);
                 /*** Setup communicator ***/
                 let (communicator, unique_reg_f) =
                     system.create_and_register(|| { Communicator::new() });
@@ -429,15 +416,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never started!");
 
-                biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
-                    .expect("Could not connect components!");
-
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
                     vec!["communicator".into()],
                 ));
 
-                self.raft_components = Some((raft_comp, communicator));
+                self.raft_communicator = Some(communicator);
                 self_path
             }
             _ => unimplemented!()
@@ -449,23 +433,48 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 
     fn prepare_iteration(&mut self) -> () {
         println!("Preparing Atomic Broadcast (client)");
+        if self.raft_communicator.is_some() {
+            let dir = "./diskstorage";
+            let conf_state = self.conf_state.as_ref().unwrap().clone();
+            let storage = DiskStorage::new_with_conf_state(dir, conf_state);
+            let config = Config {
+                election_tick: 10,
+                heartbeat_tick: 3,
+                ..Default::default()
+            };
+            let system = self.system.as_mut().expect("Kompact System not found");
+            /*** Setup RaftComp ***/
+            let (raft_comp, unique_reg_f) = system.create_and_register(|| {
+                RaftComp::with(config, storage)
+            });
+            let raft_comp_f = system.start_notify(&raft_comp);
+            raft_comp_f
+                .wait_timeout(Duration::from_millis(1000))
+                .expect("RaftComp never started!");
+            unique_reg_f.wait_expect(
+                Duration::from_millis(1000),
+                "RaftComp failed to register!",
+            );
+
+            biconnect_components::<MessagingPort, _, _>(self.raft_communicator.as_ref().unwrap(), &raft_comp)
+                .expect("Could not connect components!");
+
+            self.raft_comp = Some(raft_comp);
+        }
     }
 
     fn cleanup_iteration(&mut self, last_iteration: bool) -> () {
         println!("Cleaning up Atomic Broadcast (client)");
-        if last_iteration {
-            let system = self.system.take().unwrap();
-//            if self.paxos_comp.is_some(){
-//
-//            }
-            if self.raft_components.is_some() {
-                let (raft_comp, communicator) = self.raft_components.take().unwrap();
-                let kill_raft_f = system.kill_notify(raft_comp);
-                kill_raft_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Atomic Broadcast never died!");
+        if self.raft_comp.is_some() {
+            let system = self.system.as_mut().unwrap();
+            let kill_raft_f = system.kill_notify(self.raft_comp.take().unwrap());
+            kill_raft_f
+                .wait_timeout(Duration::from_millis(1000))
+                .expect("Atomic Broadcast never died!");
 
-                let kill_communicator_f = system.kill_notify(communicator);
+            if last_iteration {
+                let system = self.system.take().unwrap();
+                let kill_communicator_f = system.kill_notify(self.raft_communicator.take().unwrap());
                 kill_communicator_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never died!");
@@ -492,6 +501,7 @@ pub mod raft {
     use self::tikv_raft::Error;
     use storage::RaftStorage;
     use super::partitioning_actor::{Init, InitAck, PartitioningActorSer};
+    use crate::bench::atomic_broadcast::raft::storage::DiskStorage;
 
     const CONFIGCHANGE_ID: u64 = 0;
 
@@ -555,7 +565,7 @@ pub mod raft {
                     self.peers = peers;
                     receiver.tell((init_ack.to_owned(), PartitioningActorSer), self);
                 }
-                _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
+                _ => debug!(self.ctx.log(), "{}", format!("Communicator got unexpected msg: {:?}", msg))
             }
         }
     }
@@ -627,13 +637,15 @@ pub mod raft {
                     info!(self.ctx.log(), "{}", format!("Creating raft node, iteration: {}, id: {}", ctr.iteration_id, ctr.node_id));
                     self.iteration_id = ctr.iteration_id;
                     self.config.id = ctr.node_id;
-                    self.raft_node = Some(RawNode::new(&self.config, self.storage.clone()).expect("Failed to create TikvRaftNode"));
+                    self.raft_node = Some(RawNode::new(&self.config, self.storage.to_owned()).expect("Failed to create TikvRaftNode"));
                     if self.config.id == 1 {    // leader
                         let raft_node = self.raft_node.as_mut().unwrap();
                         raft_node.raft.become_candidate();
                         raft_node.raft.become_leader();
                     }
-                    self.start_timers();
+                    if self.timers.is_none() {
+                        self.start_timers();
+                    }
                     self.communication_port.trigger(CommunicatorMsg::InitAck(InitAck(self.iteration_id)));
                 }
                 RaftCompMsg::TikvRaftMsg(rm) => {
@@ -700,9 +712,13 @@ pub mod raft {
         }
 
         fn stop_timers(&mut self) {
-            let timers = self.timers.take().unwrap();
-            self.cancel_timer(timers.0);
-            self.cancel_timer(timers.1);
+            match self.timers.take() {
+                Some((ready_timer, tick_timer)) => {
+                    self.cancel_timer(ready_timer);
+                    self.cancel_timer(tick_timer);
+                }
+                _ => {}
+            }
         }
 
         fn tick(&mut self) {
@@ -925,7 +941,7 @@ pub mod raft {
 
     #[derive(Clone, Debug)]
     pub struct ProposalResp {
-        id: u64,
+        pub id: u64,
         client: Option<ActorPath>,  // client don't need it when receiving it
         pub succeeded: bool,
         conf_change: Option<(u64, ConfChangeType)>,
@@ -1172,6 +1188,7 @@ pub mod raft {
         pub trait RaftStorage: tikv_raft::storage::Storage {
             fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error>;
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error>;
+            fn new_with_conf_state(conf_state: (Vec<u64>, Vec<u64>)) -> Self;
         }
 
         impl RaftStorage for MemStorage {
@@ -1183,6 +1200,10 @@ pub mod raft {
                 self.wl().mut_hard_state().commit = commit;
                 self.wl().mut_hard_state().term = term;
                 Ok(())
+            }
+
+            fn new_with_conf_state(conf_state: (Vec<u64>, Vec<u64>)) -> Self {
+                MemStorage::new_with_conf_state(conf_state)
             }
         }
 
@@ -1233,6 +1254,10 @@ pub mod raft {
 
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
                 self.wl().set_hard_state(commit, term)
+            }
+
+            fn new_with_conf_state(conf_state: (Vec<u64>, Vec<u64>)) -> Self {
+                DiskStorage::new_with_conf_state("./diskstorage", conf_state)
             }
         }
 
@@ -1472,6 +1497,10 @@ pub mod raft {
                 (&mut self.hard_state[DiskStorageCore::COMMIT_INDEX]).write(&commit.to_be_bytes())?;
                 Ok(())
             }
+
+            fn new_with_conf_state(conf_state: (Vec<u64>, Vec<u64>)) -> Self {
+                DiskStorageCore::new_with_conf_state("./diskstorage", conf_state)
+            }
         }
 
         impl Storage for DiskStorageCore {
@@ -1516,6 +1545,7 @@ pub mod raft {
                 }
                 let log_index = idx - offset;
                 if log_index >= self.num_entries {
+                    println!("{}", format!("log_index: {}, num_entries: {}", log_index, self.num_entries));
                     return Err(Error::Store(StorageError::Unavailable));
                 }
                 Ok(self.get_entry(log_index).term)
