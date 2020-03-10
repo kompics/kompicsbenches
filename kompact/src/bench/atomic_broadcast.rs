@@ -491,8 +491,6 @@ pub mod raft {
     extern crate raft as tikv_raft;
 
     use kompact::prelude::*;
-    //use kompact_benchmarks::partitioning_actor::*;
-    use kompact::prelude::ScheduledTimer;
     use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, storage::MemStorage};
     use protobuf::{Message as PbMessage, parse_from_bytes};
     use super::super::serialiser_ids as serialiser_ids;

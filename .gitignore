@@ -99,3 +99,6 @@ out/
 .metals/
 *.code-workspace
 .vscode
+
+kompact/diskstorage/*
+shared_rust/src/kompics_benchmarks/benchmarks_grpc.rs

@@ -57,6 +57,7 @@ impl Actor for AtomicBcastClient {
                     CommunicatorMsg::ProposalResp(pr) => {
                         if pr.succeeded {
                             self.num_proposals -= 1;
+//                            info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
                             if self.num_proposals == 0 {
                                 self.finished_latch.decrement().expect("Failed to countdown finished latch");
                             }
