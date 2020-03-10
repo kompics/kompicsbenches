@@ -242,7 +242,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       stub.atomicBroadcast(request)
     },
     space = ParameterSpacePB
-      .cross(List("paxos", "raft"), List(3, 5, 7, 9), List(10L.k, 20L.k, 40L.k, 80L.k), List(1L, 1L.k, 10L.k), List("off", "one", "majority"))
+      .cross(List("paxos", "raft"), List(3, 5, 7, 9), List(10000, 20000, 40000, 80000), List(1, 1000, 10000), List("off", "one", "majority"))
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r) =>
           AtomicBroadcastRequest(
@@ -254,7 +254,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
           )
       },
     testSpace = ParameterSpacePB
-      .cross(List("raft"), List(3), List(1000), List(1), List("off"))
+      .cross(List("raft"), List(3), List(100), List(1), List("off"))
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r) =>
           AtomicBroadcastRequest(

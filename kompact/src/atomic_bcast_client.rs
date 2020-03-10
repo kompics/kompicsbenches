@@ -56,12 +56,13 @@ impl Actor for AtomicBcastClient {
                 match cm {
                     CommunicatorMsg::ProposalResp(pr) => {
                         if pr.succeeded {
+                            info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
                             self.num_proposals -= 1;
-                            if self.num_proposals == 0 {
-                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                            }
+                        }
+                        if self.num_proposals == 0 {
+                            self.finished_latch.decrement().expect("Failed to countdown finished latch");
                         } else {
-                            error!(self.ctx.log(), "{}", format!("Got failed proposal: {}", pr.id));
+                            error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
                         }
                     }
                     _ => unimplemented!()
