@@ -58,9 +58,10 @@ impl Actor for AtomicBcastClient {
                         if pr.succeeded {
                             info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
                             self.num_proposals -= 1;
-                        }
-                        if self.num_proposals == 0 {
-                            self.finished_latch.decrement().expect("Failed to countdown finished latch");
+//                            info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
+                            if self.num_proposals == 0 {
+                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                            }
                         } else {
                             error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
                         }

@@ -1592,8 +1592,8 @@ pub struct AtomicBroadcastRequest {
     // message fields
     pub algorithm: ::std::string::String,
     pub number_of_nodes: u32,
-    pub number_of_proposals: u64,
-    pub proposals_in_parallel: u64,
+    pub number_of_proposals: u32,
+    pub proposals_in_parallel: u32,
     pub reconfiguration: ::std::string::String,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
@@ -1652,10 +1652,10 @@ impl AtomicBroadcastRequest {
         self.number_of_nodes = v;
     }
 
-    // uint64 number_of_proposals = 3;
+    // uint32 number_of_proposals = 3;
 
 
-    pub fn get_number_of_proposals(&self) -> u64 {
+    pub fn get_number_of_proposals(&self) -> u32 {
         self.number_of_proposals
     }
     pub fn clear_number_of_proposals(&mut self) {
@@ -1663,14 +1663,14 @@ impl AtomicBroadcastRequest {
     }
 
     // Param is passed by value, moved
-    pub fn set_number_of_proposals(&mut self, v: u64) {
+    pub fn set_number_of_proposals(&mut self, v: u32) {
         self.number_of_proposals = v;
     }
 
-    // uint64 proposals_in_parallel = 4;
+    // uint32 proposals_in_parallel = 4;
 
 
-    pub fn get_proposals_in_parallel(&self) -> u64 {
+    pub fn get_proposals_in_parallel(&self) -> u32 {
         self.proposals_in_parallel
     }
     pub fn clear_proposals_in_parallel(&mut self) {
@@ -1678,7 +1678,7 @@ impl AtomicBroadcastRequest {
     }
 
     // Param is passed by value, moved
-    pub fn set_proposals_in_parallel(&mut self, v: u64) {
+    pub fn set_proposals_in_parallel(&mut self, v: u32) {
         self.proposals_in_parallel = v;
     }
 
@@ -1732,14 +1732,14 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     if wire_type != ::protobuf::wire_format::WireTypeVarint {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
-                    let tmp = is.read_uint64()?;
+                    let tmp = is.read_uint32()?;
                     self.number_of_proposals = tmp;
                 },
                 4 => {
                     if wire_type != ::protobuf::wire_format::WireTypeVarint {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
-                    let tmp = is.read_uint64()?;
+                    let tmp = is.read_uint32()?;
                     self.proposals_in_parallel = tmp;
                 },
                 5 => {
@@ -1785,10 +1785,10 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
             os.write_uint32(2, self.number_of_nodes)?;
         }
         if self.number_of_proposals != 0 {
-            os.write_uint64(3, self.number_of_proposals)?;
+            os.write_uint32(3, self.number_of_proposals)?;
         }
         if self.proposals_in_parallel != 0 {
-            os.write_uint64(4, self.proposals_in_parallel)?;
+            os.write_uint32(4, self.proposals_in_parallel)?;
         }
         if !self.reconfiguration.is_empty() {
             os.write_string(5, &self.reconfiguration)?;
@@ -1845,12 +1845,12 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     |m: &AtomicBroadcastRequest| { &m.number_of_nodes },
                     |m: &mut AtomicBroadcastRequest| { &mut m.number_of_nodes },
                 ));
-                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
                     "number_of_proposals",
                     |m: &AtomicBroadcastRequest| { &m.number_of_proposals },
                     |m: &mut AtomicBroadcastRequest| { &mut m.number_of_proposals },
                 ));
-                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
                     "proposals_in_parallel",
                     |m: &AtomicBroadcastRequest| { &m.proposals_in_parallel },
                     |m: &mut AtomicBroadcastRequest| { &mut m.proposals_in_parallel },
@@ -1927,11 +1927,11 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xec\
     \x01\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
     R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\rR\rnumberOfNode\
-    s\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfProposa\
-    ls\x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\x04R\x13proposalsInP\
-    arallel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguration\
-    2\xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmark\
-    s.ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\
+    s\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\rR\x11numberOfProposals\
+    \x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\rR\x13proposalsInParal\
+    lel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguration2\
+    \xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks\
+    .ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\
     \x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.Shut\
     downAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
     \x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.be\
