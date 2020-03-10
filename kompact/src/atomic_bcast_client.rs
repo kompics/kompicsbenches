@@ -8,15 +8,16 @@ use bench::atomic_broadcast::raft::{Proposal, ProposalResp, CommunicatorMsg, Raf
 #[derive(ComponentDefinition)]
 pub struct AtomicBcastClient {
     ctx: ComponentContext<Self>,
-    num_proposals: u64,
+    num_proposals: u32,
     nodes: HashMap<u64, ActorPath>,
     finished_latch: Arc<CountdownEvent>
 }
 
 impl AtomicBcastClient {
-    pub fn with(num_proposals: u64,
-            nodes: HashMap<u64, ActorPath>,
-            finished_latch: Arc<CountdownEvent>
+    pub fn with(
+        num_proposals: u32,
+        nodes: HashMap<u64, ActorPath>,
+        finished_latch: Arc<CountdownEvent>
     ) -> AtomicBcastClient {
         AtomicBcastClient {
             ctx: ComponentContext::new(), num_proposals, nodes, finished_latch
@@ -29,9 +30,9 @@ impl Provide<ControlPort> for AtomicBcastClient {
         match event {
             ControlEvent::Start => {
                 info!(self.ctx.log(), "Started bcast client");
-                for i in 0..self.num_proposals {
+                for i in 1..=self.num_proposals {
                     let ap = self.ctx.actor_path();
-                    let p = Proposal::normal(i, ap);
+                    let p = Proposal::normal(i as u64, ap);
                     // TODO send proposal to who?
                     let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
                     raft_node.tell((CommunicatorMsg::Proposal(p), RaftSer), self);
@@ -54,9 +55,13 @@ impl Actor for AtomicBcastClient {
             cm: CommunicatorMsg [RaftSer] => {
                 match cm {
                     CommunicatorMsg::ProposalResp(pr) => {
-                        if pr.succeeded { self.num_proposals -= 1}
-                        if self.num_proposals == 0 {
-                            self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                        if pr.succeeded {
+                            self.num_proposals -= 1;
+                            if self.num_proposals == 0 {
+                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                            }
+                        } else {
+                            error!(self.ctx.log(), "{}", format!("Got failed proposal: {}", pr.id));
                         }
                     }
                     _ => unimplemented!()

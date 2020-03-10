@@ -117,11 +117,15 @@ pub mod raft {
         reconfig_client: Option<ActorPath>,
         config: Config,
         storage: S,
+        timers: Option<(ScheduledTimer, ScheduledTimer)>
     }
 
     impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Provide<ControlPort> for RaftComp<S>{
-        fn handle(&mut self, _event: ControlEvent) -> () {
-            // ignore
+        fn handle(&mut self, event: ControlEvent) -> () {
+            match event {
+                ControlEvent::Start => {},
+                _ => self.stop_timers()
+            }
         }
     }
 
@@ -184,6 +188,7 @@ pub mod raft {
                 reconfig_client: None,
                 config,
                 storage,
+                timers: None
             }
         }
 
@@ -192,8 +197,15 @@ pub mod raft {
             let on_ready_uuid = uuid::Uuid::new_v4();
             let tick_uuid = uuid::Uuid::new_v4();
             // give new reference to self to make compiler happy
-            self.schedule_periodic(delay, Duration::from_millis(1), move |c, on_ready_uuid| c.on_ready());
-            self.schedule_periodic(delay, Duration::from_millis(100), move |rc, tick_uuid| rc.tick());
+            let ready_timer = self.schedule_periodic(delay, Duration::from_millis(1), move |c, on_ready_uuid| c.on_ready());
+            let tick_timer = self.schedule_periodic(delay, Duration::from_millis(100), move |rc, tick_uuid| rc.tick());
+            self.timers = Some((ready_timer, tick_timer));
+        }
+
+        fn stop_timers(&mut self) {
+            let timers = self.timers.take().unwrap();
+            self.cancel_timer(timers.0);
+            self.cancel_timer(timers.1);
         }
 
         fn tick(&mut self) {
@@ -1065,7 +1077,7 @@ pub mod raft {
                 Duration::from_millis(1000),
                 "Client failed to register!"
             );
-//            let now = Instant::now();   // for testing with logcabin
+            let now = Instant::now();   // for testing with logcabin
             let client_f = systems[0].start_notify(&client);
             client_f.wait_timeout(Duration::from_millis(1000))
                     .expect("Client never started!");
@@ -1076,7 +1088,7 @@ pub mod raft {
                                                .expect("Client's sequence should be in 0...")
                                                .to_owned();
 
-//            let exec_time = now.elapsed().as_millis();
+            let exec_time = now.elapsed().as_millis();
             for system in systems {
                 system
                     .shutdown()
@@ -1090,13 +1102,10 @@ pub mod raft {
                 assert_eq!(true, found);
             }
             remove_dir_all(dir).expect("Failed to remove test storage files");
-            /*let mut f = File::create("results.out").expect("Failed to create results file");
+            let mut f = File::create("results.out").expect("Failed to create results file");
             let s = format!("{} nodes, {} proposals took {} ms", n, num_proposals, exec_time);
             f.write_all(s.as_bytes()).unwrap();
             f.sync_all().unwrap();
-            for i in 1..n+1 {
-                remove_dir_all(format!("{}{}", &dir, i)).expect("Failed to remove test storage files");
-            }*/
         }
 
         #[test]
