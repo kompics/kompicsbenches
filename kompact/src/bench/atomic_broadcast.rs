@@ -17,7 +17,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
     algorithm: Algorithm,
-    last_node_id: u32,
+    last_node_id: u64,
 }
 
 #[derive(Default)]
@@ -59,7 +59,7 @@ impl DistributedBenchmark for AtomicBroadcast {
                     )));
                 }
             };
-            let last_node_id = split[1].parse::<u32>().map_err(|e| {
+            let last_node_id = split[1].parse::<u64>().map_err(|e| {
                 BenchmarkError::InvalidMessage(format!(
                     "String to ClientConf error: '{}' does not represent a node id: {:?}",
                     split[1], e
@@ -107,16 +107,30 @@ enum Algorithm {
 
 type Storage = DiskStorage;
 
-const OFF: u32 = 0;
-const ONE: u32 = 1;
-const MAJORITY: u32 = 2;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reconfiguration {
+    add_nodes: Vec<u64>,
+    remove_nodes: Vec<u64>
+}
+
+impl Reconfiguration {
+    fn from(initial_n: u64, reconfigure_n: u64) -> Reconfiguration {
+        let mut remove_nodes = vec![];
+        let mut add_nodes = vec![];
+        for i in 0..reconfigure_n {
+            remove_nodes.push(initial_n - i);
+            add_nodes.push(initial_n + i + 1);
+        }
+        Reconfiguration{ add_nodes, remove_nodes}
+    }
+}
 
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
-    num_nodes: Option<u32>,
+    num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     num_parallel_proposals: Option<u64>,
-    reconfiguration: Option<u32>,
+    reconfiguration: Option<Reconfiguration>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -150,30 +164,25 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
-        let additional_nodes: u32 = match c.reconfiguration.to_lowercase().as_ref() {
-            "off" => {
-                self.reconfiguration = None;
-                0
-            }
-            "one" => {
-                self.reconfiguration = Some(ONE);
-                1
-            }
-            "majority" => {
-                self.reconfiguration = Some(MAJORITY);
-                c.number_of_nodes/2 + 1
-            }
+        self.num_nodes = Some(c.number_of_nodes);
+        let reconfigure_n: u64 = match c.reconfiguration.to_lowercase().as_ref() {
+            "off" => 0,
+            "one" => 1,
+            "majority" => c.number_of_nodes/2 + 1,
             _ => return Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
         };
-        let n = c.number_of_nodes + additional_nodes;
-        if m.number_of_clients() + 1 < n {
+        let n = c.number_of_nodes + reconfigure_n;
+        if m.number_of_clients() as u64 + 1 < n {
             return Err(BenchmarkError::InvalidTest(format!(
                 "Not enough clients: {}, Required: {}",
                 &m.number_of_clients(),
                &n
             )));
         }
-        self.num_nodes = Some(c.number_of_nodes);
+        self.reconfiguration = match reconfigure_n {
+            0 => None,
+            i => Some(Reconfiguration::from(c.number_of_nodes, reconfigure_n))
+        };
         self.algorithm = match c.algorithm.to_lowercase().as_ref() {
             "paxos" => Some(Algorithm::Paxos),
             "raft" => Some(Algorithm::Raft),
@@ -284,6 +293,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             Client::with(
                                 self.num_proposals.unwrap(),
                                 nodes_id,
+                                self.reconfiguration.clone(),
                                 finished_latch.clone(),
                             )
                         });
@@ -390,7 +400,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             }
             Algorithm::Raft => {
 //                let conf_state = get_initial_conf(3);
-                let conf_state = get_initial_conf(c.last_node_id as u64);
+                let conf_state = get_initial_conf(c.last_node_id);
 //                let storage = MemStorage::new_with_conf_state(conf_state);
 //                let dir = "./diskstorage";
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
@@ -494,6 +504,7 @@ pub mod raft {
     use self::tikv_raft::Error;
     use storage::RaftStorage;
     use super::partitioning_actor::{Init, InitAck, PartitioningActorSer};
+    use crate::bench::atomic_broadcast::raft::storage::DiskStorage;
 
     const CONFIGCHANGE_ID: u64 = 0;
 
@@ -629,6 +640,7 @@ pub mod raft {
                     info!(self.ctx.log(), "{}", format!("Creating raft node, iteration: {}, id: {}", ctr.iteration_id, ctr.node_id));
                     self.iteration_id = ctr.iteration_id;
                     self.config.id = ctr.node_id;
+                    DiskStorage::clear_dir("./diskstorage").expect("Failed to clear previous iteration raft log");    // TODO remove when using Memstorage
                     let store = S::new_with_conf_state(self.conf_state.clone());
                     self.raft_node = Some(RawNode::new(&self.config, store).expect("Failed to create TikvRaftNode"));
                     if self.config.id == 1 {    // leader
@@ -658,6 +670,7 @@ pub mod raft {
                             self.communication_port.trigger(CommunicatorMsg::ProposalForward(pf));
                         } else {
                             // no leader... let client node proposal failed
+                            error!(self.ctx.log(), "Failed proposal: No leader");
                             let pr = ProposalResp::failed(p);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
                         }
@@ -736,7 +749,7 @@ pub mod raft {
                             let _ = raft_node.propose(vec![], data);
                         },
                         _ => {
-                            error!(self.ctx.log(), "Cannot propose due to tikv serialization failure...");
+                            error!(self.ctx.log(), "Failed proposal: tikv serialization failure...");
                             // Propose failed, don't forget to respond to the client.
                             let pr = ProposalResp::failed(proposal.clone());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
@@ -748,6 +761,7 @@ pub mod raft {
             let last_index2 = raft_node.raft.raft_log.last_index() + 1;
             if last_index2 == last_index1 {
                 // Propose failed, don't forget to respond to the client.
+                error!(self.ctx.log(), "Failed proposal: Failed to append to storage?");
                 let pr = ProposalResp::failed(proposal);
                 self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
             }
@@ -766,7 +780,7 @@ pub mod raft {
             // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
             // raft logs to the latest position.
             if let Err(e) = store.append_log(ready.entries()) {
-                eprintln!("persist raft log fail: {:?}, need to retry or panic", e);
+                error!(self.ctx.log(), "{}", format!("persist raft log fail: {:?}, need to retry or panic", e));
                 return;
             }
 
@@ -1173,6 +1187,8 @@ pub mod raft {
         use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
         use std::io::prelude::*;
         use std::path::Prefix::Disk;
+        use std::fs::remove_dir_all;
+        use std::io::{ErrorKind::NotFound, Error as IOError};
 
         pub trait RaftStorage: tikv_raft::storage::Storage {
             fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error>;
@@ -1233,6 +1249,19 @@ pub mod raft {
             {
                 let core = Arc::new(RwLock::new(DiskStorageCore::new_with_conf_state(dir, conf_state)));
                 DiskStorage{ core }
+            }
+
+            pub fn clear_dir(dir: &str) -> Result<(), IOError> {
+                match remove_dir_all(dir) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        if e.kind() == NotFound {
+                            Ok(())
+                        } else {
+                            Err(e)
+                        }
+                    }
+                }
             }
         }
 
@@ -1527,7 +1556,7 @@ pub mod raft {
                 }
                 let log_index = idx - offset;
                 if log_index >= self.num_entries {
-                    println!("{}", format!("log_index: {}, num_entries: {}", log_index, self.num_entries));
+                    println!("{}", format!("log_index: {}, num_entries: {}, idx: {}, offset: {}", log_index, self.num_entries, idx, offset));
                     return Err(Error::Store(StorageError::Unavailable));
                 }
                 Ok(self.get_entry(log_index).term)
@@ -1682,9 +1711,18 @@ pub mod raft {
         use std::str::FromStr;
         use super::*;
         use std::fs::remove_dir_all;
+        use super::storage::*;
+
+        fn new_entry(index: u64, term: u64) -> Entry {
+            let mut e = Entry::default();
+            e.term = term;
+            e.index = index;
+            e
+        }
 
         fn example_config() -> Config {
             Config {
+                id: 1,
                 election_tick: 10,
                 heartbeat_tick: 3,
                 ..Default::default()
@@ -1825,6 +1863,30 @@ pub mod raft {
             assert_eq!(proposal.id, des_proposal.id);
             assert_eq!(proposal.client, des_proposal.client);
             assert_eq!(proposal.conf_change, des_proposal.conf_change);
+        }
+
+        #[test]
+        fn reset_storage_test() {
+            let ents = vec![
+                new_entry(2, 2),
+                new_entry(3, 3),
+                new_entry(4, 4),
+                new_entry(5, 5),
+                new_entry(6, 6),
+            ];
+            remove_dir_all("reset_test").unwrap();
+            let config = example_config();
+            let store = DiskStorage::new_with_conf_state("reset_test", (vec![1,2,3], vec![]));
+            let mut store_c = store.clone();
+            let raft_node = Some(RawNode::new(&config, store).expect("Failed to create TikvRaftNode"));
+            store_c.append_log(&ents).unwrap();
+            remove_dir_all("reset_test").expect("Failed to remove test storage files");
+            let store2 = DiskStorage::new_with_conf_state("reset_test", (vec![1,2,3], vec![]));
+            let raft_node2 =  Some(RawNode::new(&config, store2).expect("Failed to create TikvRaftNode"));
+//            storage.append_log(&ents).expect("Failed to append logs");
+//            storage = DiskStorage::new_with_conf_state("reset_test", (vec![1,2,3], vec![]));
+//            storage.append_log(&ents).expect("Failed to append logs");
+            remove_dir_all("reset_test").expect("Failed to remove test storage files");
         }
     }
 }

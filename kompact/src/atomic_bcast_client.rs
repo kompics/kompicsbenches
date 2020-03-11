@@ -4,22 +4,26 @@ use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use std::collections::HashMap;
 use bench::atomic_broadcast::raft::{Proposal, ProposalResp, CommunicatorMsg, RaftSer};
+use bench::atomic_broadcast::Reconfiguration;
 
 #[derive(ComponentDefinition)]
 pub struct AtomicBcastClient {
     ctx: ComponentContext<Self>,
     num_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
+    reconfig: Option<Reconfiguration>,
     finished_latch: Arc<CountdownEvent>
 }
 
 impl AtomicBcastClient {
-    pub fn with(num_proposals: u64,
-            nodes: HashMap<u64, ActorPath>,
-            finished_latch: Arc<CountdownEvent>
+    pub fn with(
+        num_proposals: u64,
+        nodes: HashMap<u64, ActorPath>,
+        reconfig: Option<Reconfiguration>,
+        finished_latch: Arc<CountdownEvent>
     ) -> AtomicBcastClient {
         AtomicBcastClient {
-            ctx: ComponentContext::new(), num_proposals, nodes, finished_latch
+            ctx: ComponentContext::new(), num_proposals, nodes, reconfig, finished_latch
         }
     }
 }
@@ -55,11 +59,11 @@ impl Actor for AtomicBcastClient {
                 match cm {
                     CommunicatorMsg::ProposalResp(pr) => {
                         if pr.succeeded {
-                            info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
+//                            info!(self.ctx.log(), "{}", format!("Successful proposal: {}", pr.id));
                             self.num_proposals -= 1;
-                        }
-                        if self.num_proposals == 0 {
-                            self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                            if self.num_proposals == 0 {
+                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                            }
                         } else {
                             error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
                         }

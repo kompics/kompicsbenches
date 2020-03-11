@@ -1591,7 +1591,7 @@ impl ::protobuf::reflect::ProtobufValue for APSPRequest {
 pub struct AtomicBroadcastRequest {
     // message fields
     pub algorithm: ::std::string::String,
-    pub number_of_nodes: u32,
+    pub number_of_nodes: u64,
     pub number_of_proposals: u64,
     pub proposals_in_parallel: u64,
     pub reconfiguration: ::std::string::String,
@@ -1637,10 +1637,10 @@ impl AtomicBroadcastRequest {
         ::std::mem::replace(&mut self.algorithm, ::std::string::String::new())
     }
 
-    // uint32 number_of_nodes = 2;
+    // uint64 number_of_nodes = 2;
 
 
-    pub fn get_number_of_nodes(&self) -> u32 {
+    pub fn get_number_of_nodes(&self) -> u64 {
         self.number_of_nodes
     }
     pub fn clear_number_of_nodes(&mut self) {
@@ -1648,7 +1648,7 @@ impl AtomicBroadcastRequest {
     }
 
     // Param is passed by value, moved
-    pub fn set_number_of_nodes(&mut self, v: u32) {
+    pub fn set_number_of_nodes(&mut self, v: u64) {
         self.number_of_nodes = v;
     }
 
@@ -1725,7 +1725,7 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     if wire_type != ::protobuf::wire_format::WireTypeVarint {
                         return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
                     }
-                    let tmp = is.read_uint32()?;
+                    let tmp = is.read_uint64()?;
                     self.number_of_nodes = tmp;
                 },
                 3 => {
@@ -1782,7 +1782,7 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
             os.write_string(1, &self.algorithm)?;
         }
         if self.number_of_nodes != 0 {
-            os.write_uint32(2, self.number_of_nodes)?;
+            os.write_uint64(2, self.number_of_nodes)?;
         }
         if self.number_of_proposals != 0 {
             os.write_uint64(3, self.number_of_proposals)?;
@@ -1840,7 +1840,7 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     |m: &AtomicBroadcastRequest| { &m.algorithm },
                     |m: &mut AtomicBroadcastRequest| { &mut m.algorithm },
                 ));
-                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint32>(
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeUint64>(
                     "number_of_nodes",
                     |m: &AtomicBroadcastRequest| { &m.number_of_nodes },
                     |m: &mut AtomicBroadcastRequest| { &mut m.number_of_nodes },
@@ -1926,14 +1926,14 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     ings\"T\n\x0bAPSPRequest\x12&\n\x0fnumber_of_nodes\x18\x01\x20\x01(\rR\r\
     numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xec\
     \x01\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
-    R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\rR\rnumberOfNode\
-    s\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfProposa\
-    ls\x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\x04R\x13proposalsInP\
-    arallel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguration\
-    2\xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmark\
-    s.ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\
-    \x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.Shut\
-    downAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
+    R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\x04R\rnumberOfNo\
+    des\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfPropo\
+    sals\x122\n\x15proposals_in_parallel\x18\x04\x20\x01(\x04R\x13proposalsI\
+    nParallel\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfigurati\
+    on2\xbf\x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchma\
+    rks.ReadyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdow\
+    n\x12#.kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.Shu\
+    tdownAck\x12O\n\x08PingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\
     \x1e.kompics.benchmarks.TestResult\x12R\n\x0bNetPingPong\x12#.kompics.be\
     nchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\
     \x12ThroughputPingPong\x12-.kompics.benchmarks.ThroughputPingPongRequest\
