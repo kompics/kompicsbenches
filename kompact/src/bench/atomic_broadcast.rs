@@ -80,7 +80,6 @@ impl DistributedBenchmark for AtomicBroadcast {
         let a = match c.algorithm {
             Algorithm::Paxos => "paxos",
             Algorithm::Raft => "raft",
-            _ => ""
         };
         let s = format!("{},{}", a, c.last_node_id);
 //        println!("ClientConf string: {}", &s);
@@ -99,6 +98,43 @@ fn get_initial_conf(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
     initial_conf
 }
 
+fn get_reconfig_data(s: String, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>)>), BenchmarkError> {
+    match s.to_lowercase().as_ref() {
+        "off" => {
+            Ok((0, None))
+        },
+        "single" => {
+            let mut new_voters = vec![];
+            let new_followers: Vec<u64> = vec![];
+            for i in 1..n {
+                new_voters.push(i);   // all but last_node_id
+            }
+            let replacing_node_id = n + 1;
+            new_voters.push(replacing_node_id);    // i.e. will replace last_node_id after reconfiguration
+            assert_eq!(n, new_voters.len() as u64);
+            let reconfiguration = Some((new_voters, new_followers));
+            Ok((1, reconfiguration))
+        },
+        "majority" => {
+            let mut new_voters = vec![];
+            let new_followers: Vec<u64> = vec![];
+            let majority = n/2 + 1;
+            for i in 1..majority {
+                new_voters.push(i);   // push minority ids
+            }
+            let first_new_node_id = n + 1;
+            let last_new_node_id = n + n - 1;
+            for i in n+1..=last_new_node_id {
+                new_voters.push(i);   // push all new majority ids
+            }
+            assert_eq!(n, new_voters.len() as u64);
+            let reconfiguration = Some((new_voters, new_followers));
+            Ok((majority, reconfiguration))
+        },
+        _ => Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 enum Algorithm {
     Paxos,
@@ -107,30 +143,12 @@ enum Algorithm {
 
 type Storage = DiskStorage;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Reconfiguration {
-    add_nodes: Vec<u64>,
-    remove_nodes: Vec<u64>
-}
-
-impl Reconfiguration {
-    fn from(initial_n: u64, reconfigure_n: u64) -> Reconfiguration {
-        let mut remove_nodes = vec![];
-        let mut add_nodes = vec![];
-        for i in 0..reconfigure_n {
-            remove_nodes.push(initial_n - i);
-            add_nodes.push(initial_n + i + 1);
-        }
-        Reconfiguration{ add_nodes, remove_nodes}
-    }
-}
-
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
     num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     num_parallel_proposals: Option<u64>,
-    reconfiguration: Option<Reconfiguration>,
+    reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -165,24 +183,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
     fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
         self.num_nodes = Some(c.number_of_nodes);
-        let reconfigure_n: u64 = match c.reconfiguration.to_lowercase().as_ref() {
-            "off" => 0,
-            "one" => 1,
-            "majority" => c.number_of_nodes/2 + 1,
-            _ => return Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
-        };
-        let n = c.number_of_nodes + reconfigure_n;
-        if m.number_of_clients() as u64 + 1 < n {
-            return Err(BenchmarkError::InvalidTest(format!(
-                "Not enough clients: {}, Required: {}",
-                &m.number_of_clients(),
-               &n
-            )));
+        match get_reconfig_data(c.reconfiguration, c.number_of_nodes) {
+            Ok((additional_n, reconfig)) => {
+                let n = c.number_of_nodes + additional_n;
+                if m.number_of_clients() as u64 + 1 < n {
+                    return Err(BenchmarkError::InvalidTest(format!(
+                        "Not enough clients: {}, Required: {}",
+                        &m.number_of_clients(),
+                        &(n-1)
+                    )));
+                }
+                self.reconfiguration = reconfig;
+            },
+            Err(e) => return Err(e)
         }
-        self.reconfiguration = match reconfigure_n {
-            0 => None,
-            i => Some(Reconfiguration::from(c.number_of_nodes, reconfigure_n))
-        };
         self.algorithm = match c.algorithm.to_lowercase().as_ref() {
             "paxos" => Some(Algorithm::Paxos),
             "raft" => Some(Algorithm::Raft),
@@ -208,6 +222,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             Some(ref system) => {
                 let prepare_latch = Arc::new(CountdownEvent::new(1));
                 let finished_latch = Arc::new(CountdownEvent::new(1));
+                self.iteration_id += 1;
                 match self.algorithm {
                     Some(Algorithm::Paxos) => {
                         unimplemented!()
@@ -220,6 +235,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         let config = Config {
                             election_tick: 10,
                             heartbeat_tick: 3,
+                            max_inflight_msgs: self.num_proposals.unwrap() as usize,
                             ..Default::default()
                         };
                         /*** Setup RaftComp ***/
@@ -302,7 +318,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             "Client failed to register!",
                         );
 
-                        self.iteration_id += 1;
                         self.raft_components = Some((raft_comp, communicator));
                         self.client_comp = Some(client_comp);
                         self.finished_latch = Some(finished_latch);
@@ -338,11 +353,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
     fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
         println!("Cleaning up Atomic Broadcast (master) side");
         let system = self.system.take().unwrap();
-        //TODO
-        /*if self.paxos_comp.is_some() {
-
-        }*/
-
         if self.raft_components.is_some() {
             let (raft_comp, communicator) = self.raft_components.take().unwrap();
             let kill_raft_f = system.kill_notify(raft_comp);
@@ -621,7 +631,8 @@ pub mod raft {
         config: Config,
         conf_state: (Vec<u64>, Vec<u64>),
         iteration_id: u32,
-        timers: Option<(ScheduledTimer, ScheduledTimer)>
+        timers: Option<(ScheduledTimer, ScheduledTimer)>,
+        has_reconfigured: bool
     }
 
     impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Provide<ControlPort> for RaftComp<S>{
@@ -640,6 +651,7 @@ pub mod raft {
                     info!(self.ctx.log(), "{}", format!("Creating raft node, iteration: {}, id: {}", ctr.iteration_id, ctr.node_id));
                     self.iteration_id = ctr.iteration_id;
                     self.config.id = ctr.node_id;
+                    self.has_reconfigured = false;
                     DiskStorage::clear_dir("./diskstorage").expect("Failed to clear previous iteration raft log");    // TODO remove when using Memstorage
                     let store = S::new_with_conf_state(self.conf_state.clone());
                     self.raft_node = Some(RawNode::new(&self.config, store).expect("Failed to create TikvRaftNode"));
@@ -704,6 +716,7 @@ pub mod raft {
                 conf_state,
                 iteration_id: 0,
                 timers: None,
+                has_reconfigured: false
             }
         }
 
@@ -737,15 +750,18 @@ pub mod raft {
             let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
             let last_index1 = raft_node.raft.raft_log.last_index() + 1;
 
-            match &proposal.conf_change {
-                Some(cc) => {
+            match &proposal.reconfig {
+                Some(reconfig) => {
                     self.reconfig_client = Some(proposal.client.clone());
-                    let _ = raft_node.propose_conf_change(vec![], cc.clone());
+                    let _ = raft_node.raft.propose_membership_change(reconfig.to_owned()).unwrap();
                 }
                 None => {   // i.e normal operation
                     let ser_data = proposal.serialize_normal();
                     match ser_data {
                         Ok(data) => {
+                            if self.has_reconfigured {
+                                info!(self.ctx.log(), "{}", format!("Proposing proposal id: {}", &proposal.id));
+                            }
                             let _ = raft_node.propose(vec![], data);
                         },
                         _ => {
@@ -753,9 +769,9 @@ pub mod raft {
                             // Propose failed, don't forget to respond to the client.
                             let pr = ProposalResp::failed(proposal.clone());
                             self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                            return;
                         }
                     }
-
                 }
             }
             let last_index2 = raft_node.raft.raft_log.last_index() + 1;
@@ -810,22 +826,44 @@ pub mod raft {
                         // For conf change messages, make them effective.
                         let mut cc = ConfChange::default();
                         cc.merge_from_bytes(&entry.data).unwrap();
-                        let node_id = cc.node_id;
                         let change_type = cc.get_change_type();
                         match &change_type {
-                            ConfChangeType::AddNode => raft_node.raft.add_node(node_id.clone()).unwrap(),
-                            ConfChangeType::RemoveNode => raft_node.raft.remove_node(node_id.clone()).unwrap(),
-                            ConfChangeType::AddLearnerNode => raft_node.raft.add_learner(node_id.clone()).unwrap(),
-                            ConfChangeType::BeginMembershipChange
-                            | ConfChangeType::FinalizeMembershipChange => unimplemented!(),
-                        }
-                        // TODO
-                        /*let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
-                        store.wl().set_conf_state(cs, None);*/
-                        if raft_node.raft.state == StateRole::Leader && self.reconfig_client.is_some() {
-                            let client = self.reconfig_client.clone().unwrap();
-                            let pr = ProposalResp::succeeded_configchange(client, node_id, change_type);
-                            self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                            ConfChangeType::BeginMembershipChange => {
+                                let reconfig = cc.get_configuration();
+                                let start_index = cc.get_start_index();
+                                info!(self.ctx.log(), "{}", format!("Beginning reconfiguration to: {:?}, start_index: {}", reconfig, start_index));
+                                raft_node
+                                    .raft
+                                    .begin_membership_change(&cc)
+                                    .expect("Failed to begin reconfiguration");
+
+                                assert!(raft_node.raft.is_in_membership_change());
+                                let next_config = raft_node.raft.prs().next_configuration();
+                                let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
+                                store.set_conf_state(cs, Some((reconfig.clone(), start_index)));
+                            }
+                            ConfChangeType::FinalizeMembershipChange => {
+                                if !self.has_reconfigured {
+                                    info!(self.ctx.log(), "{}", format!("Finalizing reconfiguration: {:?}", raft_node.raft.prs().next_configuration()));
+                                    raft_node
+                                        .raft
+                                        .finalize_membership_change(&cc)
+                                        .expect("Failed to finalize reconfiguration");
+                                    self.has_reconfigured = true;
+                                    let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
+                                    if raft_node.raft.state == StateRole::Leader && self.reconfig_client.is_some() {
+                                        let client = self.reconfig_client.take().unwrap();
+                                        let current_config = (cs.nodes.clone(), cs.learners.clone());
+                                        let pr = ProposalResp::succeeded_reconfiguration(client, current_config);
+                                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                                    }
+                                    store.set_conf_state(cs, None);
+                                }
+                                /*else {
+                                    info!(self.ctx.log(), "{}", format!("Got unexpected finalize: id: {}, node_id: {}", cc.id, cc.node_id));
+                                }*/
+                            }
+                            _ => unimplemented!(),
                         }
                     } else {
                         // For normal proposals, reply to client
@@ -905,15 +943,15 @@ pub mod raft {
     pub struct Proposal {
         id: u64,
         client: ActorPath,
-        conf_change: Option<ConfChange>,
+        reconfig: Option<(Vec<u64>, Vec<u64>)>,
     }
 
     impl Proposal {
-        fn conf_change(id: u64, client: ActorPath, cc: &ConfChange) -> Proposal {
+        pub(crate) fn reconfiguration(id: u64, client: ActorPath, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
             let proposal = Proposal {
                 id,
                 client,
-                conf_change: Some(cc.clone()),
+                reconfig: Some(reconfig),
             };
             proposal
         }
@@ -922,7 +960,7 @@ pub mod raft {
             let proposal = Proposal {
                 id,
                 client,
-                conf_change: None,
+                reconfig: None,
             };
             proposal
         }
@@ -947,25 +985,17 @@ pub mod raft {
         pub id: u64,
         client: Option<ActorPath>,  // client don't need it when receiving it
         pub succeeded: bool,
-        conf_change: Option<(u64, ConfChangeType)>,
+        pub current_config: Option<(Vec<u64>, Vec<u64>)>,
     }
 
     impl ProposalResp {
         fn failed(proposal: Proposal) -> ProposalResp {
-            let mut pr = ProposalResp {
+            let pr = ProposalResp {
                 id: proposal.id,
                 client: Some(proposal.client),
                 succeeded: false,
-                conf_change: None
+                current_config: proposal.reconfig
             };
-            match proposal.conf_change {
-                Some(cf) => {
-                    let node_id = cf.get_node_id();
-                    let change_type = cf.get_change_type();
-                    pr.conf_change = Some((node_id, change_type));
-                }
-                None => {}
-            }
             pr
         }
 
@@ -974,16 +1004,16 @@ pub mod raft {
                 id: proposal.id,
                 client: Some(proposal.client),
                 succeeded: true,
-                conf_change: None
+                current_config: None
             }
         }
 
-        fn succeeded_configchange(client: ActorPath, node_id: u64, change_type: ConfChangeType) -> ProposalResp {
+        fn succeeded_reconfiguration(client: ActorPath, current_config: (Vec<u64>, Vec<u64>)) -> ProposalResp {
             ProposalResp {
                 id: CONFIGCHANGE_ID,
                 client: Some(client),
                 succeeded: true,
-                conf_change: Some((node_id, change_type))
+                current_config: Some(current_config)
             }
         }
     }
@@ -1012,10 +1042,6 @@ pub mod raft {
     const PROPOSAL_FAILED: u8 = 0;
     const PROPOSAL_SUCCESS: u8 = 1;
 
-    const CHANGETYPE_ADD_NODE: u8 = 0;
-    const CHANGETYPE_REMOVE_NODE: u8 = 1;
-    const CHANGETYPE_ADD_LEARNER: u8 = 2;
-
     pub struct RaftSer;
 
     impl Serialiser<CommunicatorMsg> for RaftSer {
@@ -1039,15 +1065,22 @@ pub mod raft {
                 CommunicatorMsg::Proposal(p) => {
                     buf.put_u8(PROPOSAL_ID);
                     buf.put_u64_be(p.id);
-                    match &p.conf_change {
-                        Some(cf) => {
-                            let cf_bytes: Vec<u8> = cf.write_to_bytes().expect("Protobuf failed to serialise ConfigChange");
-                            let cf_length = cf_bytes.len() as u64;
-                            buf.put_u64_be(cf_length);
-                            buf.put_slice(&cf_bytes);
+                    match &p.reconfig {
+                        Some((voters, followers)) => {
+                            let voters_len: u32 = voters.len() as u32;
+                            buf.put_u32_be(voters_len);
+                            for voter in voters.to_owned() {
+                                buf.put_u64_be(voter);
+                            }
+                            let followers_len: u32 = followers.len() as u32;
+                            buf.put_u32_be(followers_len);
+                            for follower in followers.to_owned() {
+                                buf.put_u64_be(follower);
+                            }
                         },
                         None => {
-                            buf.put_u64_be(0);
+                            buf.put_u32_be(0);
+                            buf.put_u32_be(0);
                         }
                     }
                     p.client.serialise(buf).expect("Failed to serialise actorpath");
@@ -1061,17 +1094,23 @@ pub mod raft {
                     } else {
                         buf.put_u8(PROPOSAL_FAILED);
                     }
-                    match &pr.conf_change {
-                        Some((node_id, change_type)) => {
-                            buf.put_u64_be(*node_id);
-                            match change_type {
-                                ConfChangeType::AddNode => buf.put_u8(CHANGETYPE_ADD_NODE),
-                                ConfChangeType::RemoveNode => buf.put_u8(CHANGETYPE_REMOVE_NODE),
-                                ConfChangeType::AddLearnerNode => buf.put_u8(CHANGETYPE_ADD_LEARNER),
-                                _ => return Err(SerError::InvalidType("Tried to serialise unknown ConfChangeType".into()))
+                    match &pr.current_config {
+                        Some((voters, followers)) => {
+                            let voters_len: u32 = voters.len() as u32;
+                            buf.put_u32_be(voters_len);
+                            for voter in voters.to_owned() {
+                                buf.put_u64_be(voter);
                             }
+                            let followers_len: u32 = followers.len() as u32;
+                            buf.put_u32_be(followers_len);
+                            for follower in followers.to_owned() {
+                                buf.put_u64_be(follower);
+                            }
+                        },
+                        None => {
+                            buf.put_u32_be(0);
+                            buf.put_u32_be(0);
                         }
-                        None => { buf.put_u64_be(0) }
                     }
                     Ok(())
                 },
@@ -1110,20 +1149,23 @@ pub mod raft {
                 },
                 PROPOSAL_ID => {
                     let id = buf.get_u64_be();
-                    let n = buf.get_u64_be();
-                    let conf_change = if n > 0 {
-                        let mut cf_bytes: Vec<u8> = vec![0; n as usize];
-                        buf.copy_to_slice(&mut cf_bytes);
-                        let cc = parse_from_bytes::<ConfChange>(&cf_bytes).expect("Protobuf failed to serialise ConfigChange");
-                        Some(cc)
-                    } else {
-                        None
-                    };
+                    let voters_len = buf.get_u32_be();
+                    let mut voters = vec![];
+                    for _ in 0..voters_len { voters.push(buf.get_u64_be()); }
+                    let followers_len = buf.get_u32_be();
+                    let mut followers = vec![];
+                    for _ in 0..followers_len { followers.push(buf.get_u64_be()); }
+                    let reconfig =
+                        if voters_len == 0 && followers_len == 0 {
+                            None
+                        } else {
+                            Some((voters, followers))
+                        };
                     let client = ActorPath::deserialise(buf).expect("Failed to deserialise actorpath");
                     let proposal = Proposal {
                         id,
                         client,
-                        conf_change
+                        reconfig
                     };
                     Ok(CommunicatorMsg::Proposal(proposal))
                 },
@@ -1133,30 +1175,28 @@ pub mod raft {
                         0 => false,
                         _ => true,
                     };
-                    let mut pr = ProposalResp {
+                    let voters_len = buf.get_u32_be();
+                    let mut voters = vec![];
+                    for _ in 0..voters_len {
+                        voters.push(buf.get_u64_be());
+                    }
+                    let followers_len = buf.get_u32_be();
+                    let mut followers = vec![];
+                    for _ in 0..followers_len {
+                        followers.push(buf.get_u64_be());
+                    }
+                    let reconfig =
+                        if voters_len == 0 && followers_len == 0 {
+                            None
+                        } else {
+                            Some((voters, followers))
+                        };
+                    let pr = ProposalResp {
                         id,
                         succeeded,
                         client: None,
-                        conf_change: None,
+                        current_config: reconfig,
                     };
-                    let node_id = buf.get_u64_be();
-                    match &node_id {
-                        0 => {},
-                        _ => {
-                            match buf.get_u8() {
-                                CHANGETYPE_ADD_NODE => {
-                                    pr.conf_change = Some((node_id, ConfChangeType::AddNode));
-                                },
-                                CHANGETYPE_REMOVE_NODE => {
-                                    pr.conf_change = Some((node_id, ConfChangeType::RemoveNode));
-                                },
-                                CHANGETYPE_ADD_LEARNER => {
-                                    pr.conf_change = Some((node_id, ConfChangeType::AddLearnerNode));
-                                },
-                                _ => {},
-                            };
-                        }
-                    }
                     Ok(CommunicatorMsg::ProposalResp(pr))
                 },
                 SEQREQ_ID => Ok(CommunicatorMsg::SequenceReq(SequenceReq)),
@@ -1191,14 +1231,19 @@ pub mod raft {
         use std::io::{ErrorKind::NotFound, Error as IOError};
 
         pub trait RaftStorage: tikv_raft::storage::Storage {
-            fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error>;
+            fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), Error>;
+            fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>);
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error>;
             fn new_with_conf_state(conf_state: (Vec<u64>, Vec<u64>)) -> Self;
         }
 
         impl RaftStorage for MemStorage {
-            fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), tikv_raft::Error> {
+            fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), Error> {
                 self.wl().append(entries)
+            }
+
+            fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+                self.wl().set_conf_state(cs, pending_membership_change);
             }
 
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
@@ -1270,6 +1315,10 @@ pub mod raft {
                 self.wl().append_log(entries)
             }
 
+            fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+                self.wl().set_conf_state(cs, pending_membership_change);
+            }
+
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
                 self.wl().set_hard_state(commit, term)
             }
@@ -1306,6 +1355,8 @@ pub mod raft {
         }
 
         struct DiskStorageCore {
+            pending_conf_state: Option<ConfState>,
+            pending_conf_state_start_index: Option<u64>,
             conf_state: ConfState,
             hard_state: MmapMut,
             log: FileMmap,
@@ -1326,7 +1377,7 @@ pub mod raft {
             const LAST_INDEX_IS_SET: Range<usize> = 9..10;    // 1 if last_index is set
             const LAST_INDEX: Range<usize> = 10..18;
 
-            const FILE_SIZE: u64 = 8000000;
+            const FILE_SIZE: u64 = 20971520;
 
             fn new(dir: &str) -> DiskStorageCore {
                 create_dir_all(dir).expect(&format!("Failed to create given directory: {}", dir));
@@ -1356,7 +1407,7 @@ pub mod raft {
                 let conf_state = ConfState::new();
                 let snapshot_metadata: SnapshotMetadata = Default::default();
 
-                DiskStorageCore { conf_state, hard_state, log, offset, raft_metadata, num_entries: 0, snapshot_metadata }
+                DiskStorageCore { conf_state, hard_state, log, offset, raft_metadata, num_entries: 0, snapshot_metadata, pending_conf_state: None, pending_conf_state_start_index: None }
             }
 
             fn new_with_conf_state<T>(dir: &str, conf_state: T) -> DiskStorageCore
@@ -1505,6 +1556,14 @@ pub mod raft {
                 }
                 let diff = entries[0].index - first_index;
                 self.append_entries(entries, diff)
+            }
+
+            fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+                self.conf_state = cs;
+                if let Some((cs, idx)) = pending_membership_change {
+                    self.pending_conf_state = Some(cs);
+                    self.pending_conf_state_start_index = Some(idx);
+                }
             }
 
             fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
@@ -1786,14 +1845,10 @@ pub mod raft {
             let client = ActorPath::from_str("local://127.0.0.1:0/test_actor").expect("Failed to create test actorpath");
             let mut b: Vec<u8> = vec![];
             let id: u64 = 12;
-            let configchange_id: u64 = 31;
-            let start_index: u64 = 47;
-            let change_type = ConfChangeType::AddNode;
-            let mut cc = ConfChange::new();
-            cc.set_id(configchange_id);
-            cc.set_change_type(change_type);
-            cc.set_start_index(start_index);
-            let p = Proposal::conf_change(id, client.clone(), &cc);
+            let voters: Vec<u64> = vec![1,2,3];
+            let followers: Vec<u64> = vec![4,5,6];
+            let reconfig = (voters.clone(), followers.clone());
+            let p = Proposal::reconfiguration(id, client.clone(), reconfig.clone());
             if RaftSer.serialise(&CommunicatorMsg::Proposal(p), &mut b).is_err() {panic!("Failed to serialise Proposal")};
             match RaftSer::deserialise(&mut b.into_buf()){
                 Ok(c) => {
@@ -1801,20 +1856,11 @@ pub mod raft {
                         CommunicatorMsg::Proposal(p) => {
                             let des_id = p.id;
                             let des_client = p.client;
-                            match p.conf_change {
-                                Some(cc) => {
-                                    let cc_id = cc.get_id();
-                                    let cc_change_type = cc.get_change_type();
-                                    let cc_start_index = cc.get_start_index();
-                                    assert_eq!(id, des_id);
-                                    assert_eq!(client, des_client);
-                                    assert_eq!(configchange_id, cc_id);
-                                    assert_eq!(start_index, cc_start_index);
-                                    assert_eq!(change_type, cc_change_type);
-                                    println!("Ser/Des Proposal passed");
-                                }
-                                _ => panic!("ConfChange should not be None")
-                            }
+                            let des_reconfig = p.reconfig;
+                            assert_eq!(id, des_id);
+                            assert_eq!(client, des_client);
+                            assert_eq!(Some(reconfig.clone()), des_reconfig);
+                            println!("Ser/Des Proposal passed");
                         }
                         _ => panic!("Deserialised message should be Proposal")
                     }
@@ -1823,12 +1869,11 @@ pub mod raft {
             }
             /*** ProposalResp ***/
             let succeeded = true;
-            let change_type = ConfChangeType::AddNode;
             let pr = ProposalResp {
                 id,
                 client: None,
                 succeeded,
-                conf_change: Some((id, change_type))
+                current_config: Some((voters, followers))
             };
             let mut b1: Vec<u8> = vec![];
             if RaftSer.serialise(&CommunicatorMsg::ProposalResp(pr), &mut b1).is_err(){panic!("Failed to serailise ProposalResp")};
@@ -1839,11 +1884,11 @@ pub mod raft {
                             let des_id = pr.id;
                             let des_succeeded = pr.succeeded;
                             let des_client = pr.client;
-                            let des_conf_change = pr.conf_change;
+                            let des_reconfig = pr.current_config;
                             assert_eq!(id, des_id);
                             assert_eq!(None, des_client);
                             assert_eq!(succeeded, des_succeeded);
-                            assert_eq!(Some((id, change_type)), des_conf_change);
+                            assert_eq!(Some(reconfig), des_reconfig);
                             println!("Ser/Des ProposalResp passed");
                         }
                         _ => panic!("Deserialised message should be ProposalResp")
@@ -1862,7 +1907,7 @@ pub mod raft {
             let des_proposal = Proposal::deserialize_normal(&bytes);
             assert_eq!(proposal.id, des_proposal.id);
             assert_eq!(proposal.client, des_proposal.client);
-            assert_eq!(proposal.conf_change, des_proposal.conf_change);
+            assert_eq!(proposal.reconfig, des_proposal.reconfig);
         }
 
         #[test]

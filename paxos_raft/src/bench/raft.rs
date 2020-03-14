@@ -1065,7 +1065,7 @@ pub mod raft {
                 Duration::from_millis(1000),
                 "Client failed to register!"
             );
-//            let now = Instant::now();   // for testing with logcabin
+            let now = Instant::now();   // for testing with logcabin
             let client_f = systems[0].start_notify(&client);
             client_f.wait_timeout(Duration::from_millis(1000))
                     .expect("Client never started!");
@@ -1076,7 +1076,7 @@ pub mod raft {
                                                .expect("Client's sequence should be in 0...")
                                                .to_owned();
 
-//            let exec_time = now.elapsed().as_millis();
+            let exec_time = now.elapsed().as_millis();
             for system in systems {
                 system
                     .shutdown()
@@ -1090,13 +1090,10 @@ pub mod raft {
                 assert_eq!(true, found);
             }
             remove_dir_all(dir).expect("Failed to remove test storage files");
-            /*let mut f = File::create("results.out").expect("Failed to create results file");
+            let mut f = File::create("results.out").expect("Failed to create results file");
             let s = format!("{} nodes, {} proposals took {} ms", n, num_proposals, exec_time);
             f.write_all(s.as_bytes()).unwrap();
             f.sync_all().unwrap();
-            for i in 1..n+1 {
-                remove_dir_all(format!("{}{}", &dir, i)).expect("Failed to remove test storage files");
-            }*/
         }
 
         #[test]
