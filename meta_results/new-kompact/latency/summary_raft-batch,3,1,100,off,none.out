@@ -1,0 +1,17 @@
+Value at quantile 0.001: 1694 micro s
+Value at quantile 0.01: 1694 micro s
+Value at quantile 0.005: 1694 micro s
+Value at quantile 0.1: 1909 micro s
+Value at quantile 0.2: 1942 micro s
+Value at quantile 0.3: 1959 micro s
+Value at quantile 0.4: 1978 micro s
+Value at quantile 0.5: 1987 micro s
+Value at quantile 0.6: 1999 micro s
+Value at quantile 0.7: 2024 micro s
+Value at quantile 0.8: 2048 micro s
+Value at quantile 0.9: 2108 micro s
+Value at quantile 0.95: 2167 micro s
+Value at quantile 0.99: 3040 micro s
+Value at quantile 0.999: 3046 micro s
+Min: 1694 micro s, Max: 3046 micro s, Average: 2022.1000000000008 micro s
+Total elements: 100

@@ -1,0 +1,6 @@
+paxos-batch,3,1000,5000,single,pull
+4/100 runs had timeouts. sum: 1680, avg: 16, med: 0, min: 0, max: 643
+raft-batch,3,1000,5000,single,replace-leader
+30/30 runs had timeouts. sum: 17880, avg: 596, med: 644, min: 28, max: 966
+paxos-batch,3,1000,3000,single,pull
+1/10 runs had timeouts. sum: 409, avg: 40, med: 0, min: 0, max: 409
