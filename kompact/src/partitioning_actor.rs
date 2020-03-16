@@ -5,7 +5,7 @@ use synchronoise::CountdownEvent;
 use benchmark_suite_shared::test_utils::{KVTimestamp, KVOperation};
 
 #[derive(ComponentDefinition)]
-pub struct PartitioningActor {
+pub struct PartitioningActor {  // TODO generalize for different applications by using serialised data as Init msg
     ctx: ComponentContext<PartitioningActor>,
     prepare_latch: Arc<CountdownEvent>,
     finished_latch: Option<Arc<CountdownEvent>>,
