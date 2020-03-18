@@ -12,7 +12,6 @@ use partitioning_actor::PartitioningActor;
 use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
-use super::storage::raft::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {

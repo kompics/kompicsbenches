@@ -171,8 +171,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
                                 numberOfKeys = k)
       },
     testSpace = ParameterSpacePB
-      .cross(List((0.5f, 0.5f)), List(3), List(100))
-      //      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
+      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
       .msg[AtomicRegisterRequest] {
         case ((rwl, wwl), p, k) =>
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
@@ -254,7 +253,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
           )
       },
     testSpace = ParameterSpacePB
-      .cross(List("raft"), List(3), List(2000), List(1), List("single", "majority"))
+      .cross(List("raft"), List(3), List(1000, 2000, 4000, 8000), List(1), List("off", "single", "majority"))
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r) =>
           AtomicBroadcastRequest(

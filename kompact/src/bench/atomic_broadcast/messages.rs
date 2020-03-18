@@ -2,7 +2,7 @@ extern crate raft as tikv_raft;
 
 use kompact::prelude::*;
 use tikv_raft::prelude::Message as TikvRaftMsg;
-use super::super::{serialiser_ids, partitioning_actor::InitAck};
+use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
 
 use self::raft::*;
@@ -98,7 +98,7 @@ pub mod paxos {
                 Some(30)
             }
 
-            fn serialise(&self, v: &HeartbeatMsg, buf: &mut BufMut) -> Result<(), SerError> {
+            fn serialise(&self, v: &HeartbeatMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
                 match v {
                     HeartbeatMsg::Request(req) => {
                         buf.put_u8(HB_REQ_ID);
@@ -121,7 +121,7 @@ pub mod paxos {
         impl Deserialiser<HeartbeatMsg> for BallotLeaderSer {
             const SER_ID: u64 = serialiser_ids::BLE_ID;
 
-            fn deserialise(buf: &mut Buf) -> Result<HeartbeatMsg, SerError> {
+            fn deserialise(buf: &mut dyn Buf) -> Result<HeartbeatMsg, SerError> {
                 match buf.get_u8() {
                     HB_REQ_ID => {
                         let round = buf.get_u64_be();
@@ -267,7 +267,7 @@ pub enum CommunicatorMsg {
     ProposalForward(ProposalForward),
     SequenceReq(SequenceReq),
     SequenceResp(SequenceResp),
-    InitAck(InitAck)
+    InitAck(u32)
 }
 
 const PROPOSAL_ID: u8 = 0;

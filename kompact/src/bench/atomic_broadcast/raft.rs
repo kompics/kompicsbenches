@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, collections::HashMap};
-use crate::partitioning_actor::{Init, InitAck, PartitioningActorSer};
+use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorMsg::*, PartitioningActorSer};
 use super::messages::{*, raft::*};
 use super::storage::raft::*;
 
@@ -69,12 +69,13 @@ impl Provide<MessagingPort> for Communicator {
                 let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
                 receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
             },
-            CommunicatorMsg::InitAck(init_ack) => {
+            CommunicatorMsg::InitAck(id) => {
                 let meta =  self.cached_next_iter_metadata.take().expect("No next iteration metadata cached");
                 let receiver = meta.0;
                 let peers = meta.1;
                 self.peers = peers;
-                receiver.tell((init_ack.to_owned(), PartitioningActorSer), self);
+                let resp = PartitioningActorMsg::InitAck(id.to_owned());
+                receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
             }
             _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
         }
@@ -91,16 +92,22 @@ impl Actor for Communicator {
     fn receive_network(&mut self, m: NetMessage) -> () {
         let sender = m.sender().clone();
         match_deser! {m; {
-                init: Init [PartitioningActorSer] => {
-                    let iteration_id = init.init_id;
-                    let node_id = init.rank as u64;
-                    let mut peers = HashMap::new();
-                    for (id, actorpath) in init.nodes.into_iter().enumerate() {
-                        peers.insert(id as u64 + 1, actorpath);
+                p: PartitioningActorMsg [PartitioningActorSer] => {
+                    match p {
+                        PartitioningActorMsg::Init(init) => {
+                            let iteration_id = init.init_id;
+                            let node_id = init.rank as u64;
+                            let mut peers = HashMap::new();
+                            for (id, actorpath) in init.nodes.into_iter().enumerate() {
+                                peers.insert(id as u64 + 1, actorpath);
+                            }
+                            self.cached_next_iter_metadata = Some((sender, peers));
+                            let ctr = CreateTikvRaft{ node_id, iteration_id };
+                            self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));
+                        },
+                        _ => unimplemented!(),
+
                     }
-                    self.cached_next_iter_metadata = Some((sender, peers));
-                    let ctr = CreateTikvRaft{ node_id, iteration_id };
-                    self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));
                 },
 
                 comm_msg: CommunicatorMsg [AtomicBroadcastSer] => {
@@ -171,7 +178,7 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<M
                 if self.timers.is_none() {
                     self.start_timers();
                 }
-                self.communication_port.trigger(CommunicatorMsg::InitAck(InitAck(self.iteration_id)));
+                self.communication_port.trigger(CommunicatorMsg::InitAck(self.iteration_id));
             }
             RaftCompMsg::TikvRaftMsg(rm) => {
                 if rm.iteration_id == self.iteration_id {
@@ -231,11 +238,11 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<
 
     fn start_timers(&mut self){
         let delay = Duration::from_millis(0);
-        let on_ready_uuid = uuid::Uuid::new_v4();
-        let tick_uuid = uuid::Uuid::new_v4();
+//        let on_ready_uuid = uuid::Uuid::new_v4();
+//        let tick_uuid = uuid::Uuid::new_v4();
         // give new reference to self to make compiler happy
-        let ready_timer = self.schedule_periodic(delay, Duration::from_millis(1), move |c, on_ready_uuid| c.on_ready());
-        let tick_timer = self.schedule_periodic(delay, Duration::from_millis(100), move |rc, tick_uuid| rc.tick());
+        let ready_timer = self.schedule_periodic(delay, Duration::from_millis(1), move |c, _| c.on_ready());
+        let tick_timer = self.schedule_periodic(delay, Duration::from_millis(100), move |rc, _| rc.tick());
         self.timers = Some((ready_timer, tick_timer));
     }
 
@@ -410,6 +417,7 @@ mod tests {
     use crate::partitioning_actor::PartitioningActor;
     use synchronoise::CountdownEvent;
     use std::sync::Arc;
+    #[allow(unused_imports)]
     use tikv_raft::storage::MemStorage;
 
     fn example_config() -> Config {
