@@ -96,11 +96,11 @@ mod ballot_leader_election {
 
         fn start_timer(&mut self) {
             let delay = Duration::from_millis(0);
-            let uuid = uuid::Uuid::new_v4();
+//            let uuid = uuid::Uuid::new_v4();
             let timer = self.schedule_periodic(
                 delay,
                 Duration::from_millis(self.hb_delay),
-                move |c, uuid| c.hb_timeout()
+                move |c, _| c.hb_timeout()
             );
             self.timer = Some(timer);
         }
@@ -126,7 +126,7 @@ mod ballot_leader_election {
     impl Actor for BallotLeaderComp {
         type Message = Run;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, _msg: Self::Message) -> () {
             self.start_timer();
         }
 

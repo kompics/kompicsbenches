@@ -241,7 +241,7 @@ pub mod actor_atomicregister {
             let finished_latch = self.finished_latch.take().unwrap();
             if let Some(ref partitioning_actor) = self.partitioning_actor {
                 let partitioning_actor_ref = partitioning_actor.actor_ref();
-                partitioning_actor_ref.tell(Run);
+                partitioning_actor_ref.tell(IterationControlMsg::Run);
                 finished_latch.wait();
             } else {
                 unimplemented!()
@@ -496,12 +496,15 @@ pub mod actor_atomicregister {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((Done, PartitioningActorSer), self);
+                    .tell_ser(PartitioningActorMsg::Done.serialised(), self)
+                    .expect("Should serialise");
             } else {
+                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((TestDone(self.timestamps.clone()), PartitioningActorSer), self);
+                    .tell_ser(td.serialised(), self)
+                    .expect("Should serialise");
             }
         }
 
@@ -530,15 +533,18 @@ pub mod actor_atomicregister {
             let sender = msg.sender().clone();
             let ser_id = msg.ser_id();
             match_deser! {msg; {
-                init: Init [PartitioningActorSer] => {
-                    self.new_iteration(&init);
-                        self.nodes = Some(init.nodes);
-                        let init_ack = InitAck(self.current_run_id);
-                        sender.tell((init_ack, PARTITIONING_ACTOR_SER), self);
-                        self.master = Some(sender);
-                },
-                _run: Run [PartitioningActorSer] => {
-                    self.invoke_operations();
+                p: PartitioningActorMsg [PartitioningActorSer] => {
+                    match p {
+                        PartitioningActorMsg::Init(init) => {
+                            self.new_iteration(&init);
+                            self.nodes = Some(init.nodes);
+                            let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
+                            sender.tell_ser(init_ack.serialised(), self).expect("Should serialise");
+                            self.master = Some(sender);
+                        },
+                        PartitioningActorMsg::Run => self.invoke_operations(),
+                        e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
+                    }
                 },
                 arm: AtomicRegisterMessage [AtomicRegisterSer] => {
                     match arm {
@@ -729,7 +735,7 @@ pub mod actor_atomicregister {
                 .expect("PartitioningComp never started!");
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
-            partitioning_actor_ref.tell(Run);
+            partitioning_actor_ref.tell(IterationControlMsg::Run);
             let results = f.wait();
             for system in systems {
                 system
@@ -982,7 +988,7 @@ pub mod mixed_atomicregister {
                     let finished_latch = self.finished_latch.take().unwrap();
                     if let Some(partitioning_actor) = self.partitioning_actor.take() {
                         let partitioning_actor_ref = partitioning_actor.actor_ref();
-                        partitioning_actor_ref.tell(Run);
+                        partitioning_actor_ref.tell(IterationControlMsg::Run);
                         finished_latch.wait();
                         self.partitioning_actor = Some(partitioning_actor);
                     } else {
@@ -1374,12 +1380,15 @@ pub mod mixed_atomicregister {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((Done, PartitioningActorSer), self);
+                    .tell_ser(PartitioningActorMsg::Done.serialised(), self)
+                    .expect("Should serialise");
             } else {
+                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((TestDone(self.timestamps.clone()), PartitioningActorSer), self);
+                    .tell_ser(td.serialised(), self)
+                    .expect("Should serialise");
             }
         }
     }
@@ -1401,28 +1410,31 @@ pub mod mixed_atomicregister {
 
         fn receive_local(&mut self, _msg: Self::Message) -> () {
             let master = self.master.as_ref().unwrap();
-            let init_ack = InitAck(self.current_run_id);
-            master.tell((init_ack, PARTITIONING_ACTOR_SER), self);
+            let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
+            master.tell_ser(init_ack.serialised(), self).expect("Should serialise");
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
             let sender = msg.sender().clone();
 
             match_deser! {msg; {
-                init: Init [PartitioningActorSer] => {
-                    self.new_iteration(&init);
-                    self.nodes = Some(init.nodes.clone());
-                    self.master = Some(sender);
-                    let self_path = self.actor_path();
-                    self.bcast_ref.tell(
-                        WithSender::from(CacheInfo {
-                            sender: self_path,
-                            nodes: init.nodes,
-                        }, self)
-                    );
-                },
-                _run: Run [PartitioningActorSer] => {
-                    self.invoke_operations();
+                p: PartitioningActorMsg [PartitioningActorSer] => {
+                    match p {
+                        PartitioningActorMsg::Init(init) => {
+                            self.new_iteration(&init);
+                            self.nodes = Some(init.nodes.clone());
+                            self.master = Some(sender);
+                            let self_path = self.actor_path();
+                            self.bcast_ref.tell(
+                                WithSender::from(CacheInfo {
+                                    sender: self_path,
+                                    nodes: init.nodes,
+                                }, self)
+                            );
+                        },
+                        PartitioningActorMsg::Run => self.invoke_operations(),
+                        e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
+                    }
                 },
                 arm: AtomicRegisterMessage [AtomicRegisterSer] => {
                     match arm {
@@ -1631,7 +1643,7 @@ pub mod mixed_atomicregister {
                 .expect("PartitioningComp never started!");
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
-            partitioning_actor_ref.tell(Run);
+            partitioning_actor_ref.tell(IterationControlMsg::Run);
             let results = f.wait();
             for system in systems {
                 system

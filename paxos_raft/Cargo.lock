@@ -784,7 +784,7 @@ dependencies = [
  "synchronoise 0.4.0",
  "time",
  "tokio-core",
- "uuid 0.7.4",
+ "uuid 0.8.1",
 ]
 
 [[package]]
