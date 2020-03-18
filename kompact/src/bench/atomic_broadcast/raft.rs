@@ -357,7 +357,7 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<
                                 self.has_reconfigured = true;
                                 let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
                                 if raft_node.raft.state == StateRole::Leader && self.reconfig_client.is_some() {
-                                    let client = self.reconfig_client.take().unwrap();
+                                    let client = self.reconfig_client.as_ref().unwrap().clone();
                                     let current_config = (cs.nodes.clone(), cs.learners.clone());
                                     let pr = ProposalResp::succeeded_reconfiguration(client, current_config);
                                     self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
@@ -406,7 +406,6 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Actor for
 mod tests {
     use std::str::FromStr;
     use super::*;
-    use std::fs::remove_dir_all;
     use super::super::client::tests::TestClient;
     use crate::partitioning_actor::PartitioningActor;
     use synchronoise::CountdownEvent;
@@ -607,11 +606,11 @@ mod tests {
         let n: u64 = 5;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 50;
+        let num_proposals = 1500;
         let config = (vec![1,2,3], vec![]);
         let reconfig = Some((vec![1,4,5], vec![]));
 
-        type Storage = MemStorage;
+        type Storage = DiskStorage;
 
         let mut systems: Vec<KompactSystem> = Vec::new();
         let mut peers: HashMap<u64, ActorPath> = HashMap::new();

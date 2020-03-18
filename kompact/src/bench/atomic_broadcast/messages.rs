@@ -24,11 +24,137 @@ pub mod raft {
     }
 }
 
-mod paxos {
+pub mod paxos {
     // TODO
+    pub mod ballot_leader_election {
+        use super::super::*;
+
+        #[derive(Clone, Copy, PartialEq, Debug, PartialOrd)]
+        pub struct Ballot {
+            pub n: u64,
+            pub pid: u64
+        }
+
+        impl Ballot {
+            pub fn with(n: u64, pid: u64) -> Ballot {
+                Ballot{n, pid}
+            }
+        }
+
+        #[derive(Copy, Clone, Debug)]
+        pub struct Leader {
+            pub pid: u64,
+            pub ballot: Ballot
+        }
+
+        impl Leader {
+            pub fn with(pid: u64, ballot: Ballot) -> Leader {
+                Leader{pid, ballot}
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub enum HeartbeatMsg {
+            Request(HeartbeatRequest),
+            Reply(HeartbeatReply)
+        }
+
+        #[derive(Clone, Debug)]
+        pub struct HeartbeatRequest {
+            pub round: u64,
+            pub max_ballot: Ballot,
+        }
+
+        impl HeartbeatRequest {
+            pub fn with(round: u64, max_ballot: Ballot) -> HeartbeatRequest {
+                HeartbeatRequest {round, max_ballot}
+            }
+        }
+
+        #[derive(Clone, Debug)]
+        pub struct HeartbeatReply {
+            pub sender_pid: u64,
+            pub round: u64,
+            pub max_ballot: Ballot
+        }
+
+        impl HeartbeatReply {
+            pub fn with(sender_pid: u64, round: u64, max_ballot: Ballot) -> HeartbeatReply {
+                HeartbeatReply { sender_pid, round, max_ballot}
+            }
+        }
+
+        pub struct BallotLeaderSer;
+
+        const HB_REQ_ID: u8 = 0;
+        const HB_REP_ID: u8 = 1;
+
+        impl Serialiser<HeartbeatMsg> for BallotLeaderSer {
+            fn ser_id(&self) -> u64 {
+                serialiser_ids::BLE_ID
+            }
+
+            fn size_hint(&self) -> Option<usize> {
+                Some(30)
+            }
+
+            fn serialise(&self, v: &HeartbeatMsg, buf: &mut BufMut) -> Result<(), SerError> {
+                match v {
+                    HeartbeatMsg::Request(req) => {
+                        buf.put_u8(HB_REQ_ID);
+                        buf.put_u64_be(req.round);
+                        buf.put_u64_be(req.max_ballot.n);
+                        buf.put_u64_be(req.max_ballot.pid);
+                    }
+                    HeartbeatMsg::Reply(rep) => {
+                        buf.put_u8(HB_REP_ID);
+                        buf.put_u64_be(rep.sender_pid);
+                        buf.put_u64_be(rep.round);
+                        buf.put_u64_be(rep.max_ballot.n);
+                        buf.put_u64_be(rep.max_ballot.pid);
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        impl Deserialiser<HeartbeatMsg> for BallotLeaderSer {
+            const SER_ID: u64 = serialiser_ids::BLE_ID;
+
+            fn deserialise(buf: &mut Buf) -> Result<HeartbeatMsg, SerError> {
+                match buf.get_u8() {
+                    HB_REQ_ID => {
+                        let round = buf.get_u64_be();
+                        let n = buf.get_u64_be();
+                        let pid = buf.get_u64_be();
+                        let max_ballot = Ballot::with(n, pid);
+                        let hb_req = HeartbeatRequest::with(round, max_ballot);
+                        Ok(HeartbeatMsg::Request(hb_req))
+                    }
+                    HB_REP_ID => {
+                        let sender_pid = buf.get_u64_be();
+                        let round = buf.get_u64_be();
+                        let n = buf.get_u64_be();
+                        let pid = buf.get_u64_be();
+                        let max_ballot = Ballot::with(n, pid);
+                        let hb_rep = HeartbeatReply::with(sender_pid, round, max_ballot);
+                        Ok(HeartbeatMsg::Reply(hb_rep))
+                    }
+                    _ => {
+                        Err(SerError::InvalidType(
+                            "Found unkown id but expected HeartbeatMessage".into(),
+                        ))
+                    }
+                }
+            }
+        }
+    }
 }
 
 /*** Shared Messages***/
+#[derive(Clone, Debug)]
+pub struct Run;
+
 #[derive(Clone, Debug)]
 pub struct Proposal {
     pub id: u64,
@@ -163,7 +289,7 @@ impl Serialiser<CommunicatorMsg> for AtomicBroadcastSer {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        Some(500) // TODO: Set it dynamically?
+        Some(50000)
     }
 
     fn serialise(&self, enm: &CommunicatorMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {

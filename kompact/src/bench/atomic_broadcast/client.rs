@@ -2,10 +2,8 @@ use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use std::collections::HashMap;
-use super::messages::{Proposal, CommunicatorMsg, AtomicBroadcastSer, RECONFIG_ID};
+use super::messages::{Proposal, CommunicatorMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 
-#[derive(Clone, Debug)]
-pub struct Run;
 
 #[derive(ComponentDefinition)]
 pub struct Client {
@@ -119,6 +117,7 @@ pub mod tests {
         finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
         sent_count: u64,
         received_count: u64,
+        reconfig_count: u32,
     }
 
     impl TestClient {
@@ -136,7 +135,8 @@ pub mod tests {
                 test_results: HashMap::new(),
                 finished_promise,
                 sent_count: 0,
-                received_count: 0
+                received_count: 0,
+                reconfig_count: 0
             }
         }
 
@@ -157,7 +157,6 @@ pub mod tests {
             let reconfig = self.reconfig.as_ref().unwrap().clone();
             info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig.clone()));
             let p = Proposal::reconfiguration(0, ap, reconfig);
-            // TODO send proposal to who?
             let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             raft_node.tell((CommunicatorMsg::Proposal(p), AtomicBroadcastSer), self);
         }
@@ -196,7 +195,7 @@ pub mod tests {
                             match pr.id {
                                 RECONFIG_ID => {
                                     let rest = self.num_proposals - self.sent_count;
-                                    info!(self.ctx.log(), "{}", format!("Reconfiguration succeeded! Sending rest of the proposals: {}", rest));
+                                    info!(self.ctx.log(), "{}", format!("Reconfiguration succeeded! Sending rest of the {} proposals", rest));
                                     self.propose_normal(rest);    // propose rest after succesful reconfig
                                 }
                                 _ => {
@@ -205,6 +204,7 @@ pub mod tests {
                                     self.received_count += 1;
                                     if self.received_count == self.num_proposals {
                                         if self.reconfig.is_some() {
+                                            info!(self.ctx.log(), "Sending SequenceReq to all nodes...");
                                             for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
                                                 let req = SequenceReq;
                                                 actorpath.tell((CommunicatorMsg::SequenceReq(req), AtomicBroadcastSer), self);
@@ -220,9 +220,9 @@ pub mod tests {
                                     }
                                 }
                             }
-                        } else {
+                        } /*else {
                             error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
-                        }
+                        }*/
                     },
                     CommunicatorMsg::SequenceResp(sr) => {
                         self.test_results.insert(sr.node_id, sr.sequence);

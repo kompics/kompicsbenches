@@ -19,3 +19,4 @@ pub const SW_SINK_ID: SerId = 55;
 pub const SW_WINDOWER_ID: SerId = 56;
 
 pub const RAFT_ID: SerId = 57;
+pub const BLE_ID: SerId = 58;
