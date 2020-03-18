@@ -85,6 +85,7 @@ impl Actor for PartitioningActor {
             },
             IterationControlMsg::StopIteration(stop_latch) => {
                 self.reply_stop = Some(stop_latch);
+                info!(self.ctx.log(), "Stopping iteration");
                 for node in &self.nodes {
                     node.tell_ser(PartitioningActorMsg::Stop.serialised(), self)
                         .expect("Should serialise");
@@ -129,6 +130,13 @@ impl Actor for PartitioningActor {
                                 .expect("Could not fulfill promise with test results");
                         }
                     },
+                    PartitioningActorMsg::StopAck => {
+                        self.stop_ack_count += 1;
+                        info!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
+                        if self.stop_ack_count == self.n {
+                            self.reply_stop.take().unwrap().reply(()).expect("Stopped iteration");
+                        }
+                    }
                     e => error!(self.ctx.log(), "Got unexpected msg: {:?}", e),
                 }
             },
