@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, collections::HashMap};
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorMsg::*, PartitioningActorSer};
+use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*, raft::*};
 use super::storage::raft::*;
 
@@ -14,9 +14,14 @@ pub enum RaftCompMsg {
     TikvRaftMsg(RaftMsg),
     Proposal(Proposal),
     SequenceReq(SequenceReq),
+    Stop,
 }
 
 pub struct MessagingPort;
+
+const delay: Duration = Duration::from_millis(0);
+const ready_period: Duration = Duration::from_millis(1);
+const tick_period: Duration = Duration::from_millis(100);
 
 impl Port for MessagingPort {
     type Indication = RaftCompMsg;
@@ -29,7 +34,8 @@ pub struct Communicator {
     raft_port: ProvidedPort<MessagingPort, Communicator>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
     cached_next_iter_metadata: Option<(ActorPath, HashMap<u64, ActorPath>)>,   // (partitioning_actor, peers) for next init_ack
-    cached_client: Option<ActorPath>    // cached client to send SequenceResp to
+    cached_client: Option<ActorPath>,    // cached client to send SequenceResp to
+    stopped: bool
 }
 
 impl Communicator {
@@ -39,7 +45,8 @@ impl Communicator {
             raft_port: ProvidedPort::new(),
             peers: HashMap::new(),
             cached_next_iter_metadata: None,
-            cached_client: None
+            cached_client: None,
+            stopped: false
         }
     }
 }
@@ -52,32 +59,34 @@ impl Provide<ControlPort> for Communicator {
 
 impl Provide<MessagingPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) {
-        match &msg {
-            CommunicatorMsg::RaftMsg(rm) => {
-                let receiver = self.peers.get(&rm.payload.get_to()).expect(&format!("Could not find actorpath for id={}", &rm.payload.get_to()));
-                receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
-            },
-            CommunicatorMsg::ProposalResp(pr) => {
-                let receiver = pr.client.as_ref().expect("No client actorpath provided in ProposalResp");
-                receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
-            },
-            CommunicatorMsg::ProposalForward(pf) => {
-                let receiver = self.peers.get(&pf.leader_id).expect("Could not find actorpath to leader in ProposalForward");
-                receiver.tell((CommunicatorMsg::Proposal(pf.proposal.to_owned()), AtomicBroadcastSer), self);
-            },
-            CommunicatorMsg::SequenceResp(_) => {
-                let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
-                receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
-            },
-            CommunicatorMsg::InitAck(id) => {
-                let meta =  self.cached_next_iter_metadata.take().expect("No next iteration metadata cached");
-                let receiver = meta.0;
-                let peers = meta.1;
-                self.peers = peers;
-                let resp = PartitioningActorMsg::InitAck(id.to_owned());
-                receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
+        if !self.stopped {
+            match &msg {
+                CommunicatorMsg::RaftMsg(rm) => {
+                    let receiver = self.peers.get(&rm.payload.get_to()).expect(&format!("Could not find actorpath for id={}", &rm.payload.get_to()));
+                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                },
+                CommunicatorMsg::ProposalResp(pr) => {
+                    let receiver = pr.client.as_ref().expect("No client actorpath provided in ProposalResp");
+                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                },
+                CommunicatorMsg::ProposalForward(pf) => {
+                    let receiver = self.peers.get(&pf.leader_id).expect("Could not find actorpath to leader in ProposalForward");
+                    receiver.tell((CommunicatorMsg::Proposal(pf.proposal.to_owned()), AtomicBroadcastSer), self);
+                },
+                CommunicatorMsg::SequenceResp(_) => {
+                    let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
+                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                },
+                CommunicatorMsg::InitAck(id) => {
+                    let meta = self.cached_next_iter_metadata.take().expect("No next iteration metadata cached");
+                    let receiver = meta.0;
+                    let peers = meta.1;
+                    self.peers = peers;
+                    let resp = PartitioningActorMsg::InitAck(id.to_owned());
+                    receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
+                }
+                _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
             }
-            _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
         }
     }
 }
@@ -103,8 +112,16 @@ impl Actor for Communicator {
                             }
                             self.cached_next_iter_metadata = Some((sender, peers));
                             let ctr = CreateTikvRaft{ node_id, iteration_id };
+                            self.stopped = false;
                             self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));
                         },
+                        PartitioningActorMsg::Stop => {
+                            self.raft_port.trigger(RaftCompMsg::Stop);
+                            self.stopped = true;
+                            sender
+                                .tell_ser(PartitioningActorMsg::StopAck.serialised(), self)
+                                .expect("Should serialise");
+                        }
                         _ => unimplemented!(),
 
                     }
@@ -181,8 +198,10 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<M
                 self.communication_port.trigger(CommunicatorMsg::InitAck(self.iteration_id));
             }
             RaftCompMsg::TikvRaftMsg(rm) => {
-                if rm.iteration_id == self.iteration_id {
+                if rm.iteration_id == self.iteration_id {   // TODO remove iteration id?
                     self.step(rm.payload)
+                } else {
+                    error!(self.ctx.log(), "Got msg from another iteration!");
                 }
             }
             RaftCompMsg::Proposal(p) => {
@@ -217,6 +236,9 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<M
                 let sr = SequenceResp{ node_id: self.config.id, sequence };
                 self.communication_port.trigger(CommunicatorMsg::SequenceResp(sr));
             }
+            RaftCompMsg::Stop => {
+                self.stop_timers();
+            }
         }
     }
 }
@@ -237,19 +259,19 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<
     }
 
     fn start_timers(&mut self){
-        let delay = Duration::from_millis(0);
 //        let on_ready_uuid = uuid::Uuid::new_v4();
 //        let tick_uuid = uuid::Uuid::new_v4();
         // give new reference to self to make compiler happy
-        let ready_timer = self.schedule_periodic(delay, Duration::from_millis(1), move |c, _| c.on_ready());
-        let tick_timer = self.schedule_periodic(delay, Duration::from_millis(100), move |rc, _| rc.tick());
+        let ready_timer = self.schedule_periodic(delay, ready_period, move |c, _| c.on_ready());
+        let tick_timer = self.schedule_periodic(delay, tick_period, move |rc, _| rc.tick());
         self.timers = Some((ready_timer, tick_timer));
     }
 
     fn stop_timers(&mut self) {
-        let timers = self.timers.take().unwrap();
-        self.cancel_timer(timers.0);
-        self.cancel_timer(timers.1);
+        if let Some(timers) = self.timers.take() {
+            self.cancel_timer(timers.0);
+            self.cancel_timer(timers.1);
+        }
     }
 
     fn tick(&mut self) {

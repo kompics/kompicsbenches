@@ -12,6 +12,7 @@ use partitioning_actor::PartitioningActor;
 use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
+use crate::partitioning_actor::{PartitioningActorMsg, IterationControlMsg};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
@@ -142,6 +143,8 @@ enum Algorithm {
 
 type Storage = MemStorage;
 
+const STOP_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
     num_nodes: Option<u64>,
@@ -153,7 +156,8 @@ pub struct AtomicBroadcastMaster {
     iteration_id: u32,
 //    paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
     raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
-    client_comp: Option<Arc<Component<Client>>>
+    client_comp: Option<Arc<Component<Client>>>,
+    partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
 }
 
 impl AtomicBroadcastMaster {
@@ -169,7 +173,8 @@ impl AtomicBroadcastMaster {
             iteration_id: 0,
 //            paxos_comp: None,
             raft_components: None,
-            client_comp: None
+            client_comp: None,
+            partitioning_actor: None,
         }
     }
 }
@@ -320,15 +325,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("ClientComp never started!");
 
+                        self.partitioning_actor = Some(partitioning_actor);
                         self.raft_components = Some((raft_comp, communicator));
                         self.client_comp = Some(client_comp);
                         self.finished_latch = Some(finished_latch);
                         prepare_latch.wait();
-                        /*** Partitioning actor not needed anymore, kill it ***/
-                        let kill_pactor_f = system.kill_notify(partitioning_actor);
-                        kill_pactor_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("Partitioning Actor never died!");
                     }
                     _ => unimplemented!(),
                 }
@@ -358,8 +359,21 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .wait_timeout(Duration::from_millis(1000))
             .expect("Client never died");
 
-        if self.raft_components.is_some() {
-            let (raft_comp, communicator) = self.raft_components.take().unwrap();
+        if let Some(partitioning_actor) = self.partitioning_actor.take() {
+            let stop_f =
+                partitioning_actor
+                .actor_ref()
+                .ask( |promise| IterationControlMsg::StopIteration(Ask::new(promise, ())));
+
+            stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
+
+            let kill_pactor_f = system.kill_notify(partitioning_actor);
+            kill_pactor_f
+                .wait_timeout(Duration::from_millis(1000))
+                .expect("Partitioning Actor never died!");
+        }
+
+        if let Some((raft_comp, communicator)) = self.raft_components.take() {
             let kill_raft_f = system.kill_notify(raft_comp);
             kill_raft_f
                 .wait_timeout(Duration::from_millis(1000))
