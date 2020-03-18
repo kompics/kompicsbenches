@@ -9,7 +9,8 @@ use std::str::FromStr;
 use super::raft::{RaftComp, Communicator, MessagingPort};
 use tikv_raft::{Config, storage::MemStorage};
 use partitioning_actor::PartitioningActor;
-use super::client::{Client, Run};
+use super::client::{Client};
+use super::messages::Run;
 use std::collections::HashMap;
 use super::storage::raft::*;
 
@@ -140,7 +141,7 @@ enum Algorithm {
     Raft,
 }
 
-type Storage = DiskStorage;
+type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
