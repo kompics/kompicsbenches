@@ -16,10 +16,20 @@ enum Role {
     Leader
 }
 
-struct ReceivedPromise<T> {
+struct ReceivedPromise<T> where T: Clone + Debug {
     pid: u64,
     n: Round,
-    sfx: Vec<T>
+    sfx: Vec<Entry<T>>
+}
+
+pub struct StopSign {
+    pub config_id: u32,
+    pub nodes: Vec<u64>,
+}
+
+pub enum Entry<T> where T: Clone + Debug {
+    Normal(T),
+    StopSign(StopSign)
 }
 
 pub struct Message {
@@ -29,8 +39,8 @@ pub struct Message {
 }
 
 pub struct Paxos<S, T> where
-    S: PaxosStorage,
-    T: Clone + Debug + Serialisable {
+    S: PaxosStorage<T>,
+    T: Clone + Debug {
         storage: S,
         pid: u64,
         nodes: Vec<u64>,
@@ -40,14 +50,14 @@ pub struct Paxos<S, T> where
         prev_final_seq: Vec<T>,
         las: HashMap<u64, u64>,
         lds: HashMap<u64, u64>,
-        prop_cmds: Vec<T>,
+        prop_cmds: Vec<Entry<T>>,
         lc: u64,    // length of longest chosen seq
         outgoing: Vec<Message> // TODO optimize, maybe SPMC?
 }
 
 impl<S, T> Paxos<S, T> where
-    S: PaxosStorage,
-    T: Clone + Debug + Serialisable {
+    S: PaxosStorage<T>,
+    T: Clone + Debug {
 
     pub fn step(&mut self, m: Message) {
         match &m.msg {
@@ -59,6 +69,11 @@ impl<S, T> Paxos<S, T> where
             PaxosMsg::Accepted(accepted) => unimplemented!(),
             PaxosMsg::Decide(d) => unimplemented!(),
         }
+    }
+
+    fn stopped(&self) -> bool {
+//        let entry = self.
+        unimplemented!()
     }
 
 }
