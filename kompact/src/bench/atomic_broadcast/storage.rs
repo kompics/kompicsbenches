@@ -557,22 +557,46 @@ pub mod raft {
 pub mod paxos {
     use std::fmt::Debug;
     use std::error::Error;
-    use super::super::messages::paxos::ballot_leader_election::Ballot;
+    use super::super::messages::paxos::{ballot_leader_election::Ballot, Round};
+    use super::super::paxos::Entry;
 
-    pub trait PaxosStorage {
-        fn append_sequence<T>(seq: Vec<T>) -> Result<(), Box<dyn Error>> where   // TODO iterator trait instead of vec
-            T: Clone + Debug + 'static;
+    pub trait PaxosStorage<S> where S: Clone + Debug
+    {
+        fn append_sequence(seq: Vec<Entry<S>>) -> Result<(), Box<dyn Error>>;   // TODO iterator trait instead of vec
 
         fn set_promise(n: Ballot) -> Result<(), Box<dyn Error>>;
 
         fn set_decided_length(ld: u64) -> Result<(), Box<dyn Error>>;
+
+        fn stopped(&self, idx: u64) -> bool;
     }
 
-    pub struct MemoryStorage<T> where
-        T: Clone + Debug + 'static {
+    pub struct MemoryStorage<T> where T: Clone + Debug {
             n_prom: Ballot,
-            n_a: Ballot,
-            v_a: Vec<T>,
+            acc_round: Round,
+            acc_seq: Vec<Entry<T>>,
             ld: u64
+    }
+
+    impl<T> PaxosStorage<T> for MemoryStorage<T> where T: Clone + Debug {
+        fn append_sequence(seq: Vec<Entry<T>>) -> Result<(), Box<dyn Error>>   // TODO iterator trait instead of vec
+        {
+            unimplemented!()
+        }
+
+        fn set_promise(n: Ballot) -> Result<(), Box<dyn Error>> {
+            unimplemented!()
+        }
+
+        fn set_decided_length(ld: u64) -> Result<(), Box<dyn Error>> {
+            unimplemented!()
+        }
+
+        fn stopped(&self, idx: u64) -> bool {
+            match self.acc_seq[idx as usize] {
+                Entry::StopSign(_) => true,
+                Entry::Normal(_) => false
+            }
+        }
     }
 }
