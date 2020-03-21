@@ -553,3 +553,26 @@ pub mod raft {
         }
     }
 }
+
+pub mod paxos {
+    use std::fmt::Debug;
+    use std::error::Error;
+    use super::super::messages::paxos::ballot_leader_election::Ballot;
+
+    pub trait PaxosStorage {
+        fn append_sequence<T>(seq: Vec<T>) -> Result<(), Box<dyn Error>> where   // TODO iterator trait instead of vec
+            T: Clone + Debug + 'static;
+
+        fn set_promise(n: Ballot) -> Result<(), Box<dyn Error>>;
+
+        fn set_decided_length(ld: u64) -> Result<(), Box<dyn Error>>;
+    }
+
+    pub struct MemoryStorage<T> where
+        T: Clone + Debug + 'static {
+            n_prom: Ballot,
+            n_a: Ballot,
+            v_a: Vec<T>,
+            ld: u64
+    }
+}

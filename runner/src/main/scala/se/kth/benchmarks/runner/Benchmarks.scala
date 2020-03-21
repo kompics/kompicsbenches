@@ -253,7 +253,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
           )
       },
     testSpace = ParameterSpacePB
-      .cross(List("raft"), List(3), List(1000, 2000, 4000, 8000), List(1), List("off", "single", "majority"))
+      .cross(List("raft"), List(3), List(1000, 2000, 4000), List(1), List("off", "single", "majority"))
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r) =>
           AtomicBroadcastRequest(

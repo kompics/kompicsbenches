@@ -1,5 +1,67 @@
 use kompact::prelude::*;
+use super::storage::paxos::PaxosStorage;
+use super::messages::paxos::{ballot_leader_election::Ballot, *};
+use std::fmt::Debug;
+use std::collections::HashMap;
 
+enum Phase {
+    Prepare,
+    Accept,
+    Recover,
+    None
+}
+
+enum Role {
+    Follower,
+    Leader
+}
+
+struct ReceivedPromise<T> {
+    pid: u64,
+    n: Round,
+    sfx: Vec<T>
+}
+
+pub struct Message {
+    from: u64,
+    to: u64,
+    msg: PaxosMsg
+}
+
+pub struct Paxos<S, T> where
+    S: PaxosStorage,
+    T: Clone + Debug + Serialisable {
+        storage: S,
+        pid: u64,
+        nodes: Vec<u64>,
+        state: (Role, Phase),
+        n_leader: Round, // (config_id, ballot)
+        promises: Vec<ReceivedPromise<T>>,
+        prev_final_seq: Vec<T>,
+        las: HashMap<u64, u64>,
+        lds: HashMap<u64, u64>,
+        prop_cmds: Vec<T>,
+        lc: u64,    // length of longest chosen seq
+        outgoing: Vec<Message> // TODO optimize, maybe SPMC?
+}
+
+impl<S, T> Paxos<S, T> where
+    S: PaxosStorage,
+    T: Clone + Debug + Serialisable {
+
+    pub fn step(&mut self, m: Message) {
+        match &m.msg {
+            PaxosMsg::Leader(l) => unimplemented!(),
+            PaxosMsg::Prepare(prep) => unimplemented!(),
+            PaxosMsg::Promise(prom) => unimplemented!(),
+            PaxosMsg::AcceptSync(acc_sync) => unimplemented!(),
+            PaxosMsg::Accept(acc) => unimplemented!(),
+            PaxosMsg::Accepted(accepted) => unimplemented!(),
+            PaxosMsg::Decide(d) => unimplemented!(),
+        }
+    }
+
+}
 
 mod ballot_leader_election {
     use super::*;
@@ -8,16 +70,13 @@ mod ballot_leader_election {
 
     pub struct BallotLeaderElection;
 
-
-
     impl Port for BallotLeaderElection {
         type Indication = Leader;
         type Request = ();
     }
 
-
     #[derive(ComponentDefinition)]
-    pub struct BallotLeaderComp {
+    pub struct BallotLeaderComp {   // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
         ctx: ComponentContext<Self>,
         ble_port: ProvidedPort<BallotLeaderElection, BallotLeaderComp>,
         pid: u64,
@@ -127,6 +186,7 @@ mod ballot_leader_election {
         type Message = Run;
 
         fn receive_local(&mut self, _msg: Self::Message) -> () {
+            // TODO implement STOP
             self.start_timer();
         }
 
@@ -155,9 +215,7 @@ mod ballot_leader_election {
                 },
 
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-
             }
-
             }
         }
     }
@@ -171,3 +229,4 @@ mod ballot_leader_election {
     }
 
 }
+
