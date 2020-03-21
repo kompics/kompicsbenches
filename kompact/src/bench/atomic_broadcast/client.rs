@@ -62,6 +62,8 @@ impl Actor for Client {
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         if self.reconfig.is_some() {
             self.propose_normal(self.num_proposals/2);
+            self.propose_reconfiguration();
+            self.propose_normal(self.num_proposals/2);
         } else {
             self.propose_normal(self.num_proposals);
         }
@@ -75,17 +77,12 @@ impl Actor for Client {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
-                                    let rest = self.num_proposals - self.sent_count;
-                                    info!(self.ctx.log(), "{}", format!("Reconfiguration succeeded! Sending rest of the proposals: {}", rest));
-//                                    assert_eq!(self.reconfig.take().unwrap(), r);
-                                    self.propose_normal(rest);    // propose rest after succesful reconfig
+                                    info!(self.ctx.log(), "reconfiguration succeeded?");
                                 }
                                 _ => {
                                     self.received_count += 1;
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else if self.received_count == self.num_proposals/2 && self.reconfig.is_some() {
-                                        self.propose_reconfiguration();
                                     }
                                 }
                             }
@@ -170,6 +167,8 @@ pub mod tests {
                     self.test_results.insert(0, Vec::new());
                     if self.reconfig.is_some() {
                         self.propose_normal(self.num_proposals/2);
+                        self.propose_reconfiguration();
+                        self.propose_normal(self.num_proposals/2);
                     } else {
                         self.propose_normal(self.num_proposals);
                     }
@@ -194,9 +193,7 @@ pub mod tests {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
-                                    let rest = self.num_proposals - self.sent_count;
-                                    info!(self.ctx.log(), "{}", format!("Reconfiguration succeeded! Sending rest of the {} proposals", rest));
-                                    self.propose_normal(rest);    // propose rest after succesful reconfig
+                                    info!(self.ctx.log(), "reconfiguration succeeded?");
                                 }
                                 _ => {
                                     let decided_sequence = self.test_results.get_mut(&0).unwrap();
@@ -215,8 +212,6 @@ pub mod tests {
                                                 .fulfill(self.test_results.clone())
                                                 .expect("Failed to fulfill finished promise");
                                         }
-                                    } else if self.received_count == self.num_proposals/2 && self.reconfig.is_some() {
-                                        self.propose_reconfiguration();
                                     }
                                 }
                             }
