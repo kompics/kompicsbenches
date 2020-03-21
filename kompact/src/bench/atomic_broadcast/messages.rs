@@ -25,7 +25,66 @@ pub mod raft {
 }
 
 pub mod paxos {
-    // TODO
+    use ballot_leader_election::{Ballot, Leader};
+
+    #[derive(Clone, Debug)]
+    pub struct Prepare {
+        n: Ballot,
+        ld: u64,
+        na: Ballot,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Promise {
+        n: Round,
+        na: Round,
+        sfx: Vec<u64>,
+        ld: u64,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct AcceptSync {
+        n: Round,
+        sfx: Vec<u64>,
+        ld: u64
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Accept {
+        n: Round,
+        seq: Vec<u64>,
+        ld: u64
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Accepted {
+        n: Round,
+        m: u64,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Decide {
+        n: Round,
+        ld: u64,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum PaxosMsg {
+        Leader(Leader),
+        Prepare(Prepare),
+        Promise(Promise),
+        AcceptSync(AcceptSync),
+        Accept(Accept),
+        Accepted(Accepted),
+        Decide(Decide)
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct Round {
+        config_id: u32,
+        ballot: Ballot,
+    }
+
     pub mod ballot_leader_election {
         use super::super::*;
 

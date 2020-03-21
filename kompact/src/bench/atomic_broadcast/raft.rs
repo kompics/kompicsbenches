@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
-use std::{time::Duration, collections::HashMap};
+use std::{time::Duration, collections::HashMap, marker::Send, clone::Clone};
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*, raft::*};
 use super::storage::raft::*;
@@ -19,9 +19,9 @@ pub enum RaftCompMsg {
 
 pub struct MessagingPort;
 
-const delay: Duration = Duration::from_millis(0);
-const ready_period: Duration = Duration::from_millis(1);
-const tick_period: Duration = Duration::from_millis(100);
+const DELAY: Duration = Duration::from_millis(0);
+const READY_PERIOD: Duration = Duration::from_millis(1);
+const TICK_PERIOD: Duration = Duration::from_millis(100);
 
 impl Port for MessagingPort {
     type Indication = RaftCompMsg;
@@ -145,7 +145,7 @@ impl Actor for Communicator {
 }
 
 #[derive(ComponentDefinition)]
-pub struct RaftComp<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> where S: std::marker::Send{
+pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {   // TODO FIX WHERE
     ctx: ComponentContext<Self>,
     raft_node: Option<RawNode<S>>,
     communication_port: RequiredPort<MessagingPort, Self>,
@@ -157,23 +157,25 @@ pub struct RaftComp<S: RaftStorage + std::marker::Send + std::clone::Clone + 'st
     has_reconfigured: bool
 }
 
-impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Provide<ControlPort> for RaftComp<S>{
-    fn handle(&mut self, event: ControlEvent) -> () {
-        match event {
-            ControlEvent::Start => {},
-            _ => {
-                self.stop_timers();
-                match self.raft_node.take() {
-                    Some(mut raft_node) => raft_node.mut_store().clear().expect("Failed to clear storage!"),
-                    _ => {}
+impl<S> Provide<ControlPort> for RaftComp<S> where
+    S: RaftStorage + Send + Clone + 'static {
+        fn handle(&mut self, event: ControlEvent) -> () {
+            match event {
+                ControlEvent::Start => {},
+                _ => {
+                    self.stop_timers();
+                    match self.raft_node.take() {
+                        Some(mut raft_node) => raft_node.mut_store().clear().expect("Failed to clear storage!"),
+                        _ => {}
+                    }
                 }
             }
         }
-    }
 }
 
-impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<MessagingPort> for RaftComp<S> {
-    fn handle(&mut self, msg: RaftCompMsg) -> () {
+impl<S> Require<MessagingPort> for RaftComp<S> where
+    S: RaftStorage + Send + Clone + 'static {
+        fn handle(&mut self, msg: RaftCompMsg) -> () {
         match msg {
             RaftCompMsg::CreateTikvRaft(ctr) => {
                 info!(self.ctx.log(), "{}", format!("Creating raft node, iteration: {}, id: {}", ctr.iteration_id, ctr.node_id));
@@ -243,7 +245,7 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Require<M
     }
 }
 
-impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<S> {
+impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     pub fn with(config: Config, conf_state: (Vec<u64>, Vec<u64>)) -> RaftComp<S> {
         RaftComp {
             ctx: ComponentContext::new(),
@@ -262,8 +264,8 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<
 //        let on_ready_uuid = uuid::Uuid::new_v4();
 //        let tick_uuid = uuid::Uuid::new_v4();
         // give new reference to self to make compiler happy
-        let ready_timer = self.schedule_periodic(delay, ready_period, move |c, _| c.on_ready());
-        let tick_timer = self.schedule_periodic(delay, tick_period, move |rc, _| rc.tick());
+        let ready_timer = self.schedule_periodic(DELAY, READY_PERIOD, move |c, _| c.on_ready());
+        let tick_timer = self.schedule_periodic(DELAY, TICK_PERIOD, move |rc, _| rc.tick());
         self.timers = Some((ready_timer, tick_timer));
     }
 
@@ -419,16 +421,17 @@ impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> RaftComp<
 
 }
 
-impl<S: RaftStorage + std::marker::Send + std::clone::Clone + 'static> Actor for RaftComp<S> {
-    type Message = ();
+impl<S> Actor for RaftComp<S> where
+    S: RaftStorage + Send + Clone + 'static{
+        type Message = ();
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
-        unimplemented!()
-    }
+        fn receive_local(&mut self, _msg: Self::Message) -> () {
+            unimplemented!()
+        }
 
-    fn receive_network(&mut self, _msg: NetMessage) -> () {
-        unimplemented!()
-    }
+        fn receive_network(&mut self, _msg: NetMessage) -> () {
+            unimplemented!()
+        }
 }
 
 #[cfg(test)]
@@ -636,11 +639,11 @@ mod tests {
         let n: u64 = 5;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 1500;
+        let num_proposals = 1000;
         let config = (vec![1,2,3], vec![]);
         let reconfig = Some((vec![1,4,5], vec![]));
 
-        type Storage = DiskStorage;
+        type Storage = MemStorage;
 
         let mut systems: Vec<KompactSystem> = Vec::new();
         let mut peers: HashMap<u64, ActorPath> = HashMap::new();
@@ -707,7 +710,7 @@ mod tests {
         let mut counter = 0;
         for i in 1..=n {
             let sequence = all_sequences.get(&i).unwrap();
-//                println!("Node {}: {:?}", i, sequence);
+            println!("Node {}: {:?}", i, sequence.len());
             assert!(client_sequence.starts_with(sequence));
             if sequence.starts_with(&client_sequence) {
                 counter += 1;
