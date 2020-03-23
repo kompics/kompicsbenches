@@ -560,40 +560,106 @@ pub mod paxos {
     use super::super::messages::paxos::{ballot_leader_election::Ballot, Round};
     use super::super::paxos::Entry;
 
-    pub trait PaxosStorage<S> where S: Clone + Debug
-    {
-        fn append_sequence(seq: Vec<Entry<S>>) -> Result<(), Box<dyn Error>>;   // TODO iterator trait instead of vec
+    pub trait PaxosStorage<S> where S: Clone + Debug {
+        fn append_entry(&mut self, seq: Entry<S>);
 
-        fn set_promise(n: Ballot) -> Result<(), Box<dyn Error>>;
+        fn append_sequence(&mut self, seq: &mut Vec<Entry<S>>);
 
-        fn set_decided_length(ld: u64) -> Result<(), Box<dyn Error>>;
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<S>>);
 
-        fn stopped(&self, idx: u64) -> bool;
+        fn set_promise(&mut self, nprom: Round);
+
+        fn set_decided_len(&mut self, ld: u64);
+
+        fn set_accepted_round(&mut self, na: Round);
+
+        fn get_accepted_round(&self) -> Round;
+
+        fn get_sequence_len(&self) -> u64;
+
+        fn get_decided_len(&self) -> u64;
+
+        fn get_suffix(&self, from: u64) -> Vec<Entry<S>>;
+
+        fn get_decided_suffix(&self) -> Vec<Entry<S>>;
+
+        fn get_promise(&self) -> Round;
+
+        fn decide_entries(&mut self, l: u64) -> Vec<Entry<S>>;
+
+        fn stopped(&self) -> bool;
     }
 
     pub struct MemoryStorage<T> where T: Clone + Debug {
-            n_prom: Ballot,
+            n_prom: Round,
             acc_round: Round,
-            acc_seq: Vec<Entry<T>>,
+            acc_seq: Vec<Entry<T>>, // va
             ld: u64
     }
 
     impl<T> PaxosStorage<T> for MemoryStorage<T> where T: Clone + Debug {
-        fn append_sequence(seq: Vec<Entry<T>>) -> Result<(), Box<dyn Error>>   // TODO iterator trait instead of vec
-        {
-            unimplemented!()
+        fn append_entry(&mut self, entry: Entry<T>) {
+            self.acc_seq.push(entry);
         }
 
-        fn set_promise(n: Ballot) -> Result<(), Box<dyn Error>> {
-            unimplemented!()
+        fn append_sequence(&mut self, seq: &mut Vec<Entry<T>>) {
+            self.acc_seq.append( seq);
         }
 
-        fn set_decided_length(ld: u64) -> Result<(), Box<dyn Error>> {
-            unimplemented!()
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<T>>) {
+            self.acc_seq.truncate(from_idx as usize);
+            self.acc_seq.append(seq);
         }
 
-        fn stopped(&self, idx: u64) -> bool {
-            match self.acc_seq[idx as usize] {
+        fn set_promise(&mut self, n: Round) {
+            self.n_prom = n;
+        }
+
+        fn set_decided_len(&mut self, ld: u64) {
+            self.ld = ld;
+        }
+
+        fn set_accepted_round(&mut self, na: Round) {
+            self.acc_round = na;
+        }
+
+        fn get_accepted_round(&self) -> Round {
+            self.acc_round.clone()
+        }
+
+        fn get_sequence_len(&self) -> u64 {
+            self.acc_seq.len() as u64
+        }
+
+        fn get_decided_len(&self) -> u64 {
+            self.ld
+        }
+
+        fn get_suffix(&self, from: u64) -> Vec<Entry<T>> {
+            self.acc_seq[from as usize..].to_vec()
+        }
+
+        fn get_decided_suffix(&self) -> Vec<Entry<T>> {
+            self.get_suffix(self.ld)
+        }
+
+        fn get_promise(&self) -> Round {
+            self.n_prom.clone()
+        }
+
+        fn decide_entries(&mut self, l: u64) -> Vec<Entry<T>> {
+            if l > self.ld {
+                let from = self.ld as usize;
+                let to = l as usize;
+                self.ld = l;
+                self.acc_seq[from..to].to_vec()
+            } else {
+                vec![]
+            }
+        }
+
+        fn stopped(&self) -> bool {
+            match self.acc_seq[self.ld as usize] {
                 Entry::StopSign(_) => true,
                 Entry::Normal(_) => false
             }
