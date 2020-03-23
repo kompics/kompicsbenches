@@ -6,7 +6,7 @@ use kompact::prelude::*;
 use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
-use super::raft::{RaftComp, Communicator, MessagingPort};
+use super::raft::{RaftComp, Communicator, RaftCommunicationPort};
 use tikv_raft::{Config, storage::MemStorage};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
@@ -271,7 +271,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("Communicator never started!");
 
-                        biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
+                        biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
                             .expect("Could not connect components!");
 
                         let self_path = ActorPath::Named(NamedPath::with_system(
@@ -470,7 +470,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never started!");
 
-                biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
+                biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
                     .expect("Could not connect components!");
 
                 let self_path = ActorPath::Named(NamedPath::with_system(

@@ -26,63 +26,101 @@ pub mod raft {
 
 pub mod paxos {
     use ballot_leader_election::{Ballot, Leader};
+    use super::super::paxos::Entry;
+    use std::fmt::Debug;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
-        n: Ballot,
-        ld: u64,
-        na: Ballot,
+        pub n: Round,
+        pub ld: u64,
+        pub n_accepted: Round,
     }
 
     #[derive(Clone, Debug)]
-    pub struct Promise {
-        n: Round,
-        na: Round,
-        sfx: Vec<u64>,
-        ld: u64,
+    pub struct Promise<T> where T: Clone + Debug {
+        pub n: Round,
+        pub n_accepted: Round,
+        pub sfx: Vec<Entry<T>>,
+        pub ld: u64,
+    }
+
+    impl<T> Promise<T> where T: Clone + Debug {
+        pub fn with(n: Round, n_accepted: Round, sfx: Vec<Entry<T>>, ld: u64) -> Promise<T> {
+            Promise { n, n_accepted, sfx, ld }
+        }
     }
 
     #[derive(Clone, Debug)]
-    pub struct AcceptSync {
-        n: Round,
-        sfx: Vec<u64>,
-        ld: u64
+    pub struct AcceptSync<T> where T: Clone + Debug {
+        pub n: Round,
+        pub sfx: Vec<Entry<T>>,
+        pub ld: u64
+    }
+
+    impl<T> AcceptSync<T> where T: Clone + Debug {
+        pub fn with(n: Round, sfx: Vec<Entry<T>>, ld: u64) -> AcceptSync<T> {
+            AcceptSync { n, sfx, ld }
+        }
     }
 
     #[derive(Clone, Debug)]
-    pub struct Accept {
-        n: Round,
-        seq: Vec<u64>,
-        ld: u64
+    pub struct Accept<T> where T: Clone + Debug {
+        pub n: Round,
+        pub entry: Entry<T>,
+        pub ld: u64
+    }
+
+    impl<T> Accept<T> where T: Clone + Debug {
+        pub fn with(n: Round, entry: Entry<T>, ld: u64) -> Accept<T> {
+            Accept{ n, entry, ld }
+        }
     }
 
     #[derive(Clone, Debug)]
     pub struct Accepted {
-        n: Round,
-        m: u64,
+        pub n: Round,
+        pub la: u64,
+    }
+
+    impl Accepted {
+        pub fn with(n: Round, la: u64) -> Accepted {
+            Accepted{ n, la }
+        }
     }
 
     #[derive(Clone, Debug)]
     pub struct Decide {
-        n: Round,
-        ld: u64,
+        pub ld: u64,
+        pub n: Round,
+    }
+
+    impl Decide {
+        pub fn with(ld: u64, n: Round) -> Decide {
+            Decide{ ld, n }
+        }
     }
 
     #[derive(Clone, Debug)]
-    pub enum PaxosMsg {
+    pub enum PaxosMsg<T> where T: Clone + Debug {
         Leader(Leader),
         Prepare(Prepare),
-        Promise(Promise),
-        AcceptSync(AcceptSync),
-        Accept(Accept),
+        Promise(Promise<T>),
+        AcceptSync(AcceptSync<T>),
+        Accept(Accept<T>),
         Accepted(Accepted),
         Decide(Decide)
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, PartialEq, PartialOrd)]
     pub struct Round {
         config_id: u32,
         ballot: Ballot,
+    }
+
+    impl Round {
+        pub fn with(config_id: u32, ballot: Ballot) -> Round {
+            Round{ config_id, ballot }
+        }
     }
 
     pub mod ballot_leader_election {
