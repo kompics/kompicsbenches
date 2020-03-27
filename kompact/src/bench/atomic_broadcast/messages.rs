@@ -26,14 +26,21 @@ pub mod raft {
 
 pub mod paxos {
     use ballot_leader_election::{Ballot, Leader};
-    use super::super::paxos::Entry;
+    use super::super::paxos::raw_paxos::Entry;
     use std::fmt::Debug;
+    use kompact::prelude::Serialiser;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
         pub n: Round,
         pub ld: u64,
         pub n_accepted: Round,
+    }
+
+    impl Prepare {
+        pub fn with(n: Round, ld: u64, n_accepted: Round) -> Prepare {
+            Prepare{ n, ld, n_accepted }
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -67,12 +74,11 @@ pub mod paxos {
     pub struct Accept<T> where T: Clone + Debug {
         pub n: Round,
         pub entry: Entry<T>,
-        pub ld: u64
     }
 
     impl<T> Accept<T> where T: Clone + Debug {
-        pub fn with(n: Round, entry: Entry<T>, ld: u64) -> Accept<T> {
-            Accept{ n, entry, ld }
+        pub fn with(n: Round, entry: Entry<T>) -> Accept<T> {
+            Accept{ n, entry }
         }
     }
 
@@ -102,7 +108,7 @@ pub mod paxos {
 
     #[derive(Clone, Debug)]
     pub enum PaxosMsg<T> where T: Clone + Debug {
-        Leader(Leader),
+//        Leader(Leader),
         Prepare(Prepare),
         Promise(Promise<T>),
         AcceptSync(AcceptSync<T>),

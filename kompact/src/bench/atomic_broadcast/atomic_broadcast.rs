@@ -261,7 +261,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         unique_reg_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("Communicator never registered!")
-                            .expect("Communicator to register!");
+                            .expect("Communicator failed to register!");
                         named_reg_f.wait_expect(
                             Duration::from_millis(1000),
                             "Communicator failed to register!",
