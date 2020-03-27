@@ -557,9 +557,13 @@ pub mod raft {
 pub mod paxos {
     use std::fmt::Debug;
     use std::error::Error;
+    use std::marker;
     use super::super::messages::paxos::{ballot_leader_election::Ballot, Round};
-    use super::super::paxos::Entry;
-
+    use super::super::paxos::raw_paxos::Entry;
+//    use crate::bench::atomic_broadcast::paxos::raw_paxos::Paxos;
+    use std::sync::Arc;
+    use std::mem;
+/*
     pub trait PaxosStorage<S> where S: Clone + Debug {
         fn append_entry(&mut self, seq: Entry<S>);
 
@@ -664,5 +668,192 @@ pub mod paxos {
                 Entry::Normal(_) => false
             }
         }
+    }*/
+
+    /*pub struct Chain<S, T> where
+        T: Clone + Debug,
+        S: Sequence<EntryType = T>,
+    {
+        head: S,
+        tail: Option<Arc<Chain<S, T>>>,
+    }*/
+
+    pub trait Sequence {
+        type EntryType: Clone + Debug;
+
+        fn append_entry(&mut self, seq: Entry<Self::EntryType>);
+
+        fn append_sequence(&mut self, seq: &mut Vec<Entry<Self::EntryType>>);
+
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<Self::EntryType>>);
+
+        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry<Self::EntryType>>;
+
+        fn get_suffix(&self, from: u64) -> Vec<Entry<Self::EntryType>>;
+
+        fn get_sequence_len(&self) -> u64;
+
+        fn get_decided_suffix(&self) -> Vec<Entry<Self::EntryType>>;
+
+        fn stopped(&self) -> bool;
     }
+
+    pub trait PaxosState {
+        fn set_promise(&mut self, nprom: Round);
+
+        fn set_decided_len(&mut self, ld: u64);
+
+        fn set_accepted_round(&mut self, na: Round);
+
+        fn get_accepted_round(&self) -> Round;
+
+        fn get_decided_len(&self) -> u64;
+
+        fn get_promise(&self) -> Round;
+    }
+
+    enum PaxosSequence<S> where S: Sequence {
+        Active(S),
+        Stopped(Arc<S>),
+        None // intermediate value to use with mem::replace
+    }
+
+    pub struct Storage<S, T, P> where
+        S: Sequence<EntryType = T>,
+        T: Clone + Debug,
+        P: PaxosState
+    {
+        sequence: PaxosSequence<S>,
+        paxos_state: P,
+    }
+
+    impl<S, T, P> Storage<S, T, P> where
+        S: Sequence<EntryType = T>,
+        T: Clone + Debug,
+        P: PaxosState
+    {
+        pub fn append_entry(&mut self, entry: Entry<T>) {
+            match &mut self.sequence {
+                PaxosSequence::Active(s) => {
+                    s.append_entry(entry);
+                },
+                PaxosSequence::Stopped(_) => {
+                    panic!("Sequence should not be modified after reconfiguration");
+                },
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn append_sequence(&mut self, seq: &mut Vec<Entry<T>>) {
+            match &mut self.sequence {
+                PaxosSequence::Active(s) => {
+                    s.append_sequence(seq);
+                },
+                PaxosSequence::Stopped(_) => {
+                    panic!("Sequence should not be modified after reconfiguration");
+                },
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<T>>) {
+            match &mut self.sequence {
+                PaxosSequence::Active(s) => {
+                    s.append_on_prefix(from_idx, seq);
+                },
+                PaxosSequence::Stopped(_) => {
+                    panic!("Sequence should not be modified after reconfiguration");
+                },
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn set_promise(&mut self, nprom: Round) {
+            self.paxos_state.set_promise(nprom);
+        }
+
+        pub fn set_decided_len(&mut self, ld: u64) {
+            self.paxos_state.set_decided_len(ld);
+        }
+
+        pub fn set_accepted_round(&mut self, na: Round) {
+            self.paxos_state.set_accepted_round(na);
+        }
+
+        pub fn get_accepted_round(&self) -> Round {
+            self.paxos_state.get_accepted_round()
+        }
+
+        pub fn get_sequence_len(&self) -> u64 {
+            match self.sequence {
+                PaxosSequence::Active(ref s) => s.get_sequence_len(),
+                PaxosSequence::Stopped(ref arc_s) => arc_s.get_sequence_len(),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn get_decided_len(&self) -> u64 {
+            self.paxos_state.get_decided_len()
+        }
+
+        pub fn get_suffix(&self, from: u64) -> Vec<Entry<T>> {
+            match self.sequence {
+                PaxosSequence::Active(ref s) => s.get_suffix(from),
+                PaxosSequence::Stopped(ref arc_s) => arc_s.get_suffix(from),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn get_decided_suffix(&self) -> Vec<Entry<T>> {
+            let ld = self.get_decided_len();
+            self.get_suffix(ld)
+        }
+
+        pub fn get_promise(&self) -> Round {
+            self.paxos_state.get_promise()
+        }
+
+        pub fn decide_entries(&mut self, ld: u64) -> Vec<Entry<T>> {
+            let prev_ld = self.get_decided_len();
+            if ld > prev_ld {
+                let from = prev_ld;
+                let to = ld;
+                let decided_entries = match self.sequence {
+                    PaxosSequence::Active(ref s) => {
+                        s.get_entries(from, to)
+                    },
+                    PaxosSequence::Stopped(ref arc_s) => {
+                        arc_s.get_entries(from, to)
+                    },
+                    _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                };
+                self.set_decided_len(ld);
+                decided_entries
+            } else {
+                vec![]
+            }
+        }
+
+        pub fn stopped(&self) -> bool {
+            let ld = self.get_decided_len();
+            match self.sequence {
+                PaxosSequence::Active(ref s) => s.stopped(),
+                PaxosSequence::Stopped(ref arc_s) => arc_s.stopped(),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn stop_and_get_sequence(&mut self) -> Arc<S> {
+            let a = mem::replace(&mut self.sequence, PaxosSequence::None);
+            match a {
+                PaxosSequence::Active(s) => {
+                    let arc_s = Arc::from(s);
+                    self.sequence = PaxosSequence::Stopped(arc_s.clone());
+                    arc_s
+                },
+                _ => panic!("Storage should already have been stopped!"),
+            }
+        }
+    }
+
 }

@@ -17,13 +17,13 @@ pub enum RaftCompMsg {
     Stop,
 }
 
-pub struct MessagingPort;
+pub struct RaftCommunicationPort;
 
 const DELAY: Duration = Duration::from_millis(0);
 const READY_PERIOD: Duration = Duration::from_millis(1);
 const TICK_PERIOD: Duration = Duration::from_millis(100);
 
-impl Port for MessagingPort {
+impl Port for RaftCommunicationPort {
     type Indication = RaftCompMsg;
     type Request = CommunicatorMsg;
 }
@@ -31,7 +31,7 @@ impl Port for MessagingPort {
 #[derive(ComponentDefinition)]
 pub struct Communicator {
     ctx: ComponentContext<Communicator>,
-    raft_port: ProvidedPort<MessagingPort, Communicator>,
+    raft_port: ProvidedPort<RaftCommunicationPort, Communicator>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
     cached_next_iter_metadata: Option<(ActorPath, HashMap<u64, ActorPath>)>,   // (partitioning_actor, peers) for next init_ack
     cached_client: Option<ActorPath>,    // cached client to send SequenceResp to
@@ -57,7 +57,7 @@ impl Provide<ControlPort> for Communicator {
     }
 }
 
-impl Provide<MessagingPort> for Communicator {
+impl Provide<RaftCommunicationPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) {
         if !self.stopped {
             match &msg {
@@ -84,7 +84,7 @@ impl Provide<MessagingPort> for Communicator {
                     self.peers = peers;
                     let resp = PartitioningActorMsg::InitAck(id.to_owned());
                     receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
-                }
+                },
                 _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
             }
         }
@@ -145,10 +145,10 @@ impl Actor for Communicator {
 }
 
 #[derive(ComponentDefinition)]
-pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {   // TODO FIX WHERE
+pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     ctx: ComponentContext<Self>,
     raft_node: Option<RawNode<S>>,
-    communication_port: RequiredPort<MessagingPort, Self>,
+    communication_port: RequiredPort<RaftCommunicationPort, Self>,
     reconfig_client: Option<ActorPath>,
     config: Config,
     conf_state: (Vec<u64>, Vec<u64>),
@@ -173,7 +173,7 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
         }
 }
 
-impl<S> Require<MessagingPort> for RaftComp<S> where
+impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
     S: RaftStorage + Send + Clone + 'static {
         fn handle(&mut self, msg: RaftCompMsg) -> () {
         match msg {
@@ -499,7 +499,7 @@ mod tests {
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("Communicator never started!");
 
-            biconnect_components::<MessagingPort, _, _>(&communicator, &raft_comp)
+            biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
                 .expect("Could not connect components!");
 
             /*** Add self to peers map ***/
