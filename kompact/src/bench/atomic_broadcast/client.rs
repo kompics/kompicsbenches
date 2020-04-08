@@ -2,8 +2,11 @@ use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use std::collections::HashMap;
-use super::messages::{Proposal, CommunicatorMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
+use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
+use std::time::Duration;
 
+const MAX_RETRIES: u32 = 50;
+const RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(ComponentDefinition)]
 pub struct Client {
@@ -12,8 +15,8 @@ pub struct Client {
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
     finished_latch: Arc<CountdownEvent>,
-    sent_count: u64,
     received_count: u64,
+    retries: HashMap<u64, u32>
 }
 
 impl Client {
@@ -24,18 +27,20 @@ impl Client {
         finished_latch: Arc<CountdownEvent>
     ) -> Client {
         Client {
-            ctx: ComponentContext::new(), num_proposals, nodes, reconfig, finished_latch, sent_count: 0, received_count: 0
+            ctx: ComponentContext::new(), num_proposals, nodes, reconfig, finished_latch, received_count: 0, retries: HashMap::new()
         }
     }
 
-    fn propose_normal(&mut self, n: u64) {
-        let num_sent = self.sent_count;
-        for i in 1..=n {
-            let ap = self.ctx.actor_path();
-            let p = Proposal::normal(i + num_sent, ap);
-            let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-            raft_node.tell((CommunicatorMsg::Proposal(p), AtomicBroadcastSer), self);
-            self.sent_count += 1;
+    fn propose_normal(&self, id: u64) {
+        let ap = self.ctx.actor_path();
+        let p = Proposal::normal(id, ap);
+        let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+        node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+    }
+
+    fn send_normal_proposals<T>(&self, r: T) where T: IntoIterator<Item = u64> {
+        for id in r {
+            self.propose_normal(id);
         }
     }
 
@@ -43,10 +48,10 @@ impl Client {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
         info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig.clone()));
-        let p = Proposal::reconfiguration(0, ap, reconfig);
+        let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig);
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-        raft_node.tell((CommunicatorMsg::Proposal(p), AtomicBroadcastSer), self);
+        raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
     }
 }
 
@@ -61,19 +66,20 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         if self.reconfig.is_some() {
-            self.propose_normal(self.num_proposals/2);
+            self.send_normal_proposals(1..self.num_proposals/2);
+            std::thread::sleep(Duration::from_secs(2));
             self.propose_reconfiguration();
-            self.propose_normal(self.num_proposals/2);
+            // self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
         } else {
-            self.propose_normal(self.num_proposals);
+            self.send_normal_proposals(1..=self.num_proposals);
         }
     }
 
     fn receive_network(&mut self, msg: NetMessage) -> () {
         match_deser!{msg; {
-            cm: CommunicatorMsg [AtomicBroadcastSer] => {
-                match cm {
-                    CommunicatorMsg::ProposalResp(pr) => {
+            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+                match am {
+                    AtomicBroadcastMsg::ProposalResp(pr) => {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
@@ -81,14 +87,31 @@ impl Actor for Client {
                                 }
                                 _ => {
                                     self.received_count += 1;
+//                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     }
                                 }
                             }
-                        } /*else {
-                            error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
-                        }*/
+                        } else {
+//                            info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
+                            match self.retries.get_mut(&pr.id) {
+                                Some(num_retries) => {
+                                    *num_retries += 1;
+                                    if *num_retries < MAX_RETRIES {
+                                        let id = pr.id;
+                                        self.schedule_once(RETRY_DELAY, move |c, _| c.propose_normal(id));
+                                    } else {
+                                        error!(self.ctx.log(), "Proposal {} reached maximum number of retries without success", pr.id);
+                                    }
+                                },
+                                None => {
+                                    let id = pr.id;
+                                    self.schedule_once(RETRY_DELAY, move |c, _| c.propose_normal(id));
+                                    self.retries.insert(pr.id, 1);
+                                }
+                            }
+                        }
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }
@@ -102,7 +125,6 @@ impl Actor for Client {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::bench::atomic_broadcast::messages::SequenceReq;
 
     #[derive(ComponentDefinition)]
     pub struct TestClient {
@@ -112,9 +134,10 @@ pub mod tests {
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         test_results: HashMap<u64, Vec<u64>>,
         finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
-        sent_count: u64,
         received_count: u64,
         reconfig_count: u32,
+        retries: HashMap<u64, u32>,
+        check_sequences: bool,
     }
 
     impl TestClient {
@@ -123,6 +146,7 @@ pub mod tests {
             nodes: HashMap<u64, ActorPath>,
             reconfig: Option<(Vec<u64>, Vec<u64>)>,
             finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
+            check_sequences: bool,
         ) -> TestClient {
             TestClient {
                 ctx: ComponentContext::new(),
@@ -131,22 +155,24 @@ pub mod tests {
                 reconfig,
                 test_results: HashMap::new(),
                 finished_promise,
-                sent_count: 0,
                 received_count: 0,
-                reconfig_count: 0
+                reconfig_count: 0,
+                retries: HashMap::new(),
+                check_sequences
             }
         }
 
-        fn propose_normal(&mut self, n: u64) {
-            let num_sent = self.sent_count;
-            for i in 1..=n {
-                let ap = self.ctx.actor_path();
-                let p = Proposal::normal(i + num_sent, ap);
-                let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-                raft_node.tell((CommunicatorMsg::Proposal(p), AtomicBroadcastSer), self);
-                self.sent_count += 1;
+        fn propose_normal(&self, id: u64) {
+            let ap = self.ctx.actor_path();
+            let p = Proposal::normal(id, ap);
+            let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+            node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+        }
+
+        fn send_normal_proposals<T>(&self, r: T) where T: IntoIterator<Item = u64> {
+            for id in r {
+                self.propose_normal(id);
             }
-            info!(self.ctx.log(), "Sent all proposals");
         }
 
         fn propose_reconfiguration(&mut self) {
@@ -155,71 +181,84 @@ pub mod tests {
             info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig.clone()));
             let p = Proposal::reconfiguration(0, ap, reconfig);
             let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-            raft_node.tell((CommunicatorMsg::Proposal(p), AtomicBroadcastSer), self);
+            raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
         }
     }
 
     impl Provide<ControlPort> for TestClient {
         fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
             match event {
-                ControlEvent::Start => {
-                    info!(self.ctx.log(), "Started bcast client");
-                    self.test_results.insert(0, Vec::new());
-                    if self.reconfig.is_some() {
-                        self.propose_normal(self.num_proposals/2);
-                        self.propose_reconfiguration();
-                        self.propose_normal(self.num_proposals/2);
-                    } else {
-                        self.propose_normal(self.num_proposals);
-                    }
-                }
+                ControlEvent::Start => info!(self.ctx.log(), "Started bcast client"),
                 _ => {}, //ignore
             }
         }
     }
 
     impl Actor for TestClient {
-        type Message = ();
+        type Message = Run;
 
         fn receive_local(&mut self, _msg: Self::Message) -> () {
-            // ignore
+            self.test_results.insert(0, Vec::new());
+            if self.reconfig.is_some() {
+                self.send_normal_proposals(1..self.num_proposals/2);
+                self.propose_reconfiguration();
+                std::thread::sleep(Duration::from_secs(2));
+                self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
+            } else {
+                self.send_normal_proposals(1..=self.num_proposals);
+            }
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
             match_deser!{msg; {
-            cm: CommunicatorMsg [AtomicBroadcastSer] => {
-                match cm {
-                    CommunicatorMsg::ProposalResp(pr) => {
+            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+                match am {
+                    AtomicBroadcastMsg::ProposalResp(pr) => {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
                                     info!(self.ctx.log(), "reconfiguration succeeded?");
                                 }
                                 _ => {
+                                    // info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
                                     let decided_sequence = self.test_results.get_mut(&0).unwrap();
                                     decided_sequence.push(pr.id);
                                     self.received_count += 1;
                                     if self.received_count == self.num_proposals {
-                                        if self.reconfig.is_some() {
-                                            info!(self.ctx.log(), "Sending SequenceReq to all nodes...");
+                                        if self.check_sequences {
                                             for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
-                                                let req = SequenceReq;
-                                                actorpath.tell((CommunicatorMsg::SequenceReq(req), AtomicBroadcastSer), self);
+                                                actorpath.tell((AtomicBroadcastMsg::SequenceReq, AtomicBroadcastSer), self);
                                             }
                                         } else {
                                             self.finished_promise
                                                 .to_owned()
                                                 .fulfill(self.test_results.clone())
-                                                .expect("Failed to fulfill finished promise");
+                                                .expect("Failed to fulfill finished promise after getting all sequences");
                                         }
                                     }
                                 }
                             }
-                        } /*else {
-                            error!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
-                        }*/
+                        } else {
+//                            info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
+                            match self.retries.get_mut(&pr.id) {
+                                Some(num_retries) => {
+                                    *num_retries += 1;
+                                    if *num_retries < MAX_RETRIES {
+                                        let id = pr.id;
+                                        self.schedule_once(RETRY_DELAY, move |c, _| c.propose_normal(id));
+                                    } else {
+                                        error!(self.ctx.log(), "Proposal {} reached maximum number of retries without success", pr.id);
+                                    }
+                                },
+                                None => {
+                                    let id = pr.id;
+                                    self.schedule_once(RETRY_DELAY, move |c, _| c.propose_normal(id));
+                                    self.retries.insert(pr.id, 1);
+                                }
+                            }
+                        }
                     },
-                    CommunicatorMsg::SequenceResp(sr) => {
+                    AtomicBroadcastMsg::SequenceResp(sr) => {
                         self.test_results.insert(sr.node_id, sr.sequence);
                         if (self.test_results.len() - 1) == self.nodes.len() {    // got all sequences from everybody, we're done
                             self.finished_promise

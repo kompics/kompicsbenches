@@ -7,12 +7,15 @@ use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
 use super::raft::{RaftComp, Communicator, RaftCommunicationPort};
+use super::paxos::{ReplicaComp, TransferPolicy};
+use super::storage::paxos::{MemoryState, MemorySequence};
+use super::storage::raft::DiskStorage;
 use tikv_raft::{Config, storage::MemStorage};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
-use crate::partitioning_actor::{PartitioningActorMsg, IterationControlMsg};
+use crate::partitioning_actor::IterationControlMsg;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
@@ -154,7 +157,7 @@ pub struct AtomicBroadcastMaster {
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-//    paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
+    paxos_replica_comp: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
     raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
@@ -171,11 +174,67 @@ impl AtomicBroadcastMaster {
             system: None,
             finished_latch: None,
             iteration_id: 0,
-//            paxos_comp: None,
+            paxos_replica_comp: None,
             raft_components: None,
             client_comp: None,
             partitioning_actor: None,
         }
+    }
+
+    fn initialise_iteration(&self, nodes: Vec<ActorPath>) -> Arc<Component<PartitioningActor>> {
+        let system = self.system.as_ref().unwrap();
+        let prepare_latch = Arc::new(CountdownEvent::new(1));
+        /*** Setup partitioning actor ***/
+        let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {
+            PartitioningActor::with(
+                prepare_latch.clone(),
+                None,
+                self.iteration_id,
+                nodes,
+                None,
+            )
+        });
+        unique_reg_f.wait_expect(
+            Duration::from_millis(1000),
+            "PartitioningComp failed to register!",
+        );
+
+        let partitioning_actor_f = system.start_notify(&partitioning_actor);
+        partitioning_actor_f
+            .wait_timeout(Duration::from_millis(1000))
+            .expect("PartitioningComp never started!");
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+        prepare_latch.wait();
+        partitioning_actor
+    }
+
+    fn create_client(
+        &self,
+        num_proposals: u64,
+        nodes_id: HashMap<u64, ActorPath>,
+        reconfig: Option<(Vec<u64>, Vec<u64>)>
+    ) -> Arc<Component<Client>> {
+        let system = self.system.as_ref().unwrap();
+        let finished_latch = self.finished_latch.clone().unwrap();
+        /*** Setup client ***/
+        let (client_comp, unique_reg_f) = system.create_and_register( || {
+            Client::with(
+                num_proposals,
+                nodes_id,
+                reconfig,
+                finished_latch,
+            )
+        });
+        unique_reg_f.wait_expect(
+            Duration::from_millis(1000),
+            "Client failed to register!",
+        );
+
+        let client_comp_f = system.start_notify(&client_comp);
+        client_comp_f
+            .wait_timeout(Duration::from_millis(1000))
+            .expect("ClientComp never started!");
+        client_comp
     }
 }
 
@@ -224,12 +283,48 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Preparing iteration");
         match self.system {
             Some(ref system) => {
-                let prepare_latch = Arc::new(CountdownEvent::new(1));
                 let finished_latch = Arc::new(CountdownEvent::new(1));
+                self.finished_latch = Some(finished_latch);
                 self.iteration_id += 1;
                 match self.algorithm {
                     Some(Algorithm::Paxos) => {
-                        unimplemented!()
+                        let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
+                        let (replica_comp, unique_reg_f) = system.create_and_register(|| {
+                            ReplicaComp::with(initial_config, system.clone(), TransferPolicy::Passive)
+                        });
+                        unique_reg_f.wait_expect(
+                            Duration::from_millis(1000),
+                            "ReplicaComp failed to register!",
+                        );
+                        let replica_comp_f = system.start_notify(&replica_comp);
+                        replica_comp_f
+                            .wait_timeout(Duration::from_millis(1000))
+                            .expect("ReplicaComp never started!");
+
+                        let named_reg_f = system.register_by_alias(
+                            &replica_comp,
+                            format!("replica{}", &self.iteration_id),
+                        );
+                        named_reg_f.wait_expect(
+                            Duration::from_millis(1000),
+                            "Failed to register alias for ReplicaComp"
+                        );
+                        let self_path = ActorPath::Named(NamedPath::with_system(
+                            system.system_path(),
+                            vec![format!("replica{}", &self.iteration_id).into()],
+                        ));
+
+                        let mut nodes = d;
+                        nodes.insert(0, self_path);
+                        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
+                        for (id, actorpath) in nodes.iter().enumerate() {
+                            nodes_id.insert(id as u64 + 1, actorpath.clone());
+                        }
+
+                        self.partitioning_actor = Some(self.initialise_iteration(nodes));
+                        self.client_comp = Some(self.create_client(self.num_proposals.unwrap(), nodes_id, self.reconfiguration.clone()));
+                        std::thread::sleep(Duration::from_secs(3));
+                        self.paxos_replica_comp = Some(replica_comp);
                     }
                     Some(Algorithm::Raft) => {
                         let conf_state = get_initial_conf(self.num_nodes.unwrap() as u64);
@@ -239,97 +334,56 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             max_inflight_msgs: self.num_proposals.unwrap() as usize,
                             ..Default::default()
                         };
-                        /*** Setup RaftComp ***/
                         let (raft_comp, unique_reg_f) = system.create_and_register(|| {
                             RaftComp::with(config, conf_state)
                         });
-                        let raft_comp_f = system.start_notify(&raft_comp);
-                        raft_comp_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("RaftComp never started!");
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
                             "RaftComp failed to register!",
                         );
-                        /*** Setup communicator ***/
+
                         let (communicator, unique_reg_f) =
                             system.create_and_register(|| { Communicator::new() });
-                        let named_reg_f = system.register_by_alias(
-                            &communicator,
-                            format!("communicator{}", &self.iteration_id),
-                        );
                         unique_reg_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("Communicator never registered!")
                             .expect("Communicator failed to register!");
-                        named_reg_f.wait_expect(
-                            Duration::from_millis(1000),
-                            "Communicator failed to register!",
-                        );
+
+                        biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
+                            .expect("Could not connect components!");
+                        /*** start components***/
                         let communicator_f = system.start_notify(&communicator);
                         communicator_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("Communicator never started!");
+                        let named_reg_f = system.register_by_alias(
+                            &communicator,
+                            format!("communicator{}", &self.iteration_id),
+                        );
+                        named_reg_f.wait_expect(
+                            Duration::from_millis(1000),
+                            "Communicator failed to register!",
+                        );
 
-                        biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
-                            .expect("Could not connect components!");
+                        let raft_comp_f = system.start_notify(&raft_comp);
+                        raft_comp_f
+                            .wait_timeout(Duration::from_millis(1000))
+                            .expect("RaftComp never started!");
 
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
                             vec![format!("communicator{}", &self.iteration_id).into()],
                         ));
-
                         let mut nodes = d;
                         nodes.insert(0, self_path);
                         let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
                         for (id, actorpath) in nodes.iter().enumerate() {
                             nodes_id.insert(id as u64 + 1, actorpath.clone());
                         }
-                        // TODO: create partitioning actor in setup and just trigger an event w. iteration_id on it locally (change atomic register as well)
-                        /*** Setup partitioning actor ***/
-                        let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {
-                            PartitioningActor::with(
-                                prepare_latch.clone(),
-                                None,
-                                self.iteration_id,
-                                nodes,
-                                1,
-                                None,
-                            )
-                        });
-                        unique_reg_f.wait_expect(
-                            Duration::from_millis(1000),
-                            "PartitioningComp failed to register!",
-                        );
 
-                        let partitioning_actor_f = system.start_notify(&partitioning_actor);
-                        partitioning_actor_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("PartitioningComp never started!");
-                        /*** Setup client ***/
-                        let (client_comp, unique_reg_f) = system.create_and_register( || {
-                            Client::with(
-                                self.num_proposals.unwrap(),
-                                nodes_id,
-                                self.reconfiguration.clone(),
-                                finished_latch.clone(),
-                            )
-                        });
-                        unique_reg_f.wait_expect(
-                            Duration::from_millis(1000),
-                            "Client failed to register!",
-                        );
-
-                        let client_comp_f = system.start_notify(&client_comp);
-                        client_comp_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("ClientComp never started!");
-
-                        self.partitioning_actor = Some(partitioning_actor);
+                        self.partitioning_actor = Some(self.initialise_iteration(nodes));
+                        self.client_comp = Some(self.create_client(self.num_proposals.unwrap(), nodes_id, self.reconfiguration.clone()));
                         self.raft_components = Some((raft_comp, communicator));
-                        self.client_comp = Some(client_comp);
-                        self.finished_latch = Some(finished_latch);
-                        prepare_latch.wait();
                     }
                     _ => unimplemented!(),
                 }
@@ -363,14 +417,22 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             let stop_f =
                 partitioning_actor
                 .actor_ref()
-                .ask( |promise| IterationControlMsg::StopIteration(Ask::new(promise, ())));
+                .ask( |promise| IterationControlMsg::Stop(Ask::new(promise, ())));
 
-            stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
+            stop_f.wait();
+            // stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
 
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("Partitioning Actor never died!");
+        }
+
+        if let Some(paxos_replica_comp) = self.paxos_replica_comp.take() {
+            let kill_replica_f = system.kill_notify(paxos_replica_comp);
+            kill_replica_f
+                .wait_timeout(Duration::from_millis(1000))
+                .expect("Paxos Replica never died!");
         }
 
         if let Some((raft_comp, communicator)) = self.raft_components.take() {
@@ -402,7 +464,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    //    paxos_comp: Option<Arc<Component<LeaderPaxosComp>>>,
+    paxos_replica_comp: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
     raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
 }
 
@@ -410,6 +472,7 @@ impl AtomicBroadcastClient {
     fn new() -> AtomicBroadcastClient {
         AtomicBroadcastClient {
             system: None,
+            paxos_replica_comp: None,
             raft_components: None
         }
     }
@@ -425,10 +488,35 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         let named_path = match c.algorithm {
             Algorithm::Paxos => {
-                unimplemented!()
+                let initial_config = get_initial_conf(c.last_node_id).0;
+                let (replica_comp, unique_reg_f) = system.create_and_register(|| {
+                    ReplicaComp::with(initial_config, system.clone(), TransferPolicy::Passive)
+                });
+                let replica_comp_f = system.start_notify(&replica_comp);
+                replica_comp_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("ReplicaComp never started!");
+                unique_reg_f.wait_expect(
+                    Duration::from_millis(1000),
+                    "ReplicaComp failed to register!",
+                );
+                let named_reg_f = system.register_by_alias(
+                    &replica_comp,
+                    "replica",
+                );
+                named_reg_f.wait_expect(
+                    Duration::from_millis(1000),
+                    "Failed to register alias for ReplicaComp"
+                );
+                let self_path = ActorPath::Named(NamedPath::with_system(
+                    system.system_path(),
+                    vec!["replica".into()],
+                ));
+
+                self.paxos_replica_comp = Some(replica_comp);
+                self_path
             }
             Algorithm::Raft => {
-//                let conf_state = get_initial_conf(3);
                 let conf_state = get_initial_conf(c.last_node_id);
 //                let storage = MemStorage::new_with_conf_state(conf_state);
 //                let dir = "./diskstorage";
@@ -442,10 +530,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let (raft_comp, unique_reg_f) = system.create_and_register(|| {
                     RaftComp::with(config, conf_state)
                 });
-                let raft_comp_f = system.start_notify(&raft_comp);
-                raft_comp_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("RaftComp never started!");
                 unique_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "RaftComp failed to register!",
@@ -453,25 +537,30 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 /*** Setup communicator ***/
                 let (communicator, unique_reg_f) =
                     system.create_and_register(|| { Communicator::new() });
-                let named_reg_f = system.register_by_alias(
-                    &communicator,
-                    "communicator",
-                );
                 unique_reg_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never registered!")
                     .expect("Communicator to register!");
+
+                let named_reg_f = system.register_by_alias(
+                    &communicator,
+                    "communicator",
+                );
                 named_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "Communicator failed to register!",
                 );
+
+                biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
+                    .expect("Could not connect components!");
                 let communicator_f = system.start_notify(&communicator);
                 communicator_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never started!");
-
-                biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
-                    .expect("Could not connect components!");
+                let raft_comp_f = system.start_notify(&raft_comp);
+                raft_comp_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("RaftComp never started!");
 
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),

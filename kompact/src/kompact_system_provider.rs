@@ -89,9 +89,9 @@ impl KompactSystemProvider {
 
     fn set_scheduler_for_threads(threads: usize, conf: &mut KompactConfig) -> () {
         if threads <= 32 {
-            conf.scheduler(|t| crossbeam_workstealing_pool::small_pool(t))
+            conf.scheduler(|t| crossbeam_workstealing_pool::small_pool(t))  // TODO change to .executor when using new kompact
         } else if threads <= 64 {
-            conf.scheduler(|t| crossbeam_workstealing_pool::large_pool(t))
+            conf.scheduler(|t| crossbeam_workstealing_pool::large_pool(t))  // TODO same here
         } else {
             panic!("DynPool doesn't work atm!");
             //conf.scheduler(|t| crossbeam_workstealing_pool::dyn_pool(t))

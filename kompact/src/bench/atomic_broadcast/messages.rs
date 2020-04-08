@@ -1,7 +1,6 @@
 extern crate raft as tikv_raft;
 
 use kompact::prelude::*;
-use tikv_raft::prelude::Message as TikvRaftMsg;
 use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
 
@@ -10,6 +9,8 @@ use self::raft::*;
 pub mod raft {
     extern crate raft as tikv_raft;
     use tikv_raft::prelude::Message as TikvRaftMsg;
+    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
+    use super::*;
 
     #[derive(Clone, Debug)]
     pub struct RaftMsg {
@@ -22,74 +23,107 @@ pub mod raft {
         pub node_id: u64,
         pub iteration_id: u32
     }
+
+    pub struct RaftSer;
+
+    impl Serialiser<RaftMsg> for RaftSer {
+        fn ser_id(&self) -> u64 {
+            serialiser_ids::RAFT_ID
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            Some(500)
+        }
+
+        fn serialise(&self, rm: &RaftMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            buf.put_u32_be(rm.iteration_id);
+            let bytes: Vec<u8> = rm.payload.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
+            buf.put_slice(&bytes);
+            Ok(())
+        }
+    }
+
+    impl Deserialiser<RaftMsg> for RaftSer {
+        const SER_ID: u64 = serialiser_ids::RAFT_ID;
+
+        fn deserialise(buf: &mut dyn Buf) -> Result<RaftMsg, SerError> {
+            let iteration_id = buf.get_u32_be();
+            let bytes = buf.bytes();
+            let payload: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
+            let rm = RaftMsg { iteration_id, payload };
+            Ok(rm)
+        }
+    }
 }
 
 pub mod paxos {
-    use ballot_leader_election::{Ballot, Leader};
+    use ballot_leader_election::Ballot;
     use super::super::paxos::raw_paxos::Entry;
     use std::fmt::Debug;
-    use kompact::prelude::Serialiser;
+    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
+    use crate::serialiser_ids;
+    use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
-        pub n: Round,
+        pub n: Ballot,
         pub ld: u64,
-        pub n_accepted: Round,
+        pub n_accepted: Ballot,
     }
 
     impl Prepare {
-        pub fn with(n: Round, ld: u64, n_accepted: Round) -> Prepare {
+        pub fn with(n: Ballot, ld: u64, n_accepted: Ballot) -> Prepare {
             Prepare{ n, ld, n_accepted }
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct Promise<T> where T: Clone + Debug {
-        pub n: Round,
-        pub n_accepted: Round,
-        pub sfx: Vec<Entry<T>>,
+    pub struct Promise {
+        pub n: Ballot,
+        pub n_accepted: Ballot,
+        pub sfx: Vec<Entry>,
         pub ld: u64,
     }
 
-    impl<T> Promise<T> where T: Clone + Debug {
-        pub fn with(n: Round, n_accepted: Round, sfx: Vec<Entry<T>>, ld: u64) -> Promise<T> {
+    impl Promise {
+        pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
             Promise { n, n_accepted, sfx, ld }
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct AcceptSync<T> where T: Clone + Debug {
-        pub n: Round,
-        pub sfx: Vec<Entry<T>>,
+    pub struct AcceptSync {
+        pub n: Ballot,
+        pub sfx: Vec<Entry>,
         pub ld: u64
     }
 
-    impl<T> AcceptSync<T> where T: Clone + Debug {
-        pub fn with(n: Round, sfx: Vec<Entry<T>>, ld: u64) -> AcceptSync<T> {
+    impl AcceptSync {
+        pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64) -> AcceptSync {
             AcceptSync { n, sfx, ld }
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct Accept<T> where T: Clone + Debug {
-        pub n: Round,
-        pub entry: Entry<T>,
+    pub struct Accept {
+        pub n: Ballot,
+        pub entry: Entry,
     }
 
-    impl<T> Accept<T> where T: Clone + Debug {
-        pub fn with(n: Round, entry: Entry<T>) -> Accept<T> {
+    impl Accept {
+        pub fn with(n: Ballot, entry: Entry) -> Accept {
             Accept{ n, entry }
         }
     }
 
     #[derive(Clone, Debug)]
     pub struct Accepted {
-        pub n: Round,
+        pub n: Ballot,
         pub la: u64,
     }
 
     impl Accepted {
-        pub fn with(n: Round, la: u64) -> Accepted {
+        pub fn with(n: Ballot, la: u64) -> Accepted {
             Accepted{ n, la }
         }
     }
@@ -97,35 +131,338 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub struct Decide {
         pub ld: u64,
-        pub n: Round,
+        pub n: Ballot,
     }
 
     impl Decide {
-        pub fn with(ld: u64, n: Round) -> Decide {
+        pub fn with(ld: u64, n: Ballot) -> Decide {
             Decide{ ld, n }
         }
     }
 
     #[derive(Clone, Debug)]
-    pub enum PaxosMsg<T> where T: Clone + Debug {
-//        Leader(Leader),
+    pub enum PaxosMsg {
         Prepare(Prepare),
-        Promise(Promise<T>),
-        AcceptSync(AcceptSync<T>),
-        Accept(Accept<T>),
+        Promise(Promise),
+        AcceptSync(AcceptSync),
+        Accept(Accept),
         Accepted(Accepted),
         Decide(Decide)
     }
 
-    #[derive(Clone, Debug, PartialEq, PartialOrd)]
-    pub struct Round {
-        config_id: u32,
-        ballot: Ballot,
+    #[derive(Clone, Debug)]
+    pub struct Message {
+        pub from: u64,
+        pub to: u64,
+        pub msg: PaxosMsg
     }
 
-    impl Round {
-        pub fn with(config_id: u32, ballot: Ballot) -> Round {
-            Round{ config_id, ballot }
+    impl Message {
+        pub fn with(from: u64, to: u64, msg: PaxosMsg) -> Message {
+            Message{ from, to, msg }
+        }
+    }
+
+    const PREPARE_ID: u8 = 1;
+    const PROMISE_ID: u8 = 2;
+    const ACCEPTSYNC_ID: u8 = 3;
+    const ACCEPT_ID: u8 = 4;
+    const ACCEPTED_ID: u8 = 5;
+    const DECIDE_ID: u8 = 6;
+
+    const NORMAL_ENTRY_ID: u8 = 7;
+    const SS_ENTRY_ID: u8 = 8;
+
+    pub struct PaxosSer;
+
+    impl PaxosSer {
+        fn serialise_ballot(ballot: &Ballot, buf: &mut dyn BufMut) {
+            buf.put_u64_be(ballot.n);
+            buf.put_u64_be(ballot.pid);
+        }
+
+        fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
+            match e {
+                Entry::Normal(data) => {
+                    buf.put_u8(NORMAL_ENTRY_ID);
+                    buf.put_u32_be(data.len() as u32);
+                    buf.put_slice(data);
+                },
+                Entry::StopSign(ss) => {
+                    buf.put_u8(SS_ENTRY_ID);
+                    buf.put_u32_be(ss.config_id);
+                    buf.put_u32_be(ss.nodes.len() as u32);
+                    ss.nodes.iter().for_each(|pid| buf.put_u64_be(*pid));
+                }
+            }
+        }
+
+        fn serialise_entries(ents: &Vec<Entry>, buf: &mut dyn BufMut) {
+            buf.put_u32_be(ents.len() as u32);
+            for e in ents {
+                Self::serialise_entry(e, buf);
+            }
+        }
+
+        fn deserialise_ballot(buf: &mut dyn Buf) -> Ballot {
+            let n = buf.get_u64_be();
+            let pid = buf.get_u64_be();
+            Ballot::with(n, pid)
+        }
+
+        fn deserialise_entry(buf: &mut dyn Buf) -> Entry {
+            match buf.get_u8() {
+                NORMAL_ENTRY_ID => {
+                    let data_len = buf.get_u32_be();
+                    let mut data = Vec::with_capacity(data_len as usize);
+                    for _ in 0..data_len {
+                        data.push(buf.get_u8());
+                    }
+                    Entry::Normal(data)
+                },
+                SS_ENTRY_ID => {
+                    let config_id = buf.get_u32_be();
+                    let nodes_len = buf.get_u32_be();
+                    let mut nodes = vec![];
+                    for _ in 0..nodes_len {
+                        nodes.push(buf.get_u64_be());
+                    }
+                    let ss = StopSign::with(config_id, nodes);
+                    Entry::StopSign(ss)
+                },
+                _ => unimplemented!()
+            }
+        }
+
+        fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry> {
+            let mut ents = vec![];
+            let len = buf.get_u32_be();
+            for _ in 0..len {
+                ents.push(Self::deserialise_entry(buf));
+            }
+            ents
+        }
+    }
+
+    impl Serialiser<Message> for PaxosSer {
+        fn ser_id(&self) -> u64 {
+            serialiser_ids::PAXOS_ID
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            Some(220000)   // TODO?
+        }
+
+        fn serialise(&self, m: &Message, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            buf.put_u64_be(m.from);
+            buf.put_u64_be(m.to);
+            match &m.msg {
+                PaxosMsg::Prepare(p) => {
+                    buf.put_u8(PREPARE_ID);
+                    Self::serialise_ballot(&p.n, buf);
+                    Self::serialise_ballot(&p.n_accepted, buf);
+                    buf.put_u64_be(p.ld);
+                },
+                PaxosMsg::Promise(p) => {
+                    buf.put_u8(PROMISE_ID);
+                    Self::serialise_ballot(&p.n, buf);
+                    Self::serialise_ballot(&p.n_accepted, buf);
+                    buf.put_u64_be(p.ld);
+                    Self::serialise_entries(&p.sfx, buf);
+                },
+                PaxosMsg::AcceptSync(acc_sync) => {
+                    buf.put_u8(ACCEPTSYNC_ID);
+                    Self::serialise_ballot(&acc_sync.n, buf);
+                    Self::serialise_entries(&acc_sync.sfx, buf);
+                    buf.put_u64_be(acc_sync.ld);
+                }
+                PaxosMsg::Accept(a) => {
+                    buf.put_u8(ACCEPT_ID);
+                    Self::serialise_ballot(&a.n, buf);
+                    buf.put_u32_be(1);  // len
+                    Self::serialise_entry(&a.entry, buf);
+                },
+                PaxosMsg::Accepted(acc) => {
+                    buf.put_u8(ACCEPTED_ID);
+                    Self::serialise_ballot(&acc.n, buf);
+                    buf.put_u64_be(acc.la);
+                },
+                PaxosMsg::Decide(d) => {
+                    buf.put_u8(DECIDE_ID);
+                    Self::serialise_ballot(&d.n, buf);
+                    buf.put_u64_be(d.ld);
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl Deserialiser<Message> for PaxosSer {
+        const SER_ID: u64 = serialiser_ids::PAXOS_ID;
+
+        fn deserialise(buf: &mut dyn Buf) -> Result<Message, SerError> {
+            let from = buf.get_u64_be();
+            let to = buf.get_u64_be();
+            match buf.get_u8() {
+                PREPARE_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let n_accepted = Self::deserialise_ballot(buf);
+                    let ld = buf.get_u64_be();
+                    let p = Prepare::with(n, ld, n_accepted);
+                    let msg = Message::with(from, to, PaxosMsg::Prepare(p));
+                    Ok(msg)
+                },
+                PROMISE_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let n_accepted = Self::deserialise_ballot(buf);
+                    let ld = buf.get_u64_be();
+                    let sfx = Self::deserialise_entries(buf);
+                    let prom = Promise::with(n, n_accepted, sfx, ld);
+                    let msg = Message::with(from, to, PaxosMsg::Promise(prom));
+                    Ok(msg)
+                },
+                ACCEPTSYNC_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let sfx = Self::deserialise_entries(buf);
+                    let ld = buf.get_u64_be();
+                    let acc_sync = AcceptSync::with(n, sfx, ld);
+                    let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
+                    Ok(msg)
+                },
+                ACCEPT_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let len = buf.get_u32_be();
+                    if len != 1 {
+                        Err(SerError::InvalidData(
+                            "Should only be 1 entry in Accept".into(),
+                        ))
+                    } else {
+                        let entry = Self::deserialise_entry(buf);
+                        let a = Accept::with(n, entry);
+                        let msg = Message::with(from, to, PaxosMsg::Accept(a));
+                        Ok(msg)
+                    }
+                },
+                ACCEPTED_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let ld = buf.get_u64_be();
+                    let acc = Accepted::with(n, ld);
+                    let msg = Message::with(from, to, PaxosMsg::Accepted(acc));
+                    Ok(msg)
+                },
+                DECIDE_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let ld = buf.get_u64_be();
+                    let d = Decide::with(ld, n);
+                    let msg = Message::with(from, to, PaxosMsg::Decide(d));
+                    Ok(msg)
+                },
+                _ => {
+                    Err(SerError::InvalidType(
+                        "Found unkown id but expected PaxosMsg".into(),
+                    ))
+                }
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SequenceMetaData {
+        next_config_id: u32,
+        len: u64
+    }
+
+    impl SequenceMetaData {
+        pub fn with(next_config_id: u32, len: u64) -> SequenceMetaData {
+            SequenceMetaData{ next_config_id, len }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SequenceTransfer {
+        pub config_id: u32,
+        pub tag: u32,
+        pub seq_len: u32,
+        pub seq_ser: Vec<u8>,
+        pub metadata: SequenceMetaData
+    }
+
+    impl SequenceTransfer {
+        pub fn with(
+            config_id: u32,
+            tag: u32,
+            seq_len: u32,
+            seq_ser: Vec<u8>,
+            metadata: SequenceMetaData
+        ) -> SequenceTransfer {
+            SequenceTransfer{ config_id, tag, seq_len, seq_ser, metadata }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SequenceRequest {
+        pub config_id: u32,
+        pub tag: u32,   // keep track of which segment of the sequence this is
+        pub from_idx: u64,
+        pub to_idx: u64
+    }
+
+    impl SequenceRequest {
+        pub fn with(config_id: u32, tag: u32, from_idx: u64, to_idx: u64) -> SequenceRequest {
+            SequenceRequest{ config_id, tag, from_idx, to_idx }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SequenceResponse {
+        pub config_id: u32,
+        pub from_idx: u64,
+        pub to_idx: u64
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct ReconfigInit {
+        pub config_id: u32,
+        pub nodes: Vec<u64>,
+    }
+
+    impl ReconfigInit {
+        pub fn with(config_id: u32, nodes: Vec<u64>) -> ReconfigInit {
+            ReconfigInit{ config_id, nodes }
+        }
+    }
+
+    pub struct ReplicaSer;
+
+    impl Serialiser<ReconfigInit> for ReplicaSer {
+        fn ser_id(&self) -> u64 {
+            serialiser_ids::REPLICA_ID
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            Some(50) // TODO?
+        }
+
+        fn serialise(&self, r: &ReconfigInit, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            buf.put_u32_be(r.config_id);
+            buf.put_u32_be(r.nodes.len() as u32);
+            r.nodes.iter().for_each(|pid| buf.put_u64_be(*pid));
+            Ok(())
+        }
+    }
+
+    impl Deserialiser<ReconfigInit> for ReplicaSer {
+        const SER_ID: u64 = serialiser_ids::REPLICA_ID;
+
+        fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigInit, SerError> {
+            let config_id = buf.get_u32_be();
+            let mut nodes = vec![];
+            let nodes_len = buf.get_u32_be();
+            for _ in 0..nodes_len {
+                nodes.push(buf.get_u64_be());
+            }
+            let r = ReconfigInit::with(config_id, nodes);
+            Ok(r)
         }
     }
 
@@ -198,7 +535,7 @@ pub mod paxos {
             }
 
             fn size_hint(&self) -> Option<usize> {
-                Some(30)
+                Some(50)
             }
 
             fn serialise(&self, v: &HeartbeatMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -302,38 +639,25 @@ impl Proposal {
 #[derive(Clone, Debug)]
 pub struct ProposalResp {
     pub id: u64,
-    pub client: Option<ActorPath>,  // client don't need it when receiving it
     pub succeeded: bool,
     pub current_config: Option<(Vec<u64>, Vec<u64>)>,
 }
 
 impl ProposalResp {
-    pub fn failed(proposal: Proposal) -> ProposalResp {
-        let pr = ProposalResp {
-            id: proposal.id,
-            client: Some(proposal.client),
-            succeeded: false,
-            current_config: proposal.reconfig
-        };
-        pr
+    pub fn succeeded_normal(id: u64) -> ProposalResp {
+        ProposalResp{ id, succeeded: true, current_config: None }
     }
 
-    pub fn succeeded_normal(proposal: Proposal) -> ProposalResp {
-        ProposalResp {
-            id: proposal.id,
-            client: Some(proposal.client),
-            succeeded: true,
-            current_config: None
-        }
-    }
-
-    pub fn succeeded_reconfiguration(client: ActorPath, current_config: (Vec<u64>, Vec<u64>)) -> ProposalResp {
+    pub fn succeeded_reconfiguration(current_config: (Vec<u64>, Vec<u64>)) -> ProposalResp {
         ProposalResp {
             id: RECONFIG_ID,
-            client: Some(client),
             succeeded: true,
             current_config: Some(current_config)
         }
+    }
+
+    pub fn failed(id: u64) -> ProposalResp {
+        ProposalResp{ id, succeeded: false, current_config: None }
     }
 }
 
@@ -353,29 +677,36 @@ impl ProposalForward {
 }
 
 #[derive(Clone, Debug)]
-pub struct SequenceReq;
-
-#[derive(Clone, Debug)]
 pub struct SequenceResp {
     pub node_id: u64,
     pub sequence: Vec<u64>
 }
 
+impl SequenceResp {
+    pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
+        SequenceResp{ node_id, sequence }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum CommunicatorMsg {
-    // TODO: Add PaxosMsg and reuse Communicator and AtomicBroadcastSer in Paxos?
     RaftMsg(RaftMsg),
-    Proposal(Proposal),
-    ProposalResp(ProposalResp),
+    ProposalResp(ActorPath, ProposalResp),
     ProposalForward(ProposalForward),
-    SequenceReq(SequenceReq),
     SequenceResp(SequenceResp),
     InitAck(u32)
 }
 
+#[derive(Clone, Debug)]
+pub enum AtomicBroadcastMsg {
+    Proposal(Proposal),
+    ProposalResp(ProposalResp),
+    SequenceReq,
+    SequenceResp(SequenceResp)
+}
+
 const PROPOSAL_ID: u8 = 0;
 const PROPOSALRESP_ID: u8 = 1;
-const RAFT_MSG_ID: u8 = 2;
 const SEQREQ_ID: u8 = 3;
 const SEQRESP_ID: u8 = 4;
 
@@ -386,25 +717,18 @@ pub const RECONFIG_ID: u64 = 0;
 
 pub struct AtomicBroadcastSer;
 
-impl Serialiser<CommunicatorMsg> for AtomicBroadcastSer {
+impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
     fn ser_id(&self) -> SerId {
-        serialiser_ids::RAFT_ID
+        serialiser_ids::ATOMICBCAST_ID
     }
 
     fn size_hint(&self) -> Option<usize> {
         Some(50000)
     }
 
-    fn serialise(&self, enm: &CommunicatorMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
+    fn serialise(&self, enm: &AtomicBroadcastMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
         match enm {
-            CommunicatorMsg::RaftMsg(rm) => {
-                buf.put_u8(RAFT_MSG_ID);
-                buf.put_u32_be(rm.iteration_id);
-                let bytes: Vec<u8> = rm.payload.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
-                buf.put_slice(&bytes);
-                Ok(())
-            },
-            CommunicatorMsg::Proposal(p) => {
+            AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
                 buf.put_u64_be(p.id);
                 match &p.reconfig {
@@ -428,7 +752,7 @@ impl Serialiser<CommunicatorMsg> for AtomicBroadcastSer {
                 p.client.serialise(buf).expect("Failed to serialise actorpath");
                 Ok(())
             },
-            CommunicatorMsg::ProposalResp(pr) => {
+            AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
                 buf.put_u64_be(pr.id);
                 if pr.succeeded {
@@ -456,11 +780,11 @@ impl Serialiser<CommunicatorMsg> for AtomicBroadcastSer {
                 }
                 Ok(())
             },
-            CommunicatorMsg::SequenceReq(_) => {
+            AtomicBroadcastMsg::SequenceReq => {
                 buf.put_u8(SEQREQ_ID);
                 Ok(())
             },
-            CommunicatorMsg::SequenceResp(sr) => {
+            AtomicBroadcastMsg::SequenceResp(sr) => {
                 buf.put_u8(SEQRESP_ID);
                 buf.put_u64_be(sr.node_id);
                 let seq_len = sr.sequence.len() as u32;
@@ -469,26 +793,16 @@ impl Serialiser<CommunicatorMsg> for AtomicBroadcastSer {
                     buf.put_u64_be(i.clone());
                 }
                 Ok(())
-            },
-            _ => {
-                Err(SerError::InvalidType("Tried to serialise unknown type".into()))
             }
         }
     }
 }
 
-impl Deserialiser<CommunicatorMsg> for AtomicBroadcastSer {
-    const SER_ID: u64 = serialiser_ids::RAFT_ID;
+impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
+    const SER_ID: u64 = serialiser_ids::ATOMICBCAST_ID;
 
-    fn deserialise(buf: &mut dyn Buf) -> Result<CommunicatorMsg, SerError> {
+    fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg, SerError> {
         match buf.get_u8(){
-            RAFT_MSG_ID => {
-                let iteration_id = buf.get_u32_be();
-                let bytes = buf.bytes();
-                let payload: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
-                let rm = RaftMsg { iteration_id, payload};
-                Ok(CommunicatorMsg::RaftMsg(rm))
-            },
             PROPOSAL_ID => {
                 let id = buf.get_u64_be();
                 let voters_len = buf.get_u32_be();
@@ -509,7 +823,7 @@ impl Deserialiser<CommunicatorMsg> for AtomicBroadcastSer {
                     client,
                     reconfig
                 };
-                Ok(CommunicatorMsg::Proposal(proposal))
+                Ok(AtomicBroadcastMsg::Proposal(proposal))
             },
             PROPOSALRESP_ID => {
                 let id = buf.get_u64_be();
@@ -536,12 +850,11 @@ impl Deserialiser<CommunicatorMsg> for AtomicBroadcastSer {
                 let pr = ProposalResp {
                     id,
                     succeeded,
-                    client: None,
                     current_config: reconfig,
                 };
-                Ok(CommunicatorMsg::ProposalResp(pr))
+                Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },
-            SEQREQ_ID => Ok(CommunicatorMsg::SequenceReq(SequenceReq)),
+            SEQREQ_ID => Ok(AtomicBroadcastMsg::SequenceReq),
             SEQRESP_ID => {
                 let node_id = buf.get_u64_be();
                 let sequence_len = buf.get_u32_be();
@@ -550,7 +863,7 @@ impl Deserialiser<CommunicatorMsg> for AtomicBroadcastSer {
                     sequence.push(buf.get_u64_be());
                 }
                 let sr = SequenceResp{ node_id, sequence};
-                Ok(CommunicatorMsg::SequenceResp(sr))
+                Ok(AtomicBroadcastMsg::SequenceResp(sr))
             }
             _ => {
                 Err(SerError::InvalidType(

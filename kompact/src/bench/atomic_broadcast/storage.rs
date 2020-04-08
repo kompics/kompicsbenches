@@ -556,183 +556,72 @@ pub mod raft {
 
 pub mod paxos {
     use std::fmt::Debug;
-    use std::error::Error;
-    use std::marker;
-    use super::super::messages::paxos::{ballot_leader_election::Ballot, Round};
-    use super::super::paxos::raw_paxos::Entry;
+    use super::super::messages::paxos::{ballot_leader_election::Ballot};
+    use super::super::paxos::{SequenceTraits, PaxosStateTraits, raw_paxos::Entry};
 //    use crate::bench::atomic_broadcast::paxos::raw_paxos::Paxos;
     use std::sync::Arc;
     use std::mem;
-/*
-    pub trait PaxosStorage<S> where S: Clone + Debug {
-        fn append_entry(&mut self, seq: Entry<S>);
-
-        fn append_sequence(&mut self, seq: &mut Vec<Entry<S>>);
-
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<S>>);
-
-        fn set_promise(&mut self, nprom: Round);
-
-        fn set_decided_len(&mut self, ld: u64);
-
-        fn set_accepted_round(&mut self, na: Round);
-
-        fn get_accepted_round(&self) -> Round;
-
-        fn get_sequence_len(&self) -> u64;
-
-        fn get_decided_len(&self) -> u64;
-
-        fn get_suffix(&self, from: u64) -> Vec<Entry<S>>;
-
-        fn get_decided_suffix(&self) -> Vec<Entry<S>>;
-
-        fn get_promise(&self) -> Round;
-
-        fn decide_entries(&mut self, l: u64) -> Vec<Entry<S>>;
-
-        fn stopped(&self) -> bool;
-    }
-
-    pub struct MemoryStorage<T> where T: Clone + Debug {
-            n_prom: Round,
-            acc_round: Round,
-            acc_seq: Vec<Entry<T>>, // va
-            ld: u64
-    }
-
-    impl<T> PaxosStorage<T> for MemoryStorage<T> where T: Clone + Debug {
-        fn append_entry(&mut self, entry: Entry<T>) {
-            self.acc_seq.push(entry);
-        }
-
-        fn append_sequence(&mut self, seq: &mut Vec<Entry<T>>) {
-            self.acc_seq.append( seq);
-        }
-
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<T>>) {
-            self.acc_seq.truncate(from_idx as usize);
-            self.acc_seq.append(seq);
-        }
-
-        fn set_promise(&mut self, n: Round) {
-            self.n_prom = n;
-        }
-
-        fn set_decided_len(&mut self, ld: u64) {
-            self.ld = ld;
-        }
-
-        fn set_accepted_round(&mut self, na: Round) {
-            self.acc_round = na;
-        }
-
-        fn get_accepted_round(&self) -> Round {
-            self.acc_round.clone()
-        }
-
-        fn get_sequence_len(&self) -> u64 {
-            self.acc_seq.len() as u64
-        }
-
-        fn get_decided_len(&self) -> u64 {
-            self.ld
-        }
-
-        fn get_suffix(&self, from: u64) -> Vec<Entry<T>> {
-            self.acc_seq[from as usize..].to_vec()
-        }
-
-        fn get_decided_suffix(&self) -> Vec<Entry<T>> {
-            self.get_suffix(self.ld)
-        }
-
-        fn get_promise(&self) -> Round {
-            self.n_prom.clone()
-        }
-
-        fn decide_entries(&mut self, l: u64) -> Vec<Entry<T>> {
-            if l > self.ld {
-                let from = self.ld as usize;
-                let to = l as usize;
-                self.ld = l;
-                self.acc_seq[from..to].to_vec()
-            } else {
-                vec![]
-            }
-        }
-
-        fn stopped(&self) -> bool {
-            match self.acc_seq[self.ld as usize] {
-                Entry::StopSign(_) => true,
-                Entry::Normal(_) => false
-            }
-        }
-    }*/
-
-    /*pub struct Chain<S, T> where
-        T: Clone + Debug,
-        S: Sequence<EntryType = T>,
-    {
-        head: S,
-        tail: Option<Arc<Chain<S, T>>>,
-    }*/
 
     pub trait Sequence {
-        type EntryType: Clone + Debug;
+        fn new() -> Self;
 
-        fn append_entry(&mut self, seq: Entry<Self::EntryType>);
+        fn append_entry(&mut self, entry: Entry);
 
-        fn append_sequence(&mut self, seq: &mut Vec<Entry<Self::EntryType>>);
+        fn append_sequence(&mut self, seq: &mut Vec<Entry>);
 
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<Self::EntryType>>);
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
 
-        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry<Self::EntryType>>;
+        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
 
-        fn get_suffix(&self, from: u64) -> Vec<Entry<Self::EntryType>>;
+        fn get_suffix(&self, from: u64) -> Vec<Entry>;
+
+        fn get_sequence(&self) -> Vec<Entry>;
 
         fn get_sequence_len(&self) -> u64;
 
-        fn get_decided_suffix(&self) -> Vec<Entry<Self::EntryType>>;
-
-        fn stopped(&self) -> bool;
+        fn stopped(&self, idx: u64) -> bool;
     }
 
     pub trait PaxosState {
-        fn set_promise(&mut self, nprom: Round);
+        fn new() -> Self;
+
+        fn set_promise(&mut self, nprom: Ballot);
 
         fn set_decided_len(&mut self, ld: u64);
 
-        fn set_accepted_round(&mut self, na: Round);
+        fn set_accepted_ballot(&mut self, na: Ballot);
 
-        fn get_accepted_round(&self) -> Round;
+        fn get_accepted_ballot(&self) -> Ballot;
 
         fn get_decided_len(&self) -> u64;
 
-        fn get_promise(&self) -> Round;
+        fn get_promise(&self) -> Ballot;
     }
 
     enum PaxosSequence<S> where S: Sequence {
         Active(S),
         Stopped(Arc<S>),
-        None // intermediate value to use with mem::replace
+        None // ugly intermediate value to use with mem::replace
     }
 
-    pub struct Storage<S, T, P> where
-        S: Sequence<EntryType = T>,
-        T: Clone + Debug,
+    pub struct Storage<S, P> where
+        S: Sequence,
         P: PaxosState
     {
         sequence: PaxosSequence<S>,
         paxos_state: P,
     }
 
-    impl<S, T, P> Storage<S, T, P> where
-        S: Sequence<EntryType = T>,
-        T: Clone + Debug,
+    impl<S, P> Storage<S, P> where
+        S: Sequence,
         P: PaxosState
     {
-        pub fn append_entry(&mut self, entry: Entry<T>) {
+        pub fn with(seq: S, paxos_state: P) -> Storage<S, P> {
+            let sequence = PaxosSequence::Active(seq);
+            Storage { sequence, paxos_state }
+        }
+
+        pub fn append_entry(&mut self, entry: Entry) {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_entry(entry);
@@ -744,7 +633,8 @@ pub mod paxos {
             }
         }
 
-        pub fn append_sequence(&mut self, seq: &mut Vec<Entry<T>>) {
+        pub fn append_sequence(&mut self, seq: &mut Vec<Entry>) {
+            if seq.is_empty() { return; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_sequence(seq);
@@ -756,7 +646,7 @@ pub mod paxos {
             }
         }
 
-        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry<T>>) {
+        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_on_prefix(from_idx, seq);
@@ -768,7 +658,20 @@ pub mod paxos {
             }
         }
 
-        pub fn set_promise(&mut self, nprom: Round) {
+        pub fn append_on_decided_prefix(&mut self, seq: &mut Vec<Entry>) {
+            let from_idx = self.get_decided_len();
+            match &mut self.sequence {
+                PaxosSequence::Active(s) => {
+                    s.append_on_prefix(from_idx, seq);
+                },
+                PaxosSequence::Stopped(_) => {
+                    panic!("Sequence should not be modified after reconfiguration");
+                },
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
+        }
+
+        pub fn set_promise(&mut self, nprom: Ballot) {
             self.paxos_state.set_promise(nprom);
         }
 
@@ -776,12 +679,20 @@ pub mod paxos {
             self.paxos_state.set_decided_len(ld);
         }
 
-        pub fn set_accepted_round(&mut self, na: Round) {
-            self.paxos_state.set_accepted_round(na);
+        pub fn set_accepted_ballot(&mut self, na: Ballot) {
+            self.paxos_state.set_accepted_ballot(na);
         }
 
-        pub fn get_accepted_round(&self) -> Round {
-            self.paxos_state.get_accepted_round()
+        pub fn get_accepted_ballot(&self) -> Ballot {
+            self.paxos_state.get_accepted_ballot()
+        }
+
+        pub fn get_sequence(&self) -> Vec<Entry> {
+            match &self.sequence {
+                PaxosSequence::Active(s) => s.get_sequence(),
+                PaxosSequence::Stopped(s) => s.get_sequence(),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+            }
         }
 
         pub fn get_sequence_len(&self) -> u64 {
@@ -796,7 +707,7 @@ pub mod paxos {
             self.paxos_state.get_decided_len()
         }
 
-        pub fn get_suffix(&self, from: u64) -> Vec<Entry<T>> {
+        pub fn get_suffix(&self, from: u64) -> Vec<Entry> {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_suffix(from),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.get_suffix(from),
@@ -804,16 +715,16 @@ pub mod paxos {
             }
         }
 
-        pub fn get_decided_suffix(&self) -> Vec<Entry<T>> {
+        pub fn get_decided_suffix(&self) -> Vec<Entry> {
             let ld = self.get_decided_len();
             self.get_suffix(ld)
         }
 
-        pub fn get_promise(&self) -> Round {
+        pub fn get_promise(&self) -> Ballot {
             self.paxos_state.get_promise()
         }
 
-        pub fn decide_entries(&mut self, ld: u64) -> Vec<Entry<T>> {
+        pub fn decide_entries(&mut self, ld: u64) -> Vec<Entry> {
             let prev_ld = self.get_decided_len();
             if ld > prev_ld {
                 let from = prev_ld;
@@ -836,9 +747,10 @@ pub mod paxos {
 
         pub fn stopped(&self) -> bool {
             let ld = self.get_decided_len();
+            if ld == 0 { return false; }
             match self.sequence {
-                PaxosSequence::Active(ref s) => s.stopped(),
-                PaxosSequence::Stopped(ref arc_s) => arc_s.stopped(),
+                PaxosSequence::Active(ref s) => s.stopped(ld-1),
+                PaxosSequence::Stopped(ref arc_s) => arc_s.stopped(ld-1),
                 _ => panic!("Got unexpected intermediate PaxosSequence::None")
             }
         }
@@ -856,4 +768,100 @@ pub mod paxos {
         }
     }
 
+    #[derive(Debug)]
+    pub struct MemorySequence {
+        sequence: Vec<Entry>
+    }
+
+    impl SequenceTraits for MemorySequence {}
+
+    impl Sequence for MemorySequence {
+        fn new() -> Self {
+            MemorySequence{ sequence: vec![] }
+        }
+
+        fn append_entry(&mut self, entry: Entry) {
+            self.sequence.push(entry);
+        }
+
+        fn append_sequence(&mut self, seq: &mut Vec<Entry>) {
+            self.sequence.append(seq);
+        }
+
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
+            self.sequence.truncate(from_idx as usize);
+            self.sequence.append(seq);
+        }
+
+        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
+            match self.sequence.get(from as usize..to as usize) {
+                Some(ents) => ents.to_vec(),
+                None => panic!("Index out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
+            }
+        }
+
+        fn get_suffix(&self, from: u64) -> Vec<Entry> {
+            match self.sequence.get(from as usize..) {
+                Some(s) => s.to_vec(),
+                None => panic!("get_suffix out of bounds: from: {}, len: {}", from, self.sequence.len())
+            }
+        }
+
+        fn get_sequence(&self) -> Vec<Entry> {
+            self.sequence.clone()
+        }
+
+        fn get_sequence_len(&self) -> u64 {
+            self.sequence.len() as u64
+        }
+
+        fn stopped(&self, idx: u64) -> bool {
+             match self.sequence.get(idx as usize) {
+                 Some(entry) => entry.is_stopsign(),
+                 None => false
+            }
+//            if idx as usize >= self.sequence.len() { return false; }
+//            self.sequence[idx as usize].is_stopsign()
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct MemoryState {
+        n_prom: Ballot,
+        acc_round: Ballot,
+        ld: u64
+    }
+
+    impl PaxosStateTraits for MemoryState {}
+
+    impl PaxosState for MemoryState {
+        fn new() -> Self {
+            let ballot = Ballot::with(0, 0);
+            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: 0 }
+        }
+
+        fn set_promise(&mut self, nprom: Ballot) {
+            self.n_prom = nprom;
+        }
+
+        fn set_decided_len(&mut self, ld: u64) {
+            self.ld = ld;
+        }
+
+        fn set_accepted_ballot(&mut self, na: Ballot) {
+            self.acc_round = na;
+        }
+
+        fn get_accepted_ballot(&self) -> Ballot {
+            self.acc_round.clone()
+        }
+
+        fn get_decided_len(&self) -> u64 {
+            self.ld
+        }
+
+        fn get_promise(&self) -> Ballot {
+            self.n_prom.clone()
+        }
+    }
 }

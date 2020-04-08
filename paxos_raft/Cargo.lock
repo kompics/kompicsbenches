@@ -489,6 +489,24 @@ checksum = "a246d82be1c9d791c5dfde9a2bd045fc3cbba3fa2b11ad558f27d01712f00569"
 
 [[package]]
 name = "executors"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bcdf1ef0554b089b159b5633ee6acf32a574b1bde537615de3012a8302caee4"
+dependencies = [
+ "arr_macro",
+ "crossbeam-channel 0.3.9",
+ "crossbeam-deque 0.7.3",
+ "crossbeam-utils 0.6.6",
+ "log 0.4.8",
+ "num_cpus",
+ "rand 0.7.3",
+ "synchronoise 1.0.0",
+ "threadpool",
+ "time",
+]
+
+[[package]]
+name = "executors"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59e5e7978cd8d6c84e715e32ba6444112a28734be9ec47221787a3638f1197b3"
@@ -722,12 +740,12 @@ dependencies = [
  "crossbeam-channel 0.4.2",
  "crossbeam-queue 0.2.1",
  "crossbeam-utils 0.7.2",
- "executors",
+ "executors 0.6.0",
  "fnv",
  "futures",
  "hocon",
- "kompact-actor-derive",
- "kompact-component-derive",
+ "kompact-actor-derive 0.9.0 (git+https://github.com/kompics/kompact)",
+ "kompact-component-derive 0.9.0 (git+https://github.com/kompics/kompact)",
  "log 0.4.8",
  "num_cpus",
  "oncemutex",
@@ -745,9 +763,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "kompact"
+version = "0.9.0"
+source = "git+https://github.com/kompics/kompact?rev=f0cca11#f0cca11bdc9711507bc84c3cb71944c45a7c598a"
+dependencies = [
+ "arc-swap 0.3.11",
+ "as_num",
+ "bitfields",
+ "bytes",
+ "crossbeam-channel 0.3.9",
+ "crossbeam-queue 0.1.2",
+ "crossbeam-utils 0.6.6",
+ "executors 0.5.3",
+ "fnv",
+ "futures",
+ "hocon",
+ "kompact-actor-derive 0.9.0 (git+https://github.com/kompics/kompact?rev=f0cca11)",
+ "kompact-component-derive 0.9.0 (git+https://github.com/kompics/kompact?rev=f0cca11)",
+ "log 0.4.8",
+ "num_cpus",
+ "oncemutex",
+ "sequence_trie",
+ "serde",
+ "slog",
+ "slog-async",
+ "slog-term",
+ "spaniel",
+ "synchronoise 1.0.0",
+ "time",
+ "tokio",
+ "tokio-retry",
+ "uuid 0.8.1",
+]
+
+[[package]]
 name = "kompact-actor-derive"
 version = "0.9.0"
 source = "git+https://github.com/kompics/kompact#a9b1a5b9909343e4992ade96961cfc33b2353c4a"
+dependencies = [
+ "proc-macro2 1.0.9",
+ "quote 1.0.3",
+ "syn 1.0.16",
+]
+
+[[package]]
+name = "kompact-actor-derive"
+version = "0.9.0"
+source = "git+https://github.com/kompics/kompact?rev=f0cca11#f0cca11bdc9711507bc84c3cb71944c45a7c598a"
 dependencies = [
  "proc-macro2 1.0.9",
  "quote 1.0.3",
@@ -765,6 +827,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kompact-component-derive"
+version = "0.9.0"
+source = "git+https://github.com/kompics/kompact?rev=f0cca11#f0cca11bdc9711507bc84c3cb71944c45a7c598a"
+dependencies = [
+ "proc-macro2 1.0.9",
+ "quote 1.0.3",
+ "syn 1.0.16",
+]
+
+[[package]]
 name = "kompact_benchmarks"
 version = "0.1.0"
 dependencies = [
@@ -773,7 +845,7 @@ dependencies = [
  "futures",
  "futures-cpupool",
  "grpc",
- "kompact",
+ "kompact 0.9.0 (git+https://github.com/kompics/kompact?rev=f0cca11)",
  "memmap",
  "num_cpus",
  "parse_duration",
@@ -1107,7 +1179,7 @@ dependencies = [
  "futures",
  "futures-cpupool",
  "grpc",
- "kompact",
+ "kompact 0.9.0 (git+https://github.com/kompics/kompact)",
  "kompact_benchmarks",
  "memmap",
  "num_cpus",

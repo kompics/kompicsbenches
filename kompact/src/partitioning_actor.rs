@@ -14,7 +14,6 @@ pub struct PartitioningActor {  // TODO generalize for different applications by
     init_id: u32,
     n: u32,
     nodes: Vec<ActorPath>,
-    num_keys: u64,
     init_ack_count: u32,
     done_count: u32,
     test_promise: Option<KPromise<Vec<KVTimestamp>>>,
@@ -27,7 +26,6 @@ impl PartitioningActor {
         finished_latch: Option<Arc<CountdownEvent>>,
         init_id: u32,
         nodes: Vec<ActorPath>,
-        num_keys: u64,
         test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     ) -> PartitioningActor {
         PartitioningActor {
@@ -37,9 +35,8 @@ impl PartitioningActor {
             reply_stop: None,
             stop_ack_count: 0,
             init_id,
-            n: nodes.len() as u32,
+            n: 0,
             nodes,
-            num_keys,
             init_ack_count: 0,
             done_count: 0,
             test_promise,
@@ -49,25 +46,8 @@ impl PartitioningActor {
 }
 
 impl Provide<ControlPort> for PartitioningActor {
-    fn handle(&mut self, event: ControlEvent) -> () {
-        match event {
-            ControlEvent::Start => {
-                let min_key: u64 = 0;
-                let max_key = self.num_keys - 1;
-                for (r, node) in (&self.nodes).iter().enumerate() {
-                    let rank = r as u32 + 1;    // index from 1 for raft...
-                    let init = Init {
-                        rank,
-                        init_id: self.init_id,
-                        nodes: self.nodes.clone(),
-                        min_key,
-                        max_key,
-                    };
-                    node.tell_ser(PartitioningActorMsg::Init(init).serialised(), self).expect("Should serialise");
-                }
-            }
-            _ => {} // ignore
-        }
+    fn handle(&mut self, _event: ControlEvent) -> () {
+        // ignore
     }
 }
 
@@ -76,13 +56,27 @@ impl Actor for PartitioningActor {
 
     fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
+            IterationControlMsg::Prepare(init_data) => {
+                self.n = self.nodes.len() as u32;
+                info!(self.ctx.log(), "{}", format!("Sending init to {} nodes", self.n));
+                for (r, node) in (&self.nodes).iter().enumerate() {
+                    let pid = r as u32 + 1;
+                    let init = Init {
+                        pid,
+                        init_id: self.init_id,
+                        nodes: self.nodes.clone(),
+                        init_data: init_data.clone()
+                    };
+                    node.tell_ser(PartitioningActorMsg::Init(init).serialised(), self).expect("Should serialise");
+                }
+            },
             IterationControlMsg::Run => {
                 for node in &self.nodes {
                     node.tell_ser(PartitioningActorMsg::Run.serialised(), self)
                         .expect("Should serialise");
                 }
             },
-            IterationControlMsg::StopIteration(stop_latch) => {
+            IterationControlMsg::Stop(stop_latch) => {
                 self.reply_stop = Some(stop_latch);
                 info!(self.ctx.log(), "Stopping iteration");
                 for node in &self.nodes {
@@ -99,7 +93,7 @@ impl Actor for PartitioningActor {
                 match p {
                     PartitioningActorMsg::InitAck(_) => {
                         self.init_ack_count += 1;
-                        //                    info!(self.ctx.log(), "Got init ack {}/{} from {}", &self.init_ack_count, &self.n, sender);
+                        info!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
                         if self.init_ack_count == self.n {
                             info!(self.ctx.log(), "Got init_ack from everybody!");
                             self.prepare_latch
@@ -146,11 +140,10 @@ impl Actor for PartitioningActor {
 
 #[derive(Debug, Clone)]
 pub struct Init {
-    pub rank: u32,
+    pub pid: u32,
     pub init_id: u32,
     pub nodes: Vec<ActorPath>,
-    pub min_key: u64,
-    pub max_key: u64,
+    pub init_data: Option<Vec<u8>>
 }
 
 #[derive(Clone, Debug)]
@@ -169,8 +162,9 @@ pub enum PartitioningActorMsg{
 
 #[derive(Debug)]
 pub enum IterationControlMsg {
+    Prepare(Option<Vec<u8>>),
     Run,
-    StopIteration(Ask<(), ()>)
+    Stop(Ask<(), ()>)
 }
 
 pub struct PartitioningActorSer;
@@ -210,10 +204,17 @@ impl Serialisable for PartitioningActorMsg {
         match self {
             PartitioningActorMsg::Init(i) => {
                 buf.put_i8(INIT_ID);
-                buf.put_u32_be(i.rank);
+                buf.put_u32_be(i.pid);
                 buf.put_u32_be(i.init_id);
-                buf.put_u64_be(i.min_key);
-                buf.put_u64_be(i.max_key);
+                match &i.init_data {
+                    Some(data) => {
+                        buf.put_u64_be(data.len() as u64);
+                        for byte in data {
+                            buf.put_u8(*byte);
+                        }
+                    },
+                    None => buf.put_u64_be(0)
+                }
                 buf.put_u32_be(i.nodes.len() as u32);
                 for node in i.nodes.iter() {
                     node.serialise(buf)?;
@@ -274,10 +275,19 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<PartitioningActorMsg, SerError> {
         match buf.get_i8() {
             INIT_ID => {
-                let rank: u32 = buf.get_u32_be();
+                let pid: u32 = buf.get_u32_be();
                 let init_id: u32 = buf.get_u32_be();
-                let min_key: u64 = buf.get_u64_be();
-                let max_key: u64 = buf.get_u64_be();
+                let data_len: u64 = buf.get_u64_be();
+                let init_data = match data_len {
+                    0 => None,
+                    _ => {
+                        let mut data = vec![];
+                        for _ in 0..data_len {
+                            data.push(buf.get_u8());
+                        }
+                        Some(data)
+                    }
+                };
                 let nodes_len: u32 = buf.get_u32_be();
                 let mut nodes: Vec<ActorPath> = Vec::new();
                 for _ in 0..nodes_len {
@@ -285,11 +295,10 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                     nodes.push(actorpath);
                 }
                 let init = Init {
-                    rank,
+                    pid,
                     init_id,
                     nodes,
-                    min_key,
-                    max_key,
+                    init_data,
                 };
                 Ok(PartitioningActorMsg::Init(init))
             },
