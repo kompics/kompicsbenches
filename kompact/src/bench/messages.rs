@@ -116,7 +116,7 @@ impl Serialisable for Ping {
     }
 
     fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
-        buf.put_u64_be(self.index);
+        buf.put_u64(self.index);
         Ok(())
     }
 
@@ -128,7 +128,7 @@ impl Deserialiser<Ping> for Ping {
     const SER_ID: SerId = Ping::SERID;
 
     fn deserialise(buf: &mut dyn Buf) -> Result<Ping, SerError> {
-        let index = buf.get_u64_be();
+        let index = buf.get_u64();
         Ok(Ping::new(index))
     }
 }
@@ -155,7 +155,7 @@ impl Serialisable for Pong {
     }
 
     fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
-        buf.put_u64_be(self.index);
+        buf.put_u64(self.index);
         Ok(())
     }
 
@@ -167,7 +167,7 @@ impl Deserialiser<Pong> for Pong {
     const SER_ID: SerId = Pong::SERID;
 
     fn deserialise(buf: &mut dyn Buf) -> Result<Pong, SerError> {
-        let index = buf.get_u64_be();
+        let index = buf.get_u64();
         Ok(Pong::new(index))
     }
 }

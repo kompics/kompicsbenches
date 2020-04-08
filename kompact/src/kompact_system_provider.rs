@@ -49,7 +49,7 @@ impl KompactSystemProvider {
         let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
-        Self::set_scheduler_for_threads(threads, &mut conf);
+        Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         let system = conf.build().expect("KompactSystem");
         system
@@ -65,7 +65,7 @@ impl KompactSystemProvider {
         let mut conf = KompactConfig::default();
         conf.label(s);
         conf.threads(threads);
-        Self::set_scheduler_for_threads(threads, &mut conf);
+        Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
         let system = conf.build().expect("KompactSystem");
@@ -87,11 +87,11 @@ impl KompactSystemProvider {
         self.public_if
     }
 
-    fn set_scheduler_for_threads(threads: usize, conf: &mut KompactConfig) -> () {
+    fn set_executor_for_threads(threads: usize, conf: &mut KompactConfig) -> () {
         if threads <= 32 {
-            conf.scheduler(|t| crossbeam_workstealing_pool::small_pool(t))
+            conf.executor(|t| crossbeam_workstealing_pool::small_pool(t))
         } else if threads <= 64 {
-            conf.scheduler(|t| crossbeam_workstealing_pool::large_pool(t))
+            conf.executor(|t| crossbeam_workstealing_pool::large_pool(t))
         } else {
             panic!("DynPool doesn't work atm!");
             //conf.scheduler(|t| crossbeam_workstealing_pool::dyn_pool(t))
