@@ -83,7 +83,7 @@ impl Provide<RaftCommunicationPort> for Communicator {
                     let peers = meta.1;
                     self.peers = peers;
                     let resp = PartitioningActorMsg::InitAck(id.to_owned());
-                    receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
+                    receiver.tell_serialised(resp, self).expect("Should serialise");
                 },
             }
         }
@@ -98,8 +98,9 @@ impl Actor for Communicator {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let sender = m.sender().clone();
-        match_deser! {m; {
+        let NetMessage{sender, receiver, data} = m;
+        // let sender = m.sender;
+        match_deser! {data; {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
@@ -118,7 +119,7 @@ impl Actor for Communicator {
                             self.raft_port.trigger(RaftCompMsg::Stop);
                             self.stopped = true;
                             sender
-                                .tell_ser(PartitioningActorMsg::StopAck.serialised(), self)
+                                .tell_serialised(PartitioningActorMsg::StopAck, self)
                                 .expect("Should serialise");
                         }
                         _ => unimplemented!(),
@@ -443,6 +444,7 @@ mod tests {
     use std::sync::Arc;
     #[allow(unused_imports)]
     use tikv_raft::storage::MemStorage;
+    use std::borrow::BorrowMut;
 
     fn example_config() -> Config {
         Config {
@@ -539,8 +541,8 @@ mod tests {
         let rm = RaftMsg { iteration_id, payload: payload.clone() };
 
         let mut bytes: Vec<u8> = vec![];
-        if RaftSer.serialise(&rm, &mut bytes).is_err(){panic!("Failed to serialise TikvRaftMsg")};
-        let mut buf = bytes.into_buf();
+        RaftSer.serialise(&rm, &mut bytes).expect("Failed to serialise RaftMsg");
+        let mut buf = bytes.as_slice();
         match RaftSer::deserialise(&mut buf) {
             Ok(rm) => {
                 let des_iteration_id = rm.iteration_id;
@@ -567,8 +569,8 @@ mod tests {
         let followers: Vec<u64> = vec![4,5,6];
         let reconfig = (voters.clone(), followers.clone());
         let p = Proposal::reconfiguration(id, client.clone(), reconfig.clone());
-        if AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::Proposal(p), &mut b).is_err() {panic!("Failed to serialise Proposal")};
-        match AtomicBroadcastSer::deserialise(&mut b.into_buf()){
+        AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::Proposal(p), &mut b).expect("Failed to serialise Proposal");
+        match AtomicBroadcastSer::deserialise(&mut b.as_slice()){
             Ok(c) => {
                 match c {
                     AtomicBroadcastMsg::Proposal(p) => {
@@ -593,8 +595,8 @@ mod tests {
             current_config: Some((voters, followers))
         };
         let mut b1: Vec<u8> = vec![];
-        if AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::ProposalResp(pr), &mut b1).is_err(){panic!("Failed to serailise ProposalResp")};
-        match AtomicBroadcastSer::deserialise(&mut b1.into_buf()){
+        AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::ProposalResp(pr), &mut b1).expect("Failed to serailise ProposalResp");
+        match AtomicBroadcastSer::deserialise(&mut b1.as_slice()){
             Ok(cm) => {
                 match cm {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -631,6 +633,7 @@ mod tests {
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
         let num_proposals = 3000;
+        let batch_size = 1000;
         let config = (vec![1,2,3], vec![]);
         // let reconfig = None;
        let reconfig = Some((vec![1,4,5], vec![]));
@@ -671,6 +674,7 @@ mod tests {
         let (client, unique_reg_f) = systems[0].create_and_register( || {
             TestClient::with(
                 num_proposals,
+                batch_size,
                 peers,
                 reconfig.clone(),
                 p,

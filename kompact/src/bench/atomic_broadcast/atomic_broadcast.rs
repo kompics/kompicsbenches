@@ -152,7 +152,7 @@ pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
     num_nodes: Option<u64>,
     num_proposals: Option<u64>,
-    num_parallel_proposals: Option<u64>,
+    batch_size: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
@@ -169,7 +169,7 @@ impl AtomicBroadcastMaster {
             algorithm: None,
             num_nodes: None,
             num_proposals: None,
-            num_parallel_proposals: None,
+            batch_size: None,
             reconfiguration: None,
             system: None,
             finished_latch: None,
@@ -220,6 +220,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
                 num_proposals,
+                self.batch_size.unwrap(),
                 nodes_id,
                 reconfig,
                 finished_latch,
@@ -271,7 +272,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             }
         };
         self.num_proposals = Some(c.number_of_proposals);
-        self.num_parallel_proposals = Some(c.proposals_in_parallel);
+        self.batch_size = Some(c.batch_size);
         let system =
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
@@ -290,7 +291,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
                         let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                            ReplicaComp::with(initial_config, system.clone(), TransferPolicy::Passive)
+                            ReplicaComp::with(initial_config, TransferPolicy::Passive)
                         });
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
@@ -454,7 +455,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 .expect("Kompact didn't shut down properly");
             self.num_proposals = None;
             self.algorithm = None;
-            self.num_parallel_proposals = None;
+            self.batch_size = None;
             self.num_nodes = None;
         } else {
             self.system = Some(system);
@@ -490,7 +491,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             Algorithm::Paxos => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                    ReplicaComp::with(initial_config, system.clone(), TransferPolicy::Passive)
+                    ReplicaComp::with(initial_config, TransferPolicy::Passive)
                 });
                 let replica_comp_f = system.start_notify(&replica_comp);
                 replica_comp_f

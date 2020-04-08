@@ -248,19 +248,19 @@ object Benchmarks extends ParameterDescriptionImplicits {
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
-            proposalsInParallel = pp,
+            batchSize = pp,
             reconfiguration = r
           )
       },
     testSpace = ParameterSpacePB
-      .cross(List("raft"), List(3), List(1000, 2000, 4000), List(1), List("off", "single", "majority"))
+      .cross(List("paxos"), List(3), List(4000, 8000), List(100, 500, 1000), List("off"))
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
-            proposalsInParallel = pp,
+            batchSize = pp,
             reconfiguration = r
           )
       }

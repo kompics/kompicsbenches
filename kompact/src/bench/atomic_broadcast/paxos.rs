@@ -3,7 +3,7 @@ use super::storage::paxos::*;
 use std::fmt::{Debug, Formatter, Error};
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection};
 use raw_paxos::{Entry, Paxos};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use super::messages::paxos::{Message as RawPaxosMsg, ballot_leader_election::Leader};
@@ -11,6 +11,7 @@ use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, Re
 use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, SequenceResp};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use synchronoise::CountdownEvent;
+use uuid::Uuid;
 
 const BLE: &str = "ble";
 const PAXOS: &str = "paxos";
@@ -38,7 +39,7 @@ impl<S> Reconfiguration<S> where
 }
 
 #[derive(Debug)]
-pub enum ReplicaMsg {
+pub enum PaxosCompMsg {
     Propose(Proposal),
     SequenceReq(ActorPath),
     Stop(Stop),
@@ -72,15 +73,16 @@ pub struct ReplicaComp<S, P> where
     P: PaxosStateTraits
 {
     ctx: ComponentContext<Self>,
-    system: KompactSystem,
     pid: u64,
     initial_config: Vec<u64>,
-    replicas: HashMap<u32, (Arc<Component<BallotLeaderComp>>, Arc<Component<PaxosComp<S, P>>>)>, // TODO keep actor_refs instead?
+    replicas: HashMap<u32, (Arc<Component<BallotLeaderComp>>, Arc<Component<PaxosComp<S, P>>>)>,
     active_config_id: u32,
     nodes: HashMap<u64, ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
     prev_sequences: HashMap<u32, Arc<S>>,
     stopped: bool,
     iteration_id: u32,
+    partitioning_actor: Option<ActorPath>,
+    pending_registrations: HashSet<Uuid>,
     policy: TransferPolicy,
     pending_seq_transfers: HashMap<(u32, u32), Vec<Entry>>,
     pending_seq_len: HashMap<u32, u64>,
@@ -90,10 +92,9 @@ impl<S, P> ReplicaComp<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    pub fn with(initial_config: Vec<u64>, system: KompactSystem, policy: TransferPolicy) -> ReplicaComp<S, P> {
+    pub fn with(initial_config: Vec<u64>, policy: TransferPolicy) -> ReplicaComp<S, P> {
         ReplicaComp {
             ctx: ComponentContext::new(),
-            system,
             pid: 0,
             initial_config,
             replicas: HashMap::new(),
@@ -102,6 +103,8 @@ impl<S, P> ReplicaComp<S, P> where
             prev_sequences: HashMap::new(),
             stopped: false,
             iteration_id: 0,
+            partitioning_actor: None,
+            pending_registrations: HashSet::new(),
             policy,
             pending_seq_transfers: HashMap::new(),
             pending_seq_len: HashMap::new()
@@ -113,18 +116,18 @@ impl<S, P> ReplicaComp<S, P> where
         let mut ble_peers = vec![];
         for pid in nodes {
             if pid != self.pid {
-                let actorpath = self.nodes.get_mut(&pid).expect("No actorpath found");
+                let actorpath = self.nodes.get(&pid).expect("No actorpath found");
                 match actorpath {
                     ActorPath::Named(n) => {
                         // derive paxos and ble actorpath of peers from replica actorpath
-                        let sys_path = n.system_mut();  // TODO don't need mut, change when kompact fixes it
+                        let sys_path = n.system();
                         let protocol = sys_path.protocol();
                         let port = sys_path.port();
                         let addr = sys_path.address();
                         let named_paxos =
-                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}-{}", PAXOS, pid, config_id, self.iteration_id).into()]);
+                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}", PAXOS, pid, config_id).into()]);
                         let named_ble =
-                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}-{}", BLE, pid, config_id, self.iteration_id).into()]);
+                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}", BLE, pid, config_id).into()]);
                         paxos_peers.insert(pid, ActorPath::Named(named_paxos));
                         ble_peers.push(ActorPath::Named(named_ble));
                     },
@@ -133,46 +136,25 @@ impl<S, P> ReplicaComp<S, P> where
             }
         }
         // info!(self.ctx.log(), "Derived all actorpaths");
-        let system = &self.system;
-        /*** create Paxos ***/
-        let (paxos_comp, _) = system.create_and_register( || {
+        let system = self.ctx.system();
+        /*** create and register Paxos ***/
+        let paxos_comp = system.create(|| {
             PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid)
         });
-
-        /*let named_reg_f = system.register_by_alias(&paxos_comp, format!("{}{},{}", PAXOS, self.pid, config_id));
-        named_reg_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("Failed to register Paxos with alias");
-        unique_reg_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("PaxosComp failed to register");
-        let paxos_f = system.start_notify(&paxos_comp);
-        paxos_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("PaxosComp never started");*/
-        /*** create BLE ***/
-        let (ble_comp, _) = system.create_and_register( || {
-            BallotLeaderComp::with(ble_peers, self.pid, DELTA)   // TODO 100?
+        system.register_without_response(&paxos_comp);
+        let paxos_id = system.register_by_alias(&paxos_comp, format!("{}{},{}", PAXOS, self.pid, config_id), self);
+        self.pending_registrations.insert(paxos_id.0);
+        /*** create and register BLE ***/
+        let ble_comp = system.create( || {
+            BallotLeaderComp::with(ble_peers, self.pid, DELTA)
         });
+        system.register_without_response(&ble_comp);
+        let ble_id = system.register_by_alias(&ble_comp, format!("{}{},{}", BLE, self.pid, config_id), self);
+        self.pending_registrations.insert(ble_id.0);
+        // let _ = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id));
+        // let _ = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id));
         biconnect_components::<BallotLeaderElection, _, _>(&ble_comp, &paxos_comp)
             .expect("Could not connect components!");
-
-        let _ = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id));
-        let _ = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id));
-        self.ctx.system().start(&paxos_comp);
-        self.ctx.system().start(&ble_comp);
-        /*let named_reg_f = system.register_by_alias(&ble_comp, format!("{}{},{}", BLE, self.pid, config_id));
-        named_reg_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("Failed to register BLE with alias");
-        unique_reg_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("BLEComp failed to register");
-        let ble_f = system.start_notify(&ble_comp);
-        ble_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("BLEComp never started");*/
-
         self.replicas.insert(config_id, (ble_comp, paxos_comp));
         self.active_config_id = config_id;
     }
@@ -243,43 +225,71 @@ impl<S, P> Provide<ControlPort> for ReplicaComp<S, P> where
     }
 }
 
+#[derive(Debug)]
+pub enum ReplicaCompMsg<S> where S: SequenceTraits{
+    Reconfig(Reconfiguration<S>),
+    RegResp(RegistrationResponse)
+}
+
+impl<S> From<RegistrationResponse> for ReplicaCompMsg<S> where S: SequenceTraits {
+    fn from(rr: RegistrationResponse) -> Self {
+        ReplicaCompMsg::RegResp(rr)
+    }
+}
+
 impl<S, P> Actor for ReplicaComp<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    type Message = Reconfiguration<S>;
+    type Message = ReplicaCompMsg<S>;
 
-    fn receive_local(&mut self, reconfig: Reconfiguration<S>) -> () {
-        info!(self.ctx.log(), "Got reconfig");
-        self.prev_sequences.insert(self.active_config_id, reconfig.final_sequence);
-        let nodes: Vec<u64> = reconfig.config.keys().map(|x| *x).collect();
-        // let old_config_id = self.active_config_id;
-        if reconfig.config.contains_key(&self.pid) {
-            self.create_replica(reconfig.config_id, nodes.clone());
-        }
-        for (pid, new_node) in reconfig.config {
-            if new_node && pid != self.pid {
-                info!(self.ctx.log(), "Sending ReconfigInit to node {}", pid);
-                let actorpath = self.nodes.get(&pid).expect("No actorpath found for new node");
-                let r_init = ReconfigInit::with(reconfig.config_id, nodes.clone());
-                actorpath.tell((r_init, ReplicaSer), self);
-                if let TransferPolicy::Eager = self.policy {
-                    unimplemented!();
+    fn receive_local(&mut self, msg: Self::Message) -> () {
+        match msg {
+            ReplicaCompMsg::Reconfig(r) => {
+                info!(self.ctx.log(), "Got reconfig");
+                self.prev_sequences.insert(self.active_config_id, r.final_sequence);
+                let nodes: Vec<u64> = r.config.keys().map(|x| *x).collect();
+                // let old_config_id = self.active_config_id;
+                if r.config.contains_key(&self.pid) {
+                    self.create_replica(r.config_id, nodes.clone());
+                }
+                for (pid, new_node) in r.config {
+                    if new_node && pid != self.pid {
+                        info!(self.ctx.log(), "Sending ReconfigInit to node {}", pid);
+                        let actorpath = self.nodes.get(&pid).expect("No actorpath found for new node");
+                        let r_init = ReconfigInit::with(r.config_id, nodes.clone());
+                        actorpath.tell((r_init, ReplicaSer), self);
+                        if let TransferPolicy::Eager = self.policy {
+                            unimplemented!();
+                        }
+                    }
+                }
+            }
+            ReplicaCompMsg::RegResp(rr) => {
+                self.pending_registrations.remove(&rr.id.0);
+                if self.pending_registrations.is_empty() {
+                    let (ble, paxos) = self.replicas.get(&self.active_config_id).expect("BLE and Paxos component not found!");
+                    self.ctx.system().start(paxos);
+                    self.ctx.system().start(ble);
+                    let resp = PartitioningActorMsg::InitAck(self.iteration_id);
+                    let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
+                    ap.tell_serialised(resp, self).expect("Should serialise");
                 }
             }
         }
+
+
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let sender = m.sender().clone();
-        match_deser! {m; {
+        let NetMessage{sender, receiver, data} = m;
+        match_deser! {data; {
             p: PartitioningActorMsg [PartitioningActorSer] => {
                 match p {
                     PartitioningActorMsg::Init(init) => {
                         info!(self.ctx.log(), "{}", format!("Got init! My pid: {}", init.pid));
-                        let resp = PartitioningActorMsg::InitAck(init.init_id);
+                        self.partitioning_actor = Some(sender);
                         self.new_iteration(init);
-                        sender.tell_ser(resp.serialised(), self).expect("Should serialise");
                     },
                     PartitioningActorMsg::Stop => {
                         info!(self.ctx.log(), "Stopping ble and paxos...");
@@ -288,15 +298,15 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                             let cd = Arc::new(CountdownEvent::new(num_comps));
                             let s = Stop::with(cd.clone());
                             for (ble, paxos) in self.replicas.values() {
-                                ble.actor_ref().tell(ReplicaMsg::Stop(s.clone()));
-                                paxos.actor_ref().tell(ReplicaMsg::Stop(s.clone()));
+                                ble.actor_ref().tell(PaxosCompMsg::Stop(s.clone()));
+                                paxos.actor_ref().tell(PaxosCompMsg::Stop(s.clone()));
                             }
                             // cd.wait();
                         }
                         info!(self.ctx.log(), "Stopped all child components");
                         self.stopped = true;
                         sender
-                            .tell_ser(PartitioningActorMsg::StopAck.serialised(), self)
+                            .tell_serialised(PartitioningActorMsg::StopAck, self)
                             .expect("Should serialise");
                     },
                     _ => unimplemented!()
@@ -320,7 +330,7 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                             /*if p.id % 100 == 0 {
                                 info!(self.ctx.log(), "Replica got proposal: {:?}", &p);
                             }*/
-                            active_paxos.actor_ref().tell(ReplicaMsg::Propose(p));
+                            active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
                         }
                     },
                     AtomicBroadcastMsg::SequenceReq => {
@@ -328,7 +338,7 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                             unimplemented!();
                         } else {
                             let active_paxos = &self.replicas.get(&self.active_config_id).expect("No active paxos replica").1;
-                            active_paxos.actor_ref().tell(ReplicaMsg::SequenceReq(sender));
+                            active_paxos.actor_ref().tell(PaxosCompMsg::SequenceReq(sender));
                         }
                     },
                     _ => unimplemented!(),
@@ -346,7 +356,7 @@ struct PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     ctx: ComponentContext<Self>,
-    supervisor: ActorRef<Reconfiguration<S>>,
+    supervisor: ActorRef<ReplicaCompMsg<S>>,
     ble_port: RequiredPort<BallotLeaderElection, Self>,
     peers: HashMap<u64, ActorPath>,
     paxos: Paxos<S, P>,
@@ -361,7 +371,7 @@ impl<S, P> PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     fn with(
-        supervisor: ActorRef<Reconfiguration<S>>,
+        supervisor: ActorRef<ReplicaCompMsg<S>>,
         peers: HashMap<u64, ActorPath>,
         config_id: u32,
         pid: u64
@@ -443,7 +453,7 @@ impl<S, P> PaxosComp<S, P> where
                         }
                     }
                     let r = Reconfiguration::with(ss.config_id, config,final_seq);
-                    self.supervisor.tell(r);
+                    self.supervisor.tell(ReplicaCompMsg::Reconfig(r));
                 }
             }
         }
@@ -480,11 +490,11 @@ impl<S, P> Actor for PaxosComp<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    type Message = ReplicaMsg;
+    type Message = PaxosCompMsg;
 
-    fn receive_local(&mut self, msg: ReplicaMsg) -> () {  // TODO change to AtomicBroadcastMsg to support SequenceReq
+    fn receive_local(&mut self, msg: PaxosCompMsg) -> () {  // TODO change to AtomicBroadcastMsg to support SequenceReq
         match msg {
-            ReplicaMsg::Propose(p) => {
+            PaxosCompMsg::Propose(p) => {
                 if self.current_leader == self.pid {
                     if p.id % 100 == 0 {
                         info!(self.ctx.log(), "Proposing {}", p.id);
@@ -492,12 +502,12 @@ impl<S, P> Actor for PaxosComp<S, P> where
                     self.propose(p);
                 } else {
                     if p.id % 100 == 0 {
-                        info!(self.ctx.log(), "Forwarding proposal {} to node {}", p.id, self.current_leader);
+                        // info!(self.ctx.log(), "Forwarding proposal {} to node {}", p.id, self.current_leader);
                     }
                     self.forward_leader(p);
                 }
             },
-            ReplicaMsg::SequenceReq(requestor) => {
+            PaxosCompMsg::SequenceReq(requestor) => {
                 info!(self.ctx.log(), "Got SequenceReq");
                 let mut seq = vec![];
                 let entries = self.paxos.get_sequence();
@@ -512,7 +522,7 @@ impl<S, P> Actor for PaxosComp<S, P> where
                 let am = AtomicBroadcastMsg::SequenceResp(sr);
                 requestor.tell((am, AtomicBroadcastSer), self);
             },
-            ReplicaMsg::Stop(s) => {
+            PaxosCompMsg::Stop(s) => {
                 self.stopped = true;
                 self.stop_timers();
                 // s.cd.decrement().expect("Failed to countdown stop");
@@ -537,7 +547,7 @@ impl<S, P> Actor for PaxosComp<S, P> where
                             self.propose(p);
                         } else {
                             if p.id % 100 == 0 {
-                                info!(self.ctx.log(), "Forwarding proposal {} to {} from PaxosComp", p.id, self.current_leader);
+                                // info!(self.ctx.log(), "Forwarding proposal {} to {} from PaxosComp", p.id, self.current_leader);
                             }
                             self.forward_leader(p);
                         }
@@ -1070,10 +1080,10 @@ mod ballot_leader_election {
     }
 
     impl Actor for BallotLeaderComp {
-        type Message = ReplicaMsg;
+        type Message = PaxosCompMsg;
 
         fn receive_local(&mut self, msg: Self::Message) -> () {
-            if let ReplicaMsg::Stop(s) = msg {
+            if let PaxosCompMsg::Stop(s) = msg {
                 self.stopped = true;
                 self.stop_timer();
                 // s.cd.decrement().expect("Failed to countdown stop");
@@ -1082,8 +1092,8 @@ mod ballot_leader_election {
 
         fn receive_network(&mut self, m: NetMessage) -> () {
             if self.stopped { return; }
-            let sender = &m.sender().clone();
-            match_deser!{m; {
+            let NetMessage{sender, receiver, data} = m;
+            match_deser!{data; {
                 hb: HeartbeatMsg [BallotLeaderSer] => {
                     match hb {
                         HeartbeatMsg::Request(req) => {
@@ -1127,7 +1137,7 @@ mod tests {
             let system =
                 kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("paxos_replica{}", i), 4);
             let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                ReplicaComp::<MemorySequence, MemoryState>::with(initial_conf.clone(), system.clone(), TransferPolicy::Passive)
+                ReplicaComp::<MemorySequence, MemoryState>::with(initial_conf.clone(), TransferPolicy::Passive)
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1158,7 +1168,8 @@ mod tests {
         let n: u64 = 3;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 4000;
+        let num_proposals = 5000;
+        let batch_size = 1000;
         let config = vec![1,2,3];
         let reconfig = None;
         // let reconfig = Some((vec![1,4,5], vec![]));
@@ -1194,6 +1205,7 @@ mod tests {
         let (client, unique_reg_f) = systems[0].create_and_register( || {
             TestClient::with(
                 num_proposals,
+                batch_size,
                 nodes,
                 reconfig,
                 p,

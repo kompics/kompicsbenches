@@ -36,7 +36,7 @@ pub mod raft {
         }
 
         fn serialise(&self, rm: &RaftMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u32_be(rm.iteration_id);
+            buf.put_u32(rm.iteration_id);
             let bytes: Vec<u8> = rm.payload.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
             buf.put_slice(&bytes);
             Ok(())
@@ -47,7 +47,7 @@ pub mod raft {
         const SER_ID: u64 = serialiser_ids::RAFT_ID;
 
         fn deserialise(buf: &mut dyn Buf) -> Result<RaftMsg, SerError> {
-            let iteration_id = buf.get_u32_be();
+            let iteration_id = buf.get_u32();
             let bytes = buf.bytes();
             let payload: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
             let rm = RaftMsg { iteration_id, payload };
@@ -177,43 +177,43 @@ pub mod paxos {
 
     impl PaxosSer {
         fn serialise_ballot(ballot: &Ballot, buf: &mut dyn BufMut) {
-            buf.put_u64_be(ballot.n);
-            buf.put_u64_be(ballot.pid);
+            buf.put_u64(ballot.n);
+            buf.put_u64(ballot.pid);
         }
 
         fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
             match e {
                 Entry::Normal(data) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
-                    buf.put_u32_be(data.len() as u32);
+                    buf.put_u32(data.len() as u32);
                     buf.put_slice(data);
                 },
                 Entry::StopSign(ss) => {
                     buf.put_u8(SS_ENTRY_ID);
-                    buf.put_u32_be(ss.config_id);
-                    buf.put_u32_be(ss.nodes.len() as u32);
-                    ss.nodes.iter().for_each(|pid| buf.put_u64_be(*pid));
+                    buf.put_u32(ss.config_id);
+                    buf.put_u32(ss.nodes.len() as u32);
+                    ss.nodes.iter().for_each(|pid| buf.put_u64(*pid));
                 }
             }
         }
 
         fn serialise_entries(ents: &Vec<Entry>, buf: &mut dyn BufMut) {
-            buf.put_u32_be(ents.len() as u32);
+            buf.put_u32(ents.len() as u32);
             for e in ents {
                 Self::serialise_entry(e, buf);
             }
         }
 
         fn deserialise_ballot(buf: &mut dyn Buf) -> Ballot {
-            let n = buf.get_u64_be();
-            let pid = buf.get_u64_be();
+            let n = buf.get_u64();
+            let pid = buf.get_u64();
             Ballot::with(n, pid)
         }
 
         fn deserialise_entry(buf: &mut dyn Buf) -> Entry {
             match buf.get_u8() {
                 NORMAL_ENTRY_ID => {
-                    let data_len = buf.get_u32_be();
+                    let data_len = buf.get_u32();
                     let mut data = Vec::with_capacity(data_len as usize);
                     for _ in 0..data_len {
                         data.push(buf.get_u8());
@@ -221,11 +221,11 @@ pub mod paxos {
                     Entry::Normal(data)
                 },
                 SS_ENTRY_ID => {
-                    let config_id = buf.get_u32_be();
-                    let nodes_len = buf.get_u32_be();
+                    let config_id = buf.get_u32();
+                    let nodes_len = buf.get_u32();
                     let mut nodes = vec![];
                     for _ in 0..nodes_len {
-                        nodes.push(buf.get_u64_be());
+                        nodes.push(buf.get_u64());
                     }
                     let ss = StopSign::with(config_id, nodes);
                     Entry::StopSign(ss)
@@ -236,7 +236,7 @@ pub mod paxos {
 
         fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry> {
             let mut ents = vec![];
-            let len = buf.get_u32_be();
+            let len = buf.get_u32();
             for _ in 0..len {
                 ents.push(Self::deserialise_entry(buf));
             }
@@ -254,43 +254,43 @@ pub mod paxos {
         }
 
         fn serialise(&self, m: &Message, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u64_be(m.from);
-            buf.put_u64_be(m.to);
+            buf.put_u64(m.from);
+            buf.put_u64(m.to);
             match &m.msg {
                 PaxosMsg::Prepare(p) => {
                     buf.put_u8(PREPARE_ID);
                     Self::serialise_ballot(&p.n, buf);
                     Self::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64_be(p.ld);
+                    buf.put_u64(p.ld);
                 },
                 PaxosMsg::Promise(p) => {
                     buf.put_u8(PROMISE_ID);
                     Self::serialise_ballot(&p.n, buf);
                     Self::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64_be(p.ld);
+                    buf.put_u64(p.ld);
                     Self::serialise_entries(&p.sfx, buf);
                 },
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
                     Self::serialise_ballot(&acc_sync.n, buf);
                     Self::serialise_entries(&acc_sync.sfx, buf);
-                    buf.put_u64_be(acc_sync.ld);
+                    buf.put_u64(acc_sync.ld);
                 }
                 PaxosMsg::Accept(a) => {
                     buf.put_u8(ACCEPT_ID);
                     Self::serialise_ballot(&a.n, buf);
-                    buf.put_u32_be(1);  // len
+                    buf.put_u32(1);  // len
                     Self::serialise_entry(&a.entry, buf);
                 },
                 PaxosMsg::Accepted(acc) => {
                     buf.put_u8(ACCEPTED_ID);
                     Self::serialise_ballot(&acc.n, buf);
-                    buf.put_u64_be(acc.la);
+                    buf.put_u64(acc.la);
                 },
                 PaxosMsg::Decide(d) => {
                     buf.put_u8(DECIDE_ID);
                     Self::serialise_ballot(&d.n, buf);
-                    buf.put_u64_be(d.ld);
+                    buf.put_u64(d.ld);
                 }
             }
             Ok(())
@@ -301,13 +301,13 @@ pub mod paxos {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
         fn deserialise(buf: &mut dyn Buf) -> Result<Message, SerError> {
-            let from = buf.get_u64_be();
-            let to = buf.get_u64_be();
+            let from = buf.get_u64();
+            let to = buf.get_u64();
             match buf.get_u8() {
                 PREPARE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64_be();
+                    let ld = buf.get_u64();
                     let p = Prepare::with(n, ld, n_accepted);
                     let msg = Message::with(from, to, PaxosMsg::Prepare(p));
                     Ok(msg)
@@ -315,7 +315,7 @@ pub mod paxos {
                 PROMISE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64_be();
+                    let ld = buf.get_u64();
                     let sfx = Self::deserialise_entries(buf);
                     let prom = Promise::with(n, n_accepted, sfx, ld);
                     let msg = Message::with(from, to, PaxosMsg::Promise(prom));
@@ -324,14 +324,14 @@ pub mod paxos {
                 ACCEPTSYNC_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let sfx = Self::deserialise_entries(buf);
-                    let ld = buf.get_u64_be();
+                    let ld = buf.get_u64();
                     let acc_sync = AcceptSync::with(n, sfx, ld);
                     let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
                     Ok(msg)
                 },
                 ACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let len = buf.get_u32_be();
+                    let len = buf.get_u32();
                     if len != 1 {
                         Err(SerError::InvalidData(
                             "Should only be 1 entry in Accept".into(),
@@ -345,14 +345,14 @@ pub mod paxos {
                 },
                 ACCEPTED_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64_be();
+                    let ld = buf.get_u64();
                     let acc = Accepted::with(n, ld);
                     let msg = Message::with(from, to, PaxosMsg::Accepted(acc));
                     Ok(msg)
                 },
                 DECIDE_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64_be();
+                    let ld = buf.get_u64();
                     let d = Decide::with(ld, n);
                     let msg = Message::with(from, to, PaxosMsg::Decide(d));
                     Ok(msg)
@@ -444,9 +444,9 @@ pub mod paxos {
         }
 
         fn serialise(&self, r: &ReconfigInit, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u32_be(r.config_id);
-            buf.put_u32_be(r.nodes.len() as u32);
-            r.nodes.iter().for_each(|pid| buf.put_u64_be(*pid));
+            buf.put_u32(r.config_id);
+            buf.put_u32(r.nodes.len() as u32);
+            r.nodes.iter().for_each(|pid| buf.put_u64(*pid));
             Ok(())
         }
     }
@@ -455,11 +455,11 @@ pub mod paxos {
         const SER_ID: u64 = serialiser_ids::REPLICA_ID;
 
         fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigInit, SerError> {
-            let config_id = buf.get_u32_be();
+            let config_id = buf.get_u32();
             let mut nodes = vec![];
-            let nodes_len = buf.get_u32_be();
+            let nodes_len = buf.get_u32();
             for _ in 0..nodes_len {
-                nodes.push(buf.get_u64_be());
+                nodes.push(buf.get_u64());
             }
             let r = ReconfigInit::with(config_id, nodes);
             Ok(r)
@@ -542,16 +542,16 @@ pub mod paxos {
                 match v {
                     HeartbeatMsg::Request(req) => {
                         buf.put_u8(HB_REQ_ID);
-                        buf.put_u64_be(req.round);
-                        buf.put_u64_be(req.max_ballot.n);
-                        buf.put_u64_be(req.max_ballot.pid);
+                        buf.put_u64(req.round);
+                        buf.put_u64(req.max_ballot.n);
+                        buf.put_u64(req.max_ballot.pid);
                     }
                     HeartbeatMsg::Reply(rep) => {
                         buf.put_u8(HB_REP_ID);
-                        buf.put_u64_be(rep.sender_pid);
-                        buf.put_u64_be(rep.round);
-                        buf.put_u64_be(rep.max_ballot.n);
-                        buf.put_u64_be(rep.max_ballot.pid);
+                        buf.put_u64(rep.sender_pid);
+                        buf.put_u64(rep.round);
+                        buf.put_u64(rep.max_ballot.n);
+                        buf.put_u64(rep.max_ballot.pid);
                     }
                 }
                 Ok(())
@@ -564,18 +564,18 @@ pub mod paxos {
             fn deserialise(buf: &mut dyn Buf) -> Result<HeartbeatMsg, SerError> {
                 match buf.get_u8() {
                     HB_REQ_ID => {
-                        let round = buf.get_u64_be();
-                        let n = buf.get_u64_be();
-                        let pid = buf.get_u64_be();
+                        let round = buf.get_u64();
+                        let n = buf.get_u64();
+                        let pid = buf.get_u64();
                         let max_ballot = Ballot::with(n, pid);
                         let hb_req = HeartbeatRequest::with(round, max_ballot);
                         Ok(HeartbeatMsg::Request(hb_req))
                     }
                     HB_REP_ID => {
-                        let sender_pid = buf.get_u64_be();
-                        let round = buf.get_u64_be();
-                        let n = buf.get_u64_be();
-                        let pid = buf.get_u64_be();
+                        let sender_pid = buf.get_u64();
+                        let round = buf.get_u64();
+                        let n = buf.get_u64();
+                        let pid = buf.get_u64();
                         let max_ballot = Ballot::with(n, pid);
                         let hb_rep = HeartbeatReply::with(sender_pid, round, max_ballot);
                         Ok(HeartbeatMsg::Reply(hb_rep))
@@ -623,14 +623,14 @@ impl Proposal {
 
     pub fn serialize_normal(&self) -> Result<Vec<u8>, SerError> {   // serialize to use with tikv raft
         let mut buf = vec![];
-        buf.put_u64_be(self.id);
+        buf.put_u64(self.id);
         self.client.serialise(&mut buf)?;
         Ok(buf.clone())
     }
 
     pub fn deserialize_normal(bytes: &Vec<u8>) -> Proposal {  // deserialize from tikv raft
-        let mut buf = bytes.into_buf();
-        let id = buf.get_u64_be();
+        let mut buf = bytes.as_slice();
+        let id = buf.get_u64();
         let client = ActorPath::deserialise(&mut buf).expect("No client actorpath in proposal");
         Proposal::normal(id, client)
     }
@@ -730,23 +730,23 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
         match enm {
             AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
-                buf.put_u64_be(p.id);
+                buf.put_u64(p.id);
                 match &p.reconfig {
                     Some((voters, followers)) => {
                         let voters_len: u32 = voters.len() as u32;
-                        buf.put_u32_be(voters_len);
+                        buf.put_u32(voters_len);
                         for voter in voters.to_owned() {
-                            buf.put_u64_be(voter);
+                            buf.put_u64(voter);
                         }
                         let followers_len: u32 = followers.len() as u32;
-                        buf.put_u32_be(followers_len);
+                        buf.put_u32(followers_len);
                         for follower in followers.to_owned() {
-                            buf.put_u64_be(follower);
+                            buf.put_u64(follower);
                         }
                     },
                     None => {
-                        buf.put_u32_be(0);
-                        buf.put_u32_be(0);
+                        buf.put_u32(0);
+                        buf.put_u32(0);
                     }
                 }
                 p.client.serialise(buf).expect("Failed to serialise actorpath");
@@ -754,7 +754,7 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
-                buf.put_u64_be(pr.id);
+                buf.put_u64(pr.id);
                 if pr.succeeded {
                     buf.put_u8(PROPOSAL_SUCCESS);
                 } else {
@@ -763,19 +763,19 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 match &pr.current_config {
                     Some((voters, followers)) => {
                         let voters_len: u32 = voters.len() as u32;
-                        buf.put_u32_be(voters_len);
+                        buf.put_u32(voters_len);
                         for voter in voters.to_owned() {
-                            buf.put_u64_be(voter);
+                            buf.put_u64(voter);
                         }
                         let followers_len: u32 = followers.len() as u32;
-                        buf.put_u32_be(followers_len);
+                        buf.put_u32(followers_len);
                         for follower in followers.to_owned() {
-                            buf.put_u64_be(follower);
+                            buf.put_u64(follower);
                         }
                     },
                     None => {
-                        buf.put_u32_be(0);
-                        buf.put_u32_be(0);
+                        buf.put_u32(0);
+                        buf.put_u32(0);
                     }
                 }
                 Ok(())
@@ -786,11 +786,11 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             },
             AtomicBroadcastMsg::SequenceResp(sr) => {
                 buf.put_u8(SEQRESP_ID);
-                buf.put_u64_be(sr.node_id);
+                buf.put_u64(sr.node_id);
                 let seq_len = sr.sequence.len() as u32;
-                buf.put_u32_be(seq_len);
+                buf.put_u32(seq_len);
                 for i in &sr.sequence {
-                    buf.put_u64_be(i.clone());
+                    buf.put_u64(i.clone());
                 }
                 Ok(())
             }
@@ -804,13 +804,13 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg, SerError> {
         match buf.get_u8(){
             PROPOSAL_ID => {
-                let id = buf.get_u64_be();
-                let voters_len = buf.get_u32_be();
+                let id = buf.get_u64();
+                let voters_len = buf.get_u32();
                 let mut voters = vec![];
-                for _ in 0..voters_len { voters.push(buf.get_u64_be()); }
-                let followers_len = buf.get_u32_be();
+                for _ in 0..voters_len { voters.push(buf.get_u64()); }
+                let followers_len = buf.get_u32();
                 let mut followers = vec![];
-                for _ in 0..followers_len { followers.push(buf.get_u64_be()); }
+                for _ in 0..followers_len { followers.push(buf.get_u64()); }
                 let reconfig =
                     if voters_len == 0 && followers_len == 0 {
                         None
@@ -826,20 +826,20 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
             },
             PROPOSALRESP_ID => {
-                let id = buf.get_u64_be();
+                let id = buf.get_u64();
                 let succeeded: bool = match buf.get_u8() {
                     0 => false,
                     _ => true,
                 };
-                let voters_len = buf.get_u32_be();
+                let voters_len = buf.get_u32();
                 let mut voters = vec![];
                 for _ in 0..voters_len {
-                    voters.push(buf.get_u64_be());
+                    voters.push(buf.get_u64());
                 }
-                let followers_len = buf.get_u32_be();
+                let followers_len = buf.get_u32();
                 let mut followers = vec![];
                 for _ in 0..followers_len {
-                    followers.push(buf.get_u64_be());
+                    followers.push(buf.get_u64());
                 }
                 let reconfig =
                     if voters_len == 0 && followers_len == 0 {
@@ -856,11 +856,11 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             },
             SEQREQ_ID => Ok(AtomicBroadcastMsg::SequenceReq),
             SEQRESP_ID => {
-                let node_id = buf.get_u64_be();
-                let sequence_len = buf.get_u32_be();
+                let node_id = buf.get_u64();
+                let sequence_len = buf.get_u32();
                 let mut sequence: Vec<u64> = Vec::new();
                 for _ in 0..sequence_len {
-                    sequence.push(buf.get_u64_be());
+                    sequence.push(buf.get_u64());
                 }
                 let sr = SequenceResp{ node_id, sequence};
                 Ok(AtomicBroadcastMsg::SequenceResp(sr))
