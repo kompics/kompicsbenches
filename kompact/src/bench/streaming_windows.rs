@@ -430,9 +430,9 @@ impl Serialisable for WindowerMsg {
                 value,
             } => {
                 buf.put_u8(Self::EVENT_FLAG);
-                buf.put_u64_be(*ts);
-                buf.put_u32_be(*partition_id);
-                buf.put_i64_be(*value);
+                buf.put_u64(*ts);
+                buf.put_u32(*partition_id);
+                buf.put_i64(*value);
             }
             WindowerMsg::Flush => buf.put_u8(Self::FLUSH_FLAG),
         }
@@ -451,9 +451,9 @@ impl Deserialiser<WindowerMsg> for WindowerMsg {
             Self::START_FLAG => Ok(WindowerMsg::Start),
             Self::STOP_FLAG => Ok(WindowerMsg::Stop),
             Self::EVENT_FLAG => {
-                let ts = buf.get_u64_be();
-                let pid = buf.get_u32_be();
-                let value = buf.get_i64_be();
+                let ts = buf.get_u64();
+                let pid = buf.get_u32();
+                let value = buf.get_i64();
                 Ok(WindowerMsg::event(ts, pid, value))
             }
             Self::FLUSH_FLAG => Ok(WindowerMsg::Flush),
@@ -545,7 +545,7 @@ impl Windower {
                 value: median,
             };
             downstream
-                .tell_ser(msg.serialised(), self)
+                .tell_serialised(msg, self)
                 .expect("Should serialise");
         } else {
             unimplemented!();
@@ -560,7 +560,7 @@ impl Windower {
                 batch_size: self.received_since_ready,
             };
             self.upstream
-                .tell_ser(msg.serialised(), self)
+                .tell_serialised(msg, self)
                 .expect("Should serialise");
             self.received_since_ready = 0u64;
         }
@@ -584,7 +584,7 @@ impl NetworkActor for Windower {
                     batch_size: self.batch_size,
                 };
                 self.upstream
-                    .tell_ser(msg.serialised(), self)
+                    .tell_serialised(msg, self)
                     .expect("Should serialise!");
             }
             WindowerMsg::Stop if self.running => {
@@ -615,7 +615,7 @@ impl NetworkActor for Windower {
             }
             WindowerMsg::Flush => {
                 self.upstream
-                    .tell_ser(SourceMsg::Flushed.serialised(), self)
+                    .tell_serialised(SourceMsg::Flushed, self)
                     .expect("Should serialise");
             }
             _ => unimplemented!("Unexpected message {:?} when running={}", msg, self.running),
@@ -654,7 +654,7 @@ impl Serialisable for SourceMsg {
             SourceMsg::Next => unimplemented!("Next shouldn't be sent over network!"),
             SourceMsg::Ready { batch_size: bs } => {
                 buf.put_u8(Self::READY_FLAG);
-                buf.put_u64_be(*bs);
+                buf.put_u64(*bs);
             }
             SourceMsg::Flushed => buf.put_u8(Self::FLUSHED_FLAG),
         }
@@ -671,7 +671,7 @@ impl Deserialiser<SourceMsg> for SourceMsg {
         let flag = buf.get_u8();
         match flag {
             Self::READY_FLAG => {
-                let bs = buf.get_u64_be();
+                let bs = buf.get_u64();
                 Ok(SourceMsg::Ready { batch_size: bs })
             }
             Self::FLUSHED_FLAG => Ok(SourceMsg::Flushed),
@@ -711,7 +711,7 @@ impl StreamSource {
             if let Some(ref downstream) = self.downstream {
                 let msg = WindowerMsg::event(self.current_ts, self.partition_id, self.random.gen());
                 downstream
-                    .tell_ser(msg.serialised(), self)
+                    .tell_serialised(msg, self)
                     .expect("Should serialise!");
             } else {
                 unimplemented!();
@@ -748,7 +748,7 @@ impl NetworkActor for StreamSource {
                 self.reply_on_flushed = Some(ask);
                 if let Some(downstream) = self.downstream.take() {
                     downstream
-                        .tell_ser(WindowerMsg::Flush.serialised(), self)
+                        .tell_serialised(WindowerMsg::Flush, self)
                         .expect("serialise!");
                 } else {
                     unimplemented!();
@@ -812,9 +812,9 @@ impl Serialisable for SinkMsg {
                 partition_id,
                 value,
             } => {
-                buf.put_u64_be(*ts);
-                buf.put_u32_be(*partition_id);
-                buf.put_f64_be(*value);
+                buf.put_u64(*ts);
+                buf.put_u32(*partition_id);
+                buf.put_f64(*value);
             }
         }
         Ok(())
@@ -834,9 +834,9 @@ impl Deserialiser<SinkMsg> for SinkMsg {
                 buf.remaining()
             )))
         } else {
-            let ts = buf.get_u64_be();
-            let pid = buf.get_u32_be();
-            let value = buf.get_f64_be();
+            let ts = buf.get_u64();
+            let pid = buf.get_u32();
+            let value = buf.get_f64();
             Ok(SinkMsg::window(ts, pid, value))
         }
     }
@@ -875,7 +875,7 @@ impl NetworkActor for StreamSink {
             SinkMsg::Run => {
                 debug!(self.ctx().log(), "Got Run");
                 self.upstream
-                    .tell_ser(WindowerMsg::Start.serialised(), self)
+                    .tell_serialised(WindowerMsg::Start, self)
                     .expect("Should serialise");
             }
             SinkMsg::WindowAggregate { value: median, .. } => {
@@ -884,7 +884,7 @@ impl NetworkActor for StreamSink {
                 if self.window_count == self.number_of_windows {
                     self.latch.decrement().expect("Latch should decrement");
                     self.upstream
-                        .tell_ser(WindowerMsg::Stop.serialised(), self)
+                        .tell_serialised(WindowerMsg::Stop, self)
                         .expect("Should serialise");
                     debug!(self.ctx().log(), "Done!");
                 } else {

@@ -338,6 +338,7 @@ impl StaticPinger {
 
 impl Provide<ControlPort> for StaticPinger {
     fn handle(&mut self, _event: ControlEvent) -> () {
+        self.ctx_mut().initialise_pool(); // Make sure that they init their pool before they start pinging
         // ignore
     }
 }
@@ -348,8 +349,7 @@ impl Actor for StaticPinger {
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger
-                .tell_ser(STATIC_PING.serialised(), self)
+            self.ponger.tell_serialised(STATIC_PING, self)
                 .expect("Should have serialised");
             self.sent_count += 1;
             pipelined += 1;
@@ -361,7 +361,7 @@ impl Actor for StaticPinger {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
-                        self.ponger.tell_ser(STATIC_PING.serialised(), self).expect("Should have serialised");
+                        self.ponger.tell_serialised(STATIC_PING, self).expect("Should have serialised");
                         self.sent_count += 1;
                     }
                 } else {
@@ -393,6 +393,7 @@ impl StaticPonger {
 impl Provide<ControlPort> for StaticPonger {
     fn handle(&mut self, _event: ControlEvent) -> () {
         // ignore
+        self.ctx_mut().initialise_pool();
     }
 }
 
@@ -403,11 +404,11 @@ impl Actor for StaticPonger {
         unreachable!("Can't instantiate Never!");
     }
     fn receive_network(&mut self, msg: NetMessage) -> () {
-        let sender = msg.sender().clone();
+        let sender = msg.sender.clone();
 
         match_deser! {msg; {
             _ping: StaticPing [StaticPing] => {
-                sender.tell_ser(STATIC_PONG.serialised(), self).expect("Should have serialised");
+                sender.tell_serialised(STATIC_PONG, self).expect("Should have serialised");
             },
             !Err(e) =>error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
         }}
@@ -446,6 +447,7 @@ impl Pinger {
 impl Provide<ControlPort> for Pinger {
     fn handle(&mut self, _event: ControlEvent) -> () {
         // ignore
+        self.ctx_mut().initialise_pool();
     }
 }
 
@@ -455,8 +457,7 @@ impl Actor for Pinger {
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         let mut pipelined: u64 = 0;
         while (pipelined < self.pipeline) && (self.sent_count < self.count) {
-            self.ponger
-                .tell_ser(Ping::new(self.sent_count).serialised(), self)
+            self.ponger.tell_serialised(Ping::new(self.sent_count), self)
                 .expect("Should have serialised");
             self.sent_count += 1;
             pipelined += 1;
@@ -468,7 +469,7 @@ impl Actor for Pinger {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
-                        self.ponger.tell_ser(Ping::new(self.sent_count).serialised(), self).expect("Should have serialised");
+                        self.ponger.tell_serialised(Ping::new(self.sent_count), self).expect("Should have serialised");
                         self.sent_count += 1;
                     }
                 } else {
@@ -500,6 +501,7 @@ impl Ponger {
 impl Provide<ControlPort> for Ponger {
     fn handle(&mut self, _event: ControlEvent) -> () {
         // ignore
+        self.ctx_mut().initialise_pool();
     }
 }
 
@@ -510,11 +512,11 @@ impl Actor for Ponger {
         unreachable!("Can't instantiate Never!");
     }
     fn receive_network(&mut self, msg: NetMessage) -> () {
-        let sender = msg.sender().clone();
+        let sender = msg.sender.clone();
 
         match_deser! {msg; {
             ping: Ping [Ping] => {
-                sender.tell_ser(Pong::new(ping.index).serialised(), self).expect("Should have serialised");
+                sender.tell_serialised(Pong::new(ping.index), self).expect("Should have serialised");
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising Ping: {:?}", e),
         }}

@@ -16,7 +16,7 @@ object Runner {
   type Stub = BenchmarkRunnerGrpc.BenchmarkRunnerStub;
 
   val WAIT: Duration = 500.milliseconds;
-  val MAX_RETRIES: Int = 30;
+  val MAX_RETRIES: Int = 130;
 }
 
 class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {

@@ -498,6 +498,7 @@ pub mod actor_atomicregister {
                     .unwrap()
                     .tell((Done, PartitioningActorSer), self);
             } else {
+                info!(self.ctx.log(), "Sending TestDone");
                 self.master
                     .as_ref()
                     .unwrap()
@@ -527,15 +528,16 @@ pub mod actor_atomicregister {
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
-            let sender = msg.sender().clone();
+            let sender = msg.sender.clone();
             let ser_id = msg.ser_id();
             match_deser! {msg; {
                 init: Init [PartitioningActorSer] => {
+                    info!(self.ctx.log(), "AtomicRegisterActor {} got Init", self.n);
                     self.new_iteration(&init);
-                        self.nodes = Some(init.nodes);
-                        let init_ack = InitAck(self.current_run_id);
-                        sender.tell((init_ack, PARTITIONING_ACTOR_SER), self);
-                        self.master = Some(sender);
+                    self.nodes = Some(init.nodes);
+                    let init_ack = InitAck(self.current_run_id);
+                    sender.tell((init_ack, PARTITIONING_ACTOR_SER), self);
+                    self.master = Some(sender);
                 },
                 _run: Run [PartitioningActorSer] => {
                     self.invoke_operations();
@@ -706,6 +708,7 @@ pub mod actor_atomicregister {
                 nodes.push(self_path);
             }
             /*** Setup partitioning actor ***/
+            println!("\nNodes and systems set-up, creating partitioning actor\n");
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = kpromise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
@@ -723,13 +726,16 @@ pub mod actor_atomicregister {
                 "PartitioningComp failed to register!",
             );
 
+            println!("\nStarting partitioning actor\n");
             let partitioning_actor_f = systems[0].start_notify(&partitioning_actor);
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("PartitioningComp never started!");
+            println!("\nAwaiting prepare latch\n");
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
             partitioning_actor_ref.tell(Run);
+            println!("\nAwaiting results\n");
             let results = f.wait();
             for system in systems {
                 system
@@ -1406,7 +1412,7 @@ pub mod mixed_atomicregister {
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
-            let sender = msg.sender().clone();
+            let sender = msg.sender.clone();
 
             match_deser! {msg; {
                 init: Init [PartitioningActorSer] => {
@@ -1624,7 +1630,6 @@ pub mod mixed_atomicregister {
                 Duration::from_millis(1000),
                 "PartitioningComp failed to register!",
             );
-
             let partitioning_actor_f = systems[0].start_notify(&partitioning_actor);
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
@@ -1632,7 +1637,9 @@ pub mod mixed_atomicregister {
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
             partitioning_actor_ref.tell(Run);
+            println!("\nAwaiting results\n");
             let results = f.wait();
+            println!("\nShutting down systems\n");
             for system in systems {
                 system
                     .shutdown()
@@ -1735,37 +1742,37 @@ impl Serialiser<AtomicRegisterMessage> for AtomicRegisterSer {
         match enm {
             AtomicRegisterMessage::Read(r) => {
                 buf.put_i8(READ_ID);
-                buf.put_u32_be(r.run_id);
-                buf.put_u64_be(r.key);
-                buf.put_u32_be(r.rid);
+                buf.put_u32(r.run_id);
+                buf.put_u64(r.key);
+                buf.put_u32(r.rid);
                 Ok(())
             }
             AtomicRegisterMessage::Value(v) => {
                 buf.put_i8(VALUE_ID);
-                buf.put_u32_be(v.run_id);
-                buf.put_u64_be(v.key);
-                buf.put_u32_be(v.rid);
-                buf.put_u32_be(v.ts);
-                buf.put_u32_be(v.wr);
-                buf.put_u32_be(v.value);
-                buf.put_u32_be(v.sender_rank);
+                buf.put_u32(v.run_id);
+                buf.put_u64(v.key);
+                buf.put_u32(v.rid);
+                buf.put_u32(v.ts);
+                buf.put_u32(v.wr);
+                buf.put_u32(v.value);
+                buf.put_u32(v.sender_rank);
                 Ok(())
             }
             AtomicRegisterMessage::Write(w) => {
                 buf.put_i8(WRITE_ID);
-                buf.put_u32_be(w.run_id);
-                buf.put_u64_be(w.key);
-                buf.put_u32_be(w.rid);
-                buf.put_u32_be(w.ts);
-                buf.put_u32_be(w.wr);
-                buf.put_u32_be(w.value);
+                buf.put_u32(w.run_id);
+                buf.put_u64(w.key);
+                buf.put_u32(w.rid);
+                buf.put_u32(w.ts);
+                buf.put_u32(w.wr);
+                buf.put_u32(w.value);
                 Ok(())
             }
             AtomicRegisterMessage::Ack(a) => {
                 buf.put_i8(ACK_ID);
-                buf.put_u32_be(a.run_id);
-                buf.put_u64_be(a.key);
-                buf.put_u32_be(a.rid);
+                buf.put_u32(a.run_id);
+                buf.put_u64(a.key);
+                buf.put_u32(a.rid);
                 Ok(())
             }
         }
@@ -1778,19 +1785,19 @@ impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicRegisterMessage, SerError> {
         match buf.get_i8() {
             READ_ID => {
-                let run_id = buf.get_u32_be();
-                let key = buf.get_u64_be();
-                let rid = buf.get_u32_be();
+                let run_id = buf.get_u32();
+                let key = buf.get_u64();
+                let rid = buf.get_u32();
                 Ok(AtomicRegisterMessage::Read(Read { run_id, key, rid }))
             }
             VALUE_ID => {
-                let run_id = buf.get_u32_be();
-                let key = buf.get_u64_be();
-                let rid = buf.get_u32_be();
-                let ts = buf.get_u32_be();
-                let wr = buf.get_u32_be();
-                let value = buf.get_u32_be();
-                let sender_rank = buf.get_u32_be();
+                let run_id = buf.get_u32();
+                let key = buf.get_u64();
+                let rid = buf.get_u32();
+                let ts = buf.get_u32();
+                let wr = buf.get_u32();
+                let value = buf.get_u32();
+                let sender_rank = buf.get_u32();
                 Ok(AtomicRegisterMessage::Value(Value {
                     run_id,
                     key,
@@ -1802,12 +1809,12 @@ impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer {
                 }))
             }
             WRITE_ID => {
-                let run_id = buf.get_u32_be();
-                let key = buf.get_u64_be();
-                let rid = buf.get_u32_be();
-                let ts = buf.get_u32_be();
-                let wr = buf.get_u32_be();
-                let value = buf.get_u32_be();
+                let run_id = buf.get_u32();
+                let key = buf.get_u64();
+                let rid = buf.get_u32();
+                let ts = buf.get_u32();
+                let wr = buf.get_u32();
+                let value = buf.get_u32();
                 Ok(AtomicRegisterMessage::Write(Write {
                     run_id,
                     key,
@@ -1818,9 +1825,9 @@ impl Deserialiser<AtomicRegisterMessage> for AtomicRegisterSer {
                 }))
             }
             ACK_ID => {
-                let run_id = buf.get_u32_be();
-                let key = buf.get_u64_be();
-                let rid = buf.get_u32_be();
+                let run_id = buf.get_u32();
+                let key = buf.get_u64();
+                let rid = buf.get_u32();
                 Ok(AtomicRegisterMessage::Ack(Ack { run_id, key, rid }))
             }
             _ => Err(SerError::InvalidType(

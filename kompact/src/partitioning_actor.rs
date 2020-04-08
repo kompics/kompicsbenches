@@ -50,7 +50,7 @@ impl Provide<ControlPort> for PartitioningActor {
             ControlEvent::Start => {
                 let min_key: u64 = 0;
                 let max_key = self.num_keys - 1;
-                //                info!(self.ctx.log(), "Sending init to nodes");
+                info!(self.ctx.log(), "Sending init to nodes");
                 for (r, node) in (&self.nodes).iter().enumerate() {
                     let rank = r as u32;
                     let init = Init {
@@ -81,32 +81,34 @@ impl Actor for PartitioningActor {
         match_deser! {msg; {
             _init_ack: InitAck [PartitioningActorSer] => {
                 self.init_ack_count += 1;
-                    //                    info!(self.ctx.log(), "Got init ack {}/{} from {}", &self.init_ack_count, &self.n, sender);
-                    if self.init_ack_count == self.n {
-                        info!(self.ctx.log(), "Got init_ack from everybody!");
-                        self.prepare_latch
-                            .decrement()
-                            .expect("Latch didn't decrement!");
-                    }
+                info!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
+                if self.init_ack_count == self.n {
+                    info!(self.ctx.log(), "Got init_ack from everybody!");
+                    self.prepare_latch
+                        .decrement()
+                        .expect("Latch didn't decrement!");
+                }
             },
             _done: Done [PartitioningActorSer] => {
+                info!(self.ctx.log(), "Done received");
                 self.done_count += 1;
-                    if self.done_count == self.n {
-                        info!(self.ctx.log(), "Everybody is done");
-                        self.finished_latch
-                            .as_ref()
-                            .unwrap()
-                            .decrement()
-                            .expect("Latch didn't decrement!");
-                    }
+                if self.done_count == self.n {
+                    info!(self.ctx.log(), "Everybody is done");
+                    self.finished_latch
+                        .as_ref()
+                        .unwrap()
+                        .decrement()
+                        .expect("Latch didn't decrement!");
+                }
             },
             td: TestDone [PartitioningActorSer] => {
+                info!(self.ctx().log(), "TestDone received");
                 self.done_count += 1;
                 self.test_results.extend(td.0);
                 if self.done_count == self.n {
                     self.test_promise.take()
                                      .unwrap()
-                                     .fulfill(self.test_results.clone())
+                                     .fulfil(self.test_results.clone())
                                      .expect("Could not fulfill promise with test results");
                 }
             },
@@ -158,11 +160,11 @@ impl Serialiser<Init> for PartitioningActorSer {
 
     fn serialise(&self, i: &Init, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INIT_ID);
-        buf.put_u32_be(i.rank);
-        buf.put_u32_be(i.init_id);
-        buf.put_u64_be(i.min_key);
-        buf.put_u64_be(i.max_key);
-        buf.put_u32_be(i.nodes.len() as u32);
+        buf.put_u32(i.rank);
+        buf.put_u32(i.init_id);
+        buf.put_u64(i.min_key);
+        buf.put_u64(i.max_key);
+        buf.put_u32(i.nodes.len() as u32);
         for node in i.nodes.iter() {
             node.serialise(buf)?;
         }
@@ -175,11 +177,11 @@ impl Deserialiser<Init> for PartitioningActorSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<Init, SerError> {
         match buf.get_i8() {
             INIT_ID => {
-                let rank: u32 = buf.get_u32_be();
-                let init_id: u32 = buf.get_u32_be();
-                let min_key: u64 = buf.get_u64_be();
-                let max_key: u64 = buf.get_u64_be();
-                let nodes_len: u32 = buf.get_u32_be();
+                let rank: u32 = buf.get_u32();
+                let init_id: u32 = buf.get_u32();
+                let min_key: u64 = buf.get_u64();
+                let max_key: u64 = buf.get_u64();
+                let nodes_len: u32 = buf.get_u32();
                 let mut nodes: Vec<ActorPath> = Vec::new();
                 for _ in 0..nodes_len {
                     let actorpath = ActorPath::deserialise(buf)?;
@@ -212,7 +214,7 @@ impl Serialiser<InitAck> for PartitioningActorSer {
 
     fn serialise(&self, init_ack: &InitAck, buf: &mut dyn BufMut) -> Result<(), SerError> {
         buf.put_i8(INITACK_ID);
-        buf.put_u32_be(init_ack.0);
+        buf.put_u32(init_ack.0);
         Ok(())
     }
 }
@@ -222,7 +224,7 @@ impl Deserialiser<InitAck> for PartitioningActorSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<InitAck, SerError> {
         match buf.get_i8() {
             INITACK_ID => {
-                let init_id = buf.get_u32_be();
+                let init_id = buf.get_u32();
                 Ok(InitAck(init_id))
             }
             _ => Err(SerError::InvalidType(
@@ -296,26 +298,26 @@ impl Serialiser<TestDone> for PartitioningActorSer {
     fn serialise(&self, td: &TestDone, buf: &mut dyn BufMut) -> Result<(), SerError> {
         let timestamps = &td.0;
         buf.put_i8(TESTDONE_ID);
-        buf.put_u32_be(timestamps.len() as u32);
+        buf.put_u32(timestamps.len() as u32);
         for ts in timestamps{
-            buf.put_u64_be(ts.key);
+            buf.put_u64(ts.key);
             match ts.operation {
                 KVOperation::ReadInvokation => buf.put_i8(READ_INV),
                 KVOperation::ReadResponse => {
                     buf.put_i8(READ_RESP);
-                    buf.put_u32_be(ts.value.unwrap());
+                    buf.put_u32(ts.value.unwrap());
                 },
                 KVOperation::WriteInvokation => {
                     buf.put_i8(WRITE_INV);
-                    buf.put_u32_be(ts.value.unwrap());
+                    buf.put_u32(ts.value.unwrap());
                 },
                 KVOperation::WriteResponse => {
                     buf.put_i8(WRITE_RESP);
-                    buf.put_u32_be(ts.value.unwrap());
+                    buf.put_u32(ts.value.unwrap());
                 },
             }
-            buf.put_i64_be(ts.time);
-            buf.put_u32_be(ts.sender);
+            buf.put_i64(ts.time);
+            buf.put_u32(ts.sender);
         }
 
         Ok(())
@@ -328,19 +330,19 @@ impl Deserialiser<TestDone> for PartitioningActorSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<TestDone, SerError> {
         match buf.get_i8() {
             TESTDONE_ID => {
-                let n: u32 = buf.get_u32_be();
+                let n: u32 = buf.get_u32();
                 let mut timestamps: Vec<KVTimestamp> = Vec::new();
                 for _ in 0..n {
-                    let key = buf.get_u64_be();
+                    let key = buf.get_u64();
                     let (operation, value) = match buf.get_i8() {
                         READ_INV => (KVOperation::ReadInvokation, None),
-                        READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32_be())),
-                        WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32_be())),
-                        WRITE_RESP => (KVOperation::WriteResponse, Some(buf.get_u32_be())),
+                        READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32())),
+                        WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32())),
+                        WRITE_RESP => (KVOperation::WriteResponse, Some(buf.get_u32())),
                         _ => panic!("Found unknown KVOperation id"),
                     };
-                    let time = buf.get_i64_be();
-                    let sender = buf.get_u32_be();
+                    let time = buf.get_i64();
+                    let sender = buf.get_u32();
                     let ts = KVTimestamp{key, operation, value, time, sender};
                     timestamps.push(ts);
                 }
