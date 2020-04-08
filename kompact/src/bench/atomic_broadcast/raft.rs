@@ -13,7 +13,7 @@ pub enum RaftCompMsg {
     CreateTikvRaft(CreateTikvRaft),
     TikvRaftMsg(RaftMsg),
     Proposal(Proposal),
-    SequenceReq(SequenceReq),
+    SequenceReq,
     Stop,
 }
 
@@ -63,19 +63,19 @@ impl Provide<RaftCommunicationPort> for Communicator {
             match &msg {
                 CommunicatorMsg::RaftMsg(rm) => {
                     let receiver = self.peers.get(&rm.payload.get_to()).expect(&format!("Could not find actorpath for id={}", &rm.payload.get_to()));
-                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                    receiver.tell((rm.clone(), RaftSer), self);
                 },
-                CommunicatorMsg::ProposalResp(pr) => {
-                    let receiver = pr.client.as_ref().expect("No client actorpath provided in ProposalResp");
-                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                CommunicatorMsg::ProposalResp(client, pr) => {
+                    let am = AtomicBroadcastMsg::ProposalResp(pr.clone());
+                    client.tell((am, AtomicBroadcastSer), self);
                 },
                 CommunicatorMsg::ProposalForward(pf) => {
                     let receiver = self.peers.get(&pf.leader_id).expect("Could not find actorpath to leader in ProposalForward");
-                    receiver.tell((CommunicatorMsg::Proposal(pf.proposal.to_owned()), AtomicBroadcastSer), self);
+                    receiver.tell((AtomicBroadcastMsg::Proposal(pf.proposal.clone()), AtomicBroadcastSer), self);
                 },
-                CommunicatorMsg::SequenceResp(_) => {
+                CommunicatorMsg::SequenceResp(sr) => {
                     let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
-                    receiver.tell((msg.to_owned(), AtomicBroadcastSer), self);
+                    receiver.tell((AtomicBroadcastMsg::SequenceResp(sr.clone()), AtomicBroadcastSer), self);
                 },
                 CommunicatorMsg::InitAck(id) => {
                     let meta = self.cached_next_iter_metadata.take().expect("No next iteration metadata cached");
@@ -85,7 +85,6 @@ impl Provide<RaftCommunicationPort> for Communicator {
                     let resp = PartitioningActorMsg::InitAck(id.to_owned());
                     receiver.tell_ser(resp.serialised(), self).expect("Should serialise");
                 },
-                _ => debug!(self.ctx.log(), "Communicator should not receive proposal from RaftComp...")
             }
         }
     }
@@ -105,7 +104,7 @@ impl Actor for Communicator {
                     match p {
                         PartitioningActorMsg::Init(init) => {
                             let iteration_id = init.init_id;
-                            let node_id = init.rank as u64;
+                            let node_id = init.pid as u64;
                             let mut peers = HashMap::new();
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
                                 peers.insert(id as u64 + 1, actorpath);
@@ -113,7 +112,7 @@ impl Actor for Communicator {
                             self.cached_next_iter_metadata = Some((sender, peers));
                             let ctr = CreateTikvRaft{ node_id, iteration_id };
                             self.stopped = false;
-                            self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));
+                            self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));   // TODO change to Ask and remove cached_next_iter
                         },
                         PartitioningActorMsg::Stop => {
                             self.raft_port.trigger(RaftCompMsg::Stop);
@@ -126,17 +125,18 @@ impl Actor for Communicator {
 
                     }
                 },
-
-                comm_msg: CommunicatorMsg [AtomicBroadcastSer] => {
-                    match comm_msg {
-                        CommunicatorMsg::RaftMsg(rm) => self.raft_port.trigger(RaftCompMsg::TikvRaftMsg(rm)),
-                        CommunicatorMsg::Proposal(p) => self.raft_port.trigger(RaftCompMsg::Proposal(p)),
-                        CommunicatorMsg::SequenceReq(sr) => {
+                am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+                    match am {
+                        AtomicBroadcastMsg::Proposal(p) => self.raft_port.trigger(RaftCompMsg::Proposal(p)),
+                        AtomicBroadcastMsg::SequenceReq => {
                             self.cached_client = Some(sender);
-                            self.raft_port.trigger(RaftCompMsg::SequenceReq(sr));
+                            self.raft_port.trigger(RaftCompMsg::SequenceReq);   // TODO use ask and remove cached_client
                         }
-                        _ => error!(self.ctx.log(), "Got unexpected msg: {:?}", comm_msg),
+                        _ => error!(self.ctx.log(), "Got unexpected msg: {:?}", am),
                     }
+                },
+                r: RaftMsg [RaftSer] => {
+                    self.raft_port.trigger(RaftCompMsg::TikvRaftMsg(r.clone()));
                 },
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }
@@ -189,11 +189,8 @@ impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
                 }
                 let store = S::new_with_conf_state(Some(dir), self.conf_state.clone());
                 self.raft_node = Some(RawNode::new(&self.config, store).expect("Failed to create TikvRaftNode"));
-                if self.config.id == 1 {    // leader
-                    let raft_node = self.raft_node.as_mut().unwrap();
-                    raft_node.raft.become_candidate();
-                    raft_node.raft.become_leader();
-                }
+                let raft_node = self.raft_node.as_mut().unwrap();
+                raft_node.campaign().expect("Failed to start campaigning as leader");
                 if self.timers.is_none() {
                     self.start_timers();
                 }
@@ -214,17 +211,16 @@ impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
                 else {
                     let leader_id = raft_node.raft.leader_id;
                     if leader_id > 0 {
+                        // info!(self.ctx.log(), "Forwarding proposal {} to leader: {}", p.id, leader_id);
                         let pf = ProposalForward::with(leader_id, p);
                         self.communication_port.trigger(CommunicatorMsg::ProposalForward(pf));
-                    } else {
-                        // no leader... let client node proposal failed
-                        error!(self.ctx.log(), "Failed proposal: No leader");
-                        let pr = ProposalResp::failed(p);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                    } else {    // no leader
+                        let pr = ProposalResp::failed(p.id);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(p.client, pr));
                     }
                 }
             }
-            RaftCompMsg::SequenceReq(_) => {
+            RaftCompMsg::SequenceReq => {
                 let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
                 let raft_entries: Vec<Entry> = raft_node.raft.raft_log.all_entries();
                 let mut sequence: Vec<u64> = Vec::new();
@@ -232,7 +228,9 @@ impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
                 for entry in raft_entries {
                     if entry.get_entry_type() == EntryType::EntryNormal && !&entry.data.is_empty() {
                         let value = Proposal::deserialize_normal(&entry.data);
-                        sequence.push(value.id)
+                        if value.id != 0 {
+                            sequence.push(value.id);
+                        }
                     }
                 }
                 let sr = SequenceResp{ node_id: self.config.id, sequence };
@@ -304,8 +302,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     _ => {
                         error!(self.ctx.log(), "Failed proposal: tikv serialization failure...");
                         // Propose failed, don't forget to respond to the client.
-                        let pr = ProposalResp::failed(proposal.clone());
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                        let pr = ProposalResp::failed(proposal.id);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(proposal.client, pr));
                         return;
                     }
                 }
@@ -315,8 +313,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         if last_index2 == last_index1 {
             // Propose failed, don't forget to respond to the client.
             error!(self.ctx.log(), "Failed proposal: Failed to append to storage?");
-            let pr = ProposalResp::failed(proposal);
-            self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+            let pr = ProposalResp::failed(proposal.id);
+            self.communication_port.trigger(CommunicatorMsg::ProposalResp(proposal.client, pr));
         }
     }
 
@@ -385,13 +383,14 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                     .raft
                                     .finalize_membership_change(&cc)
                                     .expect("Failed to finalize reconfiguration");
+
                                 self.has_reconfigured = true;
                                 let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
                                 if raft_node.raft.state == StateRole::Leader && self.reconfig_client.is_some() {
                                     let client = self.reconfig_client.as_ref().unwrap().clone();
                                     let current_config = (cs.nodes.clone(), cs.learners.clone());
-                                    let pr = ProposalResp::succeeded_reconfiguration(client, current_config);
-                                    self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                                    let pr = ProposalResp::succeeded_reconfiguration(current_config);
+                                    self.communication_port.trigger(CommunicatorMsg::ProposalResp(client, pr));
                                 }
                                 store.set_conf_state(cs, None);
                             }
@@ -405,8 +404,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     // For normal proposals, reply to client
                     let des_proposal = Proposal::deserialize_normal(&entry.data);
                     if raft_node.raft.state == StateRole::Leader {
-                        let pr = ProposalResp::succeeded_normal(des_proposal);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                        let pr = ProposalResp::succeeded_normal(des_proposal.id);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(des_proposal.client, pr));
                     }
                 }
 
@@ -439,7 +438,7 @@ mod tests {
     use std::str::FromStr;
     use super::*;
     use super::super::client::tests::TestClient;
-    use crate::partitioning_actor::PartitioningActor;
+    use crate::partitioning_actor::{PartitioningActor, IterationControlMsg};
     use synchronoise::CountdownEvent;
     use std::sync::Arc;
     #[allow(unused_imports)]
@@ -540,28 +539,23 @@ mod tests {
         let rm = RaftMsg { iteration_id, payload: payload.clone() };
 
         let mut bytes: Vec<u8> = vec![];
-        if AtomicBroadcastSer.serialise(&CommunicatorMsg::RaftMsg(rm), &mut bytes).is_err(){panic!("Failed to serialise TikvRaftMsg")};
+        if RaftSer.serialise(&rm, &mut bytes).is_err(){panic!("Failed to serialise TikvRaftMsg")};
         let mut buf = bytes.into_buf();
-        match AtomicBroadcastSer::deserialise(&mut buf) {
-            Ok(des) => {
-                match des {
-                    CommunicatorMsg::RaftMsg(rm) => {
-                        let des_iteration_id = rm.iteration_id;
-                        let des_payload = rm.payload;
-                        let des_from = des_payload.get_from();
-                        let des_to = des_payload.get_to();
-                        let des_msg_type = des_payload.get_msg_type();
-                        let des_entries = des_payload.get_entries();
-                        assert_eq!(des_iteration_id, iteration_id);
-                        assert_eq!(from, des_from);
-                        assert_eq!(to, des_to);
-                        assert_eq!(msg_type, des_msg_type);
-                        assert_eq!(des_payload.get_entries(), des_entries);
-                        assert_eq!(des_payload, payload);
-                        println!("Ser/Des RaftMsg passed");
-                    },
-                    _ => panic!("Deserialised message should be RaftMsg")
-                }
+        match RaftSer::deserialise(&mut buf) {
+            Ok(rm) => {
+                let des_iteration_id = rm.iteration_id;
+                let des_payload = rm.payload;
+                let des_from = des_payload.get_from();
+                let des_to = des_payload.get_to();
+                let des_msg_type = des_payload.get_msg_type();
+                let des_entries = des_payload.get_entries();
+                assert_eq!(des_iteration_id, iteration_id);
+                assert_eq!(from, des_from);
+                assert_eq!(to, des_to);
+                assert_eq!(msg_type, des_msg_type);
+                assert_eq!(des_payload.get_entries(), des_entries);
+                assert_eq!(des_payload, payload);
+                println!("Ser/Des RaftMsg passed");
             },
             _ => panic!("Failed to deserialise RaftMsg")
         }
@@ -573,11 +567,11 @@ mod tests {
         let followers: Vec<u64> = vec![4,5,6];
         let reconfig = (voters.clone(), followers.clone());
         let p = Proposal::reconfiguration(id, client.clone(), reconfig.clone());
-        if AtomicBroadcastSer.serialise(&CommunicatorMsg::Proposal(p), &mut b).is_err() {panic!("Failed to serialise Proposal")};
+        if AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::Proposal(p), &mut b).is_err() {panic!("Failed to serialise Proposal")};
         match AtomicBroadcastSer::deserialise(&mut b.into_buf()){
             Ok(c) => {
                 match c {
-                    CommunicatorMsg::Proposal(p) => {
+                    AtomicBroadcastMsg::Proposal(p) => {
                         let des_id = p.id;
                         let des_client = p.client;
                         let des_reconfig = p.reconfig;
@@ -595,22 +589,19 @@ mod tests {
         let succeeded = true;
         let pr = ProposalResp {
             id,
-            client: None,
             succeeded,
             current_config: Some((voters, followers))
         };
         let mut b1: Vec<u8> = vec![];
-        if AtomicBroadcastSer.serialise(&CommunicatorMsg::ProposalResp(pr), &mut b1).is_err(){panic!("Failed to serailise ProposalResp")};
+        if AtomicBroadcastSer.serialise(&AtomicBroadcastMsg::ProposalResp(pr), &mut b1).is_err(){panic!("Failed to serailise ProposalResp")};
         match AtomicBroadcastSer::deserialise(&mut b1.into_buf()){
             Ok(cm) => {
                 match cm {
-                    CommunicatorMsg::ProposalResp(pr) => {
+                    AtomicBroadcastMsg::ProposalResp(pr) => {
                         let des_id = pr.id;
                         let des_succeeded = pr.succeeded;
-                        let des_client = pr.client;
                         let des_reconfig = pr.current_config;
                         assert_eq!(id, des_id);
-                        assert_eq!(None, des_client);
                         assert_eq!(succeeded, des_succeeded);
                         assert_eq!(Some(reconfig), des_reconfig);
                         println!("Ser/Des ProposalResp passed");
@@ -639,9 +630,10 @@ mod tests {
         let n: u64 = 5;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 1000;
+        let num_proposals = 3000;
         let config = (vec![1,2,3], vec![]);
-        let reconfig = Some((vec![1,4,5], vec![]));
+        // let reconfig = None;
+       let reconfig = Some((vec![1,4,5], vec![]));
 
         type Storage = MemStorage;
 
@@ -660,7 +652,6 @@ mod tests {
                 None,
                 1,
                 nodes,
-                1,
                 None,
             )
         });
@@ -673,7 +664,7 @@ mod tests {
         partitioning_actor_f
             .wait_timeout(Duration::from_millis(1000))
             .expect("PartitioningComp never started!");
-
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
         prepare_latch.wait();
         /*** Setup client ***/
         let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
@@ -681,19 +672,21 @@ mod tests {
             TestClient::with(
                 num_proposals,
                 peers,
-                reconfig,
+                reconfig.clone(),
                 p,
+                true
             )
         });
         unique_reg_f.wait_expect(
             Duration::from_millis(1000),
             "Client failed to register!",
         );
+//        std::thread::sleep(Duration::from_secs(2));
         let client_f = systems[0].start_notify(&client);
         client_f.wait_timeout(Duration::from_millis(1000))
             .expect("Client never started!");
-
-        let all_sequences = f.wait_timeout(Duration::from_secs(60)).expect("Failed to get results");
+        client.actor_ref().tell(Run);
+        let all_sequences = f.wait();
         let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
         for system in systems {
             system
@@ -708,17 +701,26 @@ mod tests {
             assert_eq!(true, found);
         }
         let mut counter = 0;
+        let mut quorum_nodes = vec![];
         for i in 1..=n {
-            let sequence = all_sequences.get(&i).unwrap();
-            println!("Node {}: {:?}", i, sequence.len());
-            assert!(client_sequence.starts_with(sequence));
+            let sequence = all_sequences.get(&i).expect(&format!("Did not get sequence for node {}", i));
+            // println!("Node {}: {:?}", i, sequence.len());
+            // assert!(client_sequence.starts_with(sequence));
+            if !client_sequence.starts_with(sequence) {
+                panic!("{}", format!("Node {}: {:?}\nClient: {:?}", i, sequence, client_sequence))
+            }
             if sequence.starts_with(&client_sequence) {
                 counter += 1;
+                quorum_nodes.push(i);
+            }
+            if reconfig.as_ref().unwrap().0.contains(&i) {
+                println!("New node {} len: {}", i, sequence.len());
             }
         }
         if counter < quorum {
             panic!("Majority should have decided sequence: counter: {}, quorum: {}", counter, quorum);
         }
+        println!("Quorum nodes: {:?}", quorum_nodes);
     }
 }
 
