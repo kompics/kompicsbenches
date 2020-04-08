@@ -12,6 +12,7 @@ const RETRY_DELAY: Duration = Duration::from_millis(100);
 pub struct Client {
     ctx: ComponentContext<Self>,
     num_proposals: u64,
+    batch_size: u64,
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
     finished_latch: Arc<CountdownEvent>,
@@ -22,12 +23,13 @@ pub struct Client {
 impl Client {
     pub fn with(
         num_proposals: u64,
+        batch_size: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         finished_latch: Arc<CountdownEvent>
     ) -> Client {
         Client {
-            ctx: ComponentContext::new(), num_proposals, nodes, reconfig, finished_latch, received_count: 0, retries: HashMap::new()
+            ctx: ComponentContext::new(), num_proposals, batch_size, nodes, reconfig, finished_latch, received_count: 0, retries: HashMap::new()
         }
     }
 
@@ -71,7 +73,7 @@ impl Actor for Client {
             self.propose_reconfiguration();
             // self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
         } else {
-            self.send_normal_proposals(1..=self.num_proposals);
+            self.send_normal_proposals(1..=self.batch_size);
         }
     }
 
@@ -90,6 +92,14 @@ impl Actor for Client {
 //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                    } else if self.received_count % self.batch_size == 0 {
+                                        let from = self.received_count + 1;
+                                        let to = self.received_count + self.batch_size;
+                                        if to > self.num_proposals {
+                                            self.send_normal_proposals(from..self.num_proposals);
+                                        } else {
+                                            self.send_normal_proposals(from..=to);
+                                        }
                                     }
                                 }
                             }
@@ -130,6 +140,7 @@ pub mod tests {
     pub struct TestClient {
         ctx: ComponentContext<Self>,
         num_proposals: u64,
+        batch_size: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         test_results: HashMap<u64, Vec<u64>>,
@@ -143,6 +154,7 @@ pub mod tests {
     impl TestClient {
         pub fn with(
             num_proposals: u64,
+            batch_size: u64,
             nodes: HashMap<u64, ActorPath>,
             reconfig: Option<(Vec<u64>, Vec<u64>)>,
             finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
@@ -151,6 +163,7 @@ pub mod tests {
             TestClient {
                 ctx: ComponentContext::new(),
                 num_proposals,
+                batch_size,
                 nodes,
                 reconfig,
                 test_results: HashMap::new(),
@@ -205,7 +218,7 @@ pub mod tests {
                 std::thread::sleep(Duration::from_secs(2));
                 self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
             } else {
-                self.send_normal_proposals(1..=self.num_proposals);
+                self.send_normal_proposals(1..=self.batch_size);
             }
         }
 
@@ -232,8 +245,16 @@ pub mod tests {
                                         } else {
                                             self.finished_promise
                                                 .to_owned()
-                                                .fulfill(self.test_results.clone())
+                                                .fulfil(self.test_results.clone())
                                                 .expect("Failed to fulfill finished promise after getting all sequences");
+                                        }
+                                    } else if self.received_count % self.batch_size == 0 {
+                                        let from = self.received_count + 1;
+                                        let to = self.received_count + self.batch_size;
+                                        if to > self.num_proposals {
+                                            self.send_normal_proposals(from..=self.num_proposals);
+                                        } else {
+                                            self.send_normal_proposals(from..=to);
                                         }
                                     }
                                 }
@@ -263,7 +284,7 @@ pub mod tests {
                         if (self.test_results.len() - 1) == self.nodes.len() {    // got all sequences from everybody, we're done
                             self.finished_promise
                                 .to_owned()
-                                .fulfill(self.test_results.clone())
+                                .fulfil(self.test_results.clone())
                                 .expect("Failed to fulfill finished promise after getting all sequences");
                         }
                     },

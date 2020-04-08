@@ -67,12 +67,12 @@ impl Actor for PartitioningActor {
                         nodes: self.nodes.clone(),
                         init_data: init_data.clone()
                     };
-                    node.tell_ser(PartitioningActorMsg::Init(init).serialised(), self).expect("Should serialise");
+                    node.tell_serialised(PartitioningActorMsg::Init(init), self).expect("Should serialise");
                 }
             },
             IterationControlMsg::Run => {
                 for node in &self.nodes {
-                    node.tell_ser(PartitioningActorMsg::Run.serialised(), self)
+                    node.tell_serialised(PartitioningActorMsg::Run, self)
                         .expect("Should serialise");
                 }
             },
@@ -80,7 +80,7 @@ impl Actor for PartitioningActor {
                 self.reply_stop = Some(stop_latch);
                 info!(self.ctx.log(), "Stopping iteration");
                 for node in &self.nodes {
-                    node.tell_ser(PartitioningActorMsg::Stop.serialised(), self)
+                    node.tell_serialised(PartitioningActorMsg::Stop, self)
                         .expect("Should serialise");
                 }
             }
@@ -119,7 +119,7 @@ impl Actor for PartitioningActor {
                             self.test_promise
                                 .take()
                                 .unwrap()
-                                .fulfill(self.test_results.clone())
+                                .fulfil(self.test_results.clone())
                                 .expect("Could not fulfill promise with test results");
                         }
                     },
@@ -204,25 +204,25 @@ impl Serialisable for PartitioningActorMsg {
         match self {
             PartitioningActorMsg::Init(i) => {
                 buf.put_i8(INIT_ID);
-                buf.put_u32_be(i.pid);
-                buf.put_u32_be(i.init_id);
+                buf.put_u32(i.pid);
+                buf.put_u32(i.init_id);
                 match &i.init_data {
                     Some(data) => {
-                        buf.put_u64_be(data.len() as u64);
+                        buf.put_u64(data.len() as u64);
                         for byte in data {
                             buf.put_u8(*byte);
                         }
                     },
-                    None => buf.put_u64_be(0)
+                    None => buf.put_u64(0)
                 }
-                buf.put_u32_be(i.nodes.len() as u32);
+                buf.put_u32(i.nodes.len() as u32);
                 for node in i.nodes.iter() {
                     node.serialise(buf)?;
                 }
             },
             PartitioningActorMsg::InitAck(id) => {
                 buf.put_i8(INITACK_ID);
-                buf.put_u32_be(id.to_owned());
+                buf.put_u32(id.to_owned());
             },
             PartitioningActorMsg::Run => {
                 buf.put_i8(RUN_ID);
@@ -232,26 +232,26 @@ impl Serialisable for PartitioningActorMsg {
             },
             PartitioningActorMsg::TestDone(timestamps) => {
                 buf.put_i8(TESTDONE_ID);
-                buf.put_u32_be(timestamps.len() as u32);
+                buf.put_u32(timestamps.len() as u32);
                 for ts in timestamps{
-                    buf.put_u64_be(ts.key);
+                    buf.put_u64(ts.key);
                     match ts.operation {
                         KVOperation::ReadInvokation => buf.put_i8(READ_INV),
                         KVOperation::ReadResponse => {
                             buf.put_i8(READ_RESP);
-                            buf.put_u32_be(ts.value.unwrap());
+                            buf.put_u32(ts.value.unwrap());
                         },
                         KVOperation::WriteInvokation => {
                             buf.put_i8(WRITE_INV);
-                            buf.put_u32_be(ts.value.unwrap());
+                            buf.put_u32(ts.value.unwrap());
                         },
                         KVOperation::WriteResponse => {
                             buf.put_i8(WRITE_RESP);
-                            buf.put_u32_be(ts.value.unwrap());
+                            buf.put_u32(ts.value.unwrap());
                         },
                     }
-                    buf.put_i64_be(ts.time);
-                    buf.put_u32_be(ts.sender);
+                    buf.put_i64(ts.time);
+                    buf.put_u32(ts.sender);
                 }
             },
             PartitioningActorMsg::Stop => {
@@ -275,9 +275,9 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
     fn deserialise(buf: &mut dyn Buf) -> Result<PartitioningActorMsg, SerError> {
         match buf.get_i8() {
             INIT_ID => {
-                let pid: u32 = buf.get_u32_be();
-                let init_id: u32 = buf.get_u32_be();
-                let data_len: u64 = buf.get_u64_be();
+                let pid: u32 = buf.get_u32();
+                let init_id: u32 = buf.get_u32();
+                let data_len: u64 = buf.get_u64();
                 let init_data = match data_len {
                     0 => None,
                     _ => {
@@ -288,7 +288,7 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                         Some(data)
                     }
                 };
-                let nodes_len: u32 = buf.get_u32_be();
+                let nodes_len: u32 = buf.get_u32();
                 let mut nodes: Vec<ActorPath> = Vec::new();
                 for _ in 0..nodes_len {
                     let actorpath = ActorPath::deserialise(buf)?;
@@ -303,7 +303,7 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                 Ok(PartitioningActorMsg::Init(init))
             },
             INITACK_ID => {
-                let init_id = buf.get_u32_be();
+                let init_id = buf.get_u32();
                 Ok(PartitioningActorMsg::InitAck(init_id))
             },
             RUN_ID => Ok(PartitioningActorMsg::Run),

@@ -503,14 +503,15 @@ pub mod actor_atomicregister {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell_ser(PartitioningActorMsg::Done.serialised(), self)
+                    .tell_serialised(PartitioningActorMsg::Done, self)
                     .expect("Should serialise");
             } else {
-                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());
+                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());    // TODO memreplace
+                info!(self.ctx.log(), "Sending TestDone");
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell_ser(td.serialised(), self)
+                    .tell_serialised(td, self)
                     .expect("Should serialise");
             }
         }
@@ -546,7 +547,7 @@ pub mod actor_atomicregister {
                             self.new_iteration(&init);
                             self.nodes = Some(init.nodes);
                             let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
-                            sender.tell_ser(init_ack.serialised(), self).expect("Should serialise");
+                            sender.tell_serialised(init_ack, self).expect("Should serialise");
                             self.master = Some(sender);
                         },
                         PartitioningActorMsg::Run => self.invoke_operations(),
@@ -1393,14 +1394,14 @@ pub mod mixed_atomicregister {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell_ser(PartitioningActorMsg::Done.serialised(), self)
+                    .tell_serialised(PartitioningActorMsg::Done, self)
                     .expect("Should serialise");
             } else {
                 let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell_ser(td.serialised(), self)
+                    .tell_serialised(td, self)
                     .expect("Should serialise");
             }
         }
@@ -1424,12 +1425,11 @@ pub mod mixed_atomicregister {
         fn receive_local(&mut self, _msg: Self::Message) -> () {
             let master = self.master.as_ref().unwrap();
             let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
-            master.tell_ser(init_ack.serialised(), self).expect("Should serialise");
+            master.tell_serialised(init_ack, self).expect("Should serialise");
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
-            let sender = msg.sender().clone();
-
+            let sender = msg.sender.clone();
             match_deser! {msg; {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
                     match p {
