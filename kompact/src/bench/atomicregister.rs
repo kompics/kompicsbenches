@@ -11,6 +11,8 @@ use chrono::Utc;
 use synchronoise::CountdownEvent;
 use benchmark_suite_shared::test_utils::KVTimestamp;
 use benchmark_suite_shared::test_utils::KVOperation;
+use rand::Rng;
+use benchmark_suite_shared::test_utils::all_linearizable;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
