@@ -8,7 +8,7 @@ ThisBuild / resolvers ++= Seq(Resolver.mavenLocal, Resolver.jcenterRepo, Resolve
 
 val kompicsV = "1.1.0";
 val kompicsScala1xV = "1.1.0";
-val kompicsScala2xV = "2.0.0-SNAPSHOT";
+val kompicsScala2xV = "2.0.0";
 
 lazy val commonSettings = Seq(
   fork := true,
