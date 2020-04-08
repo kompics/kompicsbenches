@@ -309,19 +309,19 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
             RUN_ID => Ok(PartitioningActorMsg::Run),
             DONE_ID => Ok(PartitioningActorMsg::Done),
             TESTDONE_ID => {
-                let n: u32 = buf.get_u32_be();
+                let n: u32 = buf.get_u32();
                 let mut timestamps: Vec<KVTimestamp> = Vec::new();
                 for _ in 0..n {
-                    let key = buf.get_u64_be();
+                    let key = buf.get_u64();
                     let (operation, value) = match buf.get_i8() {
                         READ_INV => (KVOperation::ReadInvokation, None),
-                        READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32_be())),
-                        WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32_be())),
-                        WRITE_RESP => (KVOperation::WriteResponse, Some(buf.get_u32_be())),
+                        READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32())),
+                        WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32())),
+                        WRITE_RESP => (KVOperation::WriteResponse, Some(buf.get_u32())),
                         _ => panic!("Found unknown KVOperation id"),
                     };
-                    let time = buf.get_i64_be();
-                    let sender = buf.get_u32_be();
+                    let time = buf.get_i64();
+                    let sender = buf.get_u32();
                     let ts = KVTimestamp{key, operation, value, time, sender};
                     timestamps.push(ts);
                 }
