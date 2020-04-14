@@ -8,15 +8,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use super::messages::paxos::{Message as RawPaxosMsg, ballot_leader_election::Leader};
 use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReplicaSer, SequenceTransfer, SequenceRequest};
-use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, SequenceResp};
+use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, SequenceResp, RECONFIG_ID};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use synchronoise::CountdownEvent;
 use uuid::Uuid;
+use kompact::prelude::Buf;
 
 const BLE: &str = "ble";
 const PAXOS: &str = "paxos";
 
 const DELTA: u64 = 300;
+const PF_MAX_LEN: usize = 100;
 
 pub trait SequenceTraits: Sequence + Debug + Send + Sync + 'static {}
 pub trait PaxosStateTraits: PaxosState + Send + 'static {}
@@ -124,10 +126,18 @@ impl<S, P> ReplicaComp<S, P> where
                         let protocol = sys_path.protocol();
                         let port = sys_path.port();
                         let addr = sys_path.address();
-                        let named_paxos =
-                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}", PAXOS, pid, config_id).into()]);
-                        let named_ble =
-                            NamedPath::new(protocol, addr.clone(), port, vec![format!("{}{},{}", BLE, pid, config_id).into()]);
+                        let named_paxos = NamedPath::new(
+                            protocol,
+                            addr.clone(),
+                            port,
+                            vec![format!("{}{},{}-{}", PAXOS, pid, config_id, self.iteration_id).into()]
+                        );
+                        let named_ble = NamedPath::new(
+                            protocol,
+                            addr.clone(),
+                            port,
+                            vec![format!("{}{},{}-{}", BLE, pid, config_id, self.iteration_id).into()]
+                        );
                         paxos_peers.insert(pid, ActorPath::Named(named_paxos));
                         ble_peers.push(ActorPath::Named(named_ble));
                     },
@@ -142,14 +152,14 @@ impl<S, P> ReplicaComp<S, P> where
             PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid)
         });
         system.register_without_response(&paxos_comp);
-        let paxos_id = system.register_by_alias(&paxos_comp, format!("{}{},{}", PAXOS, self.pid, config_id), self);
+        let paxos_id = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id), self);
         self.pending_registrations.insert(paxos_id.0);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
             BallotLeaderComp::with(ble_peers, self.pid, DELTA)
         });
         system.register_without_response(&ble_comp);
-        let ble_id = system.register_by_alias(&ble_comp, format!("{}{},{}", BLE, self.pid, config_id), self);
+        let ble_id = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id), self);
         self.pending_registrations.insert(ble_id.0);
         // let _ = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id));
         // let _ = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id));
@@ -178,12 +188,12 @@ impl<S, P> ReplicaComp<S, P> where
             self.nodes.insert(id as u64 + 1, actorpath);
         }
         if self.initial_config.contains(&self.pid){
-            self.active_config_id += init.init_id;
+            self.active_config_id += 1;
             self.create_replica(self.active_config_id, self.initial_config.clone());
         }
     }
 
-    fn request_sequence(&mut self, continued_peers: &Vec<u64>, prev_seq_len: u64, config_id: u32) {
+    /*fn request_sequence(&mut self, continued_peers: &Vec<u64>, prev_seq_len: u64, config_id: u32) {
         /*let num_continued = continued_peers.len();
         let n = prev_seq_len/num_continued as u64;
         for i in 0..num_continued {
@@ -209,7 +219,7 @@ impl<S, P> ReplicaComp<S, P> where
 
     fn handle_sequence_resp(&mut self, config_id: u32, msg_id: u32, seq: Vec<Entry>) {
 
-    }
+    }*/
 }
 
 impl<S, P> Provide<ControlPort> for ReplicaComp<S, P> where
@@ -298,10 +308,10 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                             let cd = Arc::new(CountdownEvent::new(num_comps));
                             let s = Stop::with(cd.clone());
                             for (ble, paxos) in self.replicas.values() {
-                                ble.actor_ref().tell(PaxosCompMsg::Stop(s.clone()));
+                                ble.actor_ref().tell(s.clone());
                                 paxos.actor_ref().tell(PaxosCompMsg::Stop(s.clone()));
                             }
-                            // cd.wait();
+                            cd.wait_timeout(Duration::from_secs(5));
                         }
                         info!(self.ctx.log(), "Stopped all child components");
                         self.stopped = true;
@@ -327,9 +337,6 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                     AtomicBroadcastMsg::Proposal(p) => {
                         if !self.stopped {
                             let active_paxos = &self.replicas.get(&self.active_config_id).expect("No active paxos replica").1;
-                            /*if p.id % 100 == 0 {
-                                info!(self.ctx.log(), "Replica got proposal: {:?}", &p);
-                            }*/
                             active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
                         }
                     },
@@ -363,7 +370,10 @@ struct PaxosComp<S, P> where
     pid: u64,
     current_leader: u64,
     stopped: bool,
-    timers: Option<(ScheduledTimer, ScheduledTimer)>
+    timers: Option<(ScheduledTimer, ScheduledTimer, ScheduledTimer)>,
+    responses: HashMap<u64, u32>,
+    cached_client: Option<ActorPath>,
+    max_response: u64,
 }
 
 impl<S, P> PaxosComp<S, P> where
@@ -394,14 +404,17 @@ impl<S, P> PaxosComp<S, P> where
             pid,
             current_leader: 0,
             stopped: false,
-            timers: None
+            timers: None,
+            responses: HashMap::new(),
+            cached_client: None,
+            max_response: 0
         }
     }
 
     fn start_timers(&mut self) {
         let decided_timer = self.schedule_periodic(
             Duration::from_millis(0),
-            Duration::from_millis(1),
+            Duration::from_millis(100),
             move |c, _| c.get_decided()
         );
         let outgoing_timer = self.schedule_periodic(
@@ -409,13 +422,19 @@ impl<S, P> PaxosComp<S, P> where
             Duration::from_millis(1),
             move |p, _| p.get_outgoing()
         );
-        self.timers = Some((decided_timer, outgoing_timer));
+        let print_timer = self.schedule_periodic(
+            Duration::from_secs(5),
+            Duration::from_secs(60),
+            move |p, _| info!(p.ctx.log(), "{}", p.paxos.get_ld_la())
+        );
+        self.timers = Some((decided_timer, outgoing_timer, print_timer));
     }
 
     fn stop_timers(&mut self) {
         if let Some(timers) = self.timers.take() {
             self.cancel_timer(timers.0);
             self.cancel_timer(timers.1);
+            self.cancel_timer(timers.2);
         }
     }
     
@@ -431,17 +450,35 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn get_decided(&mut self) {
+        if self.responses.is_empty() {
+           return;
+        }
         for decided in self.paxos.get_decided_entries() {
             match decided {
-                Entry::Normal(ser_data) => {
-                    let p = Proposal::deserialize_normal(&ser_data);
-                    let pr = ProposalResp::succeeded_normal(p.id);
-                    // info!(self.ctx.log(), "Decided normal id: {}", p.id);
-                    if self.pid == self.current_leader {
-                        p.client.tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
+                Entry::Normal(n) => {
+                    let id = n.data.as_slice().get_u64();
+                    if id > self.max_response {
+                        self.max_response = id;
                     }
-                }
+                    // let p = Proposal::deserialize_normal(&n.data);
+                    match self.responses.get_mut(&id) {
+                        Some(count) => {
+                            *count += 1;
+                            if *count == 1 {
+                                let pr = ProposalResp::succeeded_normal(id);
+                                self.cached_client.as_ref().expect("No cached client").tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
+                            }
+                            else if *count > 1 {
+                                panic!("Duplicate response for id: {}, count: {}, max_id: {}", id, count, self.max_response);
+                            }
+                        },
+                        None => unimplemented!(),
+                    }
+                },
                 Entry::StopSign(ss) => {
+                    /*if self.responses.remove(&RECONFIG_ID) {
+                        unimplemented!();
+                    }*/
                     info!(self.ctx.log(), "Decided StopSign!");
                     let final_seq = self.paxos.stop_and_get_sequence();
                     let mut config = HashMap::new();
@@ -460,27 +497,21 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn propose(&mut self, p: Proposal) {
+        if let None = self.cached_client {
+            self.cached_client = Some(p.client);
+        }
         match p.reconfig {
             Some((reconfig, _)) => {
                 info!(self.ctx.log(), "Proposing reconfiguration: {:?}", reconfig);
-                self.paxos.propose_reconfiguration(reconfig)
+                self.paxos.propose_reconfiguration(reconfig);
+                self.responses.insert(RECONFIG_ID, 0);
             }
             None => {
-                let data = p.serialize_normal().expect("Failed to serialise proposal");
+                let mut data: Vec<u8> = vec![];
+                data.put_u64(p.id);
+                // let data = p.serialize_normal().expect("Failed to serialise proposal");
                 self.paxos.propose_normal(data);
-            }
-        }
-    }
-
-    fn forward_leader(&self, p: Proposal) {
-        match self.peers.get(&self.current_leader) {
-            Some(leader) => {
-                // info!(self.ctx.log(), "Forwarding Proposal to leader: {}", &self.current_leader);
-                leader.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-            },
-            None => {   // no leader, reply to client
-                let pr = ProposalResp::failed(p.id);
-                p.client.tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
+                self.responses.insert(p.id, 0);
             }
         }
     }
@@ -495,25 +526,26 @@ impl<S, P> Actor for PaxosComp<S, P> where
     fn receive_local(&mut self, msg: PaxosCompMsg) -> () {  // TODO change to AtomicBroadcastMsg to support SequenceReq
         match msg {
             PaxosCompMsg::Propose(p) => {
-                if self.current_leader == self.pid {
-                    if p.id % 100 == 0 {
+                self.propose(p);
+                /*if self.current_leader == self.pid {
+                    if p.id % 500 == 0 {
                         info!(self.ctx.log(), "Proposing {}", p.id);
                     }
                     self.propose(p);
                 } else {
-                    if p.id % 100 == 0 {
-                        // info!(self.ctx.log(), "Forwarding proposal {} to node {}", p.id, self.current_leader);
+                    if p.id % 500 == 0 {
+                        info!(self.ctx.log(), "Forwarding proposal {} to node {}", p.id, self.current_leader);
                     }
                     self.forward_leader(p);
-                }
+                }*/
             },
             PaxosCompMsg::SequenceReq(requestor) => {
                 info!(self.ctx.log(), "Got SequenceReq");
                 let mut seq = vec![];
                 let entries = self.paxos.get_sequence();
                 for e in entries {
-                    if let Entry::Normal(data) = e {
-                        let p = Proposal::deserialize_normal(&data);
+                    if let Entry::Normal(n) = e {
+                        let p = Proposal::deserialize_normal(&n.data);
                         seq.push(p.id);
                     }
                 }
@@ -525,35 +557,17 @@ impl<S, P> Actor for PaxosComp<S, P> where
             PaxosCompMsg::Stop(s) => {
                 self.stopped = true;
                 self.stop_timers();
-                // s.cd.decrement().expect("Failed to countdown stop");
+                s.cd.decrement().expect("Failed to countdown stop");
             }
         }
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
         if self.stopped { return; }
-        match_deser!{m; {
+        let NetMessage{sender, receiver: _, data} = m;
+        match_deser!{data; {
             pm: RawPaxosMsg [PaxosSer] => {
                 self.paxos.handle(pm);
-            },
-            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
-                match am {
-                    AtomicBroadcastMsg::Proposal(p) => {
-                        // info!(self.ctx.log(), "Got forwarded proposal id: {}", p.id);
-                        if self.pid == self.current_leader {
-                            if p.id % 100 == 0 {
-                                info!(self.ctx.log(), "Proposing {} from PaxosComp", p.id);
-                            }
-                            self.propose(p);
-                        } else {
-                            if p.id % 100 == 0 {
-                                // info!(self.ctx.log(), "Forwarding proposal {} to {} from PaxosComp", p.id, self.current_leader);
-                            }
-                            self.forward_leader(p);
-                        }
-                    },
-                    _ => {},
-                }
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }
@@ -600,6 +614,9 @@ pub mod raw_paxos{
     use std::collections::HashMap;
     use std::mem;
     use std::sync::Arc;
+    use crate::bench::atomic_broadcast::messages::{ProposalForward, Proposal};
+    use crate::bench::atomic_broadcast::paxos::PF_MAX_LEN;
+    use kompact::prelude::Buf;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -611,14 +628,17 @@ pub mod raw_paxos{
         majority: usize,
         peers: Vec<u64>,    // excluding self pid
         state: (Role, Phase),
+        leader: u64,
         n_leader: Ballot,
         promises: Vec<ReceivedPromise>,
-        las: Vec<u64>,
+        las: HashMap<u64, u64>,
         lds: HashMap<u64, u64>,
         proposals: Vec<Entry>,
         lc: u64,    // length of longest chosen seq
         decided: Vec<Entry>, // TODO don't expose entry to client?
         outgoing: Vec<Message>,
+        hb_forward: Vec<Entry>,
+        num_proposed: u64,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -641,14 +661,17 @@ pub mod raw_paxos{
                 majority,
                 peers,
                 state: (Role::Follower, Phase::None),
+                leader: 0,  // TODO remove leader and use n_leader.pid instead
                 n_leader,
                 promises: vec![],
-                las: vec![],
+                las: HashMap::new(),
                 lds: HashMap::new(),
                 proposals: vec![],
                 lc: 0,
                 decided: vec![],
-                outgoing: vec![]
+                outgoing: vec![],
+                hb_forward: vec![],
+                num_proposed: 0,
             }
         }
 
@@ -669,27 +692,34 @@ pub mod raw_paxos{
                     match &self.state {
                         (Role::Leader, Phase::Prepare) => self.handle_promise_prepare(prom, m.from),
                         (Role::Leader, Phase::Accept) => self.handle_promise_accept(prom, m.from),
-                        _ => {},
+                        _ => {
+                            if !self.proposals.is_empty() {
+                                let proposals = mem::replace(&mut self.proposals, vec![]);
+                                // println!("Got promise but not leader... Forwarding proposals to {}", self.leader);
+                                self.forward_proposals(proposals);
+                            }
+                        }
                     }
                 },
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
                 PaxosMsg::Accept(acc) => self.handle_accept(acc, m.from),
-                PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted),
+                PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
                 PaxosMsg::Decide(d) => self.handle_decide(d),
+                PaxosMsg::ProposalForward(proposals) => self.handle_proposal_forward(proposals),
             }
         }
 
         pub fn propose_normal(&mut self, data: Vec<u8>) {
+            let normal_entry = Entry::Normal(self.create_normal_entry(data));
             match self.state {
                 (Role::Leader, Phase::Prepare) => {
-                    self.proposals.push(Entry::Normal(data));
+                    self.proposals.push(normal_entry);
                 },
                 (Role::Leader, Phase::Accept) => {
-                    let entry = Entry::Normal(data);
-                    self.propose(entry);
+                    self.send_accept(normal_entry);
                 },
-                _ => {
-                    panic!("Got propose when not being leader: State: {:?}", self.state);
+                _ => {  // TODO forward without metadata
+                    self.forward_proposals(vec![normal_entry]);
                 }
             }
         }
@@ -699,14 +729,15 @@ pub mod raw_paxos{
                 (Role::Leader, Phase::Prepare) => {
                     let ss = StopSign::with(self.config_id + 1, nodes);
                     self.proposals.push(Entry::StopSign(ss));
-
                 },
                 (Role::Leader, Phase::Accept) => {
                     let ss = StopSign::with(self.config_id + 1, nodes);
                     let entry = Entry::StopSign(ss);
-                    self.propose(entry);
+                    self.send_accept(entry);
                 },
-                _ => {},    // TODO panic?
+                _ => {  // TODO change to forward
+                    panic!("Got propose when not being leader: State: {:?}", self.state);
+                }
             }
         }
 
@@ -718,25 +749,50 @@ pub mod raw_paxos{
             self.storage.stop_and_get_sequence()
         }
 
+        pub fn get_ld_la(&self) -> String { // TODO REMOVE
+            let ld = self.storage.get_decided_len();
+            let la = self.storage.get_sequence_len();
+            format!("ld: {}, la: {}", ld, la)
+        }
+
+        fn create_normal_entry(&mut self, data: Vec<u8>) -> Normal {
+            self.num_proposed += 1;
+            let metadata = EntryMetaData::with(self.pid, self.num_proposed);
+            Normal{ metadata, data }
+        }
+
+        fn clear_state(&mut self) {
+            self.las = HashMap::new();
+            self.promises = vec![];
+            self.lds = HashMap::new();
+        }
+
         /*** Leader ***/
         pub fn handle_leader(&mut self, l: Leader) {
             let n = l.ballot;
+            if n <= self.n_leader {
+                return;
+            }
+            self.clear_state();
             if self.pid == l.pid && n > self.n_leader {
                 self.n_leader = n.clone();
+                self.leader = n.pid;
                 self.storage.set_promise(n.clone());
                 /* insert my promise */
                 let na = self.storage.get_accepted_ballot();
                 let sfx = self.storage.get_decided_suffix();    // TODO get serialised instead
                 let rp = ReceivedPromise::with( na, sfx);
                 self.promises.push(rp);
-                self.las = vec![];
                 /* insert my longest decided sequnce */
-                self.lds = HashMap::new();
                 let ld = self.storage.get_decided_len();
                 self.lds.insert(self.pid, ld);
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
+                /*if !self.hb_forward.is_empty(){
+                    println!("Appending hb proposals, len: {}", self.hb_forward.len());
+                    self.proposals.append(self.hb_forward.as_mut());
+                }*/
                 /* send prepare */
                 for pid in &self.peers {
                     let prep = Prepare::with(n.clone(), ld, self.storage.get_accepted_ballot());
@@ -744,13 +800,63 @@ pub mod raw_paxos{
                 }
             } else {
                 self.state.0 = Role::Follower;
+                self.leader = n.pid;
+                if !self.proposals.is_empty() {
+                    let proposals = mem::replace(&mut self.proposals, vec![]);
+                    // println!("Lost leadership: Forwarding proposals to {}", self.leader);
+                    self.forward_proposals(proposals);
+                }
+                if !self.hb_forward.is_empty() {
+                    let hb_proposals = mem::replace(&mut self.hb_forward, vec![]);
+                    // println!("Lost leadership: Forwarding hb-proposals to {}", self.leader);
+                    self.forward_proposals(hb_proposals);
+                }
             }
         }
 
-        fn propose(&mut self, entry: Entry) {
+        fn forward_proposals(&mut self, proposals: Vec<Entry>) {
+            if self.leader == 0 {
+                let mut p = proposals;
+                self.hb_forward.append(&mut p);
+            } else {
+                /*for chunk in proposals.chunks(PF_MAX_LEN) {
+                    let pf = PaxosMsg::ProposalForward(chunk.to_vec());
+                    let msg = Message::with(self.pid, self.leader, pf);
+                    self.outgoing.push(msg);
+                }*/
+                let pf = PaxosMsg::ProposalForward(proposals);
+                let msg = Message::with(self.pid, self.leader, pf);
+                self.outgoing.push(msg);
+            }
+        }
+
+        fn handle_proposal_forward(&mut self, proposals: Vec<Entry>) {
             if !self.storage.stopped() {
-                self.storage.append_entry(entry.clone());
-                self.las.push(self.storage.get_sequence_len());
+                match self.state {
+                    (Role::Leader, Phase::Prepare) => {
+                        let mut p = proposals;
+                        // println!("Appending forwarded proposals: len: {}, la: {}", p.len(), self.storage.get_sequence_len());
+                        self.proposals.append(&mut p)
+                    },
+                    (Role::Leader, Phase::Accept) => {
+                        // println!("Sending accept forwarded proposals: len: {}, la: {}", proposals.len(), self.storage.get_sequence_len());
+                        for p in proposals {
+                            self.send_accept(p);
+                        }
+                    }
+                    _ => {
+                        // println!("Not leader when receiving forwarded proposal... leader: {}", self.leader);
+                        self.forward_proposals(proposals);
+                    },
+                }
+            }
+        }
+
+        fn send_accept(&mut self, entry: Entry) {
+            if !self.storage.stopped() {
+                self.storage.append_entry(entry.clone(), true);
+                self.las.insert(self.pid, self.storage.get_sequence_len());
+                // println!("Sending accept la: {}, {:?}", self.storage.get_sequence_len(), self.n_leader);
                 for pid in self.lds.keys() {
                     if pid != &self.pid {
                         let acc = Accept::with(self.n_leader.clone(), entry.clone());
@@ -766,42 +872,69 @@ pub mod raw_paxos{
                 self.promises.push(rp);
                 self.lds.insert(from, prom.ld);
                 if self.promises.len() >= self.majority {
-                    let mut suffix = Self::max_value(&self.promises);
+                    let suffix = Self::max_value(&self.promises);
                     let last_is_stop = match suffix.last() {
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
-                    self.storage.append_on_decided_prefix(&mut suffix);
+                    // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
+                    self.storage.append_on_decided_prefix(suffix);
                     if last_is_stop {
                         self.proposals = vec![];    // will never be decided
                     } else {
-                        Self::drop_after_stopsign(&mut self.proposals); // drop after ss, if ss exists
-                        let mut proposals = mem::replace(&mut self.proposals, vec![]);  // consume proposals
-                        self.storage.append_sequence(&mut proposals);
-                        self.las.push(self.storage.get_sequence_len());
+                        /*if !self.proposals.is_empty() {
+                            Self::drop_after_stopsign(&mut self.proposals); // drop after ss, if ss exists
+                            // TODO remove
+                            let first = if let Entry::Normal(first) = self.proposals.first().unwrap() {
+                                first.data.as_slice().get_u64()
+                            } else { 0 };
+                            let last = if let Entry::Normal(last) = self.proposals.first().unwrap() {
+                                last.data.as_slice().get_u64()
+                            } else { 0 };
+                            println!("Appending proposals id: {}-{}", first, last);
+                        }*/
+                        self.storage.append_sequence(&mut self.proposals);
+                        self.las.insert(self.pid, self.storage.get_sequence_len());
                         self.state = (Role::Leader, Phase::Accept);
                     }
-                    // let va_len = self.storage.get_sequence_len();
+                    // println!("Leader Prepare completed");
+                    assert!(self.lds.len() >= self.majority);
+                    // println!("Sending AcceptSync la: {}", self.storage.get_sequence_len());
                     for (pid, lds) in self.lds.iter() {
 //                        if *lds != va_len {
                         if *pid != self.pid {
-                            if *lds > self.storage.get_sequence_len() {
-                                panic!("{}", format!("promise in prepare from node {}. ld: {}, leader_len: {}. Suffix len: {}", pid, lds, self.storage.get_sequence_len(), suffix.len()));
-                            }
+                            /*if *lds > self.storage.get_sequence_len() {
+                                panic!(
+                                    "promise_prepare from node {}. ld: {}, my seq_len: {}. Suffix len: {}, my ld: {}",
+                                    pid,
+                                    lds,
+                                    self.storage.get_sequence_len(),
+                                    suffix.len(),
+                                    self.storage.get_decided_len()
+                                );
+                            }*/
                             let sfx = self.storage.get_suffix(*lds);
                             let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, *lds);
                             self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
                         }
                     }
                 }
-            }
+            } /*else {
+                println!("Got old promise in prepare: {:?}, leader: {:?}", prom.n, self.n_leader);
+            }*/
         }
 
         fn handle_promise_accept(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
                 self.lds.insert(from, prom.ld);
                 if prom.ld > self.storage.get_sequence_len() {
-                    panic!("promise in accept from node {} is longer than leader's sequence. ld: {}, leader_len: {}", from, prom.ld, self.storage.get_sequence_len());
+                    panic!(
+                        "promise_accept from node {}. ld: {}, my seq_len: {}, my ld: {}",
+                        from,
+                        prom.ld,
+                        self.storage.get_sequence_len(),
+                        self.storage.get_decided_len()
+                    );
                 }
                 let sfx = self.storage.get_suffix(prom.ld);
                 let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, prom.ld);
@@ -811,23 +944,28 @@ pub mod raw_paxos{
                     let d = Decide::with(self.lc, self.n_leader.clone());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
                 }
-            }
+            } /*else {
+                println!("Got promise for {:?} but leader ballot: {:?}", prom.n, self.n_leader);
+            }*/
         }
 
-        fn handle_accepted(&mut self, accepted: Accepted) {
+        fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
-                self.las.push(accepted.la);
-                let mut counter = 0;
-                for la in &self.las {
-                    if la >= &accepted.la { counter += 1; }
+                self.las.insert(from, accepted.la);
+                if &accepted.la <= &self.lc {
+                    return;
                 }
-                if accepted.la > self.lc && counter >= self.majority {
+                let mut counter = 0;
+                for (_pid, la) in &self.las {
+                    if la >= &accepted.la {
+                        counter += 1;   // TODO Break when counter == majority
+                    }
+                }
+                if counter >= self.majority {
                     self.lc = accepted.la;
+                    self.storage.set_pending_chosen_offset(self.lc);
                     let d = Decide::with(self.lc, self.n_leader.clone());
                     for pid in self.lds.keys() {
-                        /*if pid == self.pid {
-                            self.handle_decide(d.clone());
-                        }*/
                         self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Decide(d.clone())));
                     }
                 }
@@ -841,13 +979,24 @@ pub mod raw_paxos{
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
                 let suffix = if &na >= &prep.n_accepted {
+                    if prep.ld > self.storage.get_sequence_len() {
+                        panic!(
+                            "ld in Prepare is longer than my accepted seq: ld: {}, la: {}, ballot: {:?}, my accepted ballot: {:?}",
+                            prep.ld,
+                            self.storage.get_sequence_len(),
+                            prep.n_accepted,
+                            na
+                        )
+                    }
                     self.storage.get_suffix(prep.ld)
                 } else {
                     vec![]
                 };
                 let p = Promise::with(prep.n, na, suffix, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
-            }
+            } /*else {
+                println!("Old prepare: {:?}, promised: {:?}", prep.n, self.storage.get_promise());
+            }*/
         }
 
         fn handle_accept_sync(&mut self, acc_sync: AcceptSync, from: u64) {
@@ -855,10 +1004,26 @@ pub mod raw_paxos{
                 if self.storage.get_promise() == acc_sync.n {
                     self.storage.set_accepted_ballot(acc_sync.n.clone());
                     let mut sfx = acc_sync.sfx;
-                    self.storage.append_on_prefix(acc_sync.ld, &mut sfx);
+                    let discarded_entries = self.storage.append_on_prefix(acc_sync.ld, &mut sfx);
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
+                    if !discarded_entries.is_empty() {  // forward the proposals that I failed to decide
+                        let start = match discarded_entries.first().unwrap() {
+                            Entry::Normal(n) => {
+                                n.data.as_slice().get_u64()
+                            },
+                            _ => 0,
+                        };
+                        let end = match discarded_entries.last().unwrap() {
+                            Entry::Normal(n) => {
+                                n.data.as_slice().get_u64()
+                            },
+                            _ => 0,
+                        };
+                        println!("UNEMPTY DISCARDED ENTRIES: {}: {}-{}. Forwarding them to {}", discarded_entries.len(), start, end, self.leader);
+                        self.forward_proposals(discarded_entries);
+                    }
                 }
             }
         }
@@ -866,7 +1031,7 @@ pub mod raw_paxos{
         fn handle_accept(&mut self, acc: Accept, from: u64) {
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
-                    self.storage.append_entry(acc.entry);
+                    self.storage.append_entry(acc.entry, false);
                     let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
@@ -875,8 +1040,12 @@ pub mod raw_paxos{
 
         fn handle_decide(&mut self, dec: Decide) {
             if self.storage.get_promise() == dec.n {
-                let mut decided_entries = self.storage.decide_entries(dec.ld);
-                self.decided.append(&mut decided_entries);
+                let prev_ld = self.storage.set_decided_len(dec.ld);
+                // println!("Deciding: prev_ld: {}, ld: {}", prev_ld, dec.ld);
+                if prev_ld < dec.ld {
+                    let mut decided_entries = self.storage.get_entries(prev_ld, dec.ld);
+                    self.decided.append(&mut decided_entries);
+                }
             }
         }
 
@@ -887,6 +1056,8 @@ pub mod raw_paxos{
             for p in promises {
                 if &p.n_accepted > max_n {
                     max_n = &p.n_accepted;
+                    max_sfx = &p.sfx;
+                } else if &p.n_accepted == max_n && &p.sfx.len() > &max_sfx.len() {
                     max_sfx = &p.sfx;
                 }
             }
@@ -939,9 +1110,50 @@ pub mod raw_paxos{
         }
     }
 
+    impl PartialEq for StopSign {
+        fn eq(&self, other: &Self) -> bool {
+            unimplemented!()
+        }
+
+        fn ne(&self, other: &Self) -> bool {
+            unimplemented!()
+        }
+    }
+
     #[derive(Clone, Debug)]
+    pub struct Normal {
+        pub metadata: EntryMetaData,
+        pub data: Vec<u8>,
+    }
+
+    impl PartialEq for Normal {
+        fn eq(&self, other: &Self) -> bool { self.metadata == other.metadata }
+
+        fn ne(&self, other: &Self) -> bool { self.metadata != other.metadata }
+    }
+
+    impl Normal {
+        pub fn with(metadata: EntryMetaData, data: Vec<u8>) -> Normal {
+            Normal{ metadata, data }
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct EntryMetaData {
+        pub proposed_by: u64,
+        pub n: u64,
+    }
+
+    impl EntryMetaData {
+        pub fn with(proposed_by: u64, n: u64) -> EntryMetaData {
+            EntryMetaData{ proposed_by, n }
+        }
+    }
+
+
+    #[derive(Clone, Debug, PartialEq)]
     pub enum Entry {
-        Normal(Vec<u8>),
+        Normal(Normal),
         StopSign(StopSign)
     }
 
@@ -953,6 +1165,16 @@ pub mod raw_paxos{
             }
         }
     }
+
+    /*impl PartialEq for Entry {
+        fn eq(&self, other: &Self) -> bool {
+
+        }
+
+        fn ne(&self, other: &Self) -> bool {
+            unimplemented!()
+        }
+    }*/
 }
 
 mod ballot_leader_election {
@@ -1080,14 +1302,10 @@ mod ballot_leader_election {
     }
 
     impl Actor for BallotLeaderComp {
-        type Message = PaxosCompMsg;
+        type Message = Stop;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
-            if let PaxosCompMsg::Stop(s) = msg {
-                self.stopped = true;
-                self.stop_timer();
-                // s.cd.decrement().expect("Failed to countdown stop");
-            }
+        fn receive_local(&mut self, msg: Stop) -> () {
+            msg.cd.decrement().expect("Failed to countdown stop latch");
         }
 
         fn receive_network(&mut self, m: NetMessage) -> () {
@@ -1129,6 +1347,7 @@ mod tests {
     use synchronoise::CountdownEvent;
     use std::sync::Arc;
     use super::super::messages::Run;
+    use crate::bench::atomic_broadcast::paxos::raw_paxos::{EntryMetaData, Normal};
 
     fn create_replica_nodes(n: u64, initial_conf: Vec<u64>) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>) {
         let mut systems = vec![];
@@ -1168,7 +1387,7 @@ mod tests {
         let n: u64 = 3;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 5000;
+        let num_proposals = 4000;
         let batch_size = 1000;
         let config = vec![1,2,3];
         let reconfig = None;
@@ -1252,5 +1471,22 @@ mod tests {
             }
         }
         println!("PASSED!!!");
+    }
+
+    #[test]
+    fn paxos_entry_test() {
+        let metadata = EntryMetaData::with(1,2);
+        let data = vec![1,2,3];
+        let data2 = vec![3,2,1];
+        let entry = Entry::Normal(Normal::with(metadata.clone(), data));
+        let entry2 = Entry::Normal(Normal::with(metadata, data2));
+        let mut ents = vec![entry.clone()];
+        if !ents.contains(&entry) {
+            panic!("Should have entry!");
+        }
+        if !ents.contains(&entry2) {
+            panic!("Should have entry2!");
+        }
+
     }
 }

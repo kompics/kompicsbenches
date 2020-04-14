@@ -569,7 +569,7 @@ pub mod paxos {
 
         fn append_sequence(&mut self, seq: &mut Vec<Entry>);
 
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry>;
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
 
@@ -591,11 +591,15 @@ pub mod paxos {
 
         fn set_accepted_ballot(&mut self, na: Ballot);
 
+        fn set_pending_chosen_offset(&mut self, offset: Option<u64>);
+
         fn get_accepted_ballot(&self) -> Ballot;
 
         fn get_decided_len(&self) -> u64;
 
         fn get_promise(&self) -> Ballot;
+
+        fn get_pending_chosen_offset(&self) -> Option<u64>;
     }
 
     enum PaxosSequence<S> where S: Sequence {
@@ -621,9 +625,15 @@ pub mod paxos {
             Storage { sequence, paxos_state }
         }
 
-        pub fn append_entry(&mut self, entry: Entry) {
+        pub fn append_entry(&mut self, entry: Entry, is_leader: bool) {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
+                    if is_leader {
+                        if let None = self.paxos_state.get_pending_chosen_offset() {
+                            let current_offset = s.get_sequence_len();
+                            self.paxos_state.set_pending_chosen_offset(Some(current_offset));
+                        }
+                    }
                     s.append_entry(entry);
                 },
                 PaxosSequence::Stopped(_) => {
@@ -637,6 +647,10 @@ pub mod paxos {
             if seq.is_empty() { return; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
+                    if let None = self.paxos_state.get_pending_chosen_offset() {
+                        let current_offset = s.get_sequence_len();
+                        self.paxos_state.set_pending_chosen_offset(Some(current_offset));
+                    }
                     s.append_sequence(seq);
                 },
                 PaxosSequence::Stopped(_) => {
@@ -646,10 +660,18 @@ pub mod paxos {
             }
         }
 
-        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
+        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) -> Vec<Entry> {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    s.append_on_prefix(from_idx, seq);
+                    let get_discarded = self.paxos_state.get_pending_chosen_offset().is_some();
+                    s.append_on_prefix(from_idx, seq, get_discarded)
+                    /*match self.paxos_state.get_pending_chosen_offset() {
+                        Some(pending) => {
+                            self.paxos_state.set_pending_chosen_offset(None);
+                            discarded
+                        },
+                        _ => vec![]
+                    }*/
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -658,11 +680,12 @@ pub mod paxos {
             }
         }
 
-        pub fn append_on_decided_prefix(&mut self, seq: &mut Vec<Entry>) {
+        pub fn append_on_decided_prefix(&mut self, seq: Vec<Entry>) {
             let from_idx = self.get_decided_len();
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    s.append_on_prefix(from_idx, seq);
+                    let mut sequence = seq;
+                    let _ = s.append_on_prefix(from_idx, &mut sequence, false);
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -675,23 +698,52 @@ pub mod paxos {
             self.paxos_state.set_promise(nprom);
         }
 
-        pub fn set_decided_len(&mut self, ld: u64) {
-            self.paxos_state.set_decided_len(ld);
+        pub fn set_decided_len(&mut self, ld: u64) -> u64 {
+            let prev_ld = self.get_decided_len();
+            if ld > prev_ld {
+                self.paxos_state.set_decided_len(ld);
+            }
+            prev_ld
         }
 
         pub fn set_accepted_ballot(&mut self, na: Ballot) {
             self.paxos_state.set_accepted_ballot(na);
         }
 
+        pub fn set_pending_chosen_offset(&mut self, offset: u64) {
+            if offset == self.get_sequence_len() {
+                println!("chosen all elements in sequence: Setting to None");
+                self.paxos_state.set_pending_chosen_offset(None);
+            } else if let Some(pending_offset) = self.paxos_state.get_pending_chosen_offset() {
+                if pending_offset == offset {
+                    println!("chosen all elements up to pending offset: Setting to None");
+                    self.paxos_state.set_pending_chosen_offset(None);
+                }
+            } else {
+                self.paxos_state.set_pending_chosen_offset(Some(offset));
+            }
+        }
+
         pub fn get_accepted_ballot(&self) -> Ballot {
             self.paxos_state.get_accepted_ballot()
+        }
+
+        pub fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
+            if from > to {
+                panic!("from > to in get_entries: {}, {}", from, to);
+            }
+            match &self.sequence {
+                PaxosSequence::Active(s) => s.get_entries(from, to),
+                PaxosSequence::Stopped(s) => s.get_entries(from, to),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_entries"),
+            }
         }
 
         pub fn get_sequence(&self) -> Vec<Entry> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_sequence(),
                 PaxosSequence::Stopped(s) => s.get_sequence(),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_sequence"),
             }
         }
 
@@ -699,7 +751,7 @@ pub mod paxos {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_sequence_len(),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.get_sequence_len(),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_sequence_len"),
             }
         }
 
@@ -711,7 +763,7 @@ pub mod paxos {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_suffix(from),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.get_suffix(from),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_suffix"),
             }
         }
 
@@ -724,34 +776,13 @@ pub mod paxos {
             self.paxos_state.get_promise()
         }
 
-        pub fn decide_entries(&mut self, ld: u64) -> Vec<Entry> {
-            let prev_ld = self.get_decided_len();
-            if ld > prev_ld {
-                let from = prev_ld;
-                let to = ld;
-                let decided_entries = match self.sequence {
-                    PaxosSequence::Active(ref s) => {
-                        s.get_entries(from, to)
-                    },
-                    PaxosSequence::Stopped(ref arc_s) => {
-                        arc_s.get_entries(from, to)
-                    },
-                    _ => panic!("Got unexpected intermediate PaxosSequence::None")
-                };
-                self.set_decided_len(ld);
-                decided_entries
-            } else {
-                vec![]
-            }
-        }
-
         pub fn stopped(&self) -> bool {
             let ld = self.get_decided_len();
             if ld == 0 { return false; }
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.stopped(ld-1),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.stopped(ld-1),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in stopped()"),
             }
         }
 
@@ -766,6 +797,15 @@ pub mod paxos {
                 _ => panic!("Storage should already have been stopped!"),
             }
         }
+        /*
+        pub fn get_decided_entries_clone(&mut self, ld: u64) -> Vec<Entry> {    // TODO REMOVE
+            let prev_ld = self.get_decided_len();
+            match &self.sequence {
+                PaxosSequence::Active(s) => s.get_entries(prev_ld, ld),
+                PaxosSequence::Stopped(s) => s.get_entries(prev_ld, ld),
+                _ => panic!("Got intermediate sequence state PaxosSequence::None in get_decided_entries_clone")
+            }
+        }*/
     }
 
     #[derive(Debug)]
@@ -788,15 +828,28 @@ pub mod paxos {
             self.sequence.append(seq);
         }
 
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
-            self.sequence.truncate(from_idx as usize);
-            self.sequence.append(seq);
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry> {
+            if get_discarded {
+                let discarded_entries: Vec<Entry> = self.sequence.drain(from_idx as usize..).collect();
+                let mut failed_proposals = vec![];
+                for e in discarded_entries {
+                    if !seq.contains(&e) {
+                        failed_proposals.push(e);
+                    }
+                }
+                self.sequence.append(seq);
+                failed_proposals
+            } else {
+                self.sequence.truncate(from_idx as usize);
+                self.sequence.append(seq);
+                vec![]
+            }
         }
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
             match self.sequence.get(from as usize..to as usize) {
                 Some(ents) => ents.to_vec(),
-                None => panic!("Index out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
+                None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
             }
         }
 
@@ -829,7 +882,8 @@ pub mod paxos {
     pub struct MemoryState {
         n_prom: Ballot,
         acc_round: Ballot,
-        ld: u64
+        ld: u64,
+        pending_chosen_offset: Option<u64>,
     }
 
     impl PaxosStateTraits for MemoryState {}
@@ -837,8 +891,10 @@ pub mod paxos {
     impl PaxosState for MemoryState {
         fn new() -> Self {
             let ballot = Ballot::with(0, 0);
-            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: 0 }
+            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: 0, pending_chosen_offset:  None }
         }
+
+        fn set_pending_chosen_offset(&mut self, offset: Option<u64>) { self.pending_chosen_offset = offset }
 
         fn set_promise(&mut self, nprom: Ballot) {
             self.n_prom = nprom;
@@ -862,6 +918,10 @@ pub mod paxos {
 
         fn get_promise(&self) -> Ballot {
             self.n_prom.clone()
+        }
+
+        fn get_pending_chosen_offset(&self) -> Option<u64> {
+            self.pending_chosen_offset
         }
     }
 }
