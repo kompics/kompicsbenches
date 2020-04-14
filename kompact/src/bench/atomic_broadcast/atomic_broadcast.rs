@@ -210,7 +210,6 @@ impl AtomicBroadcastMaster {
 
     fn create_client(
         &self,
-        num_proposals: u64,
         nodes_id: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>
     ) -> Arc<Component<Client>> {
@@ -219,11 +218,12 @@ impl AtomicBroadcastMaster {
         /*** Setup client ***/
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
-                num_proposals,
+                self.num_proposals.unwrap(),
                 self.batch_size.unwrap(),
                 nodes_id,
                 reconfig,
                 finished_latch,
+                self.iteration_id
             )
         });
         unique_reg_f.wait_expect(
@@ -323,7 +323,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         }
 
                         self.partitioning_actor = Some(self.initialise_iteration(nodes));
-                        self.client_comp = Some(self.create_client(self.num_proposals.unwrap(), nodes_id, self.reconfiguration.clone()));
+                        self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
                         std::thread::sleep(Duration::from_secs(3));
                         self.paxos_replica_comp = Some(replica_comp);
                     }
@@ -383,7 +383,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         }
 
                         self.partitioning_actor = Some(self.initialise_iteration(nodes));
-                        self.client_comp = Some(self.create_client(self.num_proposals.unwrap(), nodes_id, self.reconfiguration.clone()));
+                        self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
                         self.raft_components = Some((raft_comp, communicator));
                     }
                     _ => unimplemented!(),
@@ -585,11 +585,13 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         println!("Cleaning up Atomic Broadcast (client)");
         if last_iteration {
             let system = self.system.take().unwrap();
-//            if self.paxos_comp.is_some(){
-//
-//            }
-            if self.raft_components.is_some() {
-                let (raft_comp, communicator) = self.raft_components.take().unwrap();
+            if let Some(replica) = self.paxos_replica_comp.take() {
+                let kill_replica_f = system.kill_notify(replica);
+                kill_replica_f
+                    .wait_timeout(Duration::from_secs(1))
+                    .expect("Paxos Replica never died!");
+            }
+            if let Some((raft_comp, communicator)) = self.raft_components.take() {
                 let kill_raft_f = system.kill_notify(raft_comp);
                 kill_raft_f
                     .wait_timeout(Duration::from_millis(1000))
@@ -599,11 +601,10 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 kill_communicator_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Communicator never died!");
-
-                system
-                    .shutdown()
-                    .expect("Kompact didn't shut down properly");
             }
+            system
+                .shutdown()
+                .expect("Kompact didn't shut down properly");
         }
     }
 }

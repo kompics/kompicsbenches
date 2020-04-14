@@ -1,7 +1,7 @@
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 use std::time::Duration;
 
@@ -17,7 +17,9 @@ pub struct Client {
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
     finished_latch: Arc<CountdownEvent>,
     received_count: u64,
-    retries: HashMap<u64, u32>
+    retries: HashMap<u64, u32>,
+    iteration_id: u32,
+    responses: HashMap<u64, ActorPath>,
 }
 
 impl Client {
@@ -26,10 +28,20 @@ impl Client {
         batch_size: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
-        finished_latch: Arc<CountdownEvent>
+        finished_latch: Arc<CountdownEvent>,
+        iteration_id: u32,
     ) -> Client {
         Client {
-            ctx: ComponentContext::new(), num_proposals, batch_size, nodes, reconfig, finished_latch, received_count: 0, retries: HashMap::new()
+            ctx: ComponentContext::new(),
+            num_proposals,
+            batch_size,
+            nodes,
+            reconfig,
+            finished_latch,
+            received_count: 0,
+            retries: HashMap::new(),
+            iteration_id,
+            responses: HashMap::new(),
         }
     }
 
@@ -73,12 +85,19 @@ impl Actor for Client {
             self.propose_reconfiguration();
             // self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
         } else {
+            info!(self.ctx.log(), "Sending: {}-{}", 1, self.batch_size);
             self.send_normal_proposals(1..=self.batch_size);
         }
+        self.schedule_periodic(
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            move |c, _| info!(c.ctx.log(), "Iteration {}: received: {}/{}", c.iteration_id, c.received_count, c.num_proposals)
+        );
     }
 
-    fn receive_network(&mut self, msg: NetMessage) -> () {
-        match_deser!{msg; {
+    fn receive_network(&mut self, m: NetMessage) -> () {
+        let NetMessage{sender, receiver: _, data} = m;
+        match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -89,6 +108,15 @@ impl Actor for Client {
                                 }
                                 _ => {
                                     self.received_count += 1;
+                                    match self.responses.insert(pr.id, sender.clone()) {
+                                        Some(node) if node == sender => {
+                                            panic!("Got duplicate response id: {} from same node: {:?}, {:?}", pr.id, node, sender);
+                                        },
+                                        Some(other) if other != sender => {
+                                            panic!("Got duplicate response id: {} from different nodes: {:?}, {:?}", pr.id, other, sender);
+                                        },
+                                        _ => {},
+                                    }
 //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
@@ -96,8 +124,10 @@ impl Actor for Client {
                                         let from = self.received_count + 1;
                                         let to = self.received_count + self.batch_size;
                                         if to > self.num_proposals {
-                                            self.send_normal_proposals(from..self.num_proposals);
+                                            info!(self.ctx.log(), "Sending: {}-{}", from, self.num_proposals);
+                                            self.send_normal_proposals(from..=self.num_proposals);
                                         } else {
+                                            info!(self.ctx.log(), "Sending: {}-{}", from, to);
                                             self.send_normal_proposals(from..=to);
                                         }
                                     }
@@ -149,6 +179,7 @@ pub mod tests {
         reconfig_count: u32,
         retries: HashMap<u64, u32>,
         check_sequences: bool,
+        responses: HashMap<u64, ActorPath>,
     }
 
     impl TestClient {
@@ -171,7 +202,8 @@ pub mod tests {
                 received_count: 0,
                 reconfig_count: 0,
                 retries: HashMap::new(),
-                check_sequences
+                check_sequences,
+                responses: HashMap::new()
             }
         }
 
@@ -218,12 +250,14 @@ pub mod tests {
                 std::thread::sleep(Duration::from_secs(2));
                 self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
             } else {
+                info!(self.ctx.log(), "Sending: {}-{}", 1, self.batch_size);
                 self.send_normal_proposals(1..=self.batch_size);
             }
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
-            match_deser!{msg; {
+            let NetMessage{sender, receiver: _, data} = msg;
+            match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -234,6 +268,16 @@ pub mod tests {
                                 }
                                 _ => {
                                     // info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
+                                    match self.responses.insert(pr.id, sender.clone()) {
+                                        Some(node) if node == sender => {
+                                            panic!("Got duplicate response id: {} from same node: {:?}, {:?}", pr.id, node, sender);
+                                        },
+                                        Some(other) if other != sender => {
+                                            panic!("Got duplicate response id: {} from different nodes: {:?}, {:?}", pr.id, other, sender);
+                                        },
+                                        _ => {},
+                                    }
+
                                     let decided_sequence = self.test_results.get_mut(&0).unwrap();
                                     decided_sequence.push(pr.id);
                                     self.received_count += 1;
@@ -252,8 +296,10 @@ pub mod tests {
                                         let from = self.received_count + 1;
                                         let to = self.received_count + self.batch_size;
                                         if to > self.num_proposals {
+                                            info!(self.ctx.log(), "Sending: {}-{}", from, self.num_proposals);
                                             self.send_normal_proposals(from..=self.num_proposals);
                                         } else {
+                                            info!(self.ctx.log(), "Sending: {}-{}", from, to);
                                             self.send_normal_proposals(from..=to);
                                         }
                                     }

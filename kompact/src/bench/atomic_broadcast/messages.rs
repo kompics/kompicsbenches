@@ -62,7 +62,7 @@ pub mod paxos {
     use std::fmt::Debug;
     use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
     use crate::serialiser_ids;
-    use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
+    use crate::bench::atomic_broadcast::paxos::raw_paxos::{StopSign, EntryMetaData, Normal};
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
@@ -147,7 +147,8 @@ pub mod paxos {
         AcceptSync(AcceptSync),
         Accept(Accept),
         Accepted(Accepted),
-        Decide(Decide)
+        Decide(Decide),
+        ProposalForward(Vec<Entry>)
     }
 
     #[derive(Clone, Debug)]
@@ -169,9 +170,10 @@ pub mod paxos {
     const ACCEPT_ID: u8 = 4;
     const ACCEPTED_ID: u8 = 5;
     const DECIDE_ID: u8 = 6;
+    const PROPOSALFORWARD_ID: u8 = 7;
 
-    const NORMAL_ENTRY_ID: u8 = 7;
-    const SS_ENTRY_ID: u8 = 8;
+    const NORMAL_ENTRY_ID: u8 = 1;
+    const SS_ENTRY_ID: u8 = 2;
 
     pub struct PaxosSer;
 
@@ -183,11 +185,13 @@ pub mod paxos {
 
         fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
             match e {
-                Entry::Normal(data) => {
+                Entry::Normal(normal) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
-                    buf.put_u32(data.len() as u32);
-                    buf.put_slice(data);
-                },
+                    buf.put_u64(normal.metadata.proposed_by);
+                    buf.put_u64(normal.metadata.n);
+                    buf.put_u32(normal.data.len() as u32);
+                    buf.put_slice(normal.data.as_slice());
+                }
                 Entry::StopSign(ss) => {
                     buf.put_u8(SS_ENTRY_ID);
                     buf.put_u32(ss.config_id);
@@ -213,12 +217,16 @@ pub mod paxos {
         fn deserialise_entry(buf: &mut dyn Buf) -> Entry {
             match buf.get_u8() {
                 NORMAL_ENTRY_ID => {
+                    let proposed_by = buf.get_u64();
+                    let n = buf.get_u64();
                     let data_len = buf.get_u32();
                     let mut data = Vec::with_capacity(data_len as usize);
                     for _ in 0..data_len {
                         data.push(buf.get_u8());
                     }
-                    Entry::Normal(data)
+                    let metadata = EntryMetaData::with(proposed_by, n);
+                    let normal = Normal::with(metadata, data);
+                    Entry::Normal(normal)
                 },
                 SS_ENTRY_ID => {
                     let config_id = buf.get_u32();
@@ -250,7 +258,8 @@ pub mod paxos {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(220000)   // TODO?
+            // TODO use eager ser instead? We usually send to remote actorpaths and some msgs could be really long (expensive malloc)
+            Some(10000)
         }
 
         fn serialise(&self, m: &Message, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -291,7 +300,11 @@ pub mod paxos {
                     buf.put_u8(DECIDE_ID);
                     Self::serialise_ballot(&d.n, buf);
                     buf.put_u64(d.ld);
-                }
+                },
+                PaxosMsg::ProposalForward(proposals) => {
+                    buf.put_u8(PROPOSALFORWARD_ID);
+                    Self::serialise_entries(proposals, buf);
+                },
             }
             Ok(())
         }
@@ -357,6 +370,12 @@ pub mod paxos {
                     let msg = Message::with(from, to, PaxosMsg::Decide(d));
                     Ok(msg)
                 },
+                PROPOSALFORWARD_ID => {
+                    let proposals = Self::deserialise_entries(buf);
+                    let pf = PaxosMsg::ProposalForward(proposals);
+                    let msg = Message::with(from, to, pf);
+                    Ok(msg)
+                }
                 _ => {
                     Err(SerError::InvalidType(
                         "Found unkown id but expected PaxosMsg".into(),
