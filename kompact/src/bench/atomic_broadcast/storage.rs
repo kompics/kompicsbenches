@@ -643,7 +643,7 @@ pub mod paxos {
             }
         }
 
-        pub fn append_sequence(&mut self, seq: &mut Vec<Entry>) {
+        pub fn append_sequence(&mut self, seq: Vec<Entry>) {
             if seq.is_empty() { return; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
@@ -651,7 +651,8 @@ pub mod paxos {
                         let current_offset = s.get_sequence_len();
                         self.paxos_state.set_pending_chosen_offset(Some(current_offset));
                     }
-                    s.append_sequence(seq);
+                    let mut sequence = seq;
+                    s.append_sequence(&mut sequence);
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -664,14 +665,10 @@ pub mod paxos {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     let get_discarded = self.paxos_state.get_pending_chosen_offset().is_some();
+                    if get_discarded {
+                        self.paxos_state.set_pending_chosen_offset(None);
+                    }
                     s.append_on_prefix(from_idx, seq, get_discarded)
-                    /*match self.paxos_state.get_pending_chosen_offset() {
-                        Some(pending) => {
-                            self.paxos_state.set_pending_chosen_offset(None);
-                            discarded
-                        },
-                        _ => vec![]
-                    }*/
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -712,11 +709,9 @@ pub mod paxos {
 
         pub fn set_pending_chosen_offset(&mut self, offset: u64) {
             if offset == self.get_sequence_len() {
-                println!("chosen all elements in sequence: Setting to None");
                 self.paxos_state.set_pending_chosen_offset(None);
             } else if let Some(pending_offset) = self.paxos_state.get_pending_chosen_offset() {
                 if pending_offset == offset {
-                    println!("chosen all elements up to pending offset: Setting to None");
                     self.paxos_state.set_pending_chosen_offset(None);
                 }
             } else {
@@ -797,16 +792,9 @@ pub mod paxos {
                 _ => panic!("Storage should already have been stopped!"),
             }
         }
-        /*
-        pub fn get_decided_entries_clone(&mut self, ld: u64) -> Vec<Entry> {    // TODO REMOVE
-            let prev_ld = self.get_decided_len();
-            match &self.sequence {
-                PaxosSequence::Active(s) => s.get_entries(prev_ld, ld),
-                PaxosSequence::Stopped(s) => s.get_entries(prev_ld, ld),
-                _ => panic!("Got intermediate sequence state PaxosSequence::None in get_decided_entries_clone")
-            }
-        }*/
     }
+
+    const INITIAL_CAP: usize = 5000;
 
     #[derive(Debug)]
     pub struct MemorySequence {
@@ -817,7 +805,7 @@ pub mod paxos {
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence{ sequence: vec![] }
+            MemorySequence{ sequence: Vec::with_capacity(INITIAL_CAP) }
         }
 
         fn append_entry(&mut self, entry: Entry) {
@@ -830,15 +818,14 @@ pub mod paxos {
 
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry> {
             if get_discarded {
-                let discarded_entries: Vec<Entry> = self.sequence.drain(from_idx as usize..).collect();
-                let mut failed_proposals = vec![];
-                for e in discarded_entries {
-                    if !seq.contains(&e) {
-                        failed_proposals.push(e);
-                    }
-                }
+                let discarded_entries: Vec<Entry> =
+                    self.sequence
+                        .drain(from_idx as usize..)
+                        .filter( |e| !seq.contains(e) )
+                        .collect();
+
                 self.sequence.append(seq);
-                failed_proposals
+                discarded_entries
             } else {
                 self.sequence.truncate(from_idx as usize);
                 self.sequence.append(seq);
@@ -873,8 +860,6 @@ pub mod paxos {
                  Some(entry) => entry.is_stopsign(),
                  None => false
             }
-//            if idx as usize >= self.sequence.len() { return false; }
-//            self.sequence[idx as usize].is_stopsign()
         }
     }
 

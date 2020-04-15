@@ -1,7 +1,7 @@
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 use std::time::Duration;
 
@@ -19,7 +19,6 @@ pub struct Client {
     received_count: u64,
     retries: HashMap<u64, u32>,
     iteration_id: u32,
-    responses: HashMap<u64, ActorPath>,
 }
 
 impl Client {
@@ -41,7 +40,6 @@ impl Client {
             received_count: 0,
             retries: HashMap::new(),
             iteration_id,
-            responses: HashMap::new(),
         }
     }
 
@@ -96,7 +94,7 @@ impl Actor for Client {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let NetMessage{sender, receiver: _, data} = m;
+        let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
@@ -108,28 +106,19 @@ impl Actor for Client {
                                 }
                                 _ => {
                                     self.received_count += 1;
-                                    match self.responses.insert(pr.id, sender.clone()) {
-                                        Some(node) if node == sender => {
-                                            panic!("Got duplicate response id: {} from same node: {:?}, {:?}", pr.id, node, sender);
-                                        },
-                                        Some(other) if other != sender => {
-                                            panic!("Got duplicate response id: {} from different nodes: {:?}, {:?}", pr.id, other, sender);
-                                        },
-                                        _ => {},
-                                    }
 //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else if self.received_count % self.batch_size == 0 {
                                         let from = self.received_count + 1;
-                                        let to = self.received_count + self.batch_size;
-                                        if to > self.num_proposals {
-                                            info!(self.ctx.log(), "Sending: {}-{}", from, self.num_proposals);
-                                            self.send_normal_proposals(from..=self.num_proposals);
+                                        let i = self.received_count + self.batch_size;
+                                        let to = if i > self.num_proposals {
+                                            self.num_proposals
                                         } else {
-                                            info!(self.ctx.log(), "Sending: {}-{}", from, to);
-                                            self.send_normal_proposals(from..=to);
-                                        }
+                                            i
+                                        };
+                                        info!(self.ctx.log(), "Sending: {}-{}", from, to);
+                                        self.send_normal_proposals(from..=to);
                                     }
                                 }
                             }
@@ -294,14 +283,14 @@ pub mod tests {
                                         }
                                     } else if self.received_count % self.batch_size == 0 {
                                         let from = self.received_count + 1;
-                                        let to = self.received_count + self.batch_size;
-                                        if to > self.num_proposals {
-                                            info!(self.ctx.log(), "Sending: {}-{}", from, self.num_proposals);
-                                            self.send_normal_proposals(from..=self.num_proposals);
+                                        let i = self.received_count + self.batch_size;
+                                        let to = if i > self.num_proposals {
+                                            self.num_proposals
                                         } else {
-                                            info!(self.ctx.log(), "Sending: {}-{}", from, to);
-                                            self.send_normal_proposals(from..=to);
-                                        }
+                                            i
+                                        };
+                                        info!(self.ctx.log(), "Sending: {}-{}", from, to);
+                                        self.send_normal_proposals(from..=to);
                                     }
                                 }
                             }
