@@ -639,7 +639,7 @@ impl Proposal {
         };
         proposal
     }
-
+/*
     pub fn serialize_normal(&self) -> Result<Vec<u8>, SerError> {   // serialize to use with tikv raft
         let mut buf = vec![];
         buf.put_u64(self.id);
@@ -652,7 +652,7 @@ impl Proposal {
         let id = buf.get_u64();
         let client = ActorPath::deserialise(&mut buf).expect("No client actorpath in proposal");
         Proposal::normal(id, client)
-    }
+    }*/
 }
 
 #[derive(Clone, Debug)]
@@ -710,7 +710,7 @@ impl SequenceResp {
 #[derive(Clone, Debug)]
 pub enum CommunicatorMsg {
     RaftMsg(RaftMsg),
-    ProposalResp(ActorPath, ProposalResp),
+    ProposalResp(ProposalResp),
     ProposalForward(ProposalForward),
     SequenceResp(SequenceResp),
     InitAck(u32)

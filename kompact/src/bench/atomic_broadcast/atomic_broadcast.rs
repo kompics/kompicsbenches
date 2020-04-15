@@ -146,8 +146,6 @@ enum Algorithm {
 
 type Storage = MemStorage;
 
-const STOP_TIMEOUT: Duration = Duration::from_secs(60);
-
 pub struct AtomicBroadcastMaster {
     algorithm: Option<Algorithm>,
     num_nodes: Option<u64>,
