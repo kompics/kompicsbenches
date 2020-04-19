@@ -7,12 +7,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use super::messages::paxos::{Message as RawPaxosMsg, ballot_leader_election::Leader};
-use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReplicaSer, SequenceTransfer, SequenceRequest};
+use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceResponse, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
 use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, SequenceResp, RECONFIG_ID};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use synchronoise::CountdownEvent;
 use uuid::Uuid;
 use kompact::prelude::Buf;
+use crate::bench::atomic_broadcast::raft::RaftCompMsg::SequenceReq;
+use rand::Rng;
 
 const BLE: &str = "ble";
 const PAXOS: &str = "paxos";
@@ -23,26 +25,26 @@ pub trait SequenceTraits: Sequence + Debug + Send + Sync + 'static {}
 pub trait PaxosStateTraits: PaxosState + Send + 'static {}
 
 #[derive(Debug)]
-pub struct Reconfiguration<S> where
+pub struct FinalMsg<S> where
     S: SequenceTraits,
 {
     pub config_id: u32,
-    pub config: HashMap<u64, bool>,    // nodes not part of last config
+    pub nodes: Reconfig,
     pub final_sequence: Arc<S>,
 }
 
-impl<S> Reconfiguration<S> where
+impl<S> FinalMsg<S> where
     S: SequenceTraits
 {
-    pub fn with(config_id: u32, config: HashMap<u64, bool>, final_sequence: Arc<S>) -> Reconfiguration<S> {
-        Reconfiguration{ config_id, config, final_sequence }
+    pub fn with(config_id: u32, nodes: Reconfig, final_sequence: Arc<S>) -> FinalMsg<S> {
+        FinalMsg { config_id, nodes, final_sequence }
     }
 }
 
 #[derive(Debug)]
 pub enum PaxosCompMsg {
     Propose(Proposal),
-    SequenceReq(ActorPath),
+    SequenceReq(Ask<(u64, u64), Option<Vec<u8>>>),
     Stop(Stop),
 }
 
@@ -65,7 +67,7 @@ impl Stop {
 
 pub enum TransferPolicy {
     Eager,
-    Passive
+    Pull
 }
 
 #[derive(ComponentDefinition)]
@@ -85,8 +87,10 @@ pub struct ReplicaComp<S, P> where
     partitioning_actor: Option<ActorPath>,
     pending_registrations: HashSet<Uuid>,
     policy: TransferPolicy,
-    pending_seq_transfers: HashMap<(u32, u32), Vec<Entry>>,
-    pending_seq_len: HashMap<u32, u64>,
+    pending_seq_transfers: HashMap<u32, (u32, HashMap<u32, Vec<Entry>>)>,   // <config_id, (num_segments, <segment_id, entries>)
+    pending_seq_timers: HashMap<(u32, u32), ScheduledTimer>, // <(config_id, segment_id), retry_timer>
+    complete_sequences: HashSet<u32>,
+    active_peers: (HashSet<u64>, HashSet<u64>)
 }
 
 impl<S, P> ReplicaComp<S, P> where
@@ -108,11 +112,13 @@ impl<S, P> ReplicaComp<S, P> where
             pending_registrations: HashSet::new(),
             policy,
             pending_seq_transfers: HashMap::new(),
-            pending_seq_len: HashMap::new()
+            pending_seq_timers: HashMap::new(),
+            complete_sequences: HashSet::new(),
+            active_peers: (HashSet::new(), HashSet::new())
         }
     }
 
-    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>) {
+    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_with_response: bool) {
         let mut paxos_peers = HashMap::new();
         let mut ble_peers = vec![];
         for pid in nodes {
@@ -130,12 +136,14 @@ impl<S, P> ReplicaComp<S, P> where
                             addr.clone(),
                             port,
                             vec![format!("{}{},{}-{}", PAXOS, pid, config_id, self.iteration_id).into()]
+                            // vec![format!("{}{},{}", PAXOS, pid, config_id)]
                         );
                         let named_ble = NamedPath::new(
                             protocol,
                             addr.clone(),
                             port,
                             vec![format!("{}{},{}-{}", BLE, pid, config_id, self.iteration_id).into()]
+                            // vec![format!("{}{},{}", BLE, pid, config_id).into()]
                         );
                         paxos_peers.insert(pid, ActorPath::Named(named_paxos));
                         ble_peers.push(ActorPath::Named(named_ble));
@@ -151,21 +159,55 @@ impl<S, P> ReplicaComp<S, P> where
             PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid)
         });
         system.register_without_response(&paxos_comp);
-        let paxos_id = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id), self);
-        self.pending_registrations.insert(paxos_id.0);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
             BallotLeaderComp::with(ble_peers, self.pid, DELTA)
         });
         system.register_without_response(&ble_comp);
-        let ble_id = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id), self);
-        self.pending_registrations.insert(ble_id.0);
-        // let _ = system.register_by_alias(&paxos_comp, format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id));
-        // let _ = system.register_by_alias(&ble_comp, format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id));
+        let paxos_alias = format!("{}{},{}-{}", PAXOS, self.pid, config_id, self.iteration_id);
+        let ble_alias = format!("{}{},{}-{}", BLE, self.pid, config_id, self.iteration_id);
+        // let paxos_alias = format!("{}{},{}", PAXOS, self.pid, config_id);
+        // let ble_alias = format!("{}{},{}", BLE, self.pid, config_id);
+        if register_with_response {
+            /*let (paxos_id, ble_id) = if self.iteration_id > 1 {
+                let p = system.update_alias_registration(&paxos_comp, paxos_alias, self);
+                let b = system.update_alias_registration(&ble_comp, ble_alias, self);
+                (p, b)
+            } else {
+                let p = system.register_by_alias(&paxos_comp, paxos_alias, self);
+                let b = system.register_by_alias(&ble_comp, ble_alias, self);
+                (p, b)
+            };
+            self.pending_registrations.insert(paxos_id.0);
+            self.pending_registrations.insert(ble_id.0);*/
+            let paxos_id = system.register_by_alias(&paxos_comp, paxos_alias, self);
+            self.pending_registrations.insert(paxos_id.0);
+
+            let ble_id = system.register_by_alias(&ble_comp, ble_alias, self);
+            self.pending_registrations.insert(ble_id.0);
+        } else {
+            /*if self.iteration_id > 1 {
+                system.update_alias_registration_without_response(&paxos_comp, paxos_alias);
+                system.update_alias_registration_without_response(&ble_comp, ble_alias);
+            } else {
+                system.register_by_alias_without_response(&paxos_comp, paxos_alias);
+                system.register_by_alias_without_response(&ble_comp, ble_alias);
+            }*/
+            system.register_by_alias_without_response(&paxos_comp, paxos_alias);
+            system.register_by_alias_without_response(&ble_comp, ble_alias);
+        }
+
         biconnect_components::<BallotLeaderElection, _, _>(&ble_comp, &paxos_comp)
             .expect("Could not connect components!");
         self.replicas.insert(config_id, (ble_comp, paxos_comp));
         self.active_config_id = config_id;
+    }
+
+    fn start_replica(&mut self, config_id: u32) {
+        if let Some((ble, paxos)) = self.replicas.get(&config_id) {
+            self.ctx.system().start(paxos);
+            self.ctx.system().start(ble);
+        }
     }
 
     fn kill_all_replicas(&mut self) {
@@ -188,37 +230,134 @@ impl<S, P> ReplicaComp<S, P> where
         }
         if self.initial_config.contains(&self.pid){
             self.active_config_id += 1;
-            self.create_replica(self.active_config_id, self.initial_config.clone());
+            self.create_replica(self.active_config_id, self.initial_config.clone(), true);
+        } else {
+            let resp = PartitioningActorMsg::InitAck(self.iteration_id);
+            let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
+            ap.tell_serialised(resp, self).expect("Should serialise");
         }
     }
 
-    /*fn request_sequence(&mut self, continued_peers: &Vec<u64>, prev_seq_len: u64, config_id: u32) {
-        /*let num_continued = continued_peers.len();
-        let n = prev_seq_len/num_continued as u64;
-        for i in 0..num_continued {
-            let from_idx = i as u64 * n;
-            let to_idx = from_idx + n;
-            let actorpath = self.nodes.get(&continued_peers[i]).unwrap();
-            let sr = SequenceRequest::with(config_id, from_idx, to_idx);
-            // TODO send to actorpath
-            self.pending_seq_transfers += 1;
-        }*/
+    fn pull_previous_sequence(&mut self, config_id: u32, seq_len: u64) {
+        let num_continued_nodes = self.active_peers.0.len() + self.active_peers.1.len();
+        let mut continued_nodes = self.active_peers.0.clone();
+        for pid in &self.active_peers.1 {
+            continued_nodes.insert(*pid);
+        }
+        let offset = seq_len/ num_continued_nodes as u64;
+        if num_continued_nodes < 1 {
+            panic!("No continued nodes to pull sequence from: {:?}", self.active_peers);
+        }
+        info!(self.ctx.log(), "Pulling sequence {} from {:?}", config_id, &self.active_peers);
+        self.pending_seq_transfers.insert(config_id, (num_continued_nodes as u32, HashMap::with_capacity(num_continued_nodes)));
+        for (i, pid) in continued_nodes.iter().enumerate() {
+            let from_idx = i as u64 * offset;
+            let to_idx = if from_idx as u64 + offset > seq_len{
+                seq_len
+            } else {
+                from_idx + offset
+            };
+            let tag = i + 1;
+            self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+            /*let timer = self.schedule_once(Duration::from_millis(300), move |c, _| c.retry_request_sequence()); // TODO
+            self.pending_seq_timers.insert(
+                (config_id, tag),
+                timer
+            );*/
+        }
+    }
+
+    fn request_sequence(&self, pid: u64, config_id: u32, from_idx: u64, to_idx: u64, tag: u32) {
+        let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx);
+        self.nodes
+            .get(&pid)
+            .expect(&format!("Failed to get Actorpath of node {}", pid))
+            .tell((ReconfigurationMsg::SequenceRequest(sr), ReconfigSer), self);
+    }
+
+    fn retry_request_sequence(&mut self) {
         unimplemented!();
     }
 
-    fn transfer_sequence(&self, config_id: u32, requestor: ActorPath, from_idx: u64, to_idx: u64) {
-        /*if config_id == self.active_config_id {
+    fn transfer_sequence(&self, sr: SequenceRequest, requestor: ActorPath) {
+        let (succeeded, ser_entries) = match self.prev_sequences.get(&sr.config_id) {
+            Some(seq) => {
+                info!(self.ctx.log(), "Transfer seq: {:?}", &sr);
+                let entries = seq.get_ser_entries(sr.from_idx, sr.to_idx).expect("Should have all entries in final sequence!");
+                (true, entries)
+            },
+            None => {
+                if self.active_config_id == sr.config_id {
+                    let (_, paxos) = self.replicas.get(&sr.config_id).unwrap();
+                    let ser_entries_f = paxos
+                        .actor_ref()
+                        .ask(|promise| PaxosCompMsg::SequenceReq(Ask::new(promise, (sr.from_idx, sr.to_idx))))
+                        .wait();
+                    match ser_entries_f {
+                        Some(ser_entries) => (true, ser_entries),
+                        None => (false, vec![]),
+                    }
+                } else {
+                    (false, vec![])
+                }
+            }
+        };
+        let prev_seq_len = match self.prev_sequences.get(&(sr.config_id-1)) {
+            Some(prev_seq) => {
+                prev_seq.get_sequence_len()
+            },
+            None => 0,
+        };
+        let metadata = SequenceMetaData::with(sr.config_id-1, prev_seq_len);
+        let st = SequenceResponse::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, ser_entries, metadata);
+        requestor.tell((ReconfigurationMsg::SequenceResponse(st), ReconfigSer), self);
+    }
 
+    fn handle_sequence_transfer(&mut self, st: SequenceResponse) {
+        info!(self.ctx.log(), "Handling SequenceTransfer config_id: {}, tag: {}", st.config_id, st.tag);
+        let prev_config_id = st.metadata.config_id;
+        let prev_seq_len = st.metadata.len;
+        // pull previous sequence if exists and not already started
+        if prev_config_id != 0 && !self.complete_sequences.contains(&prev_config_id) && !self.pending_seq_transfers.contains_key(&prev_config_id) {
+            self.pull_previous_sequence( prev_config_id, prev_seq_len);
+        }
+        if st.succeeded {
+            match self.pending_seq_transfers.get_mut(&st.config_id) {
+                Some(segments) => {
+                    let seq = PaxosSer::deserialise_entries(&mut st.ser_entries.as_slice());
+                    segments.1.insert(st.tag, seq);
+                    if segments.1.len() as u32 == segments.0 {  // got all segments, i.e. complete sequence
+                        info!(self.ctx.log(), "Got all segments for sequence {}", st.config_id);
+                        let mut complete_seq = segments.1.remove(&1).unwrap();
+                        for tag in 2..=segments.0 {
+                            let mut segment = segments.1.remove(&tag).unwrap();
+                            complete_seq.append(&mut segment);
+                        }
+                        let final_sequence = S::new_with_sequence(complete_seq);
+                        self.prev_sequences.insert(st.config_id, Arc::new(final_sequence));
+                        self.complete_sequences.insert(st.config_id);
+                        self.pending_seq_transfers.remove(&st.config_id);
+                        if self.pending_seq_transfers.is_empty() {  // got all previous sequences
+                            self.complete_sequences.clear();
+                            self.start_replica(self.active_config_id);
+                        }
+                    }
+                },
+                None => panic!("{}", &format!("Got unexpected sequence transfer config_id: {}, tag: {}, index: {}-{}", st.config_id, st.tag, st.from_idx, st.to_idx)),
+            }
         } else {
-            let prev_seq = self.prev_sequences.get(&config_id).expect("Previous sequence not found!");
-            let seq = prev_seq.get_entries(from_idx, to_idx);
-        }*/
-        unimplemented!();
+            let config_id = st.config_id;
+            let tag = st.tag;
+            let from_idx = st.from_idx;
+            let to_idx = st.to_idx;
+            let num_active = self.active_peers.0.len();
+            let mut rng = rand::thread_rng();
+            let rnd = rng.gen_range(1, num_active);
+            let pid = self.active_peers.0.iter().nth(rnd).expect("Failed to get random active pid");
+            info!(self.ctx.log(), "Got failed SequenceResponse for config_id: {}, tag: {}. Requesting node {} instead", config_id, tag, pid);
+            self.request_sequence(*pid, config_id, from_idx, to_idx, tag);
+        }
     }
-
-    fn handle_sequence_resp(&mut self, config_id: u32, msg_id: u32, seq: Vec<Entry>) {
-
-    }*/
 }
 
 impl<S, P> Provide<ControlPort> for ReplicaComp<S, P> where
@@ -236,7 +375,7 @@ impl<S, P> Provide<ControlPort> for ReplicaComp<S, P> where
 
 #[derive(Debug)]
 pub enum ReplicaCompMsg<S> where S: SequenceTraits{
-    Reconfig(Reconfiguration<S>),
+    Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse)
 }
 
@@ -256,39 +395,40 @@ impl<S, P> Actor for ReplicaComp<S, P> where
         match msg {
             ReplicaCompMsg::Reconfig(r) => {
                 info!(self.ctx.log(), "Got reconfig");
-                self.prev_sequences.insert(self.active_config_id, r.final_sequence);
-                let nodes: Vec<u64> = r.config.keys().map(|x| *x).collect();
-                // let old_config_id = self.active_config_id;
-                if r.config.contains_key(&self.pid) {
-                    self.create_replica(r.config_id, nodes.clone());
-                }
-                for (pid, new_node) in r.config {
-                    if new_node && pid != self.pid {
+                let prev_config_id = self.active_config_id;
+                let final_seq_len: u64 = r.final_sequence.get_sequence_len();
+                let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
+                info!(self.ctx.log(), "Inserting final sequence {}", prev_config_id);
+                self.prev_sequences.insert(prev_config_id, r.final_sequence);
+                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid));
+                for pid in &r.nodes.new_nodes {
+                    if pid != &self.pid {
                         info!(self.ctx.log(), "Sending ReconfigInit to node {}", pid);
-                        let actorpath = self.nodes.get(&pid).expect("No actorpath found for new node");
-                        let r_init = ReconfigInit::with(r.config_id, nodes.clone());
-                        actorpath.tell((r_init, ReplicaSer), self);
+                        let actorpath = self.nodes.get(pid).expect("No actorpath found for new node");
+                        actorpath.tell((r_init.clone(), ReconfigSer), self);
                         if let TransferPolicy::Eager = self.policy {
                             unimplemented!();
                         }
                     }
                 }
-            }
+                let mut nodes = r.nodes.continued_nodes;
+                let mut new_nodes = r.nodes.new_nodes;
+                if nodes.contains(&self.pid) {
+                    nodes.append(&mut new_nodes);
+                    self.create_replica(r.config_id, nodes, false);
+                    self.start_replica(r.config_id);
+                }
+            },
             ReplicaCompMsg::RegResp(rr) => {
                 self.pending_registrations.remove(&rr.id.0);
                 if self.pending_registrations.is_empty() {
                     info!(self.ctx.log(), "Registered all components");
-                    let (ble, paxos) = self.replicas.get(&self.active_config_id).expect("BLE and Paxos component not found!");
-                    self.ctx.system().start(paxos);
-                    self.ctx.system().start(ble);
                     let resp = PartitioningActorMsg::InitAck(self.iteration_id);
                     let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
                     ap.tell_serialised(resp, self).expect("Should serialise");
                 }
             }
         }
-
-
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -300,6 +440,9 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                         info!(self.ctx.log(), "{}", format!("Got init! My pid: {}", init.pid));
                         self.partitioning_actor = Some(sender);
                         self.new_iteration(init);
+                    },
+                    PartitioningActorMsg::Run => {
+                        self.start_replica(self.active_config_id);
                     },
                     PartitioningActorMsg::Stop => {
                         info!(self.ctx.log(), "Stopping ble and paxos...");
@@ -322,13 +465,36 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                     _ => unimplemented!()
                 }
             },
-            r: ReconfigInit [ReplicaSer] => {
-                if self.active_config_id < r.config_id && !self.stopped {
-                    info!(self.ctx.log(), "Got ReconfigInit!");
-                    if r.nodes.contains(&self.pid) {
-                    // TODO pull previous sequence from the nodes in r.nodes
-                        self.create_replica(r.config_id, r.nodes);
-                        self.active_config_id = r.config_id;
+            rm: ReconfigurationMsg [ReconfigSer] => {
+                match rm {
+                    ReconfigurationMsg::Init(r) => {
+                        if self.active_config_id < r.config_id && !self.stopped {
+                            info!(self.ctx.log(), "Got ReconfigInit!");
+                            for pid in &r.nodes.continued_nodes {
+                                if pid == &r.from {
+                                    self.active_peers.0.insert(*pid);
+                                } else {
+                                    self.active_peers.1.insert(*pid);
+                                }
+                            }
+                            if let TransferPolicy::Pull = self.policy {
+                                std::thread::sleep(Duration::from_secs(1));
+                                self.pull_previous_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
+                            }
+                            let mut nodes = r.nodes.continued_nodes;
+                            let mut new_nodes = r.nodes.new_nodes;
+                            nodes.append(&mut new_nodes);
+                            self.create_replica(r.config_id, nodes, false);
+                        } else if self.active_config_id == r.config_id {
+                            self.active_peers.1.remove(&r.from);
+                            self.active_peers.0.insert(r.from);
+                        }
+                    },
+                    ReconfigurationMsg::SequenceRequest(sr) => {
+                        self.transfer_sequence(sr, sender);
+                    },
+                    ReconfigurationMsg::SequenceResponse(st) => {
+                        self.handle_sequence_transfer(st);
                     }
                 }
             },
@@ -340,14 +506,14 @@ impl<S, P> Actor for ReplicaComp<S, P> where
                             active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
                         }
                     },
-                    AtomicBroadcastMsg::SequenceReq => {
+                    /*AtomicBroadcastMsg::SequenceReq => {
                         if self.replicas.len() > 1 {
                             unimplemented!();
                         } else {
                             let active_paxos = &self.replicas.get(&self.active_config_id).expect("No active paxos replica").1;
                             active_paxos.actor_ref().tell(PaxosCompMsg::SequenceReq(sender));
                         }
-                    },
+                    },*/
                     _ => unimplemented!(),
                 }
             },
@@ -466,18 +632,16 @@ impl<S, P> PaxosComp<S, P> where
                     /*if self.responses.remove(&RECONFIG_ID) {
                         unimplemented!();
                     }*/
-                    info!(self.ctx.log(), "Decided StopSign!");
                     let final_seq = self.paxos.stop_and_get_sequence();
-                    let mut config = HashMap::new();
-                    for pid in &ss.nodes {
-                        if self.peers.contains_key(pid) {
-                            config.insert(*pid, false);
-                        } else { // i.e. new node
-                            config.insert(*pid, true);
-                        }
-                    }
-                    let r = Reconfiguration::with(ss.config_id, config,final_seq);
+                    let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
+                        |&pid| pid == &self.pid || self.peers.contains_key(pid)
+                    );
+                    info!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
+                    let nodes = Reconfig::with(continued_nodes, new_nodes);
+                    let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(ReplicaCompMsg::Reconfig(r));
+                    let pr = ProposalResp::succeeded_normal(RECONFIG_ID);
+                    self.cached_client.as_ref().expect("No cached client").tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
                 }
             }
         }
@@ -514,20 +678,11 @@ impl<S, P> Actor for PaxosComp<S, P> where
             PaxosCompMsg::Propose(p) => {
                 self.propose(p);
             },
-            PaxosCompMsg::SequenceReq(requestor) => {
+            PaxosCompMsg::SequenceReq(a) => {
                 info!(self.ctx.log(), "Got SequenceReq");
-                let mut seq = vec![];
-                let entries = self.paxos.get_sequence();
-                for e in entries {
-                    if let Entry::Normal(n) = e {
-                        let id = n.data.as_slice().get_u64();
-                        seq.push(id);
-                    }
-                }
-                info!(self.ctx.log(), "Sending SequenceResp");
-                let sr = SequenceResp::with(self.pid, seq);
-                let am = AtomicBroadcastMsg::SequenceResp(sr);
-                requestor.tell((am, AtomicBroadcastSer), self);
+                let (from_idx, to_idx) = a.request();
+                let ser_entries = self.paxos.get_ser_entries(*from_idx, *to_idx);
+                a.reply(ser_entries).expect("Failed to reply ReplicaComp's Ask with serialised entries");
             },
             PaxosCompMsg::Stop(s) => {
                 self.stopped = true;
@@ -719,6 +874,10 @@ pub mod raw_paxos{
             self.storage.get_sequence()
         }
 
+        pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
+            self.storage.get_ser_entries(from_idx, to_idx)
+        }
+
         pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
             self.storage.stop_and_get_sequence()
         }
@@ -763,10 +922,10 @@ pub mod raw_paxos{
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
-                /*if !self.hb_forward.is_empty(){
+                if !self.hb_forward.is_empty(){
                     println!("Appending hb proposals, len: {}", self.hb_forward.len());
-                    self.proposals.append(self.hb_forward.as_mut());
-                }*/
+                    self.proposals.append(&mut self.hb_forward);
+                }
                 /* send prepare */
                 for pid in &self.peers {
                     let prep = Prepare::with(n.clone(), ld, self.storage.get_accepted_ballot());
@@ -948,9 +1107,7 @@ pub mod raw_paxos{
                 };
                 let p = Promise::with(prep.n, na, suffix, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
-            } /*else {
-                println!("Old prepare: {:?}, promised: {:?}", prep.n, self.storage.get_promise());
-            }*/
+            }
         }
 
         fn handle_accept_sync(&mut self, acc_sync: AcceptSync, from: u64) {
@@ -1301,7 +1458,7 @@ mod tests {
             let system =
                 kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("paxos_replica{}", i), 4);
             let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                ReplicaComp::<MemorySequence, MemoryState>::with(initial_conf.clone(), TransferPolicy::Passive)
+                ReplicaComp::<MemorySequence, MemoryState>::with(initial_conf.clone(), TransferPolicy::Pull)
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1416,5 +1573,41 @@ mod tests {
             }
         }
         println!("PASSED!!!");
+    }
+
+    #[test]
+    fn reconfig_ser_des_test(){
+        let config_id = 1;
+        let from_idx = 2;
+        let to_idx = 3;
+        let tag = 4;
+        let continued_nodes = vec![5,6,7];
+        let new_nodes = vec![8,9,10];
+        let reconfig = Reconfig::with(continued_nodes.clone(), new_nodes.clone());
+        let len = 8;
+        let metadata = SequenceMetaData::with(config_id, len);
+        let req_init = ReconfigInit::with(config_id, reconfig.clone(), metadata.clone());
+        let mut bytes: Vec<u8> = vec![];
+        ReconfigSer.serialise(&ReconfigurationMsg::Init(req_init), &mut bytes).expect("Failed to serialise ReconfigInit");
+        let mut buf = bytes.as_slice();
+        if let Ok(ReconfigurationMsg::Init(des)) = ReconfigSer::deserialise(&mut buf) {
+            assert_eq!(des.config_id, config_id);
+            assert_eq!(des.nodes.continued_nodes, continued_nodes);
+            assert_eq!(des.nodes.new_nodes, new_nodes);
+            assert_eq!(des.seq_metadata.config_id, metadata.config_id);
+            assert_eq!(des.seq_metadata.len, metadata.len);
+        }
+        let seq_ser = vec![1,2,3];
+        let st = SequenceResponse::with(config_id, tag, from_idx, to_idx, seq_ser.clone(), metadata.clone());
+        bytes.clear();
+        ReconfigSer.serialise(&ReconfigurationMsg::SequenceResponse(st), &mut bytes).expect("Failed to serialise SequenceTransfer");
+        buf = bytes.as_slice();
+        if let Ok(ReconfigurationMsg::SequenceResponse(des)) = ReconfigSer::deserialise(&mut buf) {
+            assert_eq!(des.config_id, config_id);
+            assert_eq!(des.tag, tag);
+            assert_eq!(des.ser_entries, seq_ser);
+            assert_eq!(des.metadata.config_id, metadata.config_id);
+            assert_eq!(des.metadata.len, metadata.len);
+        }
     }
 }

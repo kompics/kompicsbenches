@@ -289,7 +289,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
                         let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                            ReplicaComp::with(initial_config, TransferPolicy::Passive)
+                            ReplicaComp::with(initial_config, TransferPolicy::Pull)
                         });
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
@@ -393,13 +393,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn run_iteration(&mut self) -> () {
         println!("Running Atomic Broadcast experiment!");
+        match self.partitioning_actor {
+            Some(ref p_actor) => {
+                p_actor.actor_ref().tell(IterationControlMsg::Run);
+            },
+            _ => panic!("No partitioning actor found!"),
+        }
+
         match self.client_comp {
             Some(ref client_comp) => {
                 client_comp.actor_ref().tell(Run);
                 let finished_latch = self.finished_latch.take().unwrap();
                 finished_latch.wait();
             }
-            _ => unimplemented!()
+            _ => panic!("No client found!"),
         }
     }
 
@@ -489,7 +496,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             Algorithm::Paxos => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                    ReplicaComp::with(initial_config, TransferPolicy::Passive)
+                    ReplicaComp::with(initial_config, TransferPolicy::Pull)
                 });
                 let replica_comp_f = system.start_notify(&replica_comp);
                 replica_comp_f

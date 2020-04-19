@@ -18,5 +18,5 @@ pub const RAFT_ID: SerId = 57;
 pub const BLE_ID: SerId = 58;
 pub const ATOMICBCAST_ID: SerId = 59;
 pub const PAXOS_ID: SerId = 60;
-pub const REPLICA_ID: SerId = 61;
+pub const RECONFIG_ID: SerId = 61;
 
