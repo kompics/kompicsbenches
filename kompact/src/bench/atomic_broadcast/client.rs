@@ -56,6 +56,18 @@ impl Client {
         }
     }
 
+    fn send_batch(&self) {
+        let from = self.received_count + 1;
+        let i = self.received_count + self.batch_size;
+        let to = if i > self.num_proposals {
+            self.num_proposals
+        } else {
+            i
+        };
+        info!(self.ctx.log(), "Sending: {}-{}", from, to);
+        self.send_normal_proposals(from..=to);
+    }
+
     fn propose_reconfiguration(&mut self) {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
@@ -77,15 +89,7 @@ impl Actor for Client {
     type Message = Run;
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
-        if self.reconfig.is_some() {
-            self.send_normal_proposals(1..self.num_proposals/2);
-            std::thread::sleep(Duration::from_secs(2));
-            self.propose_reconfiguration();
-            // self.send_normal_proposals(self.num_proposals/2..=self.num_proposals);
-        } else {
-            info!(self.ctx.log(), "Sending: {}-{}", 1, self.batch_size);
-            self.send_normal_proposals(1..=self.batch_size);
-        }
+        self.send_batch();
         self.schedule_periodic(
             Duration::from_secs(5),
             Duration::from_secs(30),
@@ -103,6 +107,11 @@ impl Actor for Client {
                             match pr.id {
                                 RECONFIG_ID => {
                                     info!(self.ctx.log(), "reconfiguration succeeded?");
+                                    if self.received_count == self.num_proposals {
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                    } else {
+                                        self.send_batch();
+                                    }
                                 }
                                 _ => {
                                     self.received_count += 1;
@@ -110,15 +119,11 @@ impl Actor for Client {
                                     if self.received_count == self.num_proposals {
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else if self.received_count % self.batch_size == 0 {
-                                        let from = self.received_count + 1;
-                                        let i = self.received_count + self.batch_size;
-                                        let to = if i > self.num_proposals {
-                                            self.num_proposals
+                                        if self.received_count >= self.num_proposals/2 {
+                                            self.propose_reconfiguration();
                                         } else {
-                                            i
-                                        };
-                                        info!(self.ctx.log(), "Sending: {}-{}", from, to);
-                                        self.send_normal_proposals(from..=to);
+                                            self.send_batch();
+                                        }
                                     }
                                 }
                             }

@@ -201,7 +201,7 @@ pub mod paxos {
             }
         }
 
-        fn serialise_entries(ents: &Vec<Entry>, buf: &mut dyn BufMut) {
+        pub(crate) fn serialise_entries(ents: &[Entry], buf: &mut dyn BufMut) {
             buf.put_u32(ents.len() as u32);
             for e in ents {
                 Self::serialise_entry(e, buf);
@@ -219,19 +219,17 @@ pub mod paxos {
                 NORMAL_ENTRY_ID => {
                     let proposed_by = buf.get_u64();
                     let n = buf.get_u64();
-                    let data_len = buf.get_u32();
-                    let mut data = Vec::with_capacity(data_len as usize);
-                    for _ in 0..data_len {
-                        data.push(buf.get_u8());
-                    }
+                    let data_len = buf.get_u32() as usize;
+                    let mut data = vec![0; data_len];
+                    buf.copy_to_slice(&mut data);
                     let metadata = EntryMetaData::with(proposed_by, n);
                     let normal = Normal::with(metadata, data);
                     Entry::Normal(normal)
                 },
                 SS_ENTRY_ID => {
                     let config_id = buf.get_u32();
-                    let nodes_len = buf.get_u32();
-                    let mut nodes = vec![];
+                    let nodes_len = buf.get_u32() as usize;
+                    let mut nodes = Vec::with_capacity(nodes_len);
                     for _ in 0..nodes_len {
                         nodes.push(buf.get_u64());
                     }
@@ -242,9 +240,9 @@ pub mod paxos {
             }
         }
 
-        fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry> {
-            let mut ents = vec![];
+        pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry> {
             let len = buf.get_u32();
+            let mut ents = Vec::with_capacity(len as usize);
             for _ in 0..len {
                 ents.push(Self::deserialise_entry(buf));
             }
@@ -387,34 +385,38 @@ pub mod paxos {
 
     #[derive(Clone, Debug)]
     pub struct SequenceMetaData {
-        next_config_id: u32,
-        len: u64
+        pub config_id: u32,
+        pub len: u64
     }
 
     impl SequenceMetaData {
-        pub fn with(next_config_id: u32, len: u64) -> SequenceMetaData {
-            SequenceMetaData{ next_config_id, len }
+        pub fn with(config_id: u32, len: u64) -> SequenceMetaData {
+            SequenceMetaData{ config_id, len }
         }
     }
 
     #[derive(Clone, Debug)]
-    pub struct SequenceTransfer {
+    pub struct SequenceResponse {
         pub config_id: u32,
         pub tag: u32,
-        pub seq_len: u32,
-        pub seq_ser: Vec<u8>,
+        pub succeeded: bool,
+        pub from_idx: u64,
+        pub to_idx: u64,
+        pub ser_entries: Vec<u8>,
         pub metadata: SequenceMetaData
     }
 
-    impl SequenceTransfer {
+    impl SequenceResponse {
         pub fn with(
             config_id: u32,
             tag: u32,
-            seq_len: u32,
-            seq_ser: Vec<u8>,
+            succeeded: bool,
+            from_idx: u64,
+            to_idx: u64,
+            ser_entries: Vec<u8>,
             metadata: SequenceMetaData
-        ) -> SequenceTransfer {
-            SequenceTransfer{ config_id, tag, seq_len, seq_ser, metadata }
+        ) -> SequenceResponse {
+            SequenceResponse { config_id, tag, succeeded, from_idx, to_idx, ser_entries, metadata }
         }
     }
 
@@ -433,55 +435,151 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SequenceResponse {
-        pub config_id: u32,
-        pub from_idx: u64,
-        pub to_idx: u64
+    pub struct Reconfig {
+        pub continued_nodes: Vec<u64>,
+        pub new_nodes: Vec<u64>,
+    }
+
+    impl Reconfig {
+        pub fn with(continued_nodes: Vec<u64>, new_nodes: Vec<u64>) -> Reconfig {
+            Reconfig { continued_nodes, new_nodes }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum ReconfigurationMsg {
+        Init(ReconfigInit),
+        SequenceRequest(SequenceRequest),
+        SequenceResponse(SequenceResponse),
     }
 
     #[derive(Clone, Debug)]
     pub struct ReconfigInit {
         pub config_id: u32,
-        pub nodes: Vec<u64>,
+        pub nodes: Reconfig,
+        pub seq_metadata: SequenceMetaData,
+        pub from: u64
     }
 
     impl ReconfigInit {
-        pub fn with(config_id: u32, nodes: Vec<u64>) -> ReconfigInit {
-            ReconfigInit{ config_id, nodes }
+        pub fn with(config_id: u32, nodes: Reconfig, seq_metadata: SequenceMetaData, from: u64) -> ReconfigInit {
+            ReconfigInit{ config_id, nodes, seq_metadata, from }
         }
     }
 
-    pub struct ReplicaSer;
+    const RECONFIG_INIT_ID: u8 = 1;
+    const SEQ_REQ_ID: u8 = 2;
+    const SEQ_TRANSFER_ID: u8 = 3;
 
-    impl Serialiser<ReconfigInit> for ReplicaSer {
+    pub struct ReconfigSer;
+
+    impl Serialiser<ReconfigurationMsg> for ReconfigSer {
         fn ser_id(&self) -> u64 {
-            serialiser_ids::REPLICA_ID
+            serialiser_ids::RECONFIG_ID
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(50) // TODO?
+            Some(1000) // TODO?
         }
 
-        fn serialise(&self, r: &ReconfigInit, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u32(r.config_id);
-            buf.put_u32(r.nodes.len() as u32);
-            r.nodes.iter().for_each(|pid| buf.put_u64(*pid));
+        fn serialise(&self, r: &ReconfigurationMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            match r {
+                ReconfigurationMsg::Init(r) => {
+                    buf.put_u8(RECONFIG_INIT_ID);
+                    buf.put_u32(r.config_id);
+                    buf.put_u64(r.from);
+                    buf.put_u32(r.seq_metadata.config_id);
+                    buf.put_u64(r.seq_metadata.len);
+                    buf.put_u32(r.nodes.continued_nodes.len() as u32);
+                    r.nodes.continued_nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                    buf.put_u32(r.nodes.new_nodes.len() as u32);
+                    r.nodes.new_nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                },
+                ReconfigurationMsg::SequenceRequest(sr) => {
+                    buf.put_u8(SEQ_REQ_ID);
+                    buf.put_u32(sr.config_id);
+                    buf.put_u32(sr.tag);
+                    buf.put_u64(sr.from_idx);
+                    buf.put_u64(sr.to_idx);
+                },
+                ReconfigurationMsg::SequenceResponse(st) => {
+                    buf.put_u8(SEQ_TRANSFER_ID);
+                    buf.put_u32(st.config_id);
+                    buf.put_u32(st.tag);
+                    let succeeded: u8 = if st.succeeded { 1 } else { 0 };
+                    buf.put_u8(succeeded);
+                    buf.put_u64(st.from_idx);
+                    buf.put_u64(st.to_idx);
+                    buf.put_u32(st.metadata.config_id);
+                    buf.put_u64(st.metadata.len);
+                    let len = st.ser_entries.len() as u64;
+                    buf.put_u64(len);
+                    buf.put_slice(st.ser_entries.as_slice());
+                }
+            }
             Ok(())
         }
     }
 
-    impl Deserialiser<ReconfigInit> for ReplicaSer {
-        const SER_ID: u64 = serialiser_ids::REPLICA_ID;
+    impl Deserialiser<ReconfigurationMsg> for ReconfigSer {
+        const SER_ID: u64 = serialiser_ids::RECONFIG_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigInit, SerError> {
-            let config_id = buf.get_u32();
-            let mut nodes = vec![];
-            let nodes_len = buf.get_u32();
-            for _ in 0..nodes_len {
-                nodes.push(buf.get_u64());
+        fn deserialise(buf: &mut dyn Buf) -> Result<ReconfigurationMsg, SerError> {
+            match buf.get_u8() {
+                RECONFIG_INIT_ID => {
+                    let config_id = buf.get_u32();
+                    let from = buf.get_u64();
+                    let seq_metadata_config_id = buf.get_u32();
+                    let seq_metadata_len = buf.get_u64();
+                    let continued_nodes_len = buf.get_u32();
+                    let mut continued_nodes = Vec::with_capacity(continued_nodes_len as usize);
+                    for _ in 0..continued_nodes_len {
+                        continued_nodes.push(buf.get_u64());
+                    }
+                    let new_nodes_len = buf.get_u32();
+                    let mut new_nodes = Vec::with_capacity(new_nodes_len as usize);
+                    for _ in 0..new_nodes_len {
+                        new_nodes.push(buf.get_u64());
+                    }
+                    let seq_metadata = SequenceMetaData::with(seq_metadata_config_id, seq_metadata_len);
+                    let nodes = Reconfig::with(continued_nodes, new_nodes);
+                    let r = ReconfigInit::with(config_id, nodes, seq_metadata, from);
+                    Ok(ReconfigurationMsg::Init(r))
+                },
+                SEQ_REQ_ID => {
+                    let config_id = buf.get_u32();
+                    let tag = buf.get_u32();
+                    let from_idx = buf.get_u64();
+                    let to_idx = buf.get_u64();
+                    let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx);
+                    Ok(ReconfigurationMsg::SequenceRequest(sr))
+                },
+                SEQ_TRANSFER_ID => {
+                    let config_id = buf.get_u32();
+                    let tag = buf.get_u32();
+                    let succeeded = if buf.get_u8() == 1 { true } else { false };
+                    let from_idx = buf.get_u64();
+                    let to_idx = buf.get_u64();
+                    let metadata_config_id = buf.get_u32();
+                    let metadata_seq_len = buf.get_u64();
+                    let n = buf.get_u64() as usize;
+                    let mut seq_ser: Vec<u8> = vec![0; n];
+                    buf.copy_to_slice(&mut seq_ser);
+                    /*for _ in 0..n {
+                        seq_ser.push(buf.get_u8());
+                    }*/
+                    let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
+                    let st = SequenceResponse::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
+                    Ok(ReconfigurationMsg::SequenceResponse(st))
+                }
+                _ => {
+                    Err(SerError::InvalidType(
+                        "Found unkown id but expected ReconfigurationMsg".into(),
+                    ))
+                }
             }
-            let r = ReconfigInit::with(config_id, nodes);
-            Ok(r)
+
+
         }
     }
 

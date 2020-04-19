@@ -561,9 +561,12 @@ pub mod paxos {
 //    use crate::bench::atomic_broadcast::paxos::raw_paxos::Paxos;
     use std::sync::Arc;
     use std::mem;
+    use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
 
     pub trait Sequence {
         fn new() -> Self;
+
+        fn new_with_sequence(seq: Vec<Entry>) -> Self;
 
         fn append_entry(&mut self, entry: Entry);
 
@@ -572,6 +575,8 @@ pub mod paxos {
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry>;
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
+
+        fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>>;
 
         fn get_suffix(&self, from: u64) -> Vec<Entry>;
 
@@ -742,6 +747,14 @@ pub mod paxos {
             }
         }
 
+        pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
+            match &self.sequence {
+                PaxosSequence::Active(s) => s.get_ser_entries(from_idx, to_idx),
+                PaxosSequence::Stopped(s) => s.get_ser_entries(from_idx, to_idx),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_ser_entries"),
+            }
+        }
+
         pub fn get_sequence_len(&self) -> u64 {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_sequence_len(),
@@ -808,6 +821,10 @@ pub mod paxos {
             MemorySequence{ sequence: Vec::with_capacity(INITIAL_CAP) }
         }
 
+        fn new_with_sequence(seq: Vec<Entry>) -> Self {
+            MemorySequence{ sequence: seq }
+        }
+
         fn append_entry(&mut self, entry: Entry) {
             self.sequence.push(entry);
         }
@@ -837,6 +854,17 @@ pub mod paxos {
             match self.sequence.get(from as usize..to as usize) {
                 Some(ents) => ents.to_vec(),
                 None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
+            }
+        }
+
+        fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>> {
+            match self.sequence.get(from as usize..to as usize) {
+                Some(ents) => {
+                    let mut bytes = Vec::with_capacity(((to - from) * 8) as usize);
+                    PaxosSer::serialise_entries(ents, &mut bytes);
+                    Some(bytes)
+                },
+                _ => None,
             }
         }
 
