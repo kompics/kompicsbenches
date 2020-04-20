@@ -1595,6 +1595,8 @@ pub struct AtomicBroadcastRequest {
     pub number_of_proposals: u64,
     pub batch_size: u64,
     pub reconfiguration: ::std::string::String,
+    pub transfer_policy: ::std::string::String,
+    pub forward_discarded: bool,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
@@ -1707,6 +1709,47 @@ impl AtomicBroadcastRequest {
     pub fn take_reconfiguration(&mut self) -> ::std::string::String {
         ::std::mem::replace(&mut self.reconfiguration, ::std::string::String::new())
     }
+
+    // string transfer_policy = 6;
+
+
+    pub fn get_transfer_policy(&self) -> &str {
+        &self.transfer_policy
+    }
+    pub fn clear_transfer_policy(&mut self) {
+        self.transfer_policy.clear();
+    }
+
+    // Param is passed by value, moved
+    pub fn set_transfer_policy(&mut self, v: ::std::string::String) {
+        self.transfer_policy = v;
+    }
+
+    // Mutable pointer to the field.
+    // If field is not initialized, it is initialized with default value first.
+    pub fn mut_transfer_policy(&mut self) -> &mut ::std::string::String {
+        &mut self.transfer_policy
+    }
+
+    // Take field
+    pub fn take_transfer_policy(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.transfer_policy, ::std::string::String::new())
+    }
+
+    // bool forward_discarded = 7;
+
+
+    pub fn get_forward_discarded(&self) -> bool {
+        self.forward_discarded
+    }
+    pub fn clear_forward_discarded(&mut self) {
+        self.forward_discarded = false;
+    }
+
+    // Param is passed by value, moved
+    pub fn set_forward_discarded(&mut self, v: bool) {
+        self.forward_discarded = v;
+    }
 }
 
 impl ::protobuf::Message for AtomicBroadcastRequest {
@@ -1745,6 +1788,16 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                 5 => {
                     ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfiguration)?;
                 },
+                6 => {
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.transfer_policy)?;
+                },
+                7 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeVarint {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    let tmp = is.read_bool()?;
+                    self.forward_discarded = tmp;
+                },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
                 },
@@ -1772,6 +1825,12 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         if !self.reconfiguration.is_empty() {
             my_size += ::protobuf::rt::string_size(5, &self.reconfiguration);
         }
+        if !self.transfer_policy.is_empty() {
+            my_size += ::protobuf::rt::string_size(6, &self.transfer_policy);
+        }
+        if self.forward_discarded != false {
+            my_size += 2;
+        }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
         self.cached_size.set(my_size);
         my_size
@@ -1792,6 +1851,12 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         }
         if !self.reconfiguration.is_empty() {
             os.write_string(5, &self.reconfiguration)?;
+        }
+        if !self.transfer_policy.is_empty() {
+            os.write_string(6, &self.transfer_policy)?;
+        }
+        if self.forward_discarded != false {
+            os.write_bool(7, self.forward_discarded)?;
         }
         os.write_unknown_fields(self.get_unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -1860,6 +1925,16 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     |m: &AtomicBroadcastRequest| { &m.reconfiguration },
                     |m: &mut AtomicBroadcastRequest| { &mut m.reconfiguration },
                 ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
+                    "transfer_policy",
+                    |m: &AtomicBroadcastRequest| { &m.transfer_policy },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.transfer_policy },
+                ));
+                fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeBool>(
+                    "forward_discarded",
+                    |m: &AtomicBroadcastRequest| { &m.forward_discarded },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.forward_discarded },
+                ));
                 ::protobuf::reflect::MessageDescriptor::new::<AtomicBroadcastRequest>(
                     "AtomicBroadcastRequest",
                     fields,
@@ -1887,6 +1962,8 @@ impl ::protobuf::Clear for AtomicBroadcastRequest {
         self.number_of_proposals = 0;
         self.batch_size = 0;
         self.reconfiguration.clear();
+        self.transfer_policy.clear();
+        self.forward_discarded = false;
         self.unknown_fields.clear();
     }
 }
@@ -1924,30 +2001,32 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     equest\x12.\n\x13number_of_chameneos\x18\x01\x20\x01(\rR\x11numberOfCham\
     eneos\x12,\n\x12number_of_meetings\x18\x02\x20\x01(\x04R\x10numberOfMeet\
     ings\"T\n\x0bAPSPRequest\x12&\n\x0fnumber_of_nodes\x18\x01\x20\x01(\rR\r\
-    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xd7\
-    \x01\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
+    numberOfNodes\x12\x1d\n\nblock_size\x18\x02\x20\x01(\rR\tblockSize\"\xad\
+    \x02\n\x16AtomicBroadcastRequest\x12\x1c\n\talgorithm\x18\x01\x20\x01(\t\
     R\talgorithm\x12&\n\x0fnumber_of_nodes\x18\x02\x20\x01(\x04R\rnumberOfNo\
     des\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfPropo\
     sals\x12\x1d\n\nbatch_size\x18\x04\x20\x01(\x04R\tbatchSize\x12(\n\x0fre\
-    configuration\x18\x05\x20\x01(\tR\x0freconfiguration2\xbf\x08\n\x0fBench\
-    markRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks.ReadyRequest\x1a!.\
-    kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.kompics.benchma\
-    rks.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAck\x12O\n\x08Pin\
-    gPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks\
-    .TestResult\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingPongReques\
-    t\x1a\x1e.kompics.benchmarks.TestResult\x12c\n\x12ThroughputPingPong\x12\
-    -.kompics.benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmark\
-    s.TestResult\x12f\n\x15NetThroughputPingPong\x12-.kompics.benchmarks.Thr\
-    oughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12[\n\x0eA\
-    tomicRegister\x12).kompics.benchmarks.AtomicRegisterRequest\x1a\x1e.komp\
-    ics.benchmarks.TestResult\x12_\n\x10StreamingWindows\x12+.kompics.benchm\
-    arks.StreamingWindowsRequest\x1a\x1e.kompics.benchmarks.TestResult\x12Q\
-    \n\tFibonacci\x12$.kompics.benchmarks.FibonacciRequest\x1a\x1e.kompics.b\
-    enchmarks.TestResult\x12Q\n\tChameneos\x12$.kompics.benchmarks.Chameneos\
-    Request\x1a\x1e.kompics.benchmarks.TestResult\x12W\n\x14AllPairsShortest\
-    Path\x12\x1f.kompics.benchmarks.APSPRequest\x1a\x1e.kompics.benchmarks.T\
-    estResult\x12]\n\x0fAtomicBroadcast\x12*.kompics.benchmarks.AtomicBroadc\
-    astRequest\x1a\x1e.kompics.benchmarks.TestResultb\x06proto3\
+    configuration\x18\x05\x20\x01(\tR\x0freconfiguration\x12'\n\x0ftransfer_\
+    policy\x18\x06\x20\x01(\tR\x0etransferPolicy\x12+\n\x11forward_discarded\
+    \x18\x07\x20\x01(\x08R\x10forwardDiscarded2\xbf\x08\n\x0fBenchmarkRunner\
+    \x12L\n\x05Ready\x12\x20.kompics.benchmarks.ReadyRequest\x1a!.kompics.be\
+    nchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.kompics.benchmarks.Shutdo\
+    wnRequest\x1a\x1f.kompics.benchmarks.ShutdownAck\x12O\n\x08PingPong\x12#\
+    .kompics.benchmarks.PingPongRequest\x1a\x1e.kompics.benchmarks.TestResul\
+    t\x12R\n\x0bNetPingPong\x12#.kompics.benchmarks.PingPongRequest\x1a\x1e.\
+    kompics.benchmarks.TestResult\x12c\n\x12ThroughputPingPong\x12-.kompics.\
+    benchmarks.ThroughputPingPongRequest\x1a\x1e.kompics.benchmarks.TestResu\
+    lt\x12f\n\x15NetThroughputPingPong\x12-.kompics.benchmarks.ThroughputPin\
+    gPongRequest\x1a\x1e.kompics.benchmarks.TestResult\x12[\n\x0eAtomicRegis\
+    ter\x12).kompics.benchmarks.AtomicRegisterRequest\x1a\x1e.kompics.benchm\
+    arks.TestResult\x12_\n\x10StreamingWindows\x12+.kompics.benchmarks.Strea\
+    mingWindowsRequest\x1a\x1e.kompics.benchmarks.TestResult\x12Q\n\tFibonac\
+    ci\x12$.kompics.benchmarks.FibonacciRequest\x1a\x1e.kompics.benchmarks.T\
+    estResult\x12Q\n\tChameneos\x12$.kompics.benchmarks.ChameneosRequest\x1a\
+    \x1e.kompics.benchmarks.TestResult\x12W\n\x14AllPairsShortestPath\x12\
+    \x1f.kompics.benchmarks.APSPRequest\x1a\x1e.kompics.benchmarks.TestResul\
+    t\x12]\n\x0fAtomicBroadcast\x12*.kompics.benchmarks.AtomicBroadcastReque\
+    st\x1a\x1e.kompics.benchmarks.TestResultb\x06proto3\
 ";
 
 static mut file_descriptor_proto_lazy: ::protobuf::lazy::Lazy<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::lazy::Lazy {

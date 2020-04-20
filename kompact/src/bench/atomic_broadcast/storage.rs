@@ -630,10 +630,10 @@ pub mod paxos {
             Storage { sequence, paxos_state }
         }
 
-        pub fn append_entry(&mut self, entry: Entry, is_leader: bool) {
+        pub fn append_entry(&mut self, entry: Entry, forward_discarded: bool) {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    if is_leader {
+                    if forward_discarded {
                         if let None = self.paxos_state.get_pending_chosen_offset() {
                             let current_offset = s.get_sequence_len();
                             self.paxos_state.set_pending_chosen_offset(Some(current_offset));
@@ -648,13 +648,15 @@ pub mod paxos {
             }
         }
 
-        pub fn append_sequence(&mut self, seq: Vec<Entry>) {
+        pub fn append_sequence(&mut self, seq: Vec<Entry>, forward_discarded: bool) {
             if seq.is_empty() { return; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    if let None = self.paxos_state.get_pending_chosen_offset() {
-                        let current_offset = s.get_sequence_len();
-                        self.paxos_state.set_pending_chosen_offset(Some(current_offset));
+                    if forward_discarded {
+                        if let None = self.paxos_state.get_pending_chosen_offset(){
+                            let current_offset = s.get_sequence_len();
+                            self.paxos_state.set_pending_chosen_offset(Some(current_offset));
+                        }
                     }
                     let mut sequence = seq;
                     s.append_sequence(&mut sequence);

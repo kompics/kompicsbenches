@@ -63,4 +63,6 @@ message AtomicBroadcastRequest {
 	uint64 number_of_proposals = 3;
 	uint64 batch_size = 4;
 	string reconfiguration = 5;
+	string transfer_policy = 6;
+	bool forward_discarded = 7;
 }
