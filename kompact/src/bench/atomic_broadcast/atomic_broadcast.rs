@@ -17,10 +17,18 @@ use super::messages::Run;
 use std::collections::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ClientParams {
     algorithm: Algorithm,
     last_node_id: u64,
+    transfer_policy: Option<TransferPolicy>,
+    forward_discarded: bool
+}
+
+impl ClientParams {
+    fn with(algorithm: Algorithm, last_node_id: u64, transfer_policy: Option<TransferPolicy>, forward_discarded: bool) -> ClientParams {
+        ClientParams{ algorithm, last_node_id, transfer_policy, forward_discarded }
+    }
 }
 
 #[derive(Default)]
@@ -46,7 +54,7 @@ impl DistributedBenchmark for AtomicBroadcast {
 
     fn str_to_client_conf(s: String) -> Result<Self::ClientConf, BenchmarkError> {
         let split: Vec<_> = s.split(",").collect();
-        if split.len() != 2 {
+        if split.len() != 4 {
             Err(BenchmarkError::InvalidMessage(format!(
                 "String '{}' does not represent a client conf! Split length should be 2",
                 s
@@ -58,7 +66,7 @@ impl DistributedBenchmark for AtomicBroadcast {
                 _ => {
                     return Err(BenchmarkError::InvalidMessage(format!(
                         "String to ClientConf error: '{}' does not represent an algorithm",
-                        s
+                        split[0]
                     )));
                 }
             };
@@ -68,7 +76,24 @@ impl DistributedBenchmark for AtomicBroadcast {
                     split[1], e
                 ))
             })?;
-            Ok(ClientParams{algorithm, last_node_id})
+            let transfer_policy = match split[2].to_lowercase().as_ref() {
+                "eager" => Some(TransferPolicy::Eager),
+                "pull" => Some(TransferPolicy::Pull),
+                "none" => None,
+                _ => {
+                    return Err(BenchmarkError::InvalidMessage(format!(
+                        "String to ClientConf error: '{}' does not represent a transfer policy",
+                        split[2]
+                    )));
+                }
+            };
+            let forward_discarded = split[3].parse::<bool>().map_err(|e| {
+                BenchmarkError::InvalidMessage(format!(
+                    "String to ClientConf error: '{}' does not represent a bool: {:?}",
+                    split[3], e
+                ))
+            })?;
+            Ok(ClientParams::with(algorithm, last_node_id, transfer_policy, forward_discarded))
         }
     }
 
@@ -84,7 +109,12 @@ impl DistributedBenchmark for AtomicBroadcast {
             Algorithm::Paxos => "paxos",
             Algorithm::Raft => "raft",
         };
-        let s = format!("{},{}", a, c.last_node_id);
+        let tp = match c.transfer_policy {
+            Some(TransferPolicy::Eager) => "eager",
+            Some(TransferPolicy::Pull) => "pull",
+            None => "none"
+        };
+        let s = format!("{},{},{},{}", a, c.last_node_id, tp, c.forward_discarded);
 //        println!("ClientConf string: {}", &s);
         s
     }
@@ -101,7 +131,7 @@ fn get_initial_conf(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
     initial_conf
 }
 
-fn get_reconfig_data(s: String, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>)>), BenchmarkError> {
+fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>)>), BenchmarkError> {
     match s.to_lowercase().as_ref() {
         "off" => {
             Ok((0, None))
@@ -134,6 +164,7 @@ fn get_reconfig_data(s: String, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u6
             let reconfiguration = Some((new_voters, new_followers));
             Ok((majority, reconfiguration))
         },
+        // TODO implement one-by-one
         _ => Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
     }
 }
@@ -152,6 +183,8 @@ pub struct AtomicBroadcastMaster {
     num_proposals: Option<u64>,
     batch_size: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
+    transfer_policy: Option<TransferPolicy>,
+    forward_discarded: bool,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -169,6 +202,8 @@ impl AtomicBroadcastMaster {
             num_proposals: None,
             batch_size: None,
             reconfiguration: None,
+            transfer_policy: None,
+            forward_discarded: false,
             system: None,
             finished_latch: None,
             iteration_id: 0,
@@ -221,7 +256,6 @@ impl AtomicBroadcastMaster {
                 nodes_id,
                 reconfig,
                 finished_latch,
-                self.iteration_id
             )
         });
         unique_reg_f.wait_expect(
@@ -235,6 +269,73 @@ impl AtomicBroadcastMaster {
             .expect("ClientComp never started!");
         client_comp
     }
+
+    fn validate_and_set_experiment_args(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
+        match c.algorithm.to_lowercase().as_ref() {
+            "paxos" => {
+                self.algorithm = Some(Algorithm::Paxos);
+                self.forward_discarded = c.forward_discarded;
+                match c.reconfiguration.to_lowercase().as_ref() {
+                    "off" => {
+                        if self.forward_discarded || c.transfer_policy.to_lowercase() != "none" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
+                            ));
+                        }
+                    },
+                    _ => {}
+                }
+                self.transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
+                    "eager" => Some(TransferPolicy::Eager),
+                    "pull" => Some(TransferPolicy::Pull),
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(
+                            format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
+                        ));
+                    }
+                }
+            },
+            "raft" => {
+                self.algorithm = Some(Algorithm::Raft);
+                if c.forward_discarded {
+                    return Err(BenchmarkError::InvalidTest(
+                        format!("Unimplemented forward discarded for: {}", &c.algorithm)
+                    ));
+                }
+                self.transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
+                    "none" => None,
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(
+                            format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
+                        ));
+                    }
+                };
+            },
+            _ => {
+                return Err(BenchmarkError::InvalidTest(
+                    format!("Unimplemented atomic broadcast algorithm: {}", &c.algorithm)
+                ));
+            }
+        };
+        match get_reconfig_data(&c.reconfiguration, c.number_of_nodes) {
+            Ok((additional_n, reconfig)) => {
+                let n = c.number_of_nodes + additional_n;
+                if num_clients as u64 + 1 < n {
+                    return Err(BenchmarkError::InvalidTest(format!(
+                        "Not enough clients: {}, Required: {}",
+                        &num_clients,
+                        &(n-1)
+                    )));
+                }
+                self.reconfiguration = reconfig;
+            },
+            Err(e) => return Err(e)
+        }
+        self.num_nodes = Some(c.number_of_nodes);
+        self.num_proposals = Some(c.number_of_proposals);
+        self.batch_size = Some(c.batch_size);
+        Ok(())
+    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -244,37 +345,15 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
-        self.num_nodes = Some(c.number_of_nodes);
-        match get_reconfig_data(c.reconfiguration, c.number_of_nodes) {
-            Ok((additional_n, reconfig)) => {
-                let n = c.number_of_nodes + additional_n;
-                if m.number_of_clients() as u64 + 1 < n {
-                    return Err(BenchmarkError::InvalidTest(format!(
-                        "Not enough clients: {}, Required: {}",
-                        &m.number_of_clients(),
-                        &(n-1)
-                    )));
-                }
-                self.reconfiguration = reconfig;
-            },
-            Err(e) => return Err(e)
-        }
-        self.algorithm = match c.algorithm.to_lowercase().as_ref() {
-            "paxos" => Some(Algorithm::Paxos),
-            "raft" => Some(Algorithm::Raft),
-            _ => {
-                return Err(BenchmarkError::InvalidTest(format!(
-                    "Unimplemented algoritm: {}",
-                    &c.algorithm
-                )));
-            }
-        };
-        self.num_proposals = Some(c.number_of_proposals);
-        self.batch_size = Some(c.batch_size);
-        let system =
-            crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
+        self.validate_and_set_experiment_args(&c, m.number_of_clients())?;
+        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
-        let params = ClientParams { algorithm: self.algorithm.as_ref().unwrap().clone(), last_node_id: c.number_of_nodes };
+        let params = ClientParams::with(
+            self.algorithm.clone().unwrap(),
+            c.number_of_nodes,
+            self.transfer_policy.clone(),
+            c.forward_discarded
+        );
         Ok(params)
     }
 
@@ -289,7 +368,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
                         let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                            ReplicaComp::with(initial_config, TransferPolicy::Pull)
+                            ReplicaComp::with(initial_config, self.transfer_policy.clone().unwrap(), self.forward_discarded)
                         });
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
@@ -496,7 +575,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             Algorithm::Paxos => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                    ReplicaComp::with(initial_config, TransferPolicy::Pull)
+                    ReplicaComp::with(initial_config, c.transfer_policy.unwrap(), c.forward_discarded)
                 });
                 let replica_comp_f = system.start_notify(&replica_comp);
                 replica_comp_f

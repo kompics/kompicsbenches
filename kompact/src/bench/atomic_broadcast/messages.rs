@@ -396,7 +396,7 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SequenceResponse {
+    pub struct SequenceTransfer {
         pub config_id: u32,
         pub tag: u32,
         pub succeeded: bool,
@@ -406,7 +406,7 @@ pub mod paxos {
         pub metadata: SequenceMetaData
     }
 
-    impl SequenceResponse {
+    impl SequenceTransfer {
         pub fn with(
             config_id: u32,
             tag: u32,
@@ -415,8 +415,8 @@ pub mod paxos {
             to_idx: u64,
             ser_entries: Vec<u8>,
             metadata: SequenceMetaData
-        ) -> SequenceResponse {
-            SequenceResponse { config_id, tag, succeeded, from_idx, to_idx, ser_entries, metadata }
+        ) -> SequenceTransfer {
+            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, ser_entries, metadata }
         }
     }
 
@@ -450,7 +450,7 @@ pub mod paxos {
     pub enum ReconfigurationMsg {
         Init(ReconfigInit),
         SequenceRequest(SequenceRequest),
-        SequenceResponse(SequenceResponse),
+        SequenceTransfer(SequenceTransfer),
     }
 
     #[derive(Clone, Debug)]
@@ -502,7 +502,7 @@ pub mod paxos {
                     buf.put_u64(sr.from_idx);
                     buf.put_u64(sr.to_idx);
                 },
-                ReconfigurationMsg::SequenceResponse(st) => {
+                ReconfigurationMsg::SequenceTransfer(st) => {
                     buf.put_u8(SEQ_TRANSFER_ID);
                     buf.put_u32(st.config_id);
                     buf.put_u32(st.tag);
@@ -569,8 +569,8 @@ pub mod paxos {
                         seq_ser.push(buf.get_u8());
                     }*/
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
-                    let st = SequenceResponse::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
-                    Ok(ReconfigurationMsg::SequenceResponse(st))
+                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
+                    Ok(ReconfigurationMsg::SequenceTransfer(st))
                 }
                 _ => {
                     Err(SerError::InvalidType(
