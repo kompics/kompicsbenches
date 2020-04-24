@@ -7,96 +7,162 @@ use std::{time::Duration, collections::HashMap, marker::Send, clone::Clone};
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*, raft::*};
 use super::storage::raft::*;
+use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg, Stop as CommunicatorStop};
+use std::sync::Arc;
+use uuid::Uuid;
+use crate::partitioning_actor::PartitioningActorMsg::InitAck;
 
-#[derive(Clone, Debug)]
-pub enum RaftCompMsg {
-    CreateTikvRaft(CreateTikvRaft),
-    TikvRaftMsg(RaftMsg),
-    Proposal(Proposal),
-    SequenceReq,
-    Stop,
-}
-
-pub struct RaftCommunicationPort;
-
+const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
 const READY_PERIOD: Duration = Duration::from_millis(1);
 const TICK_PERIOD: Duration = Duration::from_millis(100);
 
-impl Port for RaftCommunicationPort {
-    type Indication = RaftCompMsg;
-    type Request = CommunicatorMsg;
+#[derive(Debug)]
+pub enum RaftReplicaMsg {
+    ProposalForward(ProposalForward),
+    RegResp(RegistrationResponse)
+}
+
+impl From<RegistrationResponse> for RaftReplicaMsg {
+    fn from(rr: RegistrationResponse) -> Self {
+        RaftReplicaMsg::RegResp(rr)
+    }
 }
 
 #[derive(ComponentDefinition)]
-pub struct Communicator {
-    ctx: ComponentContext<Communicator>,
-    raft_port: ProvidedPort<RaftCommunicationPort, Communicator>,
-    peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
-    cached_next_iter_metadata: Option<(ActorPath, HashMap<u64, ActorPath>)>,   // (partitioning_actor, peers) for next init_ack
-    cached_client: Option<ActorPath>,    // cached client to send SequenceResp to
-    stopped: bool
+pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
+    ctx: ComponentContext<Self>,
+    pid: u64,
+    initial_config: Vec<u64>,
+    raft_comp: Option<Arc<Component<RaftComp<S>>>>,
+    communicator: Option<Arc<Component<Communicator>>>,
+    nodes: HashMap<u64, ActorPath>,
+    pending_registration: Option<Uuid>,
+    iteration_id: u32,
+    stopped: bool,
+    partitioning_actor: Option<ActorPath>,
 }
 
-impl Communicator {
-    pub fn new() -> Communicator {
-        Communicator {
+impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
+    pub fn with(initial_config: Vec<u64>) -> Self {
+        RaftReplica {
             ctx: ComponentContext::new(),
-            raft_port: ProvidedPort::new(),
-            peers: HashMap::new(),
-            cached_next_iter_metadata: None,
-            cached_client: None,
-            stopped: false
+            pid: 0,
+            initial_config,
+            raft_comp: None,
+            communicator: None,
+            nodes: HashMap::new(),
+            pending_registration: None,
+            iteration_id: 0,
+            stopped: false,
+            partitioning_actor: None,
         }
     }
-}
 
-impl Provide<ControlPort> for Communicator {
-    fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
-        // ignore
+    fn create_rawraft_config(&self) -> Config {
+        Config {
+            id: self.pid,
+            election_tick: 10,
+            heartbeat_tick: 3,
+            ..Default::default()
+        }
     }
-}
 
-impl Provide<RaftCommunicationPort> for Communicator {
-    fn handle(&mut self, msg: CommunicatorMsg) {
-        if !self.stopped {
-            match &msg {    // TODO match msg and remove all clone()
-                CommunicatorMsg::RaftMsg(rm) => {
-                    let receiver = self.peers.get(&rm.payload.get_to()).expect(&format!("Could not find actorpath for id={}", &rm.payload.get_to()));
-                    receiver.tell((rm.clone(), RaftSer), self);
-                },
-                CommunicatorMsg::ProposalResp(pr) => {
-                    if let Some(client) = &self.cached_client {
-                        let am = AtomicBroadcastMsg::ProposalResp(pr.clone());
-                        self.cached_client.as_ref().expect("No cached client found!").tell((am, AtomicBroadcastSer), self);
-                    }
-                },
-                CommunicatorMsg::ProposalForward(pf) => {
-                    let receiver = self.peers.get(&pf.leader_id).expect("Could not find actorpath to leader in ProposalForward");
-                    receiver.tell((AtomicBroadcastMsg::Proposal(pf.proposal.clone()), AtomicBroadcastSer), self);
-                },
-                CommunicatorMsg::SequenceResp(sr) => {
-                    let receiver = self.cached_client.as_ref().expect("No cached client found for SequenceResp");
-                    receiver.tell((AtomicBroadcastMsg::SequenceResp(sr.clone()), AtomicBroadcastSer), self);
-                },
-                CommunicatorMsg::InitAck(id) => {
-                    let meta = self.cached_next_iter_metadata.take().expect("No next iteration metadata cached");
-                    let receiver = meta.0;
-                    let peers = meta.1;
-                    self.peers = peers;
-                    let resp = PartitioningActorMsg::InitAck(id.to_owned());
-                    receiver.tell_serialised(resp, self).expect("Should serialise");
-                },
+    fn create_components(&mut self) {
+        let conf_state = (self.initial_config.clone(), vec![]);
+        let mut communicator_peers: HashMap<u64, ActorPath> = HashMap::with_capacity(self.nodes.len());
+        for (pid, ap) in &self.nodes {
+            if pid != &self.pid {
+                match ap {
+                    ActorPath::Named(n) => {
+                        let sys_path = n.system();
+                        let protocol = sys_path.protocol();
+                        let port = sys_path.port();
+                        let addr = sys_path.address();
+                        let named_communicator = NamedPath::new(
+                            protocol,
+                            addr.clone(),
+                            port,
+                            vec![format!("{}{}-{}", COMMUNICATOR, pid, self.iteration_id).into()]
+                        );
+                        communicator_peers.insert(*pid, ActorPath::Named(named_communicator));
+                    },
+                    _ => unimplemented!(),
+                }
             }
         }
+
+        let system = self.ctx.system();
+        let dir = &format!("./diskstorage_node{}", self.pid);
+        let store = S::new_with_conf_state(Some(dir), (self.initial_config.clone(), vec![]));
+        let raw_raft = RawNode::new(&self.create_rawraft_config(), store).expect("Failed to create tikv Raft");
+        let raft_comp = system.create( || {
+            RaftComp::with(conf_state, raw_raft, self.actor_ref())
+        });
+        system.register_without_response(&raft_comp);
+        let communicator = system.create(|| {
+            Communicator::with(communicator_peers)
+        });
+        system.register_without_response(&communicator);
+        let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
+        let r = system.register_by_alias(&communicator, communicator_alias, self);
+        self.pending_registration = Some(r.0);
+        biconnect_components::<CommunicationPort, _, _>(&communicator, &raft_comp)
+            .expect("Could not connect components!");
+        self.raft_comp = Some(raft_comp);
+        self.communicator = Some(communicator);
+    }
+
+    fn start_components(&self) {
+        let raft = self.raft_comp.as_ref().expect("No raft comp to start!");
+        let communicator = self.communicator.as_ref().expect("No communicator to start!");
+        self.ctx.system().start(raft);
+        self.ctx.system().start(communicator);
+    }
+
+    fn kill_components(&mut self) {
+        let system = self.ctx.system();
+        if let Some(raft) = self.raft_comp.take() {
+            system.kill(raft);
+        }
+        if let Some(communicator) = self.communicator.take() {
+            system.kill(communicator);
+        }
     }
 }
 
-impl Actor for Communicator {
-    type Message = ();
+impl<S> Provide<ControlPort> for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
+    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        match event {
+            ControlEvent::Start => info!(self.ctx.log(), "Started RaftReplica!"),
+            _ => {},
+        }
+    }
+}
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
-        unimplemented!();
+impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
+    type Message = RaftReplicaMsg;
+
+    fn receive_local(&mut self, msg: Self::Message) -> () {
+        match msg {
+            RaftReplicaMsg::ProposalForward(pf) => {
+                if let Some(ap) = self.nodes.get(&pf.leader_id) {
+                    ap.tell( (AtomicBroadcastMsg::Proposal(pf.proposal), AtomicBroadcastSer), self);
+                }
+            },
+            RaftReplicaMsg::RegResp(rr) => {
+                if let Some(id) = self.pending_registration {
+                    if id == rr.id.0 {
+                        self.pending_registration = None;
+                        self.partitioning_actor
+                            .as_ref()
+                            .expect("No partitioning actor found!")
+                            .tell_serialised(PartitioningActorMsg::InitAck(self.iteration_id), self)
+                            .expect("Should serialise");
+                    }
+                }
+            }
+        }
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -105,23 +171,35 @@ impl Actor for Communicator {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
-                            let iteration_id = init.init_id;
-                            let node_id = init.pid as u64;
-                            let mut peers = HashMap::new();
+                            self.kill_components();
+                            self.iteration_id = init.init_id;
+                            self.pid = init.pid as u64;
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
-                                peers.insert(id as u64 + 1, actorpath);
+                                self.nodes.insert(id as u64 + 1, actorpath);
                             }
-                            self.cached_next_iter_metadata = Some((sender, peers));
-                            let ctr = CreateTikvRaft{ node_id, iteration_id };
+                            self.partitioning_actor = Some(sender);
                             self.stopped = false;
-                            self.raft_port.trigger(RaftCompMsg::CreateTikvRaft(ctr));   // TODO change to Ask and remove cached_next_iter
+                            self.create_components();
+                        },
+                        PartitioningActorMsg::Run => {
+                            self.start_components();
                         },
                         PartitioningActorMsg::Stop => {
-                            self.raft_port.trigger(RaftCompMsg::Stop);
+                            if let Some(raft) = self.raft_comp.as_ref() {
+                                let s = raft.actor_ref().ask(|promise| RaftCompMsg::Stop(Ask::new(promise, ()))).wait_timeout(Duration::from_secs(5));
+                                if let Err(_) = s {
+                                    warn!(self.ctx.log(), "Timed out stopping raft. Continuing anyway...")
+                                }
+                            }
+                            if let Some(communicator) = self.communicator.as_ref() {
+                                let s = communicator.actor_ref().ask(|promise| CommunicatorStop(Ask::new(promise, ()))).wait_timeout(Duration::from_secs(5));
+                                if let Err(_) = s {
+                                    warn!(self.ctx.log(), "Timed out stopping communicator. Continuing anyway...")
+                                }
+                            }
                             self.stopped = true;
-                            sender
-                                .tell_serialised(PartitioningActorMsg::StopAck, self)
-                                .expect("Should serialise");
+                            info!(self.ctx.log(), "Stopped components");
+                            sender.tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
                         }
                         _ => unimplemented!(),
                     }
@@ -129,18 +207,19 @@ impl Actor for Communicator {
                 am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                     match am {
                         AtomicBroadcastMsg::Proposal(p) => {
-                            self.cached_client = Some(p.client.clone());
-                            self.raft_port.trigger(RaftCompMsg::Proposal(p));
+                            if let Some(raft_comp) = self.raft_comp.as_ref() {
+                                raft_comp.actor_ref().tell(RaftCompMsg::Propose(p));
+                            }
                         },
                         AtomicBroadcastMsg::SequenceReq => {
-                            self.cached_client = Some(sender);
-                            self.raft_port.trigger(RaftCompMsg::SequenceReq);   // TODO use ask and remove cached_client
+                            if let Some(raft_comp) = self.raft_comp.as_ref() {
+                                let seq = raft_comp.actor_ref().ask(|promise| RaftCompMsg::SequenceReq(Ask::new(promise, ()))).wait();
+                                let sr = SequenceResp::with(self.pid, seq);
+                                sender.tell((AtomicBroadcastMsg::SequenceResp(sr), AtomicBroadcastSer), self);
+                            }
                         }
                         _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
                     }
-                },
-                r: RaftMsg [RaftSer] => {
-                    self.raft_port.trigger(RaftCompMsg::TikvRaftMsg(r.clone()));
                 },
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }
@@ -148,84 +227,80 @@ impl Actor for Communicator {
     }
 }
 
+#[derive(Debug)]
+pub enum RaftCompMsg {
+    Propose(Proposal),
+    Stop(Ask<(), ()>),
+    SequenceReq(Ask<(), Vec<u64>>)
+}
+
 #[derive(ComponentDefinition)]
 pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     ctx: ComponentContext<Self>,
-    raft_node: Option<RawNode<S>>,
-    communication_port: RequiredPort<RaftCommunicationPort, Self>,
-    config: Config,
+    replica: ActorRef<RaftReplicaMsg>,
+    raw_raft: RawNode<S>,
+    communication_port: RequiredPort<CommunicationPort, Self>,
     conf_state: (Vec<u64>, Vec<u64>),
     iteration_id: u32,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     has_reconfigured: bool,
+    cached_client: bool,
+    stopped: bool,
 }
 
 impl<S> Provide<ControlPort> for RaftComp<S> where
     S: RaftStorage + Send + Clone + 'static {
         fn handle(&mut self, event: ControlEvent) -> () {
             match event {
-                ControlEvent::Start => {},
+                ControlEvent::Start => {
+                    info!(self.ctx.log(), "RaftComp started!");
+                    self.start_timers();
+                },
                 _ => {
                     self.stop_timers();
-                    match self.raft_node.take() {
-                        Some(mut raft_node) => raft_node.mut_store().clear().expect("Failed to clear storage!"),
-                        _ => {}
-                    }
+                    self.raw_raft.mut_store().clear().expect("Failed to clear storage!");
                 }
             }
         }
 }
 
-impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
-    S: RaftStorage + Send + Clone + 'static {
-        fn handle(&mut self, msg: RaftCompMsg) -> () {
+impl<S> Actor for RaftComp<S> where
+    S: RaftStorage + Send + Clone + 'static{
+    type Message = RaftCompMsg;
+
+    fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
-            RaftCompMsg::CreateTikvRaft(ctr) => {
-                info!(self.ctx.log(), "{}", format!("Creating raft node, iteration: {}, id: {}", ctr.iteration_id, ctr.node_id));
-                self.iteration_id = ctr.iteration_id;
-                self.config.id = ctr.node_id;
-                self.has_reconfigured = false;
-                let dir = &format!("./diskstorage_node{}", ctr.node_id);
-                match self.raft_node.take() {
-                    Some(mut raft_node) => raft_node.mut_store().clear().expect("Failed to clear storage!"),
-                    _ => {}
+            RaftCompMsg::Propose(p) => {
+                if !self.stopped {
+                    if self.raw_raft.raft.state == StateRole::Leader{
+                        // info!(self.ctx.log(), "Proposing {}", p.id);
+                        self.propose(p);
+                    }
+                    else {
+                        let leader_id = self.raw_raft.raft.leader_id;
+                        if leader_id > 0 {
+                            // info!(self.ctx.log(), "Forwarding proposal {} to leader: {}", p.id, leader_id);
+                            let pf = ProposalForward::with(leader_id, p);
+                            self.replica.tell(RaftReplicaMsg::ProposalForward(pf));
+                        } else {    // no leader
+                            // info!(self.ctx.log(), "Got proposal but no leader...");
+                            if !self.cached_client {
+                                self.communication_port.trigger(CommunicatorMsg::CacheClient(p.client));
+                                self.cached_client = true;
+                            }
+                            let pr = ProposalResp::failed(p.id);
+                            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                        }
+                    }
                 }
-                let store = S::new_with_conf_state(Some(dir), self.conf_state.clone());
-                self.raft_node = Some(RawNode::new(&self.config, store).expect("Failed to create TikvRaftNode"));
-                let raft_node = self.raft_node.as_mut().unwrap();
-                raft_node.campaign().expect("Failed to start campaigning as leader");
-                if self.timers.is_none() {
-                    self.start_timers();
-                }
-                self.communication_port.trigger(CommunicatorMsg::InitAck(self.iteration_id));
-            }
-            RaftCompMsg::TikvRaftMsg(rm) => {
-                if rm.iteration_id == self.iteration_id {   // TODO remove iteration id?
-                    self.step(rm.payload)
-                } else {
-                    error!(self.ctx.log(), "Got msg from another iteration!");
-                }
-            }
-            RaftCompMsg::Proposal(p) => {
-                let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
-                if raft_node.raft.state == StateRole::Leader{
-                    self.propose(p);
-                }
-                else {
-                    let leader_id = raft_node.raft.leader_id;
-                    if leader_id > 0 {
-                        // info!(self.ctx.log(), "Forwarding proposal {} to leader: {}", p.id, leader_id);
-                        let pf = ProposalForward::with(leader_id, p);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalForward(pf));
-                    } /*else {    // no leader
-                        let pr = ProposalResp::failed(p.id);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
-                    }*/
-                }
-            }
-            RaftCompMsg::SequenceReq => {
-                let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
-                let raft_entries: Vec<Entry> = raft_node.raft.raft_log.all_entries();
+            },
+            RaftCompMsg::Stop(s) => {
+                self.stop_timers();
+                self.stopped = true;
+                let _ = s.reply(());
+            },
+            RaftCompMsg::SequenceReq(sr) => {
+                let raft_entries: Vec<Entry> = self.raw_raft.raft.raft_log.all_entries();
                 let mut sequence: Vec<u64> = Vec::new();
                 for entry in raft_entries {
                     if entry.get_entry_type() == EntryType::EntryNormal && !&entry.data.is_empty() {
@@ -235,37 +310,47 @@ impl<S> Require<RaftCommunicationPort> for RaftComp<S> where
                         }
                     }
                 }
-                info!(self.ctx.log(), "Node {} got SequenceReq: my seq_len={}", self.config.id, sequence.len());
-                let sr = SequenceResp{ node_id: self.config.id, sequence };
-                self.communication_port.trigger(CommunicatorMsg::SequenceResp(sr));
-            }
-            RaftCompMsg::Stop => {
-                self.stop_timers();
+                info!(self.ctx.log(), "Got SequenceReq: my seq_len={}", sequence.len());
+                sr.reply(sequence).expect("Failed to respond SequenceReq ask");
             }
         }
     }
+
+    fn receive_network(&mut self, _msg: NetMessage) -> () {
+        unimplemented!()
+    }
+}
+
+impl<S> Require<CommunicationPort> for RaftComp<S> where
+    S: RaftStorage + Send + Clone + 'static {
+        fn handle(&mut self, msg: AtomicBroadcastCompMsg) -> () {
+            if let AtomicBroadcastCompMsg::RawRaftMsg(rm) = msg {
+                if !self.stopped {
+                    self.step(rm);
+                }
+            }
+        }
 }
 
 impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
-    pub fn with(config: Config, conf_state: (Vec<u64>, Vec<u64>)) -> RaftComp<S> {
+    pub fn with(conf_state: (Vec<u64>, Vec<u64>), raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>) -> RaftComp<S> {
         RaftComp {
             ctx: ComponentContext::new(),
-            raft_node: None,
+            replica,
+            raw_raft,
             communication_port: RequiredPort::new(),
-            config,
             conf_state,
             iteration_id: 0,
             timers: None,
             has_reconfigured: false,
+            cached_client: false,
+            stopped: false
         }
     }
 
     fn start_timers(&mut self){
-//        let on_ready_uuid = uuid::Uuid::new_v4();
-//        let tick_uuid = uuid::Uuid::new_v4();
-        // give new reference to self to make compiler happy
         let ready_timer = self.schedule_periodic(DELAY, READY_PERIOD, move |c, _| c.on_ready());
-        let tick_timer = self.schedule_periodic(DELAY, TICK_PERIOD, move |rc, _| rc.tick());
+        let tick_timer = self.schedule_periodic(DELAY, TICK_PERIOD, move |rc, _| rc.tick() );
         self.timers = Some((ready_timer, tick_timer));
     }
 
@@ -277,47 +362,47 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn tick(&mut self) {
-        self.raft_node.as_mut()
-            .expect("TikvRaftNode not initialized in RaftComp")
-            .tick();
+        self.raw_raft.tick();
     }
 
     fn step(&mut self, msg: TikvRaftMsg) {
-        let _ = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp").step(msg);
+        let _ = self.raw_raft.step(msg);
     }
 
     fn propose(&mut self, proposal: Proposal) {
-        let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
-        let last_index1 = raft_node.raft.raft_log.last_index() + 1;
+        let last_index1 = self.raw_raft.raft.raft_log.last_index() + 1;
         let id = proposal.id;
+        if !self.cached_client {
+            self.communication_port.trigger(CommunicatorMsg::CacheClient(proposal.client));
+            self.cached_client = true;
+        }
         match proposal.reconfig {
             Some(reconfig) => {
-                let _ = raft_node.raft.propose_membership_change(reconfig).unwrap();
+                let _ = self.raw_raft.raft.propose_membership_change(reconfig).unwrap();
             }
             None => {   // i.e normal operation
                 let mut data: Vec<u8> = Vec::with_capacity(8);
                 data.put_u64(id);
-                raft_node.propose(vec![], data).expect("Failed to propose in TikvRaft");
+                self.raw_raft.propose(vec![], data).expect("Failed to propose in TikvRaft");
             }
         }
-        let last_index2 = raft_node.raft.raft_log.last_index() + 1;
+        let last_index2 = self.raw_raft.raft.raft_log.last_index() + 1;
         if last_index2 == last_index1 {
             // Propose failed, don't forget to respond to the client.
             error!(self.ctx.log(), "Failed proposal: Failed to append to storage?");
             let pr = ProposalResp::failed(id);
-            self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
         }
     }
 
     fn on_ready(&mut self) {
-        let raft_node = self.raft_node.as_mut().expect("TikvRaftNode not initialized in RaftComp");
-        if !raft_node.has_ready() {
+        if !self.raw_raft.has_ready() {
             return;
         }
-        let mut store = raft_node.raft.raft_log.store.clone();
+        let mut store = self.raw_raft.raft.raft_log.store.clone();
 
         // Get the `Ready` with `RawNode::ready` interface.
-        let mut ready = raft_node.ready();
+        let mut ready = self.raw_raft.ready();
 
         // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
         // raft logs to the latest position.
@@ -337,8 +422,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
         // Send out the messages come from the node.
         for msg in ready.messages.drain(..) {
-            let rm = RaftMsg { iteration_id: self.iteration_id, payload: msg};
-            self.communication_port.trigger(CommunicatorMsg::RaftMsg(rm));
+            self.communication_port.trigger(CommunicatorMsg::RawRaftMsg(msg));
         }
 
         // Apply all committed proposals.
@@ -358,33 +442,30 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             let reconfig = cc.get_configuration();
                             let start_index = cc.get_start_index();
                             info!(self.ctx.log(), "{}", format!("Beginning reconfiguration to: {:?}, start_index: {}", reconfig, start_index));
-                            raft_node
+                            self.raw_raft
                                 .raft
                                 .begin_membership_change(&cc)
                                 .expect("Failed to begin reconfiguration");
 
-                            assert!(raft_node.raft.is_in_membership_change());
-                            let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
+                            assert!(self.raw_raft.raft.is_in_membership_change());  // TODO remove?
+                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
                             store.set_conf_state(cs, Some((reconfig.clone(), start_index)));
                         }
                         ConfChangeType::FinalizeMembershipChange => {
                             if !self.has_reconfigured {
-                                info!(self.ctx.log(), "{}", format!("Finalizing reconfiguration: {:?}", raft_node.raft.prs().next_configuration()));
-                                raft_node
+                                info!(self.ctx.log(), "{}", format!("Finalizing reconfiguration: {:?}", self.raw_raft.raft.prs().next_configuration()));
+                                self.raw_raft
                                     .raft
                                     .finalize_membership_change(&cc)
                                     .expect("Failed to finalize reconfiguration");
 
                                 self.has_reconfigured = true;
-                                let cs = ConfState::from(raft_node.raft.prs().configuration().clone());
+                                let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
                                 let current_config = (cs.nodes.clone(), cs.learners.clone());
                                 let pr = ProposalResp::succeeded_reconfiguration(current_config);
                                 store.set_conf_state(cs, None);
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                             }
-                            /*else {
-                                info!(self.ctx.log(), "{}", format!("Got unexpected finalize: id: {}, node_id: {}", cc.id, cc.node_id));
-                            }*/
                         }
                         _ => unimplemented!(),
                     }
@@ -392,31 +473,17 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     // normal proposals
                     let id = entry.data.as_slice().get_u64();
                     let pr = ProposalResp::succeeded_normal(id);
-                    self.communication_port.trigger(CommunicatorMsg::ProposalResp(pr));
+                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
-
             }
             if let Some(last_committed) = committed_entries.last() {
                 store.set_hard_state(last_committed.index, last_committed.term).expect("Failed to set hardstate");
             }
         }
         // Call `RawNode::advance` interface to update position flags in the raft.
-        raft_node.advance(ready);
+        self.raw_raft.advance(ready);
     }
 
-}
-
-impl<S> Actor for RaftComp<S> where
-    S: RaftStorage + Send + Clone + 'static{
-        type Message = ();
-
-        fn receive_local(&mut self, _msg: Self::Message) -> () {
-            unimplemented!()
-        }
-
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
-            unimplemented!()
-        }
 }
 
 #[cfg(test)]
@@ -430,15 +497,6 @@ mod tests {
     #[allow(unused_imports)]
     use tikv_raft::storage::MemStorage;
 
-    fn example_config() -> Config {
-        Config {
-            id: 1,
-            election_tick: 10,
-            heartbeat_tick: 3,
-            ..Default::default()
-        }
-    }
-
     fn create_raft_nodes<T: RaftStorage + std::marker::Send + std::clone::Clone + 'static>(
         n: u64,
         systems: &mut Vec<KompactSystem>,
@@ -448,11 +506,11 @@ mod tests {
         for i in 1..=n {
             let system =
                 kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("raft{}", i), 4);
-            let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                RaftComp::<T>::with(example_config(), conf_state.clone())
+            let (raft_replica, unique_reg_f) = system.create_and_register(|| {
+                RaftReplica::<T>::with(conf_state.0.clone())
             });
-            let raft_comp_f = system.start_notify(&raft_comp);
-            raft_comp_f
+            let raft_replica_f = system.start_notify(&raft_replica);
+            raft_replica_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("RaftComp never started!");
             unique_reg_f.wait_expect(
@@ -460,43 +518,26 @@ mod tests {
                 "RaftComp failed to register!",
             );
 
-            /*** Setup communicator ***/
-            let (communicator, unique_reg_f) =
-                system.create_and_register(|| { Communicator::new() });
-
             let named_reg_f = system.register_by_alias(
-                &communicator,
-                format!("communicator{}", i),
+                &raft_replica,
+                format!("raft_replica{}", i),
             );
-
-            unique_reg_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Communicator never registered!")
-                .expect("Communicator to register!");
 
             named_reg_f.wait_expect(
                 Duration::from_millis(1000),
                 "Communicator failed to register!",
             );
 
-            let communicator_f = system.start_notify(&communicator);
-            communicator_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Communicator never started!");
-
-            biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
-                .expect("Could not connect components!");
-
             /*** Add self to peers map ***/
             let self_path = ActorPath::Named(NamedPath::with_system(
                 system.system_path(),
-                vec![format!("communicator{}", i).into()],
+                vec![format!("raft_replica{}", i).into()],
             ));
             systems.push(system);
             peers.insert(i, self_path);
         }
     }
-
+/*
     #[test]
     fn kompact_raft_ser_test() {
         use super::*;
@@ -598,14 +639,14 @@ mod tests {
             _ => panic!("Failed to deserialise ProposalResp")
         }
     }
-
+*/
     #[test]
     fn raft_test() {
         let n: u64 = 5;
         let active_n: u64 = 3;
         let quorum = active_n/2 + 1;
-        let num_proposals = 3000;
-        let batch_size = 1000;
+        let num_proposals = 300;
+        let batch_size = 100;
         let config = (vec![1,2,3], vec![]);
         // let reconfig = None;
        let reconfig = Some((vec![1,4,5], vec![]));
@@ -641,6 +682,7 @@ mod tests {
             .expect("PartitioningComp never started!");
         partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
         prepare_latch.wait();
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
         /*** Setup client ***/
         let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
         let (client, unique_reg_f) = systems[0].create_and_register( || {

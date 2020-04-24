@@ -44,8 +44,8 @@ impl Client {
         let p = Proposal::normal(id, ap);
         let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
         node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-        let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
-        self.proposal_timeouts.insert(id, timer);
+        // let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+        // self.proposal_timeouts.insert(id, timer);
     }
 
     fn send_normal_proposals<T>(&mut self, r: T) where T: IntoIterator<Item = u64> {
@@ -139,8 +139,10 @@ impl Actor for Client {
                                 }
                             }
                         } else {
-                            info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
-                            unimplemented!();
+                            // info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
+                            let id = pr.id;
+                            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+                            self.proposal_timeouts.insert(pr.id, timer);
                         }
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),

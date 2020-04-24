@@ -4,3 +4,4 @@ mod paxos;
 mod client;
 mod messages;
 mod storage;
+mod communicator;
