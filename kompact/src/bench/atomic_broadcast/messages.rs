@@ -12,21 +12,9 @@ pub mod raft {
     use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
     use super::*;
 
-    #[derive(Clone, Debug)]
-    pub struct RaftMsg {
-        pub iteration_id: u32,
-        pub payload: TikvRaftMsg
-    }
+    pub struct RawRaftSer;
 
-    #[derive(Clone, Debug)]
-    pub struct CreateTikvRaft {
-        pub node_id: u64,
-        pub iteration_id: u32
-    }
-
-    pub struct RaftSer;
-
-    impl Serialiser<RaftMsg> for RaftSer {
+    impl Serialiser<TikvRaftMsg> for RawRaftSer {
         fn ser_id(&self) -> u64 {
             serialiser_ids::RAFT_ID
         }
@@ -35,22 +23,19 @@ pub mod raft {
             Some(500)
         }
 
-        fn serialise(&self, rm: &RaftMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u32(rm.iteration_id);
-            let bytes: Vec<u8> = rm.payload.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
+        fn serialise(&self, rm: &TikvRaftMsg, buf: &mut BufMut) -> Result<(), SerError> {
+            let bytes: Vec<u8> = rm.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
             buf.put_slice(&bytes);
             Ok(())
         }
     }
 
-    impl Deserialiser<RaftMsg> for RaftSer {
+    impl Deserialiser<TikvRaftMsg> for RawRaftSer {
         const SER_ID: u64 = serialiser_ids::RAFT_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<RaftMsg, SerError> {
-            let iteration_id = buf.get_u32();
+        fn deserialise(buf: &mut Buf) -> Result<TikvRaftMsg, SerError> {
             let bytes = buf.bytes();
-            let payload: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
-            let rm = RaftMsg { iteration_id, payload };
+            let rm: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
             Ok(rm)
         }
     }
@@ -803,15 +788,6 @@ impl SequenceResp {
     pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
         SequenceResp{ node_id, sequence }
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum CommunicatorMsg {
-    RaftMsg(RaftMsg),
-    ProposalResp(ProposalResp),
-    ProposalForward(ProposalForward),
-    SequenceResp(SequenceResp),
-    InitAck(u32)
 }
 
 #[derive(Clone, Debug)]

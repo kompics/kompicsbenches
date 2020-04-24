@@ -6,7 +6,7 @@ use kompact::prelude::*;
 use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
-use super::raft::{RaftComp, Communicator, RaftCommunicationPort};
+use super::raft::{RaftReplica};
 use super::paxos::{ReplicaComp, TransferPolicy};
 use super::storage::paxos::{MemoryState, MemorySequence};
 use super::storage::raft::DiskStorage;
@@ -16,6 +16,7 @@ use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
+use super::communicator::Communicator;
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
@@ -188,8 +189,8 @@ pub struct AtomicBroadcastMaster {
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    paxos_replica_comp: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
-    raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
+    paxos_replica: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
+    raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
 }
@@ -207,8 +208,8 @@ impl AtomicBroadcastMaster {
             system: None,
             finished_latch: None,
             iteration_id: 0,
-            paxos_replica_comp: None,
-            raft_components: None,
+            paxos_replica: None,
+            raft_replica: None,
             client_comp: None,
             partitioning_actor: None,
         }
@@ -402,55 +403,34 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         self.partitioning_actor = Some(self.initialise_iteration(nodes));
                         self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
                         std::thread::sleep(Duration::from_secs(3));
-                        self.paxos_replica_comp = Some(replica_comp);
+                        self.paxos_replica = Some(replica_comp);
                     }
                     Some(Algorithm::Raft) => {
                         let conf_state = get_initial_conf(self.num_nodes.unwrap() as u64);
-                        let config = Config {
-                            election_tick: 10,
-                            heartbeat_tick: 3,
-                            max_inflight_msgs: self.num_proposals.unwrap() as usize,
-                            ..Default::default()
-                        };
-                        let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                            RaftComp::with(config, conf_state)
+                        let (raft_replica, unique_reg_f) = system.create_and_register(|| {
+                            RaftReplica::<Storage>::with(conf_state.0)
                         });
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
                             "RaftComp failed to register!",
                         );
-
-                        let (communicator, unique_reg_f) =
-                            system.create_and_register(|| { Communicator::new() });
-                        unique_reg_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("Communicator never registered!")
-                            .expect("Communicator failed to register!");
-
-                        biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
-                            .expect("Could not connect components!");
-                        /*** start components***/
-                        let communicator_f = system.start_notify(&communicator);
-                        communicator_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("Communicator never started!");
                         let named_reg_f = system.register_by_alias(
-                            &communicator,
-                            format!("communicator{}", &self.iteration_id),
+                            &raft_replica,
+                            format!("raft_replica{}", &self.iteration_id),
                         );
                         named_reg_f.wait_expect(
                             Duration::from_millis(1000),
-                            "Communicator failed to register!",
+                            "RaftReplica failed to register!",
                         );
 
-                        let raft_comp_f = system.start_notify(&raft_comp);
-                        raft_comp_f
+                        let raft_replica_f = system.start_notify(&raft_replica);
+                        raft_replica_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("RaftComp never started!");
 
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
-                            vec![format!("communicator{}", &self.iteration_id).into()],
+                            vec![format!("raft_replica{}", &self.iteration_id).into()],
                         ));
                         let mut nodes = d;
                         nodes.insert(0, self_path);
@@ -461,7 +441,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
                         self.partitioning_actor = Some(self.initialise_iteration(nodes));
                         self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
-                        self.raft_components = Some((raft_comp, communicator));
+                        self.raft_replica = Some(raft_replica);
                     }
                     _ => unimplemented!(),
                 }
@@ -513,23 +493,18 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 .expect("Partitioning Actor never died!");
         }
 
-        if let Some(paxos_replica_comp) = self.paxos_replica_comp.take() {
+        if let Some(paxos_replica_comp) = self.paxos_replica.take() {
             let kill_replica_f = system.kill_notify(paxos_replica_comp);
             kill_replica_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("Paxos Replica never died!");
         }
 
-        if let Some((raft_comp, communicator)) = self.raft_components.take() {
-            let kill_raft_f = system.kill_notify(raft_comp);
+        if let Some(raft_replica) = self.raft_replica.take() {
+            let kill_raft_f = system.kill_notify(raft_replica);
             kill_raft_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("RaftComp never died!");
-
-            let kill_communicator_f = system.kill_notify(communicator);
-            kill_communicator_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("Communicator never died");
         }
 
         if last_iteration {
@@ -549,16 +524,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    paxos_replica_comp: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
-    raft_components: Option<(Arc<Component<RaftComp<Storage>>>, Arc<Component<Communicator>>)>,
+    paxos_replica: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
+    raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
 }
 
 impl AtomicBroadcastClient {
     fn new() -> AtomicBroadcastClient {
         AtomicBroadcastClient {
             system: None,
-            paxos_replica_comp: None,
-            raft_components: None
+            paxos_replica: None,
+            raft_replica: None
         }
     }
 }
@@ -598,7 +573,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     vec!["replica".into()],
                 ));
 
-                self.paxos_replica_comp = Some(replica_comp);
+                self.paxos_replica = Some(replica_comp);
                 self_path
             }
             Algorithm::Raft => {
@@ -606,53 +581,33 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 //                let storage = MemStorage::new_with_conf_state(conf_state);
 //                let dir = "./diskstorage";
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
-                let config = Config {
-                    election_tick: 10,
-                    heartbeat_tick: 3,
-                    ..Default::default()
-                };
                 /*** Setup RaftComp ***/
-                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::with(config, conf_state)
+                let (raft_replica, unique_reg_f) = system.create_and_register(|| {
+                    RaftReplica::<Storage>::with(conf_state.0)
                 });
                 unique_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "RaftComp failed to register!",
                 );
-                /*** Setup communicator ***/
-                let (communicator, unique_reg_f) =
-                    system.create_and_register(|| { Communicator::new() });
-                unique_reg_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Communicator never registered!")
-                    .expect("Communicator to register!");
-
                 let named_reg_f = system.register_by_alias(
-                    &communicator,
-                    "communicator",
+                    &raft_replica,
+                    "raft_replica",
                 );
                 named_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "Communicator failed to register!",
                 );
-
-                biconnect_components::<RaftCommunicationPort, _, _>(&communicator, &raft_comp)
-                    .expect("Could not connect components!");
-                let communicator_f = system.start_notify(&communicator);
-                communicator_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Communicator never started!");
-                let raft_comp_f = system.start_notify(&raft_comp);
-                raft_comp_f
+                let raft_replica_f = system.start_notify(&raft_replica);
+                raft_replica_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("RaftComp never started!");
+                self.raft_replica = Some(raft_replica);
 
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
-                    vec!["communicator".into()],
+                    vec!["raft_replica".into()],
                 ));
 
-                self.raft_components = Some((raft_comp, communicator));
                 self_path
             }
         };
@@ -669,22 +624,17 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         println!("Cleaning up Atomic Broadcast (client)");
         if last_iteration {
             let system = self.system.take().unwrap();
-            if let Some(replica) = self.paxos_replica_comp.take() {
+            if let Some(replica) = self.paxos_replica.take() {
                 let kill_replica_f = system.kill_notify(replica);
                 kill_replica_f
                     .wait_timeout(Duration::from_secs(1))
                     .expect("Paxos Replica never died!");
             }
-            if let Some((raft_comp, communicator)) = self.raft_components.take() {
-                let kill_raft_f = system.kill_notify(raft_comp);
+            if let Some(raft_replica) = self.raft_replica.take() {
+                let kill_raft_f = system.kill_notify(raft_replica);
                 kill_raft_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("Atomic Broadcast never died!");
-
-                let kill_communicator_f = system.kill_notify(communicator);
-                kill_communicator_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("Communicator never died!");
             }
             system
                 .shutdown()
