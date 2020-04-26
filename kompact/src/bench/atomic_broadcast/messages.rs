@@ -4,8 +4,6 @@ use kompact::prelude::*;
 use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
 
-use self::raft::*;
-
 pub mod raft {
     extern crate raft as tikv_raft;
     use tikv_raft::prelude::Message as TikvRaftMsg;
@@ -23,7 +21,7 @@ pub mod raft {
             Some(500)
         }
 
-        fn serialise(&self, rm: &TikvRaftMsg, buf: &mut BufMut) -> Result<(), SerError> {
+        fn serialise(&self, rm: &TikvRaftMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
             let bytes: Vec<u8> = rm.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
             buf.put_slice(&bytes);
             Ok(())
@@ -33,7 +31,7 @@ pub mod raft {
     impl Deserialiser<TikvRaftMsg> for RawRaftSer {
         const SER_ID: u64 = serialiser_ids::RAFT_ID;
 
-        fn deserialise(buf: &mut Buf) -> Result<TikvRaftMsg, SerError> {
+        fn deserialise(buf: &mut dyn Buf) -> Result<TikvRaftMsg, SerError> {
             let bytes = buf.bytes();
             let rm: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes).expect("Protobuf failed to deserialise TikvRaftMsg");
             Ok(rm)
@@ -697,6 +695,8 @@ pub mod paxos {
 #[derive(Clone, Debug)]
 pub struct Run;
 
+pub const RECONFIG_ID: u64 = 0;
+
 #[derive(Clone, Debug)]
 pub struct Proposal {
     pub id: u64,
@@ -722,20 +722,6 @@ impl Proposal {
         };
         proposal
     }
-/*
-    pub fn serialize_normal(&self) -> Result<Vec<u8>, SerError> {   // serialize to use with tikv raft
-        let mut buf = vec![];
-        buf.put_u64(self.id);
-        self.client.serialise(&mut buf)?;
-        Ok(buf.clone())
-    }
-
-    pub fn deserialize_normal(bytes: &Vec<u8>) -> Proposal {  // deserialize from tikv raft
-        let mut buf = bytes.as_slice();
-        let id = buf.get_u64();
-        let client = ActorPath::deserialise(&mut buf).expect("No client actorpath in proposal");
-        Proposal::normal(id, client)
-    }*/
 }
 
 #[derive(Clone, Debug)]
@@ -779,34 +765,16 @@ impl ProposalForward {
 }
 
 #[derive(Clone, Debug)]
-pub struct SequenceResp {
-    pub node_id: u64,
-    pub sequence: Vec<u64>
-}
-
-impl SequenceResp {
-    pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
-        SequenceResp{ node_id, sequence }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
-    SequenceReq,
-    SequenceResp(SequenceResp)
 }
 
 const PROPOSAL_ID: u8 = 0;
 const PROPOSALRESP_ID: u8 = 1;
-const SEQREQ_ID: u8 = 3;
-const SEQRESP_ID: u8 = 4;
 
 const PROPOSAL_FAILED: u8 = 0;
 const PROPOSAL_SUCCESS: u8 = 1;
-
-pub const RECONFIG_ID: u64 = 0;
 
 pub struct AtomicBroadcastSer;
 
@@ -816,7 +784,7 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        Some(50000)
+        Some(50)
     }
 
     fn serialise(&self, enm: &AtomicBroadcastMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -873,20 +841,6 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 }
                 Ok(())
             },
-            AtomicBroadcastMsg::SequenceReq => {
-                buf.put_u8(SEQREQ_ID);
-                Ok(())
-            },
-            AtomicBroadcastMsg::SequenceResp(sr) => {
-                buf.put_u8(SEQRESP_ID);
-                buf.put_u64(sr.node_id);
-                let seq_len = sr.sequence.len() as u32;
-                buf.put_u32(seq_len);
-                for i in &sr.sequence {
-                    buf.put_u64(i.clone());
-                }
-                Ok(())
-            }
         }
     }
 }
@@ -947,7 +901,73 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },
-            SEQREQ_ID => Ok(AtomicBroadcastMsg::SequenceReq),
+            _ => {
+                Err(SerError::InvalidType(
+                    "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SequenceResp {
+    pub node_id: u64,
+    pub sequence: Vec<u64>
+}
+
+impl SequenceResp {
+    pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
+        SequenceResp{ node_id, sequence }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum TestMessage {
+    SequenceReq,
+    SequenceResp(SequenceResp)
+}
+
+pub struct TestMessageSer;
+
+const SEQREQ_ID: u8 = 0;
+const SEQRESP_ID: u8 = 1;
+
+impl Serialiser<TestMessage> for TestMessageSer {
+    fn ser_id(&self) -> u64 {
+        serialiser_ids::TEST_SEQ_ID
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(50000)
+    }
+
+    fn serialise(&self, msg: &TestMessage, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match msg {
+            TestMessage::SequenceReq => {
+                buf.put_u8(SEQREQ_ID);
+                Ok(())
+            },
+            TestMessage::SequenceResp(sr) => {
+                buf.put_u8(SEQRESP_ID);
+                buf.put_u64(sr.node_id);
+                let seq_len = sr.sequence.len() as u32;
+                buf.put_u32(seq_len);
+                for i in &sr.sequence {
+                    buf.put_u64(i.clone());
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Deserialiser<TestMessage> for TestMessageSer {
+    const SER_ID: u64 = serialiser_ids::TEST_SEQ_ID;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<TestMessage, SerError> {
+        match buf.get_u8() {
+            SEQREQ_ID => Ok(TestMessage::SequenceReq),
             SEQRESP_ID => {
                 let node_id = buf.get_u64();
                 let sequence_len = buf.get_u32();
@@ -956,11 +976,11 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                     sequence.push(buf.get_u64());
                 }
                 let sr = SequenceResp{ node_id, sequence};
-                Ok(AtomicBroadcastMsg::SequenceResp(sr))
-            }
+                Ok(TestMessage::SequenceResp(sr))
+            },
             _ => {
                 Err(SerError::InvalidType(
-                    "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),
+                    "Found unkown id when deserialising TestMessage. Expected SequenceReq or SequenceResp".into(),
                 ))
             }
         }

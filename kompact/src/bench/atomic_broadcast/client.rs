@@ -44,8 +44,8 @@ impl Client {
         let p = Proposal::normal(id, ap);
         let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
         node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-        // let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
-        // self.proposal_timeouts.insert(id, timer);
+        let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+        self.proposal_timeouts.insert(id, timer);
     }
 
     fn send_normal_proposals<T>(&mut self, r: T) where T: IntoIterator<Item = u64> {
@@ -70,7 +70,7 @@ impl Client {
     fn propose_reconfiguration(&mut self) {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
-        info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig.clone()));
+        info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig);
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
@@ -95,7 +95,6 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.send_batch();
-        // self.propose_reconfiguration();
         self.schedule_periodic(
             Duration::from_secs(5),
             Duration::from_secs(30),
@@ -138,9 +137,12 @@ impl Actor for Client {
                                     }
                                 }
                             }
-                        } else {
+                        } else {    // failed proposal
                             // info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
                             let id = pr.id;
+                            if let Some(timer) = self.proposal_timeouts.remove(&id) {
+                                self.cancel_timer(timer);
+                            }
                             let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
                             self.proposal_timeouts.insert(pr.id, timer);
                         }
@@ -157,6 +159,7 @@ impl Actor for Client {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::bench::atomic_broadcast::messages::{TestMessage, TestMessageSer};
 
     #[derive(ComponentDefinition)]
     pub struct TestClient {
@@ -227,8 +230,8 @@ pub mod tests {
 
         fn propose_reconfiguration(&mut self) {
             let ap = self.ctx.actor_path();
-            let reconfig = self.reconfig.as_ref().unwrap().clone();
-            info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig.clone()));
+            let reconfig = self.reconfig.take().unwrap();
+            info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
             let p = Proposal::reconfiguration(0, ap, reconfig);
             let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
@@ -236,6 +239,9 @@ pub mod tests {
 
         fn retry_proposal(&mut self, id: u64) {
             if !self.responses.contains(&id) {
+                if id % 100 == 0 {
+                    // info!(self.ctx.log(), "Retrying proposal {}", id);
+                }
                 self.propose_normal(id);
             }
         }
@@ -263,7 +269,7 @@ pub mod tests {
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
-            let NetMessage{sender, receiver: _, data} = msg;
+            let NetMessage{sender: _, receiver: _, data} = msg;
             match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
@@ -274,8 +280,9 @@ pub mod tests {
                                     info!(self.ctx.log(), "reconfiguration succeeded?");
                                     if self.responses.len() as u64 == self.num_proposals {
                                         if self.check_sequences {
+                                            info!(self.ctx.log(), "TestClient requesting sequences");
                                             for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
-                                                actorpath.tell((AtomicBroadcastMsg::SequenceReq, AtomicBroadcastSer), self);
+                                                actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
                                             }
                                         } else {
                                             self.finished_promise
@@ -300,7 +307,7 @@ pub mod tests {
                                         if received_count == self.num_proposals {
                                             if self.check_sequences {
                                                 for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
-                                                    actorpath.tell((AtomicBroadcastMsg::SequenceReq, AtomicBroadcastSer), self);
+                                                    actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
                                                 }
                                             } else {
                                                 self.finished_promise
@@ -318,9 +325,22 @@ pub mod tests {
                                     }
                                 }
                             }
+                        } else {    // failed proposal
+                            // info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
+                            let id = pr.id;
+                            if let Some(timer) = self.proposal_timeouts.remove(&id) {
+                                self.cancel_timer(timer);
+                            }
+                            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+                            self.proposal_timeouts.insert(pr.id, timer);
                         }
                     },
-                    AtomicBroadcastMsg::SequenceResp(sr) => {
+                    _ => error!(self.ctx.log(), "Client received unexpected msg"),
+                }
+            },
+            tm: TestMessage [TestMessageSer] => {
+                match tm {
+                    TestMessage::SequenceResp(sr) => {
                         self.test_results.insert(sr.node_id, sr.sequence);
                         if (self.test_results.len() - 1) == self.nodes.len() {    // got all sequences from everybody, we're done
                             info!(self.ctx.log(), "Got all sequences");
@@ -330,7 +350,7 @@ pub mod tests {
                                 .expect("Failed to fulfill finished promise after getting all sequences");
                         }
                     },
-                    _ => error!(self.ctx.log(), "Client received unexpected msg"),
+                    _ => error!(self.ctx.log(), "Received unexpected TestMessage {:?}", tm),
                 }
             },
             !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
