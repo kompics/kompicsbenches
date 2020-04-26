@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
-use crate::bench::atomic_broadcast::messages::{ProposalResp, ProposalForward, AtomicBroadcastMsg, AtomicBroadcastSer};
+use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer};
 use std::collections::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer};
 
@@ -73,16 +73,13 @@ impl Provide<CommunicationPort> for Communicator {
                 },
                 CommunicatorMsg::ProposalResponse(pr) => {
                     if let Some(client) = &self.cached_client {
-                        // if pr.id % 200 == 0 {
-                        //     info!(self.ctx.log(), "Proposal {} succesful", pr.id);
-                        // }
                         let am = AtomicBroadcastMsg::ProposalResp(pr.clone());
                         client.tell((am, AtomicBroadcastSer), self);
-                    } /*else {
-                        if pr.id % 200 == 0 {
-                            info!(self.ctx.log(), "Got proposal response {} but no cached client", pr.id);
+                    } else {
+                        if pr.id % 100 == 0 {
+                            error!(self.ctx.log(), "Got proposal response {} but no cached client", pr.id);
                         }
-                    }*/
+                    }
                 },
             }
         }
@@ -90,11 +87,11 @@ impl Provide<CommunicationPort> for Communicator {
 }
 
 impl Actor for Communicator {
-    type Message = Stop;
+    type Message = ();
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
-        self.stopped = true;
-        let _ = msg.0.reply(());
+    fn receive_local(&mut self, _msg: Self::Message) -> () {
+        // self.stopped = true;
+        // let _ = msg.0.reply(());
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -111,6 +108,3 @@ impl Actor for Communicator {
             }
     }
 }
-
-#[derive(Debug)]
-pub struct Stop(pub Ask<(), ()>);

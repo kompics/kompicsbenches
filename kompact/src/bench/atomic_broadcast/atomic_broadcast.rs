@@ -7,16 +7,15 @@ use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
 use super::raft::{RaftReplica};
-use super::paxos::{ReplicaComp, TransferPolicy};
+use super::paxos::{PaxosReplica, TransferPolicy};
 use super::storage::paxos::{MemoryState, MemorySequence};
 use super::storage::raft::DiskStorage;
-use tikv_raft::{Config, storage::MemStorage};
+use tikv_raft::{storage::MemStorage};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
-use super::communicator::Communicator;
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
@@ -184,12 +183,12 @@ pub struct AtomicBroadcastMaster {
     num_proposals: Option<u64>,
     batch_size: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
-    transfer_policy: Option<TransferPolicy>,
+    paxos_transfer_policy: Option<TransferPolicy>,
     forward_discarded: bool,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    paxos_replica: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
+    paxos_replica: Option<Arc<Component<PaxosReplica<MemorySequence, MemoryState>>>>,
     raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
@@ -203,7 +202,7 @@ impl AtomicBroadcastMaster {
             num_proposals: None,
             batch_size: None,
             reconfiguration: None,
-            transfer_policy: None,
+            paxos_transfer_policy: Some(TransferPolicy::Pull),
             forward_discarded: false,
             system: None,
             finished_latch: None,
@@ -278,22 +277,24 @@ impl AtomicBroadcastMaster {
                 self.forward_discarded = c.forward_discarded;
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
-                        if self.forward_discarded || c.transfer_policy.to_lowercase() != "none" {
+                        if c.transfer_policy.to_lowercase() != "none" {
                             return Err(BenchmarkError::InvalidTest(
                                 format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
                             ));
                         }
                     },
+                    s if s == "single" || s == "majority" => {
+                        self.paxos_transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
+                            "eager" => Some(TransferPolicy::Eager),
+                            "pull" => Some(TransferPolicy::Pull),
+                            _ => {
+                                return Err(BenchmarkError::InvalidTest(
+                                    format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
+                                ));
+                            }
+                        }
+                    },
                     _ => {}
-                }
-                self.transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
-                    "eager" => Some(TransferPolicy::Eager),
-                    "pull" => Some(TransferPolicy::Pull),
-                    _ => {
-                        return Err(BenchmarkError::InvalidTest(
-                            format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
-                        ));
-                    }
                 }
             },
             "raft" => {
@@ -303,7 +304,7 @@ impl AtomicBroadcastMaster {
                         format!("Unimplemented forward discarded for: {}", &c.algorithm)
                     ));
                 }
-                self.transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
+                self.paxos_transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
                     "none" => None,
                     _ => {
                         return Err(BenchmarkError::InvalidTest(
@@ -352,7 +353,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let params = ClientParams::with(
             self.algorithm.clone().unwrap(),
             c.number_of_nodes,
-            self.transfer_policy.clone(),
+            self.paxos_transfer_policy.clone(),
             c.forward_discarded
         );
         Ok(params)
@@ -369,7 +370,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
                         let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                            ReplicaComp::with(initial_config, self.transfer_policy.clone().unwrap(), self.forward_discarded)
+                            PaxosReplica::with(initial_config, self.paxos_transfer_policy.clone().unwrap(), self.forward_discarded)
                         });
                         unique_reg_f.wait_expect(
                             Duration::from_millis(1000),
@@ -524,7 +525,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    paxos_replica: Option<Arc<Component<ReplicaComp<MemorySequence, MemoryState>>>>,
+    paxos_replica: Option<Arc<Component<PaxosReplica<MemorySequence, MemoryState>>>>,
     raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
 }
 
@@ -550,7 +551,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             Algorithm::Paxos => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                    ReplicaComp::with(initial_config, c.transfer_policy.unwrap(), c.forward_discarded)
+                    PaxosReplica::with(initial_config, c.transfer_policy.unwrap(), c.forward_discarded)
                 });
                 let replica_comp_f = system.start_notify(&replica_comp);
                 replica_comp_f

@@ -5,12 +5,12 @@ use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude:
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, collections::HashMap, marker::Send, clone::Clone};
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
-use super::messages::{*, raft::*};
+use super::messages::{*};
 use super::storage::raft::*;
-use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg, Stop as CommunicatorStop};
+use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg};
 use std::sync::Arc;
 use uuid::Uuid;
-use crate::partitioning_actor::PartitioningActorMsg::InitAck;
+use std::collections::HashSet;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -69,7 +69,6 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn create_components(&mut self) {
-        let conf_state = (self.initial_config.clone(), vec![]);
         let mut communicator_peers: HashMap<u64, ActorPath> = HashMap::with_capacity(self.nodes.len());
         for (pid, ap) in &self.nodes {
             if pid != &self.pid {
@@ -94,10 +93,11 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
 
         let system = self.ctx.system();
         let dir = &format!("./diskstorage_node{}", self.pid);
-        let store = S::new_with_conf_state(Some(dir), (self.initial_config.clone(), vec![]));
+        let conf_state: (Vec<u64>, Vec<u64>) = (self.initial_config.clone(), vec![]);
+        let store = S::new_with_conf_state(Some(dir), conf_state);
         let raw_raft = RawNode::new(&self.create_rawraft_config(), store).expect("Failed to create tikv Raft");
         let raft_comp = system.create( || {
-            RaftComp::with(conf_state, raw_raft, self.actor_ref())
+            RaftComp::with(raw_raft, self.actor_ref())
         });
         system.register_without_response(&raft_comp);
         let communicator = system.create(|| {
@@ -171,7 +171,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
-                            self.kill_components();
+                            // self.kill_components();
                             self.iteration_id = init.init_id;
                             self.pid = init.pid as u64;
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
@@ -185,22 +185,11 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             self.start_components();
                         },
                         PartitioningActorMsg::Stop => {
-                            if let Some(raft) = self.raft_comp.as_ref() {
-                                let s = raft.actor_ref().ask(|promise| RaftCompMsg::Stop(Ask::new(promise, ()))).wait_timeout(Duration::from_secs(5));
-                                if let Err(_) = s {
-                                    warn!(self.ctx.log(), "Timed out stopping raft. Continuing anyway...")
-                                }
-                            }
-                            if let Some(communicator) = self.communicator.as_ref() {
-                                let s = communicator.actor_ref().ask(|promise| CommunicatorStop(Ask::new(promise, ()))).wait_timeout(Duration::from_secs(5));
-                                if let Err(_) = s {
-                                    warn!(self.ctx.log(), "Timed out stopping communicator. Continuing anyway...")
-                                }
-                            }
+                            self.kill_components();
                             self.stopped = true;
                             info!(self.ctx.log(), "Stopped components");
                             sender.tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
-                        }
+                        },
                         _ => unimplemented!(),
                     }
                 },
@@ -211,14 +200,19 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                                 raft_comp.actor_ref().tell(RaftCompMsg::Propose(p));
                             }
                         },
-                        AtomicBroadcastMsg::SequenceReq => {
+                        _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
+                    }
+                },
+                tm: TestMessage [TestMessageSer] => {
+                    match tm {
+                        TestMessage::SequenceReq => {
                             if let Some(raft_comp) = self.raft_comp.as_ref() {
                                 let seq = raft_comp.actor_ref().ask(|promise| RaftCompMsg::SequenceReq(Ask::new(promise, ()))).wait();
                                 let sr = SequenceResp::with(self.pid, seq);
-                                sender.tell((AtomicBroadcastMsg::SequenceResp(sr), AtomicBroadcastSer), self);
+                                sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
                             }
-                        }
-                        _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
+                        },
+                        _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
                     }
                 },
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
@@ -230,7 +224,6 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
 #[derive(Debug)]
 pub enum RaftCompMsg {
     Propose(Proposal),
-    Stop(Ask<(), ()>),
     SequenceReq(Ask<(), Vec<u64>>)
 }
 
@@ -240,8 +233,6 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     replica: ActorRef<RaftReplicaMsg>,
     raw_raft: RawNode<S>,
     communication_port: RequiredPort<CommunicationPort, Self>,
-    conf_state: (Vec<u64>, Vec<u64>),
-    iteration_id: u32,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     has_reconfigured: bool,
     cached_client: bool,
@@ -282,7 +273,7 @@ impl<S> Actor for RaftComp<S> where
                             // info!(self.ctx.log(), "Forwarding proposal {} to leader: {}", p.id, leader_id);
                             let pf = ProposalForward::with(leader_id, p);
                             self.replica.tell(RaftReplicaMsg::ProposalForward(pf));
-                        } else {    // no leader
+                        } /*else {    // no leader
                             // info!(self.ctx.log(), "Got proposal but no leader...");
                             if !self.cached_client {
                                 self.communication_port.trigger(CommunicatorMsg::CacheClient(p.client));
@@ -290,27 +281,24 @@ impl<S> Actor for RaftComp<S> where
                             }
                             let pr = ProposalResp::failed(p.id);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                        }
+                        }*/
                     }
                 }
             },
-            RaftCompMsg::Stop(s) => {
-                self.stop_timers();
-                self.stopped = true;
-                let _ = s.reply(());
-            },
             RaftCompMsg::SequenceReq(sr) => {
                 let raft_entries: Vec<Entry> = self.raw_raft.raft.raft_log.all_entries();
-                let mut sequence: Vec<u64> = Vec::new();
+                let mut sequence: Vec<u64> = Vec::with_capacity(raft_entries.len());
+                let mut unique = HashSet::new();
                 for entry in raft_entries {
                     if entry.get_entry_type() == EntryType::EntryNormal && !&entry.data.is_empty() {
                         let id = entry.data.as_slice().get_u64();
                         if id != 0 {
                             sequence.push(id);
                         }
+                        unique.insert(id);
                     }
                 }
-                info!(self.ctx.log(), "Got SequenceReq: my seq_len={}", sequence.len());
+                info!(self.ctx.log(), "Got SequenceReq: my seq_len={}. Unique={}", sequence.len(), unique.len());
                 sr.reply(sequence).expect("Failed to respond SequenceReq ask");
             }
         }
@@ -333,14 +321,12 @@ impl<S> Require<CommunicationPort> for RaftComp<S> where
 }
 
 impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
-    pub fn with(conf_state: (Vec<u64>, Vec<u64>), raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>) -> RaftComp<S> {
+    pub fn with(raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>) -> RaftComp<S> {
         RaftComp {
             ctx: ComponentContext::new(),
             replica,
             raw_raft,
             communication_port: RequiredPort::new(),
-            conf_state,
-            iteration_id: 0,
             timers: None,
             has_reconfigured: false,
             cached_client: false,
@@ -643,8 +629,7 @@ mod tests {
     #[test]
     fn raft_test() {
         let n: u64 = 5;
-        let active_n: u64 = 3;
-        let quorum = active_n/2 + 1;
+        let quorum = n/2 + 1;
         let num_proposals = 300;
         let batch_size = 100;
         let config = (vec![1,2,3], vec![]);
@@ -723,7 +708,7 @@ mod tests {
             // println!("Node {}: {:?}", i, sequence.len());
             // assert!(client_sequence.starts_with(sequence));
             for id in &client_sequence {
-                if !sequence.contains(&i) {
+                if !sequence.contains(&id) {
                     counter += 1;
                     break;
                 }
