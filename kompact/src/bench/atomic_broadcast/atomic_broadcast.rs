@@ -271,6 +271,14 @@ impl AtomicBroadcastMaster {
     }
 
     fn validate_and_set_experiment_args(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
+        self.num_nodes = Some(c.number_of_nodes);
+        self.num_proposals = Some(c.number_of_proposals);
+        self.batch_size = Some(c.batch_size);
+        if c.batch_size > c.number_of_proposals {
+            return Err(BenchmarkError::InvalidTest(
+                format!("Batch size: {} should be less or equal to number of proposals: {}", c.batch_size, c.number_of_proposals)
+            ));
+        }
         match c.algorithm.to_lowercase().as_ref() {
             "paxos" => {
                 self.algorithm = Some(Algorithm::Paxos);
@@ -333,9 +341,6 @@ impl AtomicBroadcastMaster {
             },
             Err(e) => return Err(e)
         }
-        self.num_nodes = Some(c.number_of_nodes);
-        self.num_proposals = Some(c.number_of_proposals);
-        self.batch_size = Some(c.batch_size);
         Ok(())
     }
 }

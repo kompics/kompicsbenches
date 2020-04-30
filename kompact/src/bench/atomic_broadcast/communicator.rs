@@ -6,6 +6,7 @@ use tikv_raft::prelude::Message as RawRaftMsg;
 use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer};
 use std::collections::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer};
+use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
 
 #[derive(Clone, Debug)]
 pub enum AtomicBroadcastCompMsg {
@@ -50,11 +51,8 @@ impl Communicator {
 }
 
 impl Provide<ControlPort> for Communicator {
-    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
-        match event {
-            ControlEvent::Start => info!(self.ctx.log(), "Communicator started!"),
-            _ => {}
-        }
+    fn handle(&mut self, _: <ControlPort as Port>::Request) -> () {
+        // ignore
     }
 }
 
@@ -65,21 +63,25 @@ impl Provide<CommunicationPort> for Communicator {
                 CommunicatorMsg::CacheClient(client) => self.cached_client = Some(client),
                 CommunicatorMsg::RawRaftMsg(rm) => {
                     let receiver = self.peers.get(&rm.get_to()).expect(&format!("Could not find actorpath for id={}. Known peers: {:?}", &rm.get_to(), self.peers.keys()));
-                    receiver.tell((rm, RawRaftSer), self);
+                    receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
                 },
                 CommunicatorMsg::RawPaxosMsg(pm) => {
                     let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
                     receiver.tell((pm, PaxosSer), self);
+                    // receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
                 },
                 CommunicatorMsg::ProposalResponse(pr) => {
                     if let Some(client) = &self.cached_client {
-                        let am = AtomicBroadcastMsg::ProposalResp(pr.clone());
+                        if pr.id % 100 == 0 {
+                            info!(self.ctx.log(), "ProposalResponse id: {}", pr.id);
+                        }
+                        let am = AtomicBroadcastMsg::ProposalResp(pr);
                         client.tell((am, AtomicBroadcastSer), self);
-                    } else {
+                    }/* else {
                         if pr.id % 100 == 0 {
                             error!(self.ctx.log(), "Got proposal response {} but no cached client", pr.id);
                         }
-                    }
+                    }*/
                 },
             }
         }

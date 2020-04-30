@@ -171,7 +171,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
                                 numberOfKeys = k)
       },
     testSpace = ParameterSpacePB
-      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
+      .cross(List((0.5f, 0.5f)), List(3), List(1000))
       .msg[AtomicRegisterRequest] {
         case ((rwl, wwl), p, k) =>
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
@@ -234,22 +234,96 @@ object Benchmarks extends ParameterDescriptionImplicits {
       }
   );
 
+  /*** split into different parameter spaces as some parameters are dependent on each other ***/
+  private val atomicBroadcastTestNodes = List(3, 5);
+  private val atomicBroadcastTestProposals = List(2L.k, 4L.k, 8L.k, 16L.k);
+  private val atomicBroadcastTestBatchSizes = List(1L.k, 2L.k, 4L.k, 8L.k, 16L.k);
+
+  private val atomicBroadcastNodes = List(3, 5, 7, 9);
+  private val atomicBroadcastProposals = List(100L.k, 200L.k, 400L.k, 800L.k);
+  private val atomicBroadcastBatchSizes = List(10L.k, 50L.k, 100L.k);
+
+  private val atomicBroadcastReconfigurations = List("off", "single", "majority");
+
+  private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
+    .cross(
+      List("paxos"),
+      List(3),
+      List(4L.k, 6L.k, 8L.k),
+      List(4L.k),
+//      atomicBroadcastTestProposals,
+//      atomicBroadcastTestBatchSizes,
+      List("off"),
+      List("none"),
+      List(false, true)
+    );
+
+  private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
+    .cross(
+      List("paxos"),
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestBatchSizes,
+      List("single", "majority"),
+      List("pull", "eager"),
+      List(true, false)
+    );
+
+  private val paxosTestSpace = paxosNormalTestSpace.merge(paxosReconfigTestSpace);
+
+  private val raftTestSpace = ParameterSpacePB
+    .cross(
+      List("raft"),
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestBatchSizes,
+      atomicBroadcastReconfigurations,
+      List("none"),
+      List(false)
+    );
+
+  private val paxosNormalSpace = ParameterSpacePB
+    .cross(
+      List("paxos"),
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastBatchSizes,
+      List("off"),
+      List("none"),
+      List(true, false)
+    );
+
+  private val paxosReconfigSpace = ParameterSpacePB
+    .cross(
+      List("paxos"),
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastBatchSizes,
+      List("single", "majority"),
+      List("pull", "eager"),
+      List(true, false)
+    );
+
+  private val paxosSpace = paxosNormalSpace.merge(paxosReconfigSpace);
+
+  private val raftSpace = ParameterSpacePB
+    .cross(
+      List("raft"),
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastBatchSizes,
+      atomicBroadcastReconfigurations,
+      List("none"),
+      List(false)
+    );
+
   val atomicBroadcast = Benchmark(
     name = "Atomic Broadcast",
     symbol = "ATOMICBROADCAST",
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = ParameterSpacePB
-      .cross(
-        List("paxos", "raft"),
-        List(3, 5, 7, 9),
-        List(10000, 20000, 40000, 80000),
-        List(1, 1000, 10000),
-        List("off", "single", "majority"),
-        List("none", "pull", "eager"),
-        List(true, false)
-      )
+    space = paxosSpace.merge(raftSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r, tp, fd) =>
           AtomicBroadcastRequest(
@@ -262,16 +336,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             forwardDiscarded = fd
           )
       },
-    testSpace = ParameterSpacePB
-      .cross(
-        List("paxos"),
-        List(3),
-        List(100),
-        List(50),
-        List("single"),
-        List("eager"),
-        List(false)
-      )
+    testSpace = paxosNormalTestSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r, tp, fd) =>
           AtomicBroadcastRequest(

@@ -58,7 +58,6 @@ impl Actor for PartitioningActor {
         match msg {
             IterationControlMsg::Prepare(init_data) => {
                 self.n = self.nodes.len() as u32;
-                info!(self.ctx.log(), "{}", format!("Sending init to {} nodes", self.n));
                 for (r, node) in (&self.nodes).iter().enumerate() {
                     let pid = r as u32 + 1;
                     let init = Init {
@@ -93,9 +92,8 @@ impl Actor for PartitioningActor {
                 match p {
                     PartitioningActorMsg::InitAck(_) => {
                         self.init_ack_count += 1;
-                        info!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
+                        debug!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
                         if self.init_ack_count == self.n {
-                            info!(self.ctx.log(), "Got init_ack from everybody!");
                             self.prepare_latch
                                 .decrement()
                                 .expect("Latch didn't decrement!");
@@ -104,7 +102,7 @@ impl Actor for PartitioningActor {
                     PartitioningActorMsg::Done => {
                         self.done_count += 1;
                         if self.done_count == self.n {
-                            info!(self.ctx.log(), "Everybody is done");
+                            debug!(self.ctx.log(), "Everybody is done");
                             self.finished_latch
                                 .as_ref()
                                 .unwrap()
@@ -125,7 +123,7 @@ impl Actor for PartitioningActor {
                     },
                     PartitioningActorMsg::StopAck => {
                         self.stop_ack_count += 1;
-                        info!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
+                        debug!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
                         if self.stop_ack_count == self.n {
                             self.reply_stop.take().unwrap().reply(()).expect("Stopped iteration");
                         }

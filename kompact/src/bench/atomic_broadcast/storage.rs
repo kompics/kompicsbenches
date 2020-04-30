@@ -584,7 +584,7 @@ pub mod paxos {
 
         fn get_sequence_len(&self) -> u64;
 
-        fn stopped(&self, idx: u64) -> bool;
+        fn stopped(&self) -> bool;
     }
 
     pub trait PaxosState {
@@ -777,21 +777,14 @@ pub mod paxos {
             }
         }
 
-        pub fn get_decided_suffix(&self) -> Vec<Entry> {
-            let ld = self.get_decided_len();
-            self.get_suffix(ld)
-        }
-
         pub fn get_promise(&self) -> Ballot {
             self.paxos_state.get_promise()
         }
 
         pub fn stopped(&self) -> bool {
-            let ld = self.get_decided_len();
-            if ld == 0 { return false; }
             match self.sequence {
-                PaxosSequence::Active(ref s) => s.stopped(ld-1),
-                PaxosSequence::Stopped(ref arc_s) => arc_s.stopped(ld-1),
+                PaxosSequence::Active(ref s) => s.stopped(),
+                PaxosSequence::Stopped(_) => true,
                 _ => panic!("Got unexpected intermediate PaxosSequence::None in stopped()"),
             }
         }
@@ -885,8 +878,8 @@ pub mod paxos {
             self.sequence.len() as u64
         }
 
-        fn stopped(&self, idx: u64) -> bool {
-             match self.sequence.get(idx as usize) {
+        fn stopped(&self) -> bool {
+             match self.sequence.last() {
                  Some(entry) => entry.is_stopsign(),
                  None => false
             }

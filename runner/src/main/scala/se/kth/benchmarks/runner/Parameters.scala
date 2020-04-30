@@ -164,5 +164,10 @@ object ParameterSpacePB {
     def msg[M <: Message[M]: TypeTag](f: T => M): ParameterSpacePB[M] = {
       ParameterSpacePB(iter.map(f).toSeq)
     }
+
+    def merge(other: TupleSpace[T]): TupleSpace[T] = {
+      val iter = this.iter ++ other.iter;
+      new TupleSpace(iter)
+    }
   }
 }

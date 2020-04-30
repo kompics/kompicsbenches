@@ -70,7 +70,7 @@ impl Client {
     fn propose_reconfiguration(&mut self) {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
-        info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
+        debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig);
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
@@ -95,11 +95,11 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.send_batch();
-        self.schedule_periodic(
+        /*self.schedule_periodic( // TODO remove
             Duration::from_secs(5),
             Duration::from_secs(30),
             move |c, _| info!(c.ctx.log(), "Client: received: {}/{}", c.responses.len(), c.num_proposals)
-        );
+        );*/
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -112,27 +112,20 @@ impl Actor for Client {
                             match pr.id {
                                 RECONFIG_ID => {
                                     info!(self.ctx.log(), "reconfiguration succeeded?");
-                                    if self.responses.len() as u64 == self.num_proposals {
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        self.send_batch();
-                                    }
-                                }
+                                },
                                 _ => {
                                     if self.responses.insert(pr.id) {
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
                                             self.cancel_timer(timer);
                                         }
                                         let received_count = self.responses.len() as u64;
-    //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                         if received_count == self.num_proposals {
                                             self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         } else if received_count % self.batch_size == 0 {
                                             if received_count >= self.num_proposals/2 && self.reconfig.is_some() {
                                                 self.propose_reconfiguration();
-                                            } else {
-                                                self.send_batch();
                                             }
+                                            self.send_batch();
                                         }
                                     }
                                 }
@@ -239,9 +232,6 @@ pub mod tests {
 
         fn retry_proposal(&mut self, id: u64) {
             if !self.responses.contains(&id) {
-                if id % 100 == 0 {
-                    // info!(self.ctx.log(), "Retrying proposal {}", id);
-                }
                 self.propose_normal(id);
             }
         }
@@ -260,6 +250,7 @@ pub mod tests {
         type Message = Run;
 
         fn receive_local(&mut self, _msg: Self::Message) -> () {
+            // info!(self.ctx.log(), "CLIENT ACTORPATH={:?}", self.ctx.actor_path());
             self.send_batch();
             self.schedule_periodic(
                 Duration::from_secs(5),
@@ -290,12 +281,14 @@ pub mod tests {
                                                 .fulfil(self.test_results.clone())
                                                 .expect("Failed to fulfill finished promise after successful reconfiguration");
                                         }
-                                    } else {
+                                    } /*else {
                                         self.send_batch();
-                                    }
-                                }
+                                    }*/
+                                },
                                 _ => {
-                                    // info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
+                                    if pr.id % 100 == 0 {
+                                        info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
+                                    }
                                     if self.responses.insert(pr.id) {
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
                                             self.cancel_timer(timer);
@@ -306,6 +299,7 @@ pub mod tests {
     //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                         if received_count == self.num_proposals {
                                             if self.check_sequences {
+                                                info!(self.ctx.log(), "TestClient requesting sequences 2. num_responses: {}", self.responses.len());
                                                 for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
                                                     actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
                                                 }
@@ -318,9 +312,8 @@ pub mod tests {
                                         } else if received_count % self.batch_size == 0 {
                                             if received_count >= self.num_proposals/2 && self.reconfig.is_some() {
                                                 self.propose_reconfiguration();
-                                            } else {
-                                                self.send_batch();
                                             }
+                                            self.send_batch();
                                         }
                                     }
                                 }
