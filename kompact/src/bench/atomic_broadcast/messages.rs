@@ -12,19 +12,26 @@ pub mod raft {
 
     pub struct RawRaftSer;
 
-    impl Serialiser<TikvRaftMsg> for RawRaftSer {
+    #[derive(Debug)]
+    pub struct RaftMsg(pub TikvRaftMsg);    // wrapper to implement eager serialisation
+
+    impl Serialisable for RaftMsg {
         fn ser_id(&self) -> u64 {
             serialiser_ids::RAFT_ID
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(500)
+            Some(500)   // TODO
         }
 
-        fn serialise(&self, rm: &TikvRaftMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            let bytes: Vec<u8> = rm.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
+        fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            let bytes = self.0.write_to_bytes().expect("Protobuf failed to serialise TikvRaftMsg");
             buf.put_slice(&bytes);
             Ok(())
+        }
+
+        fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+            Ok(self)
         }
     }
 
@@ -43,9 +50,10 @@ pub mod paxos {
     use ballot_leader_election::Ballot;
     use super::super::paxos::raw_paxos::Entry;
     use std::fmt::Debug;
-    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
+    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf, Serialisable, Any};
     use crate::serialiser_ids;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::{StopSign, EntryMetaData, Normal};
+    use kompact::messaging::Serialised;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
@@ -157,6 +165,11 @@ pub mod paxos {
 
     const NORMAL_ENTRY_ID: u8 = 1;
     const SS_ENTRY_ID: u8 = 2;
+
+    const PAXOS_MSG_OVERHEAD: usize = 17;
+    const BALLOT_OVERHEAD: usize = 16;
+    const DATA_SIZE: usize = 8;
+    const ENTRY_OVERHEAD: usize = 21 + DATA_SIZE;
 
     pub struct PaxosSer;
 
