@@ -92,7 +92,7 @@ impl Actor for PartitioningActor {
                 match p {
                     PartitioningActorMsg::InitAck(_) => {
                         self.init_ack_count += 1;
-                        debug!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
+                        info!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
                         if self.init_ack_count == self.n {
                             self.prepare_latch
                                 .decrement()
@@ -123,7 +123,7 @@ impl Actor for PartitioningActor {
                     },
                     PartitioningActorMsg::StopAck => {
                         self.stop_ack_count += 1;
-                        debug!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
+                        info!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
                         if self.stop_ack_count == self.n {
                             self.reply_stop.take().unwrap().reply(()).expect("Stopped iteration");
                         }
@@ -167,18 +167,18 @@ pub enum IterationControlMsg {
 
 pub struct PartitioningActorSer;
 pub const PARTITIONING_ACTOR_SER: PartitioningActorSer = PartitioningActorSer {};
-const INIT_ID: i8 = 1;
-const INITACK_ID: i8 = 2;
-const RUN_ID: i8 = 3;
-const DONE_ID: i8 = 4;
-const TESTDONE_ID: i8 = 5;
-const STOP_ID: i8 = 6;
-const STOP_ACK_ID: i8 = 7;
+const INIT_ID: u8 = 1;
+const INITACK_ID: u8 = 2;
+const RUN_ID: u8 = 3;
+const DONE_ID: u8 = 4;
+const TESTDONE_ID: u8 = 5;
+const STOP_ID: u8 = 6;
+const STOP_ACK_ID: u8 = 13;
 /* bytes to differentiate KVOperations*/
-const READ_INV: i8 = 6;
-const READ_RESP: i8 = 7;
-const WRITE_INV: i8 = 8;
-const WRITE_RESP: i8 = 9;
+const READ_INV: u8 = 8;
+const READ_RESP: u8 = 9;
+const WRITE_INV: u8 = 10;
+const WRITE_RESP: u8 = 11;
 
 
 impl Serialisable for PartitioningActorMsg {
@@ -201,7 +201,7 @@ impl Serialisable for PartitioningActorMsg {
     fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
         match self {
             PartitioningActorMsg::Init(i) => {
-                buf.put_i8(INIT_ID);
+                buf.put_u8(INIT_ID);
                 buf.put_u32(i.pid);
                 buf.put_u32(i.init_id);
                 match &i.init_data {
@@ -219,32 +219,28 @@ impl Serialisable for PartitioningActorMsg {
                 }
             },
             PartitioningActorMsg::InitAck(id) => {
-                buf.put_i8(INITACK_ID);
-                buf.put_u32(id.to_owned());
+                buf.put_u8(INITACK_ID);
+                buf.put_u32(*id);
             },
-            PartitioningActorMsg::Run => {
-                buf.put_i8(RUN_ID);
-            },
-            PartitioningActorMsg::Done => {
-                buf.put_i8(DONE_ID);
-            },
+            PartitioningActorMsg::Run => buf.put_u8(RUN_ID),
+            PartitioningActorMsg::Done => buf.put_u8(DONE_ID),
             PartitioningActorMsg::TestDone(timestamps) => {
-                buf.put_i8(TESTDONE_ID);
+                buf.put_u8(TESTDONE_ID);
                 buf.put_u32(timestamps.len() as u32);
                 for ts in timestamps{
                     buf.put_u64(ts.key);
                     match ts.operation {
-                        KVOperation::ReadInvokation => buf.put_i8(READ_INV),
+                        KVOperation::ReadInvokation => buf.put_u8(READ_INV),
                         KVOperation::ReadResponse => {
-                            buf.put_i8(READ_RESP);
+                            buf.put_u8(READ_RESP);
                             buf.put_u32(ts.value.unwrap());
                         },
                         KVOperation::WriteInvokation => {
-                            buf.put_i8(WRITE_INV);
+                            buf.put_u8(WRITE_INV);
                             buf.put_u32(ts.value.unwrap());
                         },
                         KVOperation::WriteResponse => {
-                            buf.put_i8(WRITE_RESP);
+                            buf.put_u8(WRITE_RESP);
                             buf.put_u32(ts.value.unwrap());
                         },
                     }
@@ -252,12 +248,8 @@ impl Serialisable for PartitioningActorMsg {
                     buf.put_u32(ts.sender);
                 }
             },
-            PartitioningActorMsg::Stop => {
-                buf.put_i8(STOP_ID);
-            },
-            PartitioningActorMsg::StopAck => {
-                buf.put_i8(STOP_ACK_ID);
-            }
+            PartitioningActorMsg::Stop => buf.put_u8(STOP_ID),
+            PartitioningActorMsg::StopAck => buf.put_u8(STOP_ACK_ID),
         }
         Ok(())
     }
@@ -271,7 +263,7 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
     const SER_ID: u64 = serialiser_ids::PARTITIONING_ID;
 
     fn deserialise(buf: &mut dyn Buf) -> Result<PartitioningActorMsg, SerError> {
-        match buf.get_i8() {
+        match buf.get_u8() {
             INIT_ID => {
                 let pid: u32 = buf.get_u32();
                 let init_id: u32 = buf.get_u32();
@@ -310,8 +302,8 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                 let n: u32 = buf.get_u32_be();
                 let mut timestamps: Vec<KVTimestamp> = Vec::new();
                 for _ in 0..n {
-                    let key = buf.get_u64_be();
-                    let (operation, value) = match buf.get_i8() {
+                    let key = buf.get_u64();
+                    let (operation, value) = match buf.get_u8() {
                         READ_INV => (KVOperation::ReadInvokation, None),
                         READ_RESP => (KVOperation::ReadResponse, Some(buf.get_u32_be())),
                         WRITE_INV => (KVOperation::WriteInvokation, Some(buf.get_u32_be())),

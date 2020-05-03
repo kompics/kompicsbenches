@@ -7,7 +7,7 @@ use protobuf::{Message, parse_from_bytes};
 pub mod raft {
     extern crate raft as tikv_raft;
     use tikv_raft::prelude::Message as TikvRaftMsg;
-    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf};
+    use kompact::prelude::{SerError, BufMut, Deserialiser, Buf};
     use super::*;
 
     pub struct RawRaftSer;
@@ -50,10 +50,9 @@ pub mod paxos {
     use ballot_leader_election::Ballot;
     use super::super::paxos::raw_paxos::Entry;
     use std::fmt::Debug;
-    use kompact::prelude::{Serialiser, SerError, BufMut, Deserialiser, Buf, Serialisable, Any};
+    use kompact::prelude::{SerError, BufMut, Deserialiser, Buf, Serialisable, Any};
     use crate::serialiser_ids;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::{StopSign, EntryMetaData, Normal};
-    use kompact::messaging::Serialised;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
@@ -246,13 +245,82 @@ pub mod paxos {
         }
     }
 
+    impl Serialisable for Message {
+        fn ser_id(&self) -> u64 {
+            serialiser_ids::PAXOS_ID
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            // Some(1000)
+            match &self.msg {
+                PaxosMsg::Prepare(_) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8),
+                PaxosMsg::Promise(p) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8 + 4 + p.sfx.len() * ENTRY_OVERHEAD),
+                PaxosMsg::AcceptSync(acc_sync) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 4 + acc_sync.sfx.len() * ENTRY_OVERHEAD + 8),
+                PaxosMsg::Accept(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 4 + ENTRY_OVERHEAD),
+                PaxosMsg::Accepted(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 8),
+                PaxosMsg::Decide(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 8),
+                PaxosMsg::ProposalForward(pf) => Some(PAXOS_MSG_OVERHEAD + 4 + pf.len() * ENTRY_OVERHEAD),
+            }
+        }
+
+        fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            buf.put_u64(self.from);
+            buf.put_u64(self.to);
+            match &self.msg {
+                PaxosMsg::Prepare(p) => {
+                    buf.put_u8(PREPARE_ID);
+                    PaxosSer::serialise_ballot(&p.n, buf);
+                    PaxosSer::serialise_ballot(&p.n_accepted, buf);
+                    buf.put_u64(p.ld);
+                },
+                PaxosMsg::Promise(p) => {
+                    buf.put_u8(PROMISE_ID);
+                    PaxosSer::serialise_ballot(&p.n, buf);
+                    PaxosSer::serialise_ballot(&p.n_accepted, buf);
+                    buf.put_u64(p.ld);
+                    PaxosSer::serialise_entries(&p.sfx, buf);
+                },
+                PaxosMsg::AcceptSync(acc_sync) => {
+                    buf.put_u8(ACCEPTSYNC_ID);
+                    PaxosSer::serialise_ballot(&acc_sync.n, buf);
+                    PaxosSer::serialise_entries(&acc_sync.sfx, buf);
+                    buf.put_u64(acc_sync.ld);
+                },
+                PaxosMsg::Accept(a) => {
+                    buf.put_u8(ACCEPT_ID);
+                    PaxosSer::serialise_ballot(&a.n, buf);
+                    buf.put_u32(1);  // len
+                    PaxosSer::serialise_entry(&a.entry, buf);
+                },
+                PaxosMsg::Accepted(acc) => {
+                    buf.put_u8(ACCEPTED_ID);
+                    PaxosSer::serialise_ballot(&acc.n, buf);
+                    buf.put_u64(acc.la);
+                },
+                PaxosMsg::Decide(d) => {
+                    buf.put_u8(DECIDE_ID);
+                    PaxosSer::serialise_ballot(&d.n, buf);
+                    buf.put_u64(d.ld);
+                },
+                PaxosMsg::ProposalForward(proposals) => {
+                    buf.put_u8(PROPOSALFORWARD_ID);
+                    PaxosSer::serialise_entries(&proposals, buf);
+                },
+            }
+            Ok(())
+        }
+
+        fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+            Ok(self)
+        }
+    }
+/*
     impl Serialiser<Message> for PaxosSer {
         fn ser_id(&self) -> u64 {
             serialiser_ids::PAXOS_ID
         }
 
         fn size_hint(&self) -> Option<usize> {
-            // TODO use eager ser instead? We usually send to remote actorpaths and some msgs could be really long (expensive malloc)
             Some(10000)
         }
 
@@ -303,7 +371,7 @@ pub mod paxos {
             Ok(())
         }
     }
-
+*/
     impl Deserialiser<Message> for PaxosSer {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
@@ -469,6 +537,62 @@ pub mod paxos {
 
     pub struct ReconfigSer;
 
+    impl Serialisable for ReconfigurationMsg {
+        fn ser_id(&self) -> u64 {
+            serialiser_ids::RECONFIG_ID
+        }
+
+        fn size_hint(&self) -> Option<usize> {
+            match self {
+                ReconfigurationMsg::Init(r) => Some(33 + r.nodes.continued_nodes.len() * 8 + r.nodes.new_nodes.len() * 8),
+                ReconfigurationMsg::SequenceRequest(_) => Some(25),
+                ReconfigurationMsg::SequenceTransfer(st) => Some(46 + st.ser_entries.len()),
+            }
+        }
+
+        fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+            match self {
+                ReconfigurationMsg::Init(r) => {
+                    buf.put_u8(RECONFIG_INIT_ID);
+                    buf.put_u32(r.config_id);
+                    buf.put_u64(r.from);
+                    buf.put_u32(r.seq_metadata.config_id);
+                    buf.put_u64(r.seq_metadata.len);
+                    buf.put_u32(r.nodes.continued_nodes.len() as u32);
+                    r.nodes.continued_nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                    buf.put_u32(r.nodes.new_nodes.len() as u32);
+                    r.nodes.new_nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                },
+                ReconfigurationMsg::SequenceRequest(sr) => {
+                    buf.put_u8(SEQ_REQ_ID);
+                    buf.put_u32(sr.config_id);
+                    buf.put_u32(sr.tag);
+                    buf.put_u64(sr.from_idx);
+                    buf.put_u64(sr.to_idx);
+                },
+                ReconfigurationMsg::SequenceTransfer(st) => {
+                    buf.put_u8(SEQ_TRANSFER_ID);
+                    buf.put_u32(st.config_id);
+                    buf.put_u32(st.tag);
+                    let succeeded: u8 = if st.succeeded { 1 } else { 0 };
+                    buf.put_u8(succeeded);
+                    buf.put_u64(st.from_idx);
+                    buf.put_u64(st.to_idx);
+                    buf.put_u32(st.metadata.config_id);
+                    buf.put_u64(st.metadata.len);
+                    let len = st.ser_entries.len() as u64;
+                    buf.put_u64(len);
+                    buf.put_slice(st.ser_entries.as_slice());
+                }
+            }
+            Ok(())
+        }
+
+        fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+            Ok(self)
+        }
+    }
+    /*
     impl Serialiser<ReconfigurationMsg> for ReconfigSer {
         fn ser_id(&self) -> u64 {
             serialiser_ids::RECONFIG_ID
@@ -516,7 +640,7 @@ pub mod paxos {
             Ok(())
         }
     }
-
+    */
     impl Deserialiser<ReconfigurationMsg> for ReconfigSer {
         const SER_ID: u64 = serialiser_ids::RECONFIG_ID;
 

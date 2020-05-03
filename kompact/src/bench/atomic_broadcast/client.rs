@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 use std::time::Duration;
 
-const PROPOSAL_TIMEOUT: Duration = Duration::from_millis(100);
+const PROPOSAL_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(ComponentDefinition)]
 pub struct Client {
@@ -95,11 +95,11 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.send_batch();
-        /*self.schedule_periodic( // TODO remove
+        self.schedule_periodic( // TODO remove
             Duration::from_secs(5),
             Duration::from_secs(30),
             move |c, _| info!(c.ctx.log(), "Client: received: {}/{}", c.responses.len(), c.num_proposals)
-        );*/
+        );
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {

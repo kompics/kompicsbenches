@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use super::messages::{TestMessage, TestMessageSer, SequenceResp, paxos::ballot_leader_election::Leader};
-use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg, PaxosMsg};
+use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
 use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, RECONFIG_ID};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use uuid::Uuid;
@@ -265,7 +265,8 @@ impl<S, P> PaxosReplica<S, P> where
         self.nodes
             .get(&pid)
             .expect(&format!("Failed to get Actorpath of node {}", pid))
-            .tell((ReconfigurationMsg::SequenceRequest(sr), ReconfigSer), self);
+            .tell_serialised(ReconfigurationMsg::SequenceRequest(sr), self)
+            .expect("Should serialise!");
     }
 
     fn retry_request_sequence(&mut self, config_id: u32, seq_len: u64) {
@@ -340,7 +341,7 @@ impl<S, P> PaxosReplica<S, P> where
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
         let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, ser_entries, prev_seq_metadata);
-        requestor.tell((ReconfigurationMsg::SequenceTransfer(st), ReconfigSer), self);
+        requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
     }
 
     fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
@@ -439,15 +440,15 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid));
                 for pid in &r.nodes.new_nodes {
                     if pid != &self.pid {
-                        let actorpath = self.nodes.get(pid).expect("No actorpath found for new node");
-                        actorpath.tell((r_init.clone(), ReconfigSer), self);
+                        let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
+                        actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
                     }
                 }
                 if let TransferPolicy::Eager = self.policy {
                     let st = self.create_eager_sequence_transfer(&r.nodes.continued_nodes, prev_config_id);
                     for pid in &r.nodes.new_nodes {
-                        let actorpath = self.nodes.get(pid).expect("No actorpath found for new node");
-                        actorpath.tell((ReconfigurationMsg::SequenceTransfer(st.clone()), ReconfigSer), self);
+                        let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
+                        actorpath.tell_serialised(ReconfigurationMsg::SequenceTransfer(st.clone()), self).expect("Should serialise!");
                     }
                 }
                 let mut nodes = r.nodes.continued_nodes;
@@ -475,7 +476,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             p: PartitioningActorMsg [PartitioningActorSer] => {
                 match p {
                     PartitioningActorMsg::Init(init) => {
-                        info!(self.ctx.log(), "{}", format!("Got init! My pid: {}", init.pid));
+                        info!(self.ctx.log(), "{}", format!("Got init for iteration: {}! My pid: {}", init.init_id, init.pid));
                         self.partitioning_actor = Some(sender);
                         self.new_iteration(init);
                     },
@@ -486,11 +487,12 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     },
                     PartitioningActorMsg::Stop => {
                         self.kill_all_replicas();
-                        debug!(self.ctx.log(), "Stopped all child components");
+                        info!(self.ctx.log(), "Stopped all child components");
                         self.stopped = true;
                         sender
                             .tell_serialised(PartitioningActorMsg::StopAck, self)
                             .expect("Should serialise");
+                        info!(self.ctx.log(), "StopAck sent!");
                     },
                     _ => unimplemented!()
                 }
@@ -1518,13 +1520,16 @@ mod tests {
 
     #[test]
     fn paxos_test() {
-        let n: u64 = 3;
-        let num_proposals = 2000;
-        let batch_size = 2000;
+        let num_proposals = 1000;
+        let batch_size = 250;
         let config = vec![1,2,3];
-        let reconfig = None;
-        // let reconfig = Some((vec![1,4,5], vec![]));
-        let check_sequences = false;
+        // let reconfig = None;
+        let reconfig = Some((vec![1,4,5], vec![]));
+        let n: u64 = match reconfig {
+            None => config.len() as u64,
+            Some(ref r) => *(r.0.last().unwrap()),
+        };
+        let check_sequences = true;
         let policy = TransferPolicy::Pull;
         let forward_discarded = true;
         let active_n = config.len() as u64;
@@ -1577,9 +1582,7 @@ mod tests {
         let all_sequences = f.wait_timeout(Duration::from_secs(60)).expect("Failed to get results");
         let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
         for system in systems {
-            system
-                .shutdown()
-                .expect("Kompact didn't shut down properly");
+            system.shutdown().expect("Kompact didn't shut down properly");
         }
 
         assert_eq!(num_proposals, client_sequence.len() as u64);
@@ -1588,29 +1591,31 @@ mod tests {
             let found = iter.find(|&&x| x == i).is_some();
             assert_eq!(true, found);
         }
-        let mut counter = 0;
-        for i in 1..=n {
-            let sequence = all_sequences.get(&i).expect(&format!("Did not get sequence for node {}", i));
-            // println!("Node {}: {:?}", i, sequence.len());
-            // assert!(client_sequence.starts_with(sequence));
-            if let Some(r) = &reconfig {
-                if r.0.contains(&i) {
-                    for id in &client_sequence {
-                        if !sequence.contains(&id) {
-                            println!("Node {} did not have id: {} in sequence", i, id);
-                            counter += 1;
-                            break;
+        if check_sequences {
+            let mut counter = 0;
+            for i in 1..=n {
+                let sequence = all_sequences.get(&i).expect(&format!("Did not get sequence for node {}", i));
+                // println!("Node {}: {:?}", i, sequence.len());
+                // assert!(client_sequence.starts_with(sequence));
+                if let Some(r) = &reconfig {
+                    if r.0.contains(&i) {
+                        for id in &client_sequence {
+                            if !sequence.contains(&id) {
+                                println!("Node {} did not have id: {} in sequence", i, id);
+                                counter += 1;
+                                break;
+                            }
                         }
                     }
                 }
             }
-        }
-        if counter >= quorum {
-            panic!("Majority of new configuration DOES NOT have all client elements: counter: {}, quorum: {}", counter, quorum);
+            if counter >= quorum {
+                panic!("Majority of new configuration DOES NOT have all client elements: counter: {}, quorum: {}", counter, quorum);
+            }
         }
         println!("PASSED!!!");
     }
-
+/*
     #[test]
     fn reconfig_ser_des_test(){
         let config_id = 1;
@@ -1649,4 +1654,5 @@ mod tests {
             assert_eq!(des.succeeded, true);
         }
     }
+    */
 }

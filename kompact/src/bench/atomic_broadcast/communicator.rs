@@ -67,21 +67,14 @@ impl Provide<CommunicationPort> for Communicator {
                 },
                 CommunicatorMsg::RawPaxosMsg(pm) => {
                     let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
-                    receiver.tell((pm, PaxosSer), self);
-                    // receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
+                    // receiver.tell((pm, PaxosSer), self);
+                    receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
                 },
                 CommunicatorMsg::ProposalResponse(pr) => {
                     if let Some(client) = &self.cached_client {
-                        if pr.id % 100 == 0 {
-                            info!(self.ctx.log(), "ProposalResponse id: {}", pr.id);
-                        }
                         let am = AtomicBroadcastMsg::ProposalResp(pr);
                         client.tell((am, AtomicBroadcastSer), self);
-                    }/* else {
-                        if pr.id % 100 == 0 {
-                            error!(self.ctx.log(), "Got proposal response {} but no cached client", pr.id);
-                        }
-                    }*/
+                    }
                 },
             }
         }
