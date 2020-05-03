@@ -249,13 +249,13 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       List("paxos"),
       List(3),
-      List(4L.k, 6L.k, 8L.k),
-      List(4L.k),
+      List(8L.k),
+      List(4L.k, 8L.k),
 //      atomicBroadcastTestProposals,
 //      atomicBroadcastTestBatchSizes,
       List("off"),
       List("none"),
-      List(false, true)
+      List(false)
     );
 
   private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
