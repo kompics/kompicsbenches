@@ -92,7 +92,7 @@ impl Actor for PartitioningActor {
                 match p {
                     PartitioningActorMsg::InitAck(_) => {
                         self.init_ack_count += 1;
-                        info!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
+                        debug!(self.ctx.log(), "Got init ack {}/{}", &self.init_ack_count, &self.n);
                         if self.init_ack_count == self.n {
                             self.prepare_latch
                                 .decrement()
@@ -123,7 +123,7 @@ impl Actor for PartitioningActor {
                     },
                     PartitioningActorMsg::StopAck => {
                         self.stop_ack_count += 1;
-                        info!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
+                        debug!(self.ctx.log(), "{}", format!("Got StopAck {}/{}", self.stop_ack_count, self.n));
                         if self.stop_ack_count == self.n {
                             self.reply_stop.take().unwrap().reply(()).expect("Stopped iteration");
                         }

@@ -68,4 +68,8 @@ class BenchmarkRunnerImpl extends BenchmarkRunnerGrpc.BenchmarkRunner {
       msg
     }
   }
+
+  override def atomicBroadcast(request: AtomicBroadcastRequest): Future[TestResult] = {
+    Future.successful(NotImplemented());
+  }
 }

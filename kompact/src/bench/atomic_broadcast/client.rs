@@ -63,7 +63,7 @@ impl Client {
         } else {
             i
         };
-        info!(self.ctx.log(), "Sending: {}-{}", from, to);
+        debug!(self.ctx.log(), "Sending: {}-{}", from, to);
         self.send_normal_proposals(from..=to);
     }
 
@@ -95,11 +95,11 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.send_batch();
-        self.schedule_periodic( // TODO remove
+        /*self.schedule_periodic( // TODO remove
             Duration::from_secs(5),
             Duration::from_secs(30),
             move |c, _| info!(c.ctx.log(), "Client: received: {}/{}", c.responses.len(), c.num_proposals)
-        );
+        );*/
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -111,7 +111,7 @@ impl Actor for Client {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
-                                    info!(self.ctx.log(), "reconfiguration succeeded?");
+                                    debug!(self.ctx.log(), "reconfiguration succeeded?");
                                 },
                                 _ => {
                                     if self.responses.insert(pr.id) {

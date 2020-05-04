@@ -177,7 +177,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn start_replica(&mut self, config_id: u32) {
-        info!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, self.next_config_id);
+        debug!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, self.next_config_id);
         self.active_config_id = config_id;
         let paxos = self.paxos_comps
             .get(&config_id)
@@ -487,12 +487,12 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     },
                     PartitioningActorMsg::Stop => {
                         self.kill_all_replicas();
-                        info!(self.ctx.log(), "Stopped all child components");
+                        debug!(self.ctx.log(), "Stopped all child components");
                         self.stopped = true;
                         sender
                             .tell_serialised(PartitioningActorMsg::StopAck, self)
                             .expect("Should serialise");
-                        info!(self.ctx.log(), "StopAck sent!");
+                        debug!(self.ctx.log(), "StopAck sent!");
                     },
                     _ => unimplemented!()
                 }
@@ -581,7 +581,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             }
                             let min = unique.iter().min();
                             let max = unique.iter().max();
-                            info!(self.ctx.log(), "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}", all_entries.len(), unique.len(), min, max);
+                            debug!(self.ctx.log(), "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}", all_entries.len(), unique.len(), min, max);
                         } else {
                             warn!(self.ctx.log(), "Got SequenceReq but no active paxos: {}", self.active_config_id);
                         }
@@ -785,7 +785,7 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
 {
     fn handle(&mut self, l: Leader) -> () {
         if !self.stopped {
-            info!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
+            debug!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
             self.current_leader = l.pid;
             self.paxos.handle_leader(l);
         }

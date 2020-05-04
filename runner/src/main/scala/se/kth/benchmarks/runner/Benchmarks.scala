@@ -248,14 +248,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
       List("paxos"),
-      List(3),
-      List(8L.k),
-      List(4L.k, 8L.k),
-//      atomicBroadcastTestProposals,
-//      atomicBroadcastTestBatchSizes,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestBatchSizes,
       List("off"),
       List("none"),
-      List(false)
+      List(true, false)
     );
 
   private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
@@ -336,7 +334,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             forwardDiscarded = fd
           )
       },
-    testSpace = paxosNormalTestSpace
+    testSpace = paxosTestSpace.merge(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r, tp, fd) =>
           AtomicBroadcastRequest(
