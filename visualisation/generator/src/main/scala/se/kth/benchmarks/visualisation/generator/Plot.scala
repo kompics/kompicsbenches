@@ -36,6 +36,7 @@ object Plotter extends StrictLogging {
       case "APSP"                         => plots.AllPairsShortestPath.plot(data)
       case "ATOMICREGISTER"               => plots.AtomicRegister.plot(data)
       case "STREAMINGWINDOWS"             => plots.StreamingWindows.plot(data)
+      case "ATOMICBROADCAST"              => plots.AtomicBroadcast.plot(data)
       case _                              => PlotGroup.Empty // TODO
     }
   }
