@@ -31,8 +31,7 @@ object AtomicBroadcast {
                                 data: BenchmarkData[Params])
     extends ExperimentPlots[Params](_bench, _space, data) {
       def plot(): List[PlotGroup.Along] = {
-        var all_plots = ListBuffer[PlotGroup.Along]();
-
+        var axis_plots = MutTreeMap[String, TreeMap[String, ImplGroupedResult[Long]]]();
         for ((_impl, res) <- data.results) { // Map: KOMPACTMIX -> ImplGroupedResult
           val params = res.params;
           val stats = res.stats;
@@ -42,7 +41,7 @@ object AtomicBroadcast {
             reconfig match {
               case "off" => {
                 val num_nodes = p.numberOfNodes;
-                val plot_key = s"off, $num_nodes";
+                val plot_key = s"off, num_nodes = $num_nodes";
 //                println(s"normalPlots keys: ${normalPlots.keys.mkString(", ")}");
                 var all_series = normalPlots.getOrElse(plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
                 val serie_key = (p.algorithm, p.batchSize);
@@ -74,101 +73,36 @@ object AtomicBroadcast {
 //              series += (impl -> impls);
 //              sliced += (reconfig_numNodes -> series);
             }
-            val sliced = TreeMap(reconfig_numNodes -> all_series.result());
-            println(s"\nsliced: $sliced");
-            val plot_group = this.plotAlongPreSliced(
-              mainAxis = (params: Params) => params.numberOfProposals,
-              groupings = (params: Params) => params.reconfiguration,
-              plotId = (param: String) => s"reconfiguration-$param",
-              plotParams = (param: String) =>
-                List(s"reconfiguration = ${param}"),
-              plotTitle = "Execution Time",
-              xAxisLabel = "number of proposals",
-              xAxisTitle = "Number of Proposals",
-              xAxisId = "number-of-proposals",
-              yAxisLabel = "execution time (ms)",
-              units = "ms",
-              calculateParams = (_params: String) => (),
-              calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
-                val meanTime = stats.sampleMean;
-                val totalOperations = numberOfProposals.toDouble;
-                val throughput = (totalOperations * 1000.0) / meanTime; // ops/s
-                throughput
-              },
-              calculatedTitle = "Throughput",
-              calculatedYAxisLabel = "avg. throughput (operations/s)",
-              calculatedUnits = "operations/s",
-              sliced
-            );
-            all_plots += plot_group;
-
-            /*
-            val plots: List[PlotGroup] = sliced.toList.map {
-              case (params, impls) => { // Ex: (r-50-w-50, partiion_size = 3, kompact) TODO REMOVE
-                println("\nparams: " + params + ", impls: " + impls);
-                val paramSeries = data.paramSeries(mainAxis);
-                println("\nparamSeries: " + paramSeries.mkString(", "));
-                val groupedSeries = impls.mapValues(_.map2D(identity, paramSeries));
-                val groupedErrorSeries = impls.mapValues(_.map2DErrorBars(identity, paramSeries));
-                groupedSeries.foreach {
-                  case (key, value) => {
-                    println(s"\nGROUPED_SERIES key: $key, value-data: ${value.data.mkString(", ")}")
-                  }
-                }
-                //        println("\ngroupedseries: " + groupedSeries);
-                val mergedSeries = (for (key <- groupedSeries.keys) yield {
-                  (key, groupedSeries(key), groupedErrorSeries(key))
-                }).toList;
-                println("\nmerged series: " + mergedSeries);
-                val sortedSeries: List[Series] = mergedSeries.sortBy(_._1).map(t => List[Series](t._2, t._3)).flatten;
-                println("\nsorted series: " + sortedSeries);
-
-                val pimpedSeries: List[Series] = sortedSeries.map(
-                  _.addMeta(
-                    "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}")
-                  )
-                );
-                val paramsS = paramSeries.map(_.toString);
-                paramsS.foreach(x => println("paramsS: " + x));
-                val corePlotId = s"${bench.symbol.toLowerCase()}-${plotId(params)}";
-                val primaryPlotId = s"${corePlotId}-primary";
-                val primaryPlot = PlotData(
-                  id = primaryPlotId,
-                  title = s"${bench.name} (${plotTitle})",
-                  fixedParams = plotParams(params),
-                  xAxisLabel = xAxisLabel,
-                  xAxisCategories = paramsS,
-                  yAxisLabel = yAxisLabel,
-                  seriesData = pimpedSeries
-                );
-                val calculatedParams = calculateParams(params);
-                val calculatedSeries = impls
-                  .mapValues(_.map2DWithCalc(identity, paramSeries, (t, stats) => calculateValue(calculatedParams, t, stats)))
-                  .toList;
-                val sortedCalculatedSeries: List[Series] = calculatedSeries.sortBy(_._1).map(t => t._2);
-                val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(
-                  _.addMeta(
-                    "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}")
-                  )
-                );
-                val calculatedPlotId = s"${corePlotId}-calculated";
-                val calculatedPlot = PlotData(
-                  id = calculatedPlotId,
-                  title = s"${bench.name} (${calculatedTitle})",
-                  fixedParams = plotParams(params),
-                  xAxisLabel = xAxisLabel,
-                  xAxisCategories = paramsS,
-                  yAxisLabel = calculatedYAxisLabel,
-                  seriesData = pimpedCalculatedSeries
-                );
-                PlotGroup.CalculatedWithParameters(primaryPlot, calculatedPlot)
-              }
-            };
-            */
-
+//            val sliced = TreeMap(reconfig_numNodes -> all_series.result());
+            axis_plots += (reconfig_numNodes -> all_series.result());
+//            println(s"\nsliced: $sliced");
           }
         }
-        all_plots.toList
+        val plot_group = this.plotAlongPreSliced(
+          mainAxis = (params: Params) => params.numberOfProposals,
+          groupings = (params: Params) => params.reconfiguration,
+          plotId = (param: String) => s"reconfiguration-$param",
+          plotParams = (param: String) =>
+            List(s"reconfiguration = ${param}"),
+          plotTitle = "Execution Time",
+          xAxisLabel = "number of proposals",
+          xAxisTitle = "Number of Proposals",
+          xAxisId = "number-of-proposals",
+          yAxisLabel = "execution time (ms)",
+          units = "ms",
+          calculateParams = (_params: String) => (),
+          calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
+            val meanTime = stats.sampleMean;
+            val totalOperations = numberOfProposals.toDouble;
+            val throughput = (totalOperations * 1000.0) / meanTime; // ops/s
+            throughput
+          },
+          calculatedTitle = "Throughput",
+          calculatedYAxisLabel = "avg. throughput (operations/s)",
+          calculatedUnits = "operations/s",
+          axis_plots
+        );
+        List(plot_group)
 //        PlotGroup.Along(xAxisId, xAxisTitle, plots)
       }
   }
