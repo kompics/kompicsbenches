@@ -70,7 +70,7 @@ impl Client {
     fn propose_reconfiguration(&mut self) {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
-        debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
+        info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig.clone());
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
@@ -131,7 +131,7 @@ impl Actor for Client {
                                 },
                                 _ => {
                                     if self.responses.insert(pr.id) {
-                                        if pr.id % 1000 == 0 {
+                                        if pr.id % 1000 == 0 {  // TODO REMOVE
                                             info!(self.ctx.log(), "ProposalResp: {}", pr.id);
                                         }
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
@@ -140,11 +140,13 @@ impl Actor for Client {
                                         let received_count = self.responses.len() as u64;
                                         if received_count == self.num_proposals {
                                             self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                        } else if received_count % self.batch_size == 0 {
-                                            if received_count >= self.num_proposals/2 && self.reconfig.is_some() {
+                                        } else {
+                                            if received_count == self.num_proposals/2 && self.reconfig.is_some(){
                                                 self.propose_reconfiguration();
                                             }
-                                            self.send_batch();
+                                            if received_count % self.batch_size == 0 {
+                                                self.send_batch();
+                                            }
                                         }
                                     }
                                 }
