@@ -174,10 +174,14 @@ impl<S, P> PaxosReplica<S, P> where
 
         self.paxos_comps.insert(config_id, paxos_comp);
         self.ble_communicator_comps.insert(config_id, (ble_comp, communicator));
+        self.next_config_id = config_id;
     }
 
     fn start_replica(&mut self, config_id: u32) {
-        debug!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, self.next_config_id);
+        if self.active_config_id >= config_id {
+            warn!(self.ctx.log(), "Trying to start config_id: {} again? Active config_id: {}", config_id, self.active_config_id);
+        }
+        info!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, self.next_config_id);
         self.active_config_id = config_id;
         let paxos = self.paxos_comps
             .get(&config_id)
@@ -242,7 +246,7 @@ impl<S, P> PaxosReplica<S, P> where
                 from_idx + offset
             };
             let tag = i + 1;
-            debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
+            info!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
             self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
         }
         // get segment from ready nodes (definitely has final sequence)
@@ -254,7 +258,7 @@ impl<S, P> PaxosReplica<S, P> where
                 from_idx + offset
             };
             let tag = num_unready_peers + i + 1;
-            debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
+            info!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
             self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
         }
         self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
@@ -357,7 +361,7 @@ impl<S, P> PaxosReplica<S, P> where
         if st.succeeded {
             match self.pending_seq_transfers.get_mut(&st.config_id) {
                 Some(segments) => {
-                    debug!(self.ctx.log(), "Got segment config_id: {}, tag: {}", st.config_id, st.tag);
+                    info!(self.ctx.log(), "Got segment config_id: {}, tag: {}", st.config_id, st.tag);
                     let seq = PaxosSer::deserialise_entries(&mut st.ser_entries.as_slice());
                     segments.1.insert(st.tag, seq);
                     if segments.1.len() as u32 == segments.0 {  // got all segments, i.e. complete sequence
@@ -429,11 +433,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
             PaxosReplicaMsg::Reconfig(r) => {
-                debug!(self.ctx.log(), "Got reconfig. Next config_id: {}", r.config_id);
+                info!(self.ctx.log(), "RECONFIG: Next config_id: {}", r.config_id);
                 let prev_config_id = self.active_config_id;
-                // if r.nodes.continued_nodes.contains(&self.pid) {
-                //     self.next_config_id = r.config_id;
-                // }
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
                 let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
                 self.prev_sequences.insert(prev_config_id, r.final_sequence);
@@ -444,16 +445,16 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
                     }
                 }
-                if let TransferPolicy::Eager = self.policy {
-                    let st = self.create_eager_sequence_transfer(&r.nodes.continued_nodes, prev_config_id);
-                    for pid in &r.nodes.new_nodes {
-                        let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
-                        actorpath.tell_serialised(ReconfigurationMsg::SequenceTransfer(st.clone()), self).expect("Should serialise!");
-                    }
-                }
                 let mut nodes = r.nodes.continued_nodes;
                 let mut new_nodes = r.nodes.new_nodes;
                 if nodes.contains(&self.pid) {
+                    if let TransferPolicy::Eager = self.policy {
+                        let st = self.create_eager_sequence_transfer(&nodes, prev_config_id);
+                        for pid in &new_nodes {
+                            let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
+                            actorpath.tell_serialised(ReconfigurationMsg::SequenceTransfer(st.clone()), self).expect("Should serialise!");
+                        }
+                    }
                     nodes.append(&mut new_nodes);
                     self.create_replica(r.config_id, nodes, false);
                     self.start_replica(r.config_id);
@@ -678,22 +679,21 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn get_decided(&mut self) {
-        if !self.cached_client {
-           return;
-        }
         for decided in self.paxos.get_decided_entries() {
             match decided {
                 Entry::Normal(n) => {
-                    let id = n.data.as_slice().get_u64();
-                    let pr = ProposalResp::succeeded_normal(id);
-                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    if self.cached_client {
+                        let id = n.data.as_slice().get_u64();
+                        let pr = ProposalResp::succeeded_normal(id);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    }
                 },
                 Entry::StopSign(ss) => {
                     let final_seq = self.paxos.stop_and_get_sequence();
                     let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
                         |&pid| pid == &self.pid || self.peers.contains(pid)
                     );
-                    debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
+                    info!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
                     let nodes = Reconfig::with(continued_nodes, new_nodes);
                     let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
@@ -785,7 +785,7 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
 {
     fn handle(&mut self, l: Leader) -> () {
         if !self.stopped {
-            debug!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
+            info!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
             self.current_leader = l.pid;
             self.paxos.handle_leader(l);
         }
@@ -918,9 +918,11 @@ pub mod raw_paxos{
             let entry = Entry::StopSign(ss);
             match self.state {
                 (Role::Leader, Phase::Prepare) => {
+                    println!("reconfig: prepare");
                     self.proposals.push(entry);
                 },
                 (Role::Leader, Phase::Accept) => {
+                    println!("reconfig: accept");
                     self.send_accept(entry);
                 },
                 _ => {
@@ -1040,6 +1042,9 @@ pub mod raw_paxos{
 
         fn send_accept(&mut self, entry: Entry) {
             if !self.storage.stopped() {
+                if entry.is_stopsign() {
+                    println!("SEND ACCEPT STOPSIGN");
+                }
                 self.storage.append_entry(entry.clone(), self.forward_discarded);
                 self.las.insert(self.pid, self.storage.get_sequence_len());
                 for pid in self.lds.keys() {
@@ -1047,6 +1052,10 @@ pub mod raw_paxos{
                         let acc = Accept::with(self.n_leader.clone(), entry.clone());
                         self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Accept(acc)));
                     }
+                }
+            } else {
+                if entry.is_stopsign() {
+                    println!("ALREADY STOPPED: FAILED STOPSIGN");
                 }
             }
         }
@@ -1167,7 +1176,7 @@ pub mod raw_paxos{
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
-                    if !discarded_entries.is_empty() {  // forward the proposals that I failed to decide
+                    if !discarded_entries.is_empty() && self.forward_discarded {  // forward the proposals that I failed to decide
                         self.forward_proposals(discarded_entries);
                     }
                 }
@@ -1177,9 +1186,20 @@ pub mod raw_paxos{
         fn handle_accept(&mut self, acc: Accept, from: u64) {
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
+                    if acc.entry.is_stopsign() {
+                        println!("Accepting stopsign");
+                    }
                     self.storage.append_entry(acc.entry, false);
                     let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
+                } else {
+                    if acc.entry.is_stopsign() {
+                        println!("NOT ACCEPTING STOPSIGN. Wrong promise: {:?}, current promise: {:?}", acc.n, self.storage.get_promise());
+                    }
+                }
+            } else {
+                if acc.entry.is_stopsign() {
+                    println!("NOT ACCEPTING STOPSIGN. Wrong state: {:?}", self.state);
                 }
             }
         }
@@ -1482,6 +1502,7 @@ mod tests {
     use synchronoise::CountdownEvent;
     use std::sync::Arc;
     use super::super::messages::Run;
+    use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
 
     fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
         let mut systems = Vec::with_capacity(n as usize);
@@ -1518,13 +1539,19 @@ mod tests {
         (systems, nodes, actorpaths)
     }
 
+    /*#[test]
+    fn drop_after_ss() {
+        let e1 = Entry::Normal(Normal(5))
+        let proposals = vec![];
+    }*/
+
     #[test]
     fn paxos_test() {
         let num_proposals = 1000;
         let batch_size = 250;
-        let config = vec![1,2,3];
+        let config = vec![1,2,3,4,5];
         // let reconfig = None;
-        let reconfig = Some((vec![1,4,5], vec![]));
+        let reconfig = Some((vec![1,2,6,7,8], vec![]));
         let n: u64 = match reconfig {
             None => config.len() as u64,
             Some(ref r) => *(r.0.last().unwrap()),
