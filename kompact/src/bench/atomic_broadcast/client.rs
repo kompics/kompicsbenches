@@ -71,15 +71,28 @@ impl Client {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
-        let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig);
+        let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig.clone());
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
         raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+        let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_reconfig(reconfig));
+        self.proposal_timeouts.insert(RECONFIG_ID, timer);
     }
 
     fn retry_proposal(&mut self, id: u64) {
         if !self.responses.contains(&id) {
             self.propose_normal(id);
+        }
+    }
+
+    fn retry_reconfig(&mut self, reconfig: (Vec<u64>, Vec<u64>)) {
+        if let Some(_) = self.proposal_timeouts.remove(&RECONFIG_ID) {
+            info!(self.ctx.log(), "TIMEOUT RECONFIGURING");
+            let p = Proposal::reconfiguration(RECONFIG_ID, self.ctx.actor_path(), reconfig.clone());
+            let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+            raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_reconfig(reconfig));
+            self.proposal_timeouts.insert(RECONFIG_ID, timer);
         }
     }
 }
@@ -111,10 +124,16 @@ impl Actor for Client {
                         if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
-                                    debug!(self.ctx.log(), "reconfiguration succeeded?");
+                                    if let Some(timer) = self.proposal_timeouts.remove(&RECONFIG_ID) {
+                                        self.cancel_timer(timer);
+                                    }
+                                    info!(self.ctx.log(), "reconfiguration succeeded?");
                                 },
                                 _ => {
                                     if self.responses.insert(pr.id) {
+                                        if pr.id % 1000 == 0 {
+                                            info!(self.ctx.log(), "ProposalResp: {}", pr.id);
+                                        }
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
                                             self.cancel_timer(timer);
                                         }
@@ -286,10 +305,10 @@ pub mod tests {
                                     }*/
                                 },
                                 _ => {
-                                    if pr.id % 100 == 0 {
-                                        info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
-                                    }
                                     if self.responses.insert(pr.id) {
+                                        if pr.id % 100 == 0 {
+                                            info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
+                                        }
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
                                             self.cancel_timer(timer);
                                         }
@@ -299,7 +318,7 @@ pub mod tests {
     //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
                                         if received_count == self.num_proposals {
                                             if self.check_sequences {
-                                                info!(self.ctx.log(), "TestClient requesting sequences 2. num_responses: {}", self.responses.len());
+                                                info!(self.ctx.log(), "TestClient requesting sequences. num_responses: {}", self.responses.len());
                                                 for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
                                                     actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
                                                 }
@@ -335,7 +354,7 @@ pub mod tests {
                 match tm {
                     TestMessage::SequenceResp(sr) => {
                         self.test_results.insert(sr.node_id, sr.sequence);
-                        if (self.test_results.len() - 1) == self.nodes.len() {    // got all sequences from everybody, we're done
+                        if (self.test_results.len()) == self.nodes.len() + 1 {    // got sequences from everybody, we're done
                             info!(self.ctx.log(), "Got all sequences");
                             self.finished_promise
                                 .to_owned()

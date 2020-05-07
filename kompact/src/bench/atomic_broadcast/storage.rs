@@ -677,8 +677,12 @@ pub mod paxos {
                     }
                     s.append_on_prefix(from_idx, seq, get_discarded)
                 },
-                PaxosSequence::Stopped(_) => {
-                    panic!("Sequence should not be modified after reconfiguration");
+                PaxosSequence::Stopped(s) => {
+                    if &s.get_suffix(from_idx) != seq {
+                        panic!("Sequence should not be modified after reconfiguration");
+                    } else {
+                        vec![]
+                    }
                 },
                 _ => panic!("Got unexpected intermediate PaxosSequence::None")
             }
@@ -689,10 +693,17 @@ pub mod paxos {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     let mut sequence = seq;
-                    let _ = s.append_on_prefix(from_idx, &mut sequence, false);
+                    let discarded = s.append_on_prefix(from_idx, &mut sequence, true);
+                    for e in discarded {
+                        if e.is_stopsign() {
+                            println!("DISCARDING STOPSIGN!");
+                        }
+                    }
                 },
                 PaxosSequence::Stopped(_) => {
-                    panic!("Sequence should not be modified after reconfiguration");
+                    if !seq.is_empty() {
+                        panic!("Sequence should not be modified after reconfiguration");
+                    }
                 },
                 _ => panic!("Got unexpected intermediate PaxosSequence::None")
             }
