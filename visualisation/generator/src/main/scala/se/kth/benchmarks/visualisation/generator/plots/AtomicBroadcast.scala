@@ -31,29 +31,48 @@ object AtomicBroadcast {
                                 data: BenchmarkData[Params])
     extends ExperimentPlots[Params](_bench, _space, data) {
       def plot(): List[PlotGroup.Along] = {
-        var axis_plots = MutTreeMap[String, TreeMap[String, ImplGroupedResult[Long]]]();
+        var normal_axis = MutTreeMap[String, TreeMap[String, ImplGroupedResult[Long]]]();
+        var reconfig_axis = MutTreeMap[String, TreeMap[String, ImplGroupedResult[Long]]]();
+        var forward_discarded_axis = MutTreeMap[String, TreeMap[String, ImplGroupedResult[Long]]]();
         for ((_impl, res) <- data.results) { // Map: KOMPACTMIX -> ImplGroupedResult
           val params = res.params;
           val stats = res.stats;
           var normalPlots: MutTreeMap[String, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
+          var reconfigPlots: MutTreeMap[String, MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           for ((p, s) <- params.zip(stats)) { // go through each row in summary
             val reconfig = p.reconfiguration;
             reconfig match {
               case "off" => {
-                val num_nodes = p.numberOfNodes;
-                val plot_key = s"off, num_nodes = $num_nodes";
-//                println(s"normalPlots keys: ${normalPlots.keys.mkString(", ")}");
-                var all_series = normalPlots.getOrElse(plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
-                val serie_key = (p.algorithm, p.batchSize);
-                println(s"all_series keys: ${all_series.keys.mkString((", "))}")
-                var serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
-                serie._1 += p.numberOfProposals;
-                serie._2 += s;
-                all_series(serie_key) = serie;
-                normalPlots(plot_key) = all_series;
+                if (!p.forwardDiscarded) {  // TODO handle forward discarded in separate plots
+                  val num_nodes = p.numberOfNodes;
+                  val plot_key = s"off, num_nodes = $num_nodes";
+                  //                println(s"normalPlots keys: ${normalPlots.keys.mkString(", ")}");
+                  var all_series = normalPlots.getOrElse(plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
+                  val serie_key = (p.algorithm, p.batchSize);
+                  println(s"all_series keys: ${all_series.keys.mkString((", "))}")
+                  var serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
+                  serie._1 += p.numberOfProposals;
+                  serie._2 += s;
+                  all_series(serie_key) = serie;
+                  normalPlots(plot_key) = all_series;
+                }
+
               }
-              /*case "single" | "majority" => {}
-              case _ => {}*/
+              case "single" | "majority" => {
+                if (!p.forwardDiscarded) {  // TODO
+                  val num_nodes = p.numberOfNodes;
+                  val batch_size = p.batchSize;
+                  val plot_key = s"$reconfig, num_nodes = $num_nodes, batch_size = $batch_size";
+                  var all_series = reconfigPlots.getOrElse(plot_key, MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]());
+                  val serie_key = (p.algorithm, p.transferPolicy);
+                  var serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
+                  serie._1 += p.numberOfProposals;
+                  serie._2 += s;
+                  all_series(serie_key) = serie;
+                  reconfigPlots(plot_key) = all_series;
+                }
+              }
+              /*case _ => {}*/
             }
           }
           println(s"normalPlots: ${normalPlots.keys.mkString(", ")}");
@@ -67,18 +86,32 @@ object AtomicBroadcast {
               val num_proposals = serie._2._1.toList;
               val stats = serie._2._2.toList;
               val impl = s"${algo_batchSize._1}, batch_size: ${algo_batchSize._2}";
-              val impls = ImplGroupedResult(impl, num_proposals, stats);
-              all_series += (impl -> impls);
-//              var series = sliced.getOrElse(reconfig_numNodes, MutTreeMap[String, ImplGroupedResult[Long]]());
-//              series += (impl -> impls);
-//              sliced += (reconfig_numNodes -> series);
+              val grouped_res = ImplGroupedResult(impl, num_proposals, stats);
+              all_series += (impl -> grouped_res);
             }
-//            val sliced = TreeMap(reconfig_numNodes -> all_series.result());
-            axis_plots += (reconfig_numNodes -> all_series.result());
-//            println(s"\nsliced: $sliced");
+            normal_axis += (reconfig_numNodes -> all_series.result());
+          }
+          for (reconfigPlot <- reconfigPlots) {
+            val reconfig_numNodes_batchSize = reconfigPlot._1;
+            var all_series = TreeMap.newBuilder[String, ImplGroupedResult[Long]];
+            //            var sliced = MutTreeMap[String, MutTreeMap[String, ImplGroupedResult[Long]]]();
+            for (serie <- reconfigPlot._2) {
+              println(s"series: ${serie._1}, params: ${serie._2._1.mkString(", ")}");
+              val algo_transferPolicy = serie._1;
+              val num_proposals = serie._2._1.toList;
+              val stats = serie._2._2.toList;
+              val impl = if (algo_transferPolicy._1 == "paxos") {
+                s"${algo_transferPolicy._1}, ${algo_transferPolicy._2}"
+              } else {
+                "raft"
+              };
+              val grouped_res = ImplGroupedResult(impl, num_proposals, stats);
+              all_series += (impl -> grouped_res);
+            }
+            reconfig_axis += (reconfig_numNodes_batchSize -> all_series.result());
           }
         }
-        val plot_group = this.plotAlongPreSliced(
+        val normal_plotgroup = this.plotAlongPreSliced(
           mainAxis = (params: Params) => params.numberOfProposals,
           groupings = (params: Params) => params.reconfiguration,
           plotId = (param: String) => s"reconfiguration-$param",
@@ -100,9 +133,33 @@ object AtomicBroadcast {
           calculatedTitle = "Throughput",
           calculatedYAxisLabel = "avg. throughput (operations/s)",
           calculatedUnits = "operations/s",
-          axis_plots
+          normal_axis
         );
-        List(plot_group)
+        val reconfig_plotgroup = this.plotAlongPreSliced(
+          mainAxis = (params: Params) => params.numberOfProposals,
+          groupings = (params: Params) => params.reconfiguration,
+          plotId = (param: String) => s"reconfiguration-$param",
+          plotParams = (param: String) =>
+            List(s"reconfiguration = ${param}"),
+          plotTitle = "Execution Time",
+          xAxisLabel = "number of proposals",
+          xAxisTitle = "Reconfiguration, Number of Proposals",
+          xAxisId = "number-of-proposals",
+          yAxisLabel = "execution time (ms)",
+          units = "ms",
+          calculateParams = (_params: String) => (),
+          calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
+            val meanTime = stats.sampleMean;
+            val totalOperations = numberOfProposals.toDouble;
+            val throughput = (totalOperations * 1000.0) / meanTime; // ops/s
+            throughput
+          },
+          calculatedTitle = "Throughput",
+          calculatedYAxisLabel = "avg. throughput (operations/s)",
+          calculatedUnits = "operations/s",
+          reconfig_axis
+        );
+        List(normal_plotgroup, reconfig_plotgroup)
 //        PlotGroup.Along(xAxisId, xAxisTitle, plots)
       }
   }
