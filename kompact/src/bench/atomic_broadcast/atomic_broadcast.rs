@@ -137,34 +137,23 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
             Ok((0, None))
         },
         "single" => {
-            let mut new_voters = vec![];
-            let new_followers: Vec<u64> = vec![];
-            for i in 1..n {
-                new_voters.push(i);   // all but last_node_id
-            }
-            let replacing_node_id = n + 1;
-            new_voters.push(replacing_node_id);    // i.e. will replace last_node_id after reconfiguration
-            assert_eq!(n, new_voters.len() as u64);
-            let reconfiguration = Some((new_voters, new_followers));
+            let mut reconfig: Vec<u64> = (1..n).collect();
+            reconfig.push(n+1);
+            let reconfiguration = Some((reconfig, new_followers));
             Ok((1, reconfiguration))
         },
         "majority" => {
-            let mut new_voters = vec![];
-            let new_followers: Vec<u64> = vec![];
             let majority = n/2 + 1;
-            for i in 1..majority {
-                new_voters.push(i);   // push minority ids
+            let mut reconfig: Vec<u64> = (1..majority).collect();   // minority i.e. continued node ids
+            for i in 1..=majority {
+                let new_node_id = n + i;
+                reconfig.push(new_node_id);
             }
-            let first_new_node_id = n + 1;
-            let last_new_node_id = n + n - 1;
-            for i in first_new_node_id..=last_new_node_id {
-                new_voters.push(i);   // push all new majority ids
-            }
-            assert_eq!(n, new_voters.len() as u64);
-            let reconfiguration = Some((new_voters, new_followers));
+            assert_eq!(n, reconfig.len() as u64);
+            let new_followers: Vec<u64> = vec![];
+            let reconfiguration = Some((reconfig, new_followers));
             Ok((majority, reconfiguration))
         },
-        // TODO implement one-by-one
         _ => Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
     }
 }
