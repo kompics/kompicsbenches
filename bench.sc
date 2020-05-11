@@ -117,8 +117,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
-	val remoteDir = tmp.dir();
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir()): Unit = {
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
 	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
