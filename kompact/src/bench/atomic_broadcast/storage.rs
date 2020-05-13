@@ -580,6 +580,8 @@ pub mod paxos {
 
         fn get_suffix(&self, from: u64) -> Vec<Entry>;
 
+        fn get_ser_suffix(&self, from: u64) -> Vec<u8>;
+
         fn get_sequence(&self) -> Vec<Entry>;
 
         fn get_sequence_len(&self) -> u64;
@@ -788,6 +790,14 @@ pub mod paxos {
             }
         }
 
+        pub fn get_ser_suffix(&self, from: u64) -> Vec<u8> {
+            match self.sequence {
+                PaxosSequence::Active(ref s) => s.get_ser_suffix(from),
+                PaxosSequence::Stopped(ref arc_s) => arc_s.get_ser_suffix(from),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_suffix"),
+            }
+        }
+
         pub fn get_promise(&self) -> Ballot {
             self.paxos_state.get_promise()
         }
@@ -877,6 +887,18 @@ pub mod paxos {
         fn get_suffix(&self, from: u64) -> Vec<Entry> {
             match self.sequence.get(from as usize..) {
                 Some(s) => s.to_vec(),
+                None => vec![]
+            }
+        }
+
+        fn get_ser_suffix(&self, from: u64) -> Vec<u8> {
+            match self.sequence.get(from as usize..) {
+                Some(s) => {
+                    let len = s.len();
+                    let mut bytes: Vec<u8> = Vec::with_capacity(len * 40);
+                    PaxosSer::serialise_entries(s, &mut bytes);
+                    bytes
+                },
                 None => vec![]
             }
         }

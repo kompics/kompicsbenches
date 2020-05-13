@@ -73,11 +73,15 @@ pub mod paxos {
         pub n_accepted: Ballot,
         pub sfx: Vec<Entry>,
         pub ld: u64,
+        pub ser_sfx: Option<Vec<u8>>
     }
 
     impl Promise {
         pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
-            Promise { n, n_accepted, sfx, ld }
+            Promise { n, n_accepted, sfx, ld, ser_sfx: None }
+        }
+        pub fn with_serialised_sfx(n: Ballot, n_accepted: Ballot, ser_sfx: Vec<u8>, ld: u64) -> Promise {
+            Promise { n, n_accepted, sfx: vec![], ld, ser_sfx: Some(ser_sfx) }
         }
     }
 
@@ -85,12 +89,16 @@ pub mod paxos {
     pub struct AcceptSync {
         pub n: Ballot,
         pub sfx: Vec<Entry>,
-        pub ld: u64
+        pub ld: u64,
+        pub ser_sfx: Option<(Vec<u8>)>
     }
 
     impl AcceptSync {
         pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64) -> AcceptSync {
-            AcceptSync { n, sfx, ld }
+            AcceptSync { n, sfx, ld, ser_sfx: None }
+        }
+        pub fn with_serialised_sfx(n: Ballot, ser_sfx: Vec<u8>, ld: u64) -> AcceptSync {
+            AcceptSync { n, sfx: vec![], ld, ser_sfx: Some(ser_sfx) }
         }
     }
 
@@ -278,13 +286,19 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
                     buf.put_u64(p.ld);
-                    PaxosSer::serialise_entries(&p.sfx, buf);
+                    match &p.ser_sfx {
+                        Some(ser_sfx) => buf.put_slice(ser_sfx.as_slice()),
+                        None => PaxosSer::serialise_entries(&p.sfx, buf),
+                    }
                 },
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
-                    PaxosSer::serialise_ballot(&acc_sync.n, buf);
-                    PaxosSer::serialise_entries(&acc_sync.sfx, buf);
                     buf.put_u64(acc_sync.ld);
+                    PaxosSer::serialise_ballot(&acc_sync.n, buf);
+                    match &acc_sync.ser_sfx {
+                        Some(ser_sfx) => buf.put_slice(ser_sfx.as_slice()),
+                        None => PaxosSer::serialise_entries(&acc_sync.sfx, buf),
+                    }
                 },
                 PaxosMsg::Accept(a) => {
                     buf.put_u8(ACCEPT_ID);
@@ -339,9 +353,9 @@ pub mod paxos {
                     Ok(msg)
                 },
                 ACCEPTSYNC_ID => {
+                    let ld = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let sfx = Self::deserialise_entries(buf);
-                    let ld = buf.get_u64();
                     let acc_sync = AcceptSync::with(n, sfx, ld);
                     let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
                     Ok(msg)
