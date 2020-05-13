@@ -877,7 +877,7 @@ pub mod paxos {
         fn get_suffix(&self, from: u64) -> Vec<Entry> {
             match self.sequence.get(from as usize..) {
                 Some(s) => s.to_vec(),
-                None => panic!("get_suffix out of bounds: from: {}, len: {}", from, self.sequence.len())
+                None => vec![]
             }
         }
 
