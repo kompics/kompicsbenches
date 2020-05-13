@@ -1104,8 +1104,8 @@ pub mod raw_paxos{
                     for (pid, lds) in self.lds.iter() {
 //                        if *lds != va_len {
                         if pid != &self.pid {
-                            let sfx = self.storage.get_suffix(*lds);
-                            let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, *lds);
+                            let ser_sfx = self.storage.get_ser_suffix(*lds);
+                            let acc_sync = AcceptSync::with_serialised_sfx(self.n_leader.clone(), ser_sfx, *lds);
                             self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
                         }
                     }
@@ -1127,8 +1127,8 @@ pub mod raw_paxos{
                     );
                 }
                 */
-                let sfx = self.storage.get_suffix(prom.ld);
-                let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, prom.ld);
+                let ser_sfx = self.storage.get_ser_suffix(prom.ld);
+                let acc_sync = AcceptSync::with_serialised_sfx(self.n_leader.clone(), ser_sfx, prom.ld);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
                 if self.lc != 0 {
                     // inform what got decided already
@@ -1168,7 +1168,7 @@ pub mod raw_paxos{
                 self.storage.set_promise(prep.n.clone());
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
-                let suffix = if &na >= &prep.n_accepted {
+                let ser_sfx = if &na >= &prep.n_accepted {
                     /*if prep.ld > self.storage.get_sequence_len() {
                         panic!(
                             "ld in Prepare is longer than my accepted seq: ld: {}, la: {}, ballot: {:?}, my accepted ballot: {:?}",
@@ -1178,11 +1178,11 @@ pub mod raw_paxos{
                             na
                         )
                     }*/
-                    self.storage.get_suffix(prep.ld)
+                    self.storage.get_ser_suffix(prep.ld)
                 } else {
                     vec![]
                 };
-                let p = Promise::with(prep.n, na, suffix, self.storage.get_decided_len());
+                let p = Promise::with_serialised_sfx(prep.n, na, ser_sfx, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
             }
         }
@@ -1552,9 +1552,9 @@ mod tests {
     fn paxos_test() {
         let num_proposals = 1000;
         let batch_size = 250;
-        let config = vec![1,2,3,4,5];
-        // let reconfig = None;
-        let reconfig = Some((vec![1,2,6,7,8], vec![]));
+        let config = vec![1,2,3];
+        let reconfig: Option<(Vec<u64>, Vec<u64>)> = None;
+        // let reconfig = Some((vec![1,2,6,7,8], vec![]));
         let n: u64 = match reconfig {
             None => config.len() as u64,
             Some(ref r) => *(r.0.last().unwrap()),
