@@ -124,11 +124,13 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
 	};
 	println(s"Going to copy files=${copyFiles.mkString("[", ",", "]")} and folders==${copyDirectories.mkString("[", ",", "]")}.");
+	val totalStart = System.currentTimeMillis();
+	val runId = s"run-${totalStart}";
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
 		val dirName = s"${ip}-port-${p}";
-		val dir = remoteDir / dirName;
+		val dir = remoteDir / runId / dirName;
 		print(s"Created temporary directory for test node $addr: ${dir}, copying data...");
 		for (d <- copyDirectories) {
 			mkdir(dir / d);
@@ -141,8 +143,6 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 		NodeEntry(ip, p, dir.toString)
 	} toList;
 	val masters = masterBenches.map(_.remoteRunner(runnerAddr, masterAddr, nodes.size));
-	val totalStart = System.currentTimeMillis();
-	val runId = s"run-${totalStart}";
 	val logdir = logs / runId;
 	mkdir! logdir;
 	val resultsdir = results / runId;
