@@ -223,7 +223,8 @@ pub mod tests {
             let p = Proposal::normal(id, ap);
             let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+            let timeout = Duration::from_millis(PROPOSAL_TIMEOUT);
+            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
             self.proposal_timeouts.insert(id, timer);
         }
 
@@ -349,7 +350,8 @@ pub mod tests {
                             if let Some(timer) = self.proposal_timeouts.remove(&id) {
                                 self.cancel_timer(timer);
                             }
-                            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+                            let timeout = Duration::from_millis(PROPOSAL_TIMEOUT);
+                            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
                             self.proposal_timeouts.insert(pr.id, timer);
                         }
                     },
