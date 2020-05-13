@@ -314,64 +314,6 @@ pub mod paxos {
             Ok(self)
         }
     }
-/*
-    impl Serialiser<Message> for PaxosSer {
-        fn ser_id(&self) -> u64 {
-            serialiser_ids::PAXOS_ID
-        }
-
-        fn size_hint(&self) -> Option<usize> {
-            Some(10000)
-        }
-
-        fn serialise(&self, m: &Message, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            buf.put_u64(m.from);
-            buf.put_u64(m.to);
-            match &m.msg {
-                PaxosMsg::Prepare(p) => {
-                    buf.put_u8(PREPARE_ID);
-                    Self::serialise_ballot(&p.n, buf);
-                    Self::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64(p.ld);
-                },
-                PaxosMsg::Promise(p) => {
-                    buf.put_u8(PROMISE_ID);
-                    Self::serialise_ballot(&p.n, buf);
-                    Self::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64(p.ld);
-                    Self::serialise_entries(&p.sfx, buf);
-                },
-                PaxosMsg::AcceptSync(acc_sync) => {
-                    buf.put_u8(ACCEPTSYNC_ID);
-                    Self::serialise_ballot(&acc_sync.n, buf);
-                    Self::serialise_entries(&acc_sync.sfx, buf);
-                    buf.put_u64(acc_sync.ld);
-                }
-                PaxosMsg::Accept(a) => {
-                    buf.put_u8(ACCEPT_ID);
-                    Self::serialise_ballot(&a.n, buf);
-                    buf.put_u32(1);  // len
-                    Self::serialise_entry(&a.entry, buf);
-                },
-                PaxosMsg::Accepted(acc) => {
-                    buf.put_u8(ACCEPTED_ID);
-                    Self::serialise_ballot(&acc.n, buf);
-                    buf.put_u64(acc.la);
-                },
-                PaxosMsg::Decide(d) => {
-                    buf.put_u8(DECIDE_ID);
-                    Self::serialise_ballot(&d.n, buf);
-                    buf.put_u64(d.ld);
-                },
-                PaxosMsg::ProposalForward(proposals) => {
-                    buf.put_u8(PROPOSALFORWARD_ID);
-                    Self::serialise_entries(proposals, buf);
-                },
-            }
-            Ok(())
-        }
-    }
-*/
     impl Deserialiser<Message> for PaxosSer {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
@@ -592,55 +534,6 @@ pub mod paxos {
             Ok(self)
         }
     }
-    /*
-    impl Serialiser<ReconfigurationMsg> for ReconfigSer {
-        fn ser_id(&self) -> u64 {
-            serialiser_ids::RECONFIG_ID
-        }
-
-        fn size_hint(&self) -> Option<usize> {
-            Some(1000) // TODO?
-        }
-
-        fn serialise(&self, r: &ReconfigurationMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-            match r {
-                ReconfigurationMsg::Init(r) => {
-                    buf.put_u8(RECONFIG_INIT_ID);
-                    buf.put_u32(r.config_id);
-                    buf.put_u64(r.from);
-                    buf.put_u32(r.seq_metadata.config_id);
-                    buf.put_u64(r.seq_metadata.len);
-                    buf.put_u32(r.nodes.continued_nodes.len() as u32);
-                    r.nodes.continued_nodes.iter().for_each(|pid| buf.put_u64(*pid));
-                    buf.put_u32(r.nodes.new_nodes.len() as u32);
-                    r.nodes.new_nodes.iter().for_each(|pid| buf.put_u64(*pid));
-                },
-                ReconfigurationMsg::SequenceRequest(sr) => {
-                    buf.put_u8(SEQ_REQ_ID);
-                    buf.put_u32(sr.config_id);
-                    buf.put_u32(sr.tag);
-                    buf.put_u64(sr.from_idx);
-                    buf.put_u64(sr.to_idx);
-                },
-                ReconfigurationMsg::SequenceTransfer(st) => {
-                    buf.put_u8(SEQ_TRANSFER_ID);
-                    buf.put_u32(st.config_id);
-                    buf.put_u32(st.tag);
-                    let succeeded: u8 = if st.succeeded { 1 } else { 0 };
-                    buf.put_u8(succeeded);
-                    buf.put_u64(st.from_idx);
-                    buf.put_u64(st.to_idx);
-                    buf.put_u32(st.metadata.config_id);
-                    buf.put_u64(st.metadata.len);
-                    let len = st.ser_entries.len() as u64;
-                    buf.put_u64(len);
-                    buf.put_slice(st.ser_entries.as_slice());
-                }
-            }
-            Ok(())
-        }
-    }
-    */
     impl Deserialiser<ReconfigurationMsg> for ReconfigSer {
         const SER_ID: u64 = serialiser_ids::RECONFIG_ID;
 
@@ -706,7 +599,7 @@ pub mod paxos {
     pub mod ballot_leader_election {
         use super::super::*;
 
-        #[derive(Clone, Copy, PartialEq, Debug, PartialOrd)]
+        #[derive(Clone, Copy, Eq, Debug, Ord, PartialOrd, PartialEq)]
         pub struct Ballot {
             pub n: u64,
             pub pid: u64
@@ -763,10 +656,10 @@ pub mod paxos {
 
         pub struct BallotLeaderSer;
 
-        const HB_REQ_ID: u8 = 0;
-        const HB_REP_ID: u8 = 1;
+        const HB_REQ_ID: u8 = 1;
+        const HB_REP_ID: u8 = 2;
 
-        impl Serialiser<HeartbeatMsg> for BallotLeaderSer {
+        impl Serialisable for HeartbeatMsg {
             fn ser_id(&self) -> u64 {
                 serialiser_ids::BLE_ID
             }
@@ -775,14 +668,14 @@ pub mod paxos {
                 Some(50)
             }
 
-            fn serialise(&self, v: &HeartbeatMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-                match v {
+            fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+                match self {
                     HeartbeatMsg::Request(req) => {
                         buf.put_u8(HB_REQ_ID);
                         buf.put_u64(req.round);
                         buf.put_u64(req.max_ballot.n);
                         buf.put_u64(req.max_ballot.pid);
-                    }
+                    },
                     HeartbeatMsg::Reply(rep) => {
                         buf.put_u8(HB_REP_ID);
                         buf.put_u64(rep.sender_pid);
@@ -792,6 +685,10 @@ pub mod paxos {
                     }
                 }
                 Ok(())
+            }
+
+            fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+                Ok(self)
             }
         }
 

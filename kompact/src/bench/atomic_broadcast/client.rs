@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 use std::time::Duration;
 
-const PROPOSAL_TIMEOUT: Duration = Duration::from_millis(300);
+const PROPOSAL_TIMEOUT: u64 = 800;
+const DELTA: u64 = 20;
 
 #[derive(ComponentDefinition)]
 pub struct Client {
@@ -17,6 +18,7 @@ pub struct Client {
     finished_latch: Arc<CountdownEvent>,
     responses: HashSet<u64>,
     proposal_timeouts: HashMap<u64, ScheduledTimer>,
+    timeout: u64,
 }
 
 impl Client {
@@ -36,6 +38,7 @@ impl Client {
             finished_latch,
             responses: HashSet::with_capacity(num_proposals as usize),
             proposal_timeouts: HashMap::with_capacity(batch_size as usize),
+            timeout: PROPOSAL_TIMEOUT
         }
     }
 
@@ -44,7 +47,8 @@ impl Client {
         let p = Proposal::normal(id, ap);
         let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
         node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-        let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+        let timeout = Duration::from_millis(self.timeout);
+        let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
         self.proposal_timeouts.insert(id, timer);
     }
 
@@ -70,12 +74,13 @@ impl Client {
     fn propose_reconfiguration(&mut self) {
         let ap = self.ctx.actor_path();
         let reconfig = self.reconfig.take().unwrap();
-        info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
+        debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, ap, reconfig.clone());
         // TODO send proposal to who?
         let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
         raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-        let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_reconfig(reconfig));
+        let timeout = Duration::from_millis(self.timeout);
+        let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig(reconfig));
         self.proposal_timeouts.insert(RECONFIG_ID, timer);
     }
 
@@ -87,11 +92,12 @@ impl Client {
 
     fn retry_reconfig(&mut self, reconfig: (Vec<u64>, Vec<u64>)) {
         if let Some(_) = self.proposal_timeouts.remove(&RECONFIG_ID) {
-            info!(self.ctx.log(), "TIMEOUT RECONFIGURING");
+            debug!(self.ctx.log(), "TIMEOUT RECONFIGURING");
             let p = Proposal::reconfiguration(RECONFIG_ID, self.ctx.actor_path(), reconfig.clone());
             let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_reconfig(reconfig));
+            let timeout = Duration::from_millis(self.timeout);
+            let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig(reconfig));
             self.proposal_timeouts.insert(RECONFIG_ID, timer);
         }
     }
@@ -108,11 +114,6 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.send_batch();
-        /*self.schedule_periodic( // TODO remove
-            Duration::from_secs(5),
-            Duration::from_secs(30),
-            move |c, _| info!(c.ctx.log(), "Client: received: {}/{}", c.responses.len(), c.num_proposals)
-        );*/
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -131,8 +132,8 @@ impl Actor for Client {
                                 },
                                 _ => {
                                     if self.responses.insert(pr.id) {
-                                        if pr.id % 1000 == 0 {  // TODO REMOVE
-                                            info!(self.ctx.log(), "ProposalResp: {}", pr.id);
+                                        if pr.id % 2000 == 0 {  // TODO REMOVE
+                                            debug!(self.ctx.log(), "ProposalResp: {}", pr.id);
                                         }
                                         if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
                                             self.cancel_timer(timer);
@@ -148,16 +149,19 @@ impl Actor for Client {
                                                 self.send_batch();
                                             }
                                         }
+                                    } else {    // duplicate response
+                                        self.timeout = self.timeout + self.timeout/DELTA;
                                     }
                                 }
                             }
                         } else {    // failed proposal
-                            // info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
+                            debug!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
                             let id = pr.id;
                             if let Some(timer) = self.proposal_timeouts.remove(&id) {
                                 self.cancel_timer(timer);
                             }
-                            let timer = self.schedule_once(PROPOSAL_TIMEOUT, move |c, _| c.retry_proposal(id));
+                            let timeout = Duration::from_millis(self.timeout);
+                            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
                             self.proposal_timeouts.insert(pr.id, timer);
                         }
                     }
