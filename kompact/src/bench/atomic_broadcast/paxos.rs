@@ -1116,6 +1116,7 @@ pub mod raw_paxos{
         fn handle_promise_accept(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
                 self.lds.insert(from, prom.ld);
+                /*
                 if prom.ld > self.storage.get_sequence_len() {  // TODO remove
                     panic!(
                         "promise_accept from node {}. ld: {}, my seq_len: {}, my ld: {}",
@@ -1125,6 +1126,7 @@ pub mod raw_paxos{
                         self.storage.get_decided_len()
                     );
                 }
+                */
                 let sfx = self.storage.get_suffix(prom.ld);
                 let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, prom.ld);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
@@ -1389,8 +1391,9 @@ mod ballot_leader_election {
             }
         }
 
-        fn max_by_ballot(&self) -> (Ballot, u64) {
-            self.ballots
+        fn max_by_ballot(ballots: Vec<(Ballot, u64)>) -> (Ballot, u64) {
+            ballots.into_iter().max().expect("Should be at least majority of ballots")
+            /*self.ballots
                 .iter()
                 .max_by(|x, y|
                     if x.0 > y.0 || (x.0 == y.0 && x.1 < y.1) { // use less pid as tiebreaker
@@ -1399,12 +1402,13 @@ mod ballot_leader_election {
                         std::cmp::Ordering::Less
                     }
                 )
-                .expect("Should have at least majority of ballots").clone()
+                .expect("Should have at least majority of ballots").clone()*/
         }
 
         fn check_leader(&mut self) {
             self.ballots.push((self.current_ballot, self.pid));
-            let (top_ballot, top_pid) = self.max_by_ballot();
+            let ballots = std::mem::replace(&mut self.ballots, Vec::with_capacity(self.majority*2));
+            let (top_ballot, top_pid) = Self::max_by_ballot(ballots);
             if top_ballot < self.max_ballot {
                 self.current_ballot.n = self.max_ballot.n + 1;
                 self.leader = None;
@@ -1543,7 +1547,7 @@ mod tests {
         }
         (systems, nodes, actorpaths)
     }
-    
+
     #[test]
     fn paxos_test() {
         let num_proposals = 1000;
