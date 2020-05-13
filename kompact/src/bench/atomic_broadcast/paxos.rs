@@ -18,8 +18,8 @@ use crate::bench::atomic_broadcast::communicator::{CommunicationPort, AtomicBroa
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
 
-const DELTA: u64 = 300;
-const TRANSFER_TIMEOUT: Duration = Duration::from_millis(200);
+const DELTA: u64 = 500;
+const TRANSFER_TIMEOUT: Duration = Duration::from_millis(800);
 const INITIAL_CAPACITY: usize = 1000;
 
 pub trait SequenceTraits: Sequence + Debug + Send + Sync + 'static {}
@@ -69,7 +69,7 @@ pub struct PaxosReplica<S, P> where
     partitioning_actor: Option<ActorPath>,
     alias_registrations: HashSet<Uuid>,
     policy: TransferPolicy,
-    next_config_id: u32,
+    next_config_id: Option<u32>,
     pending_seq_transfers: HashMap<u32, (u32, HashMap<u32, Vec<Entry>>)>,   // <config_id, (num_segments, <segment_id, entries>)
     complete_sequences: HashSet<u32>,
     active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
@@ -96,7 +96,7 @@ impl<S, P> PaxosReplica<S, P> where
             partitioning_actor: None,
             alias_registrations: HashSet::new(),
             policy,
-            next_config_id: 0,
+            next_config_id: None,
             pending_seq_transfers: HashMap::new(),
             complete_sequences: HashSet::new(),
             active_peers: (Vec::new(), Vec::new()),
@@ -176,16 +176,12 @@ impl<S, P> PaxosReplica<S, P> where
 
         self.paxos_comps.insert(config_id, paxos_comp);
         self.ble_communicator_comps.insert(config_id, (ble_comp, communicator));
-        self.next_config_id = config_id;
+        self.next_config_id = Some(config_id);
     }
 
     fn start_replica(&mut self) {
-        let config_id = self.next_config_id;
-        if config_id > 0 {
-            if self.active_config_id >= config_id {
-                warn!(self.ctx.log(), "Trying to start config_id: {} again? Active config_id: {}", config_id, self.active_config_id);
-            }
-            info!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, self.next_config_id);
+        if let Some(config_id) = self.next_config_id {
+            info!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, config_id);
             self.active_config_id = config_id;
             let paxos = self.paxos_comps
                 .get(&config_id)
@@ -196,6 +192,7 @@ impl<S, P> PaxosReplica<S, P> where
             self.ctx.system().start(paxos);
             self.ctx.system().start(communicator);
             self.ctx.system().start(ble);
+            self.next_config_id = None;
         }
     }
 
@@ -209,13 +206,13 @@ impl<S, P> PaxosReplica<S, P> where
             self.ctx.system().kill(paxos);
         }
         self.active_config_id = 0;
-        self.next_config_id = 0;
+        self.next_config_id = None;
     }
 
     fn new_iteration(&mut self, init: Init) {
         let nodes = init.nodes;
         self.active_config_id = 0;
-        self.next_config_id = 0;
+        self.next_config_id = None;
         self.stopped = false;
         self.prev_sequences.clear();
         self.active_peers.0.clear();
@@ -227,8 +224,8 @@ impl<S, P> PaxosReplica<S, P> where
             self.nodes.insert(id as u64 + 1, actorpath);
         }
         if self.initial_config.contains(&self.pid){
-            self.next_config_id = 1;
-            self.create_replica(self.next_config_id, self.initial_config.clone(), true);
+            self.next_config_id = Some(1);
+            self.create_replica(1, self.initial_config.clone(), true);
         } else {
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
@@ -279,9 +276,6 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn retry_request_sequence(&mut self, config_id: u32, seq_len: u64) {
-        /*if self.active_config_id >= config_id {
-            return;
-        }*/
         if let Some(transfer) = self.pending_seq_transfers.get(&config_id) {
             let num_segments = transfer.0;
             let received_segments = &transfer.1;
@@ -290,7 +284,7 @@ impl<S, P> PaxosReplica<S, P> where
             if num_active > 0 {
                 for i in 0..num_segments {
                     let tag = i + 1;
-                    if !received_segments.contains_key(&tag) {    // missing segment, retry from an active node
+                    if !received_segments.contains_key(&tag) {    // missing segment, retry from a replica we know have the final seq
                         let from_idx = i as u64 * offset;
                         let to_idx = from_idx + offset;
                         let pid = self.active_peers.0.get(i as usize % num_active).expect(&format!("Failed to get active pid. idx: {}, len: {}", i, self.active_peers.0.len()));
@@ -300,7 +294,6 @@ impl<S, P> PaxosReplica<S, P> where
             }
             self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
         }
-        //let transfer = self.pending_seq_transfers.get(&config_id).expect(&format!("Replica should have prepared for receiving eager transfers. config_id: {}, active_config_id: {}", config_id, self.active_config_id));
     }
 
     fn get_sequence_metadata(&self, config_id: u32) -> SequenceMetaData {
@@ -331,8 +324,20 @@ impl<S, P> PaxosReplica<S, P> where
     fn handle_sequence_request(&self, sr: SequenceRequest, requestor: ActorPath) {
         let (succeeded, ser_entries) = match self.prev_sequences.get(&sr.config_id) {
             Some(seq) => {
-                let entries = seq.get_ser_entries(sr.from_idx, sr.to_idx).expect("Should have all entries in final sequence!");
-                (true, entries)
+                if let Some(entries) = seq.get_ser_entries(sr.from_idx, sr.to_idx) {
+                    (true, entries)
+                } else {
+                    warn!(
+                        self.ctx.log(),
+                        "Previous sequence did not have requested entries: active_config: {}, requested_config: {}, requested_idx: {}-{}, sequence len: {}",
+                        self.active_config_id,
+                        sr.config_id,
+                        sr.from_idx,
+                        sr.to_idx,
+                        seq.get_sequence_len()
+                    );
+                    (false, vec![])
+                }
             },
             None => {
                 if self.active_config_id == sr.config_id {
@@ -356,11 +361,11 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
-        let prev_config_id = st.metadata.config_id;
-        let prev_seq_len = st.metadata.len;
         if self.active_config_id > st.config_id || self.complete_sequences.contains(&st.config_id) {
             return; // ignore late sequence transfers
         }
+        let prev_config_id = st.metadata.config_id;
+        let prev_seq_len = st.metadata.len;
         // pull previous sequence if exists and not already started
         if prev_config_id != 0 && !self.complete_sequences.contains(&prev_config_id) && !self.pending_seq_transfers.contains_key(&prev_config_id) {
             self.pull_sequence(prev_config_id, prev_seq_len);
@@ -511,37 +516,44 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             rm: ReconfigurationMsg [ReconfigSer] => {
                 match rm {
                     ReconfigurationMsg::Init(r) => {
-                        if self.next_config_id < r.config_id && !self.stopped {
-                            debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
-                            for pid in &r.nodes.continued_nodes {
-                                if pid == &r.from {
-                                    self.active_peers.0.push(*pid);
-                                } else {
-                                    self.active_peers.1.push(*pid);
+                        if self.stopped || self.active_config_id >= r.config_id {
+                            return;
+                        } else {
+                            match self.next_config_id {
+                                None => {
+                                    debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
+                                    for pid in &r.nodes.continued_nodes {
+                                        if pid == &r.from {
+                                            self.active_peers.0.push(*pid);
+                                        } else {
+                                            self.active_peers.1.push(*pid);
+                                        }
+                                    }
+                                    match self.policy {
+                                        TransferPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
+                                        TransferPolicy::Eager => {
+                                            let n = r.nodes.continued_nodes.len();
+                                            let config_id = r.seq_metadata.config_id;
+                                            self.pending_seq_transfers.insert(r.seq_metadata.config_id, (n as u32, HashMap::with_capacity(n)));
+                                            let seq_len = r.seq_metadata.len;
+                                            self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
+                                        }
+                                    }
+                                    let mut nodes = r.nodes.continued_nodes;
+                                    let mut new_nodes = r.nodes.new_nodes;
+                                    nodes.append(&mut new_nodes);
+                                    self.create_replica(r.config_id, nodes, false);
+                                },
+                                Some(next_config_id) => {
+                                    if next_config_id == r.config_id {
+                                        if r.nodes.continued_nodes.contains(&r.from) {
+                                            // update who we know already decided final seq
+                                            self.active_peers.1.retain(|x| x == &r.from);
+                                            self.active_peers.0.push(r.from);
+                                        }
+                                    }
                                 }
                             }
-                            match self.policy {
-                                TransferPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
-                                TransferPolicy::Eager => {
-                                    let n = r.nodes.continued_nodes.len();
-                                    let config_id = r.seq_metadata.config_id;
-                                    self.pending_seq_transfers.insert(r.seq_metadata.config_id, (n as u32, HashMap::with_capacity(n)));
-                                    let seq_len = r.seq_metadata.len;
-                                    self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
-                                }
-                            }
-                            let mut nodes = r.nodes.continued_nodes;
-                            let mut new_nodes = r.nodes.new_nodes;
-                            nodes.append(&mut new_nodes);
-                            self.create_replica(r.config_id, nodes, false);
-                        } else if self.next_config_id == r.config_id {
-                            if r.nodes.continued_nodes.contains(&r.from) {
-                                // update who we know already decided final seq
-                                self.active_peers.1.retain(|x| x == &r.from);
-                                self.active_peers.0.push(r.from);
-                            }
-                        } else {    // TODO remove
-                            warn!(self.ctx.log(), "Got unexpected ReconfigInit config_id: {}, active_config_id: {}", r.config_id, self.active_config_id);
                         }
                     },
                     ReconfigurationMsg::SequenceRequest(sr) => {
@@ -562,6 +574,10 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         if !self.stopped {
                             if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
                                 active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
+                            } else {
+                                warn!(self.ctx.log(), "Failed proposal {}. No active Paxos!", p.id);
+                                let pr = ProposalResp::failed(p.id);
+                                p.client.tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
                             }
                         }
                     },
@@ -626,7 +642,6 @@ struct PaxosComp<S, P> where
     paxos: Paxos<S, P>,
     pid: u64,
     current_leader: u64,
-    stopped: bool,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     cached_client: bool,
 }
@@ -656,7 +671,6 @@ impl<S, P> PaxosComp<S, P> where
             paxos,
             pid,
             current_leader: 0,
-            stopped: false,
             timers: None,
             cached_client: false,
         }
@@ -712,8 +726,10 @@ impl<S, P> PaxosComp<S, P> where
                     let nodes = Reconfig::with(continued_nodes, new_nodes);
                     let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
-                    let pr = ProposalResp::succeeded_normal(RECONFIG_ID);
-                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    if self.cached_client {
+                        let pr = ProposalResp::succeeded_normal(RECONFIG_ID);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    }
                 }
             }
         }
@@ -787,9 +803,7 @@ impl<S, P> Require<CommunicationPort> for PaxosComp<S, P> where
 {
     fn handle(&mut self, msg: <CommunicationPort as Port>::Indication) -> () {
         if let AtomicBroadcastCompMsg::RawPaxosMsg(pm) = msg {
-            if !self.stopped {
-                self.paxos.handle(pm);
-            }
+            self.paxos.handle(pm);
         }
     }
 }
@@ -799,11 +813,9 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     fn handle(&mut self, l: Leader) -> () {
-        if !self.stopped {
-            debug!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
-            self.current_leader = l.pid;
-            self.paxos.handle_leader(l);
-        }
+        debug!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
+        self.current_leader = l.pid;
+        self.paxos.handle_leader(l);
     }
 }
 
@@ -1072,7 +1084,8 @@ pub mod raw_paxos{
                 self.promises.push(rp);
                 self.lds.insert(from, prom.ld);
                 if self.promises.len() >= self.majority {
-                    let suffix = Self::max_value(&self.promises);
+                    let promises = mem::replace(&mut self.promises, Vec::with_capacity(self.majority * 2));
+                    let suffix = Self::max_value(promises);
                     let last_is_stop = match suffix.last() {
                         Some(e) => e.is_stopsign(),
                         None => false
@@ -1103,7 +1116,7 @@ pub mod raw_paxos{
         fn handle_promise_accept(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
                 self.lds.insert(from, prom.ld);
-                if prom.ld > self.storage.get_sequence_len() {
+                if prom.ld > self.storage.get_sequence_len() {  // TODO remove
                     panic!(
                         "promise_accept from node {}. ld: {}, my seq_len: {}, my ld: {}",
                         from,
@@ -1154,7 +1167,7 @@ pub mod raw_paxos{
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
                 let suffix = if &na >= &prep.n_accepted {
-                    if prep.ld > self.storage.get_sequence_len() {
+                    /*if prep.ld > self.storage.get_sequence_len() {
                         panic!(
                             "ld in Prepare is longer than my accepted seq: ld: {}, la: {}, ballot: {:?}, my accepted ballot: {:?}",
                             prep.ld,
@@ -1162,7 +1175,7 @@ pub mod raw_paxos{
                             prep.n_accepted,
                             na
                         )
-                    }
+                    }*/
                     self.storage.get_suffix(prep.ld)
                 } else {
                     vec![]
@@ -1210,18 +1223,16 @@ pub mod raw_paxos{
         }
 
         /*** algorithm specific functions ***/
-        fn max_value(promises: &Vec<ReceivedPromise>) -> Vec<Entry> {
-            let mut max_n: &Ballot = &promises[0].n_accepted;
-            let mut max_sfx: &Vec<Entry> = &promises[0].sfx;
-            for p in promises {
-                if &p.n_accepted > max_n {
-                    max_n = &p.n_accepted;
-                    max_sfx = &p.sfx;
-                } else if &p.n_accepted == max_n && &p.sfx.len() > &max_sfx.len() {
-                    max_sfx = &p.sfx;
+        fn max_value(promises: Vec<ReceivedPromise>) -> Vec<Entry> {
+            let max_promise = promises.into_iter().max_by(|x, y|
+                if x.n_accepted > y.n_accepted || (x.n_accepted == y.n_accepted && x.sfx.len() > y.sfx.len()){
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
                 }
-            }
-            max_sfx.clone()
+            );
+            let max_sfx = max_promise.expect("Should have at least majority of promises").sfx;
+            max_sfx
         }
 
         fn drop_after_stopsign(entries: &mut Vec<Entry>) {   // drop all entries ordered after stopsign (if any)
@@ -1346,9 +1357,9 @@ mod ballot_leader_election {
         pid: u64,
         peers: HashSet<ActorPath>,
         round: u64,
-        ballots: Vec<(u64, Ballot)>,
+        ballots: Vec<(Ballot, u64)>,
         current_ballot: Ballot,  // (round, pid)
-        leader: Option<(u64, Ballot)>,
+        leader: Option<(Ballot, u64)>,
         max_ballot: Ballot,
         hb_delay: u64,
         delta: u64,
@@ -1378,29 +1389,29 @@ mod ballot_leader_election {
             }
         }
 
-        fn max_by_ballot(ballots: Vec<(u64, Ballot)>) -> (u64, Ballot) {
-            let mut top = ballots[0];
-            for ballot in ballots {
-                if ballot.1 > top.1 {
-                    top = ballot;
-                } else if ballot.1 == top.1 && ballot.0 > top.0 {   // use pid to tiebreak
-                    top = ballot;
-                }
-            }
-            top
+        fn max_by_ballot(&self) -> (Ballot, u64) {
+            self.ballots
+                .iter()
+                .max_by(|x, y|
+                    if x.0 > y.0 || (x.0 == y.0 && x.1 < y.1) { // use less pid as tiebreaker
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    }
+                )
+                .expect("Should have at least majority of ballots").clone()
         }
 
         fn check_leader(&mut self) {
-            self.ballots.push((self.pid, self.current_ballot));
-            let ballots = std::mem::replace(&mut self.ballots, Vec::with_capacity(self.majority * 2));
-            let (top_pid, top_ballot) = Self::max_by_ballot(ballots);
+            self.ballots.push((self.current_ballot, self.pid));
+            let (top_ballot, top_pid) = self.max_by_ballot();
             if top_ballot < self.max_ballot {
                 self.current_ballot.n = self.max_ballot.n + 1;
                 self.leader = None;
             } else {
-                if self.leader != Some((top_pid, top_ballot)) {
+                if self.leader != Some((top_ballot, top_pid)) {
                     self.max_ballot = top_ballot;
-                    self.leader = Some((top_pid, top_ballot));
+                    self.leader = Some((top_ballot, top_pid));
                     self.ble_port.trigger(Leader::with(top_pid, top_ballot));
                 }
             }
@@ -1410,16 +1421,17 @@ mod ballot_leader_election {
             if self.ballots.len() + 1 >= self.majority {
                 self.check_leader();
             }
+            self.ballots.clear();
             self.round += 1;
             for peer in &self.peers {
                 let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
-                peer.tell((HeartbeatMsg::Request(hb_request), BallotLeaderSer), self);
+                peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
             }
+            self.start_timer();
         }
 
         fn start_timer(&mut self) {
-            let timer = self.schedule_periodic(
-                Duration::from_millis(0),
+            let timer = self.schedule_once(
                 Duration::from_millis(self.hb_delay),
                 move |c, _| c.hb_timeout()
             );
@@ -1468,15 +1480,13 @@ mod ballot_leader_election {
                                 self.max_ballot = req.max_ballot;
                             }
                             let hb_reply = HeartbeatReply::with(self.pid, req.round, self.current_ballot);
-                            sender.tell((HeartbeatMsg::Reply(hb_reply), BallotLeaderSer), self);
+                            sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
                         },
                         HeartbeatMsg::Reply(rep) => {
                             if rep.round == self.round {
-                                self.ballots.push((rep.sender_pid, rep.max_ballot));
+                                self.ballots.push((rep.max_ballot, rep.sender_pid));
                             } else {
-                                self.stop_timer();
                                 self.hb_delay += self.delta;
-                                self.start_timer();
                             }
                         }
                     }
@@ -1497,6 +1507,7 @@ mod tests {
     use std::sync::Arc;
     use super::super::messages::Run;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
+    use super::super::messages::paxos::ballot_leader_election::Ballot;
 
     fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
         let mut systems = Vec::with_capacity(n as usize);
@@ -1532,13 +1543,7 @@ mod tests {
         }
         (systems, nodes, actorpaths)
     }
-
-    /*#[test]
-    fn drop_after_ss() {
-        let e1 = Entry::Normal(Normal(5))
-        let proposals = vec![];
-    }*/
-
+    
     #[test]
     fn paxos_test() {
         let num_proposals = 1000;
