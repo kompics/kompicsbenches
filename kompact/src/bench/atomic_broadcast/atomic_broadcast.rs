@@ -9,13 +9,15 @@ use std::str::FromStr;
 use super::raft::{RaftReplica};
 use super::paxos::{PaxosReplica, TransferPolicy};
 use super::storage::paxos::{MemoryState, MemorySequence};
-use super::storage::raft::DiskStorage;
-use tikv_raft::{storage::MemStorage};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
 use super::messages::Run;
 use std::collections::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
+
+#[allow(unused_imports)]
+use super::storage::raft::DiskStorage;
+use tikv_raft::{storage::MemStorage};
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
@@ -139,6 +141,7 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
         "single" => {
             let mut reconfig: Vec<u64> = (1..n).collect();
             reconfig.push(n+1);
+            let new_followers: Vec<u64> = vec![];
             let reconfiguration = Some((reconfig, new_followers));
             Ok((1, reconfiguration))
         },
@@ -397,7 +400,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
                         self.partitioning_actor = Some(self.initialise_iteration(nodes));
                         self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
-                        std::thread::sleep(Duration::from_secs(3));
                         self.paxos_replica = Some(replica_comp);
                     }
                     Some(Algorithm::Raft) => {
@@ -453,7 +455,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             },
             _ => panic!("No partitioning actor found!"),
         }
-
         match self.client_comp {
             Some(ref client_comp) => {
                 client_comp.actor_ref().tell(Run);

@@ -60,12 +60,16 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn create_rawraft_config(&self) -> Config {
-        Config {
+        let c = Config {
             id: self.pid,
-            election_tick: 10,
-            heartbeat_tick: 3,
+            election_tick: 5,  // number of ticks without HB before starting election
+            heartbeat_tick: 1,  // leader sends HB every heartbeat_tick
+            max_inflight_msgs: 10000,    // TODO: max_inflight_msgs * msg_size = BUFFER_SIZE in Kompact?
+            max_size_per_msg: 6400, //std::u64::MAX
             ..Default::default()
-        }
+        };
+        assert_eq!(c.validate().is_ok(), true);
+        c
     }
 
     fn create_components(&mut self) {
@@ -170,7 +174,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                         PartitioningActorMsg::Init(init) => {
                             self.iteration_id = init.init_id;
                             self.pid = init.pid as u64;
-                            debug!(self.ctx.log(), "Got init! My pid: {}", self.pid);
+                            info!(self.ctx.log(), "Got init! My pid: {}", self.pid);
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
                                 self.nodes.insert(id as u64 + 1, actorpath);
                             }
@@ -259,7 +263,7 @@ impl<S> Actor for RaftComp<S> where
             RaftCompMsg::Propose(p) => {
                 if !self.stopped {
                     if self.raw_raft.raft.state == StateRole::Leader{
-                        self.propose(p);
+                        self.propose(p);    // TODO propose no matter what state if TikV forwards automatically
                     }
                     else {
                         let leader_id = self.raw_raft.raft.leader_id;
@@ -351,6 +355,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn propose(&mut self, proposal: Proposal) {
         let last_index1 = self.raw_raft.raft.raft_log.last_index() + 1;
         let id = proposal.id;
+        if id % 2000 == 0 {
+            info!(self.ctx.log(), "Proposing {}", id);
+        }
         if !self.cached_client {
             self.communication_port.trigger(CommunicatorMsg::CacheClient(proposal.client));
             self.cached_client = true;
@@ -439,19 +446,23 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
                                 self.has_reconfigured = true;
                                 let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                                let current_config = (cs.nodes.clone(), cs.learners.clone());
-                                let pr = ProposalResp::succeeded_reconfiguration(current_config);
+                                if self.cached_client {
+                                    let current_config = (cs.nodes.clone(), cs.learners.clone());
+                                    let pr = ProposalResp::succeeded_reconfiguration(current_config);
+                                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                                }
                                 store.set_conf_state(cs, None);
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                             }
                         }
                         _ => unimplemented!(),
                     }
                 } else {
                     // normal proposals
-                    let id = entry.data.as_slice().get_u64();
-                    let pr = ProposalResp::succeeded_normal(id);
-                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    if self.cached_client {
+                        let id = entry.data.as_slice().get_u64();
+                        let pr = ProposalResp::succeeded_normal(id);
+                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                    }
                 }
             }
             if let Some(last_committed) = committed_entries.last() {

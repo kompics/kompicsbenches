@@ -71,10 +71,9 @@ impl Provide<CommunicationPort> for Communicator {
                     receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
                 },
                 CommunicatorMsg::ProposalResponse(pr) => {
-                    if let Some(client) = &self.cached_client {
-                        let am = AtomicBroadcastMsg::ProposalResp(pr);
-                        client.tell((am, AtomicBroadcastSer), self);
-                    }
+                    let client = self.cached_client.as_ref().expect("No cached client");
+                    let am = AtomicBroadcastMsg::ProposalResp(pr);
+                    client.tell((am, AtomicBroadcastSer), self);
                 },
             }
         }
