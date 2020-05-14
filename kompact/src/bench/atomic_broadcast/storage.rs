@@ -581,7 +581,7 @@ pub mod paxos {
 
         fn get_suffix(&self, from: u64) -> Vec<Entry>;
 
-        fn get_ser_suffix(&self, from: u64) -> Vec<u8>;
+        fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>>;
 
         fn get_sequence(&self) -> Vec<Entry>;
 
@@ -791,7 +791,7 @@ pub mod paxos {
             }
         }
 
-        pub fn get_ser_suffix(&self, from: u64) -> Vec<u8> {
+        pub fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>> {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_ser_suffix(from),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.get_ser_suffix(from),
@@ -892,19 +892,15 @@ pub mod paxos {
             }
         }
 
-        fn get_ser_suffix(&self, from: u64) -> Vec<u8> {
+        fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>> {
             match self.sequence.get(from as usize..) {
                 Some(s) => {
                     let len = s.len();
                     let mut bytes: Vec<u8> = Vec::with_capacity(len * 40);
                     PaxosSer::serialise_entries(s, &mut bytes);
-                    bytes
+                    Some(bytes)
                 },
-                None => {
-                    let mut bytes: Vec<u8> = Vec::with_capacity(4);
-                    bytes.put_u32(0);
-                    bytes
-                }
+                None => None,
             }
         }
 
