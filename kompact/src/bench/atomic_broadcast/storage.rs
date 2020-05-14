@@ -562,6 +562,7 @@ pub mod paxos {
     use std::sync::Arc;
     use std::mem;
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
+    use kompact::prelude::BufMut;
 
     pub trait Sequence {
         fn new() -> Self;
@@ -899,7 +900,11 @@ pub mod paxos {
                     PaxosSer::serialise_entries(s, &mut bytes);
                     bytes
                 },
-                None => vec![]
+                None => {
+                    let mut bytes: Vec<u8> = Vec::with_capacity(4);
+                    bytes.put_u32(0);
+                    bytes
+                }
             }
         }
 
