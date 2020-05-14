@@ -1180,7 +1180,7 @@ pub mod raw_paxos{
                     }*/
                     self.storage.get_ser_suffix(prep.ld)
                 } else {
-                    vec![]
+                    None
                 };
                 let p = Promise::with_serialised_sfx(prep.n, na, ser_sfx, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
