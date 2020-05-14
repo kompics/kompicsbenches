@@ -90,7 +90,7 @@ pub mod paxos {
         pub n: Ballot,
         pub sfx: Vec<Entry>,
         pub ld: u64,
-        pub ser_sfx: Option<(Vec<u8>)>
+        pub ser_sfx: Option<Vec<u8>>
     }
 
     impl AcceptSync {
