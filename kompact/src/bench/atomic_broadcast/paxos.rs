@@ -14,12 +14,10 @@ use uuid::Uuid;
 use kompact::prelude::Buf;
 use rand::Rng;
 use crate::bench::atomic_broadcast::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
+use super::parameters::{*, paxos::*};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
-
-const DELTA: u64 = 500;
-const TRANSFER_TIMEOUT: Duration = Duration::from_millis(800);
 const INITIAL_CAPACITY: usize = 1000;
 
 pub trait SequenceTraits: Sequence + Debug + Send + Sync + 'static {}
@@ -153,7 +151,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, DELTA)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -263,7 +261,7 @@ impl<S, P> PaxosReplica<S, P> where
             debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
             self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
         }
-        self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
+        self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
     }
 
     fn request_sequence(&self, pid: u64, config_id: u32, from_idx: u64, to_idx: u64, tag: u32) {
@@ -292,7 +290,7 @@ impl<S, P> PaxosReplica<S, P> where
                     }
                 }
             }
-            self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
+            self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
         }
     }
 
@@ -536,7 +534,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             let config_id = r.seq_metadata.config_id;
                                             self.pending_seq_transfers.insert(r.seq_metadata.config_id, (n as u32, HashMap::with_capacity(n)));
                                             let seq_len = r.seq_metadata.len;
-                                            self.schedule_once(TRANSFER_TIMEOUT, move |c, _| c.retry_request_sequence(config_id, seq_len));
+                                            self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
                                         }
                                     }
                                     let mut nodes = r.nodes.continued_nodes;
@@ -679,12 +677,12 @@ impl<S, P> PaxosComp<S, P> where
     fn start_timers(&mut self) {
         let decided_timer = self.schedule_periodic(
             Duration::from_millis(0),
-            Duration::from_millis(100),
+            Duration::from_millis(GET_DECIDED_PERIOD),
             move |c, _| c.get_decided()
         );
         let outgoing_timer = self.schedule_periodic(
             Duration::from_millis(0),
-            Duration::from_millis(1),
+            Duration::from_millis(OUTGOING_MSGS_PERIOD),
             move |p, _| p.send_outgoing()
         );
         self.timers = Some((decided_timer, outgoing_timer));
@@ -829,6 +827,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::paxos::INITIAL_CAPACITY;
+    use kompact::prelude::BufMut;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1180,7 +1179,9 @@ pub mod raw_paxos{
                     }*/
                     self.storage.get_ser_suffix(prep.ld)
                 } else {
-                    vec![]
+                    let mut bytes = Vec::<u8>::with_capacity(4);
+                    bytes.put_u32(0);
+                    bytes
                 };
                 let p = Promise::with_serialised_sfx(prep.n, na, ser_sfx, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
@@ -1512,6 +1513,9 @@ mod tests {
     use super::super::messages::Run;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
     use super::super::messages::paxos::ballot_leader_election::Ballot;
+    use crate::bench::atomic_broadcast::paxos::raw_paxos::EntryMetaData;
+    use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
+    use crate::bench::atomic_broadcast::raft::RaftReplicaMsg::ProposalForward;
 
     fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
         let mut systems = Vec::with_capacity(n as usize);
@@ -1550,8 +1554,8 @@ mod tests {
 
     #[test]
     fn paxos_test() {
-        let num_proposals = 1000;
-        let batch_size = 250;
+        let num_proposals = 4000;
+        let batch_size = 2000;
         let config = vec![1,2,3];
         let reconfig: Option<(Vec<u64>, Vec<u64>)> = None;
         // let reconfig = Some((vec![1,2,6,7,8], vec![]));
@@ -1645,6 +1649,77 @@ mod tests {
         }
         println!("PASSED!!!");
     }
+
+    #[test]
+    fn ser_sfx_test() {
+        use super::super::messages::paxos::{Promise, AcceptSync};
+        use super::*;
+        use super::raw_paxos::Normal;
+        use kompact::prelude::BufMut;
+
+        let b1 = Ballot::with(1, 1);
+        let b2 = Ballot::with(2, 2);
+        let meta1 = EntryMetaData::with(1, 1);
+        let meta2 = EntryMetaData::with(2, 2);
+        let mut data: Vec<u8> = Vec::with_capacity(8);
+        data.put_u64(37);
+
+        let e1 = Entry::Normal(Normal::with(meta1, data.clone()));
+        let e2 = Entry::Normal(Normal::with(meta2, data.clone()));
+        let sfx = vec![e1, e2];
+        let mut ser_sfx = Vec::<u8>::with_capacity(40);
+
+        let mut ser_empty_sfx = Vec::<u8>::with_capacity(4);
+        ser_empty_sfx.put_u32(0);
+
+        let ld = 624;
+        PaxosSer::serialise_entries(&sfx, &mut ser_sfx);
+        let p = Promise::with_serialised_sfx(b1.clone(), b2.clone(), ser_empty_sfx.clone(), ld);
+        let from = 234;
+        let to = 345;
+        let msg_p = Message::with(from, to, PaxosMsg::Promise(p.clone()));
+
+        let a = AcceptSync::with_serialised_sfx(b1.clone(), ser_empty_sfx, ld);
+        let msg_a = Message::with(from, to, PaxosMsg::AcceptSync(a.clone()));
+
+        let pf = PaxosMsg::ProposalForward(sfx.clone());
+        let msg_pf = Message::with(from, to, pf);
+        // let mut bytes = Vec::<u8>::with_capacity(50);
+        let msgs = [msg_pf, msg_a, msg_p];
+        for msg in msgs.iter() {
+            let ser = msg.serialised();
+            let mut bytes = ser.expect("failed to ser").data;
+            match PaxosSer::deserialise(&mut bytes) {
+                Ok(m) => {
+                    assert_eq!(m.from, from);
+                    assert_eq!(m.to, to);
+                    match m.msg {
+                        PaxosMsg::Promise(des_p) => {
+                            assert_eq!(des_p.n, p.n);
+                            assert_eq!(des_p.n_accepted, p.n_accepted);
+                            assert_eq!(des_p.ld, p.ld);
+                            println!("{:?}", des_p.sfx);
+                            assert_eq!(des_p.sfx, p.sfx)
+                        },
+                        PaxosMsg::AcceptSync(des_a) => {
+                            assert_eq!(des_a.n, a.n);
+                            assert_eq!(des_a.ld, a.ld);
+                            println!("{:?}", des_a.sfx);
+                            assert_eq!(des_a.sfx, a.sfx);
+                        },
+                        PaxosMsg::ProposalForward(des_ents) => {
+                            println!("{:?}", des_ents);
+                            assert_eq!(des_ents, sfx.clone());
+                        }
+                        _ => panic!("Got unexpected msg")
+                    }
+                },
+                _ => panic!("Failed to deserialise")
+            }
+
+        }
+    }
+
 /*
     #[test]
     fn reconfig_ser_des_test(){
