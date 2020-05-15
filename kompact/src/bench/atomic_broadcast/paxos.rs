@@ -827,7 +827,6 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::paxos::INITIAL_CAPACITY;
-    use kompact::prelude::BufMut;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
