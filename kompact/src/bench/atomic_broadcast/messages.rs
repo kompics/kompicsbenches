@@ -592,9 +592,6 @@ pub mod paxos {
                     let n = buf.get_u64() as usize;
                     let mut seq_ser: Vec<u8> = vec![0; n];
                     buf.copy_to_slice(&mut seq_ser);
-                    /*for _ in 0..n {
-                        seq_ser.push(buf.get_u8());
-                    }*/
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
                     let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
                     Ok(ReconfigurationMsg::SequenceTransfer(st))

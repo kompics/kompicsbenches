@@ -558,11 +558,9 @@ pub mod paxos {
     use std::fmt::Debug;
     use super::super::messages::paxos::{ballot_leader_election::Ballot};
     use super::super::paxos::{SequenceTraits, PaxosStateTraits, raw_paxos::Entry};
-//    use crate::bench::atomic_broadcast::paxos::raw_paxos::Paxos;
     use std::sync::Arc;
     use std::mem;
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
-    use kompact::prelude::BufMut;
 
     pub trait Sequence {
         fn new() -> Self;
