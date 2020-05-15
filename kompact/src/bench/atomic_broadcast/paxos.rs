@@ -1179,9 +1179,7 @@ pub mod raw_paxos{
                     }*/
                     self.storage.get_ser_suffix(prep.ld)
                 } else {
-                    let mut bytes = Vec::<u8>::with_capacity(4);
-                    bytes.put_u32(0);
-                    bytes
+                    None
                 };
                 let p = Promise::with_serialised_sfx(prep.n, na, ser_sfx, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));

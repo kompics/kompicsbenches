@@ -80,8 +80,8 @@ pub mod paxos {
         pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
             Promise { n, n_accepted, sfx, ld, ser_sfx: None }
         }
-        pub fn with_serialised_sfx(n: Ballot, n_accepted: Ballot, ser_sfx: Vec<u8>, ld: u64) -> Promise {
-            Promise { n, n_accepted, sfx: vec![], ld, ser_sfx: Some(ser_sfx) }
+        pub fn with_serialised_sfx(n: Ballot, n_accepted: Ballot, ser_sfx: Option<Vec<u8>>, ld: u64) -> Promise {
+            Promise { n, n_accepted, sfx: vec![], ld, ser_sfx }
         }
     }
 
@@ -97,8 +97,8 @@ pub mod paxos {
         pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64) -> AcceptSync {
             AcceptSync { n, sfx, ld, ser_sfx: None }
         }
-        pub fn with_serialised_sfx(n: Ballot, ser_sfx: Vec<u8>, ld: u64) -> AcceptSync {
-            AcceptSync { n, sfx: vec![], ld, ser_sfx: Some(ser_sfx) }
+        pub fn with_serialised_sfx(n: Ballot, ser_sfx: Option<Vec<u8>>, ld: u64) -> AcceptSync {
+            AcceptSync { n, sfx: vec![], ld, ser_sfx }
         }
     }
 
