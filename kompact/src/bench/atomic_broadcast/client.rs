@@ -4,9 +4,7 @@ use synchronoise::CountdownEvent;
 use std::collections::{HashMap, HashSet};
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
 use std::time::Duration;
-
-const PROPOSAL_TIMEOUT: u64 = 800;
-const DELTA: u64 = 20;
+use super::parameters::client::*;
 
 #[derive(ComponentDefinition)]
 pub struct Client {
@@ -150,7 +148,7 @@ impl Actor for Client {
                                             }
                                         }
                                     } else {    // duplicate response
-                                        self.timeout = self.timeout + self.timeout/DELTA;
+                                        self.timeout = self.timeout + self.timeout/DUPLICATE_FACTOR;
                                     }
                                 }
                             }

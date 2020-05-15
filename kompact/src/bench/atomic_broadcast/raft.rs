@@ -11,11 +11,13 @@ use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPo
 use std::sync::Arc;
 use uuid::Uuid;
 use std::collections::HashSet;
+use super::parameters::{*, raft::*};
+use rand::Rng;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
-const READY_PERIOD: Duration = Duration::from_millis(1);
-const TICK_PERIOD: Duration = Duration::from_millis(100);
+// const READY_PERIOD: Duration = Duration::from_millis(1);
+// const TICK_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
@@ -60,12 +62,19 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn create_rawraft_config(&self) -> Config {
+        // convert from ms to logical clock ticks
+        let mut rand = rand::thread_rng();
+        let election_timeout = ELECTION_TIMEOUT/TICK_PERIOD;
+        let random_delta = RANDOM_DELTA/TICK_PERIOD;
+        let election_tick = rand.gen_range(election_timeout, election_timeout + random_delta) as usize;
+        let heartbeat_tick = (LEADER_HEARTBEAT_PERIOD/TICK_PERIOD) as usize;
+        info!(self.ctx.log(), "RawRaft config: election_tick={}, heartbeat_tick={}", election_tick, heartbeat_tick);
         let c = Config {
             id: self.pid,
-            election_tick: 5,  // number of ticks without HB before starting election
-            heartbeat_tick: 1,  // leader sends HB every heartbeat_tick
-            max_inflight_msgs: 10000,    // TODO: max_inflight_msgs * msg_size = BUFFER_SIZE in Kompact?
-            max_size_per_msg: 6400, //std::u64::MAX
+            election_tick,  // number of ticks without HB before starting election
+            heartbeat_tick,  // leader sends HB every heartbeat_tick
+            max_inflight_msgs: 100000,
+            max_size_per_msg: 64000, // TODO: same as BUFFER_SIZE in Kompact?
             ..Default::default()
         };
         assert_eq!(c.validate().is_ok(), true);
@@ -332,8 +341,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn start_timers(&mut self){
-        let ready_timer = self.schedule_periodic(DELAY, READY_PERIOD, move |c, _| c.on_ready());
-        let tick_timer = self.schedule_periodic(DELAY, TICK_PERIOD, move |rc, _| rc.tick() );
+        let ready_timer = self.schedule_periodic(DELAY, Duration::from_millis(OUTGOING_MSGS_PERIOD), move |c, _| c.on_ready());
+        let tick_timer = self.schedule_periodic(DELAY, Duration::from_millis(TICK_PERIOD), move |rc, _| rc.tick() );
         self.timers = Some((ready_timer, tick_timer));
     }
 
