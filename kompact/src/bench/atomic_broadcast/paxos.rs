@@ -359,7 +359,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
-        if self.active_config_id > st.config_id || self.complete_sequences.contains(&st.config_id) {
+        if self.active_config_id > st.config_id || self.complete_sequences.contains(&st.config_id) || self.stopped {
             return; // ignore late sequence transfers
         }
         let prev_config_id = st.metadata.config_id;
@@ -399,15 +399,13 @@ impl<S, P> PaxosReplica<S, P> where
             let to_idx = st.to_idx;
             // query someone we know have reached final seq
             let num_active = self.active_peers.0.len();
-            if num_active > 1 {
+            if num_active > 0 {
                 // choose randomly
                 let mut rng = rand::thread_rng();
-                let rnd = rng.gen_range(1, num_active);
-                let pid = self.active_peers.0.get(rnd).expect(&format!("Failed to get random active pid. Rnd: {}, len: {}", rnd, self.active_peers.0.len()));
-                self.request_sequence(*pid, config_id, from_idx, to_idx, tag);
-            } else if num_active == 1 {
-                let pid = self.active_peers.0.first().expect("No active peer found");
-                self.request_sequence(*pid, config_id, from_idx, to_idx, tag);
+                let rnd = rng.gen_range(0, num_active);
+                let pid = self.active_peers.0[rnd];
+                // let pid = self.active_peers.0.get(rnd).expect(&format!("Failed to get random active pid. Rnd: {}, len: {}", rnd, self.active_peers.0.len()));
+                self.request_sequence(pid, config_id, from_idx, to_idx, tag);
             } // else let timeout handle it to retry
         }
     }
@@ -570,10 +568,14 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 match am {
                     AtomicBroadcastMsg::Proposal(p) => {
                         if !self.stopped {
-                            if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
+                            if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
+                                warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
+                                return;
+                            }
+                            else if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
                                 active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
                             } else {
-                                warn!(self.ctx.log(), "Failed proposal {}. No active Paxos!", p.id);
+                                // warn!(self.ctx.log(), "Failed proposal {}. No active Paxos!", p.id);
                                 let pr = ProposalResp::failed(p.id);
                                 p.client.tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
                             }
@@ -906,13 +908,7 @@ pub mod raw_paxos{
                     match &self.state {
                         (Role::Leader, Phase::Prepare) => self.handle_promise_prepare(prom, m.from),
                         (Role::Leader, Phase::Accept) => self.handle_promise_accept(prom, m.from),
-                        _ => {
-                            if !self.proposals.is_empty() {
-                                let proposals = mem::replace(&mut self.proposals, Vec::with_capacity(INITIAL_CAPACITY));
-                                // println!("Got promise but not leader... Forwarding proposals to {}", self.leader);
-                                self.forward_proposals(proposals);
-                            }
-                        }
+                        _ => {}
                     }
                 },
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
@@ -924,6 +920,7 @@ pub mod raw_paxos{
         }
 
         pub fn propose_normal(&mut self, data: Vec<u8>) {
+            if self.storage.stopped(){ return; }
             let normal_entry = Entry::Normal(self.create_normal_entry(data));
             match self.state {
                 (Role::Leader, Phase::Prepare) => {
@@ -939,6 +936,7 @@ pub mod raw_paxos{
         }
 
         pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) {
+            if self.storage.stopped(){ return; }
             let ss = StopSign::with(self.config_id + 1, nodes);
             let entry = Entry::StopSign(ss);
             match self.state {
@@ -972,7 +970,7 @@ pub mod raw_paxos{
             Normal{ metadata, data }
         }
 
-        fn clear_state(&mut self) {
+        fn clear_peers_state(&mut self) {
             self.las.clear();
             self.promises.clear();
             self.lds.clear();
@@ -981,10 +979,14 @@ pub mod raw_paxos{
         /*** Leader ***/
         pub fn handle_leader(&mut self, l: Leader) {
             let n = l.ballot;
-            if n <= self.n_leader {
+            if n <= self.n_leader || n < self.storage.get_promise() {
                 return;
             }
-            self.clear_state();
+            self.clear_peers_state();
+            if self.storage.stopped() {
+                self.proposals.clear();
+                self.hb_forward.clear();
+            }
             if self.pid == l.pid {
                 self.n_leader = n.clone();
                 self.leader = n.pid;
@@ -1088,6 +1090,11 @@ pub mod raw_paxos{
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
+                    for entry in &suffix {  // TODO remove
+                        if entry.is_stopsign() && !last_is_stop {
+                            panic!("Suffix contained SS but not at the end");
+                        }
+                    }
                     // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
                     self.storage.append_on_decided_prefix(suffix);
                     if last_is_stop {
@@ -1100,7 +1107,6 @@ pub mod raw_paxos{
                     self.las.insert(self.pid, self.storage.get_sequence_len());
                     self.state = (Role::Leader, Phase::Accept);
                     for (pid, lds) in self.lds.iter() {
-//                        if *lds != va_len {
                         if pid != &self.pid {
                             let ser_sfx = self.storage.get_ser_suffix(*lds);
                             let acc_sync = AcceptSync::with_serialised_sfx(self.n_leader.clone(), ser_sfx, *lds);
@@ -1114,23 +1120,17 @@ pub mod raw_paxos{
         fn handle_promise_accept(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
                 self.lds.insert(from, prom.ld);
-                /*
-                if prom.ld > self.storage.get_sequence_len() {  // TODO remove
-                    panic!(
-                        "promise_accept from node {}. ld: {}, my seq_len: {}, my ld: {}",
-                        from,
-                        prom.ld,
-                        self.storage.get_sequence_len(),
-                        self.storage.get_decided_len()
-                    );
-                }
-                */
                 let ser_sfx = self.storage.get_ser_suffix(prom.ld);
                 let acc_sync = AcceptSync::with_serialised_sfx(self.n_leader.clone(), ser_sfx, prom.ld);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
-                if self.lc != 0 {
-                    // inform what got decided already
-                    let d = Decide::with(self.lc, self.n_leader.clone());
+                // inform what got decided already
+                let idx = if self.lc > 0 {
+                    self.lc
+                } else {
+                    self.storage.get_decided_len()
+                };
+                if idx > prom.ld {
+                    let d = Decide::with(idx, self.n_leader.clone());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
                 }
             }
@@ -1139,22 +1139,24 @@ pub mod raw_paxos{
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las.insert(from, accepted.la);
-                if &accepted.la <= &self.lc {
-                    return;
-                }
-                let mut counter = 0;
-                for (_pid, la) in &self.las {
-                    if la >= &accepted.la {
-                        counter += 1;
-                        if counter == self.majority { break; }
+                if self.lc > 0 && accepted.la <= self.lc { // already chosen i.e. slow follower
+                    let d = Decide::with(accepted.la, self.n_leader.clone());
+                    self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d.clone())));
+                } else {
+                    let mut counter = 0;
+                    for (_pid, la) in &self.las {
+                        if la >= &accepted.la {
+                            counter += 1;
+                            if counter == self.majority { break; }
+                        }
                     }
-                }
-                if counter >= self.majority {
-                    self.lc = accepted.la;
-                    self.storage.set_pending_chosen_offset(self.lc);
-                    let d = Decide::with(self.lc, self.n_leader.clone());
-                    for pid in self.lds.keys() {
-                        self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Decide(d.clone())));
+                    if counter >= self.majority {
+                        self.lc = accepted.la;
+                        self.storage.set_pending_chosen_offset(self.lc);
+                        let d = Decide::with(self.lc, self.n_leader.clone());
+                        for pid in self.lds.keys() {
+                            self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Decide(d.clone())));
+                        }
                     }
                 }
             }
@@ -1167,15 +1169,6 @@ pub mod raw_paxos{
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
                 let ser_sfx = if &na >= &prep.n_accepted {
-                    /*if prep.ld > self.storage.get_sequence_len() {
-                        panic!(
-                            "ld in Prepare is longer than my accepted seq: ld: {}, la: {}, ballot: {:?}, my accepted ballot: {:?}",
-                            prep.ld,
-                            self.storage.get_sequence_len(),
-                            prep.n_accepted,
-                            na
-                        )
-                    }*/
                     self.storage.get_ser_suffix(prep.ld)
                 } else {
                     None
@@ -1204,6 +1197,9 @@ pub mod raw_paxos{
         fn handle_accept(&mut self, acc: Accept, from: u64) {
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
+                    if self.storage.stopped() { // TODO remove
+                        panic!("Accepting after SS?");
+                    }
                     self.storage.append_entry(acc.entry, false);
                     let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
@@ -1391,16 +1387,6 @@ mod ballot_leader_election {
 
         fn max_by_ballot(ballots: Vec<(Ballot, u64)>) -> (Ballot, u64) {
             ballots.into_iter().max().expect("Should be at least majority of ballots")
-            /*self.ballots
-                .iter()
-                .max_by(|x, y|
-                    if x.0 > y.0 || (x.0 == y.0 && x.1 < y.1) { // use less pid as tiebreaker
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
-                    }
-                )
-                .expect("Should have at least majority of ballots").clone()*/
         }
 
         fn check_leader(&mut self) {
@@ -1646,77 +1632,6 @@ mod tests {
         }
         println!("PASSED!!!");
     }
-
-    #[test]
-    fn ser_sfx_test() {
-        use super::super::messages::paxos::{Promise, AcceptSync};
-        use super::*;
-        use super::raw_paxos::Normal;
-        use kompact::prelude::BufMut;
-
-        let b1 = Ballot::with(1, 1);
-        let b2 = Ballot::with(2, 2);
-        let meta1 = EntryMetaData::with(1, 1);
-        let meta2 = EntryMetaData::with(2, 2);
-        let mut data: Vec<u8> = Vec::with_capacity(8);
-        data.put_u64(37);
-
-        let e1 = Entry::Normal(Normal::with(meta1, data.clone()));
-        let e2 = Entry::Normal(Normal::with(meta2, data.clone()));
-        let sfx = vec![e1, e2];
-        let mut ser_sfx = Vec::<u8>::with_capacity(40);
-
-        let mut ser_empty_sfx = Vec::<u8>::with_capacity(4);
-        ser_empty_sfx.put_u32(0);
-
-        let ld = 624;
-        PaxosSer::serialise_entries(&sfx, &mut ser_sfx);
-        let p = Promise::with_serialised_sfx(b1.clone(), b2.clone(), ser_empty_sfx.clone(), ld);
-        let from = 234;
-        let to = 345;
-        let msg_p = Message::with(from, to, PaxosMsg::Promise(p.clone()));
-
-        let a = AcceptSync::with_serialised_sfx(b1.clone(), ser_empty_sfx, ld);
-        let msg_a = Message::with(from, to, PaxosMsg::AcceptSync(a.clone()));
-
-        let pf = PaxosMsg::ProposalForward(sfx.clone());
-        let msg_pf = Message::with(from, to, pf);
-        // let mut bytes = Vec::<u8>::with_capacity(50);
-        let msgs = [msg_pf, msg_a, msg_p];
-        for msg in msgs.iter() {
-            let ser = msg.serialised();
-            let mut bytes = ser.expect("failed to ser").data;
-            match PaxosSer::deserialise(&mut bytes) {
-                Ok(m) => {
-                    assert_eq!(m.from, from);
-                    assert_eq!(m.to, to);
-                    match m.msg {
-                        PaxosMsg::Promise(des_p) => {
-                            assert_eq!(des_p.n, p.n);
-                            assert_eq!(des_p.n_accepted, p.n_accepted);
-                            assert_eq!(des_p.ld, p.ld);
-                            println!("{:?}", des_p.sfx);
-                            assert_eq!(des_p.sfx, p.sfx)
-                        },
-                        PaxosMsg::AcceptSync(des_a) => {
-                            assert_eq!(des_a.n, a.n);
-                            assert_eq!(des_a.ld, a.ld);
-                            println!("{:?}", des_a.sfx);
-                            assert_eq!(des_a.sfx, a.sfx);
-                        },
-                        PaxosMsg::ProposalForward(des_ents) => {
-                            println!("{:?}", des_ents);
-                            assert_eq!(des_ents, sfx.clone());
-                        }
-                        _ => panic!("Got unexpected msg")
-                    }
-                },
-                _ => panic!("Failed to deserialise")
-            }
-
-        }
-    }
-
 /*
     #[test]
     fn reconfig_ser_des_test(){

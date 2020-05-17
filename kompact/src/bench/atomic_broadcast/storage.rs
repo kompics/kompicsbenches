@@ -670,6 +670,7 @@ pub mod paxos {
         }
 
         pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) -> Vec<Entry> {
+            if seq.is_empty() { return vec![]; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     let get_discarded = self.paxos_state.get_pending_chosen_offset().is_some();
@@ -690,16 +691,12 @@ pub mod paxos {
         }
 
         pub fn append_on_decided_prefix(&mut self, seq: Vec<Entry>) {
+            if seq.is_empty() { return; }
             let from_idx = self.get_decided_len();
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     let mut sequence = seq;
-                    let discarded = s.append_on_prefix(from_idx, &mut sequence, true);
-                    for e in discarded {
-                        if e.is_stopsign() {
-                            println!("DISCARDING STOPSIGN!");
-                        }
-                    }
+                    let _ = s.append_on_prefix(from_idx, &mut sequence, false);
                 },
                 PaxosSequence::Stopped(_) => {
                     if !seq.is_empty() {
@@ -743,9 +740,6 @@ pub mod paxos {
         }
 
         pub fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
-            if from > to {
-                panic!("from > to in get_entries: {}, {}", from, to);
-            }
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_entries(from, to),
                 PaxosSequence::Stopped(s) => s.get_entries(from, to),
