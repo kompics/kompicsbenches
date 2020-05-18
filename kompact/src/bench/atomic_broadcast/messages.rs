@@ -745,24 +745,21 @@ pub const RECONFIG_ID: u64 = 0;
 #[derive(Clone, Debug)]
 pub struct Proposal {
     pub id: u64,
-    pub client: ActorPath,
     pub reconfig: Option<(Vec<u64>, Vec<u64>)>,
 }
 
 impl Proposal {
-    pub fn reconfiguration(id: u64, client: ActorPath, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
+    pub fn reconfiguration(id: u64, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
         let proposal = Proposal {
             id,
-            client,
             reconfig: Some(reconfig),
         };
         proposal
     }
 
-    pub fn normal(id: u64, client: ActorPath) -> Proposal {
+    pub fn normal(id: u64) -> Proposal {
         let proposal = Proposal {
             id,
-            client,
             reconfig: None,
         };
         proposal
@@ -855,7 +852,6 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                         buf.put_u32(0);
                     }
                 }
-                p.client.serialise(buf).expect("Failed to serialise actorpath");
                 Ok(())
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -909,10 +905,8 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                     } else {
                         Some((voters, followers))
                     };
-                let client = ActorPath::deserialise(buf).expect("Failed to deserialise actorpath");
                 let proposal = Proposal {
                     id,
-                    client,
                     reconfig
                 };
                 Ok(AtomicBroadcastMsg::Proposal(proposal))

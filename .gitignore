@@ -2,6 +2,7 @@
 /logs/
 /results/
 /plots/
+/remote_logs/
 
 bin/
 

@@ -72,7 +72,8 @@ pub struct PaxosReplica<S, P> where
     complete_sequences: HashSet<u32>,
     active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
     forward_discarded: bool,
-    retry_transfer_timers: HashMap<u32, ScheduledTimer>
+    retry_transfer_timers: HashMap<u32, ScheduledTimer>,
+    cached_client: Option<ActorPath>
 }
 
 impl<S, P> PaxosReplica<S, P> where
@@ -99,7 +100,8 @@ impl<S, P> PaxosReplica<S, P> where
             complete_sequences: HashSet::new(),
             active_peers: (Vec::new(), Vec::new()),
             forward_discarded,
-            retry_transfer_timers: HashMap::new()
+            retry_transfer_timers: HashMap::new(),
+            cached_client: None,
         }
     }
 
@@ -146,7 +148,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
         let communicator = system.create( || {
-            Communicator::with(communicator_peers)
+            Communicator::with(communicator_peers, self.cached_client.as_ref().expect("No cached client!").clone())
         });
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
@@ -218,6 +220,9 @@ impl<S, P> PaxosReplica<S, P> where
         self.complete_sequences.clear();
         self.pid = init.pid as u64;
         self.iteration_id = init.init_id;
+        let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
+        let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
+        self.cached_client = Some(client);
         for (id, actorpath) in nodes.into_iter().enumerate() {
             self.nodes.insert(id as u64 + 1, actorpath);
         }
@@ -486,7 +491,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             p: PartitioningActorMsg [PartitioningActorSer] => {
                 match p {
                     PartitioningActorMsg::Init(init) => {
-                        info!(self.ctx.log(), "{}", format!("Got init for iteration: {}! My pid: {}", init.init_id, init.pid));
+                        // info!(self.ctx.log(), "{}", format!("Got init for iteration: {}! My pid: {}", init.init_id, init.pid));
                         self.partitioning_actor = Some(sender);
                         self.new_iteration(init);
                     },
@@ -574,10 +579,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             }
                             else if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
                                 active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
-                            } else {
-                                // warn!(self.ctx.log(), "Failed proposal {}. No active Paxos!", p.id);
-                                let pr = ProposalResp::failed(p.id);
-                                p.client.tell((AtomicBroadcastMsg::ProposalResp(pr), AtomicBroadcastSer), self);
                             }
                         }
                     },
@@ -643,7 +644,6 @@ struct PaxosComp<S, P> where
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
-    cached_client: bool,
 }
 
 impl<S, P> PaxosComp<S, P> where
@@ -672,7 +672,6 @@ impl<S, P> PaxosComp<S, P> where
             pid,
             current_leader: 0,
             timers: None,
-            cached_client: false,
         }
     }
 
@@ -711,7 +710,7 @@ impl<S, P> PaxosComp<S, P> where
         for decided in self.paxos.get_decided_entries() {
             match decided {
                 Entry::Normal(n) => {
-                    if self.cached_client {
+                    if self.current_leader == self.pid {    // TODO
                         let id = n.data.as_slice().get_u64();
                         let pr = ProposalResp::succeeded_normal(id);
                         self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
@@ -726,20 +725,15 @@ impl<S, P> PaxosComp<S, P> where
                     let nodes = Reconfig::with(continued_nodes, new_nodes);
                     let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
-                    if self.cached_client {
-                        let pr = ProposalResp::succeeded_normal(RECONFIG_ID);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                    }
+                    // TODO
+                    let pr = ProposalResp::succeeded_normal(RECONFIG_ID);
+                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }
         }
     }
 
     fn propose(&mut self, p: Proposal) {
-        if !self.cached_client {
-            self.communication_port.trigger(CommunicatorMsg::CacheClient(p.client));
-            self.cached_client = true;
-        }
         match p.reconfig {
             Some((reconfig, _)) => {
                 self.paxos.propose_reconfiguration(reconfig);
@@ -1090,11 +1084,6 @@ pub mod raw_paxos{
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
-                    for entry in &suffix {  // TODO remove
-                        if entry.is_stopsign() && !last_is_stop {
-                            panic!("Suffix contained SS but not at the end");
-                        }
-                    }
                     // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
                     self.storage.append_on_decided_prefix(suffix);
                     if last_is_stop {

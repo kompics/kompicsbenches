@@ -19,7 +19,6 @@ pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
     ProposalResponse(ProposalResp),
-    CacheClient(ActorPath)
 }
 
 pub struct CommunicationPort;
@@ -34,17 +33,17 @@ pub struct Communicator {
     ctx: ComponentContext<Communicator>,
     atomic_broadcast_port: ProvidedPort<CommunicationPort, Communicator>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
-    cached_client: Option<ActorPath>,    // cached client to send SequenceResp to
+    client: ActorPath,    // cached client to send SequenceResp to
     stopped: bool
 }
 
 impl Communicator {
-    pub fn with(peers: HashMap<u64, ActorPath>) -> Communicator {
+    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath) -> Communicator {
         Communicator {
             ctx: ComponentContext::new(),
             atomic_broadcast_port: ProvidedPort::new(),
             peers,
-            cached_client: None,
+            client,
             stopped: false
         }
     }
@@ -60,20 +59,17 @@ impl Provide<CommunicationPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) {
         if !self.stopped {
             match msg {
-                CommunicatorMsg::CacheClient(client) => self.cached_client = Some(client),
                 CommunicatorMsg::RawRaftMsg(rm) => {
                     let receiver = self.peers.get(&rm.get_to()).expect(&format!("Could not find actorpath for id={}. Known peers: {:?}", &rm.get_to(), self.peers.keys()));
                     receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
                 },
                 CommunicatorMsg::RawPaxosMsg(pm) => {
                     let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
-                    // receiver.tell((pm, PaxosSer), self);
                     receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
                 },
                 CommunicatorMsg::ProposalResponse(pr) => {
-                    let client = self.cached_client.as_ref().expect("No cached client");
                     let am = AtomicBroadcastMsg::ProposalResp(pr);
-                    client.tell((am, AtomicBroadcastSer), self);
+                    self.client.tell((am, AtomicBroadcastSer), self);
                 },
             }
         }
