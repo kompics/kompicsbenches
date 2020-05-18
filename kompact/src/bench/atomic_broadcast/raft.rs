@@ -43,6 +43,7 @@ pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     iteration_id: u32,
     stopped: bool,
     partitioning_actor: Option<ActorPath>,
+    cached_client: Option<ActorPath>
 }
 
 impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
@@ -58,6 +59,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             iteration_id: 0,
             stopped: false,
             partitioning_actor: None,
+            cached_client: None
         }
     }
 
@@ -68,7 +70,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         let random_delta = RANDOM_DELTA/TICK_PERIOD;
         let election_tick = rand.gen_range(election_timeout, election_timeout + random_delta) as usize;
         let heartbeat_tick = (LEADER_HEARTBEAT_PERIOD/TICK_PERIOD) as usize;
-        info!(self.ctx.log(), "RawRaft config: election_tick={}, heartbeat_tick={}", election_tick, heartbeat_tick);
+        // info!(self.ctx.log(), "RawRaft config: election_tick={}, heartbeat_tick={}", election_tick, heartbeat_tick);
         let c = Config {
             id: self.pid,
             election_tick,  // number of ticks without HB before starting election
@@ -114,7 +116,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         });
         system.register_without_response(&raft_comp);
         let communicator = system.create(|| {
-            Communicator::with(communicator_peers)
+            Communicator::with(communicator_peers, self.cached_client.as_ref().expect("No cached client").clone())
         });
         system.register_without_response(&communicator);
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
@@ -183,6 +185,9 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                         PartitioningActorMsg::Init(init) => {
                             self.iteration_id = init.init_id;
                             self.pid = init.pid as u64;
+                            let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
+                            let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
+                            self.cached_client = Some(client);
                             info!(self.ctx.log(), "Got init! My pid: {}", self.pid);
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
                                 self.nodes.insert(id as u64 + 1, actorpath);
@@ -244,7 +249,6 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     communication_port: RequiredPort<CommunicationPort, Self>,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     has_reconfigured: bool,
-    cached_client: bool,
     stopped: bool,
 }
 
@@ -279,15 +283,7 @@ impl<S> Actor for RaftComp<S> where
                         if leader_id > 0 {
                             let pf = ProposalForward::with(leader_id, p);
                             self.replica.tell(RaftReplicaMsg::ProposalForward(pf));
-                        } /*else {    // no leader
-                            // info!(self.ctx.log(), "Got proposal but no leader...");
-                            if !self.cached_client {
-                                self.communication_port.trigger(CommunicatorMsg::CacheClient(p.client));
-                                self.cached_client = true;
-                            }
-                            let pr = ProposalResp::failed(p.id);
-                            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                        }*/
+                        }
                     }
                 }
             },
@@ -335,7 +331,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             communication_port: RequiredPort::new(),
             timers: None,
             has_reconfigured: false,
-            cached_client: false,
             stopped: false
         }
     }
@@ -364,13 +359,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn propose(&mut self, proposal: Proposal) {
         let last_index1 = self.raw_raft.raft.raft_log.last_index() + 1;
         let id = proposal.id;
-        if id % 2000 == 0 {
-            info!(self.ctx.log(), "Proposing {}", id);
-        }
-        if !self.cached_client {
-            self.communication_port.trigger(CommunicatorMsg::CacheClient(proposal.client));
-            self.cached_client = true;
-        }
         match proposal.reconfig {
             Some(reconfig) => {
                 let _ = self.raw_raft.raft.propose_membership_change(reconfig).unwrap();
@@ -455,11 +443,10 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
                                 self.has_reconfigured = true;
                                 let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                                if self.cached_client {
-                                    let current_config = (cs.nodes.clone(), cs.learners.clone());
-                                    let pr = ProposalResp::succeeded_reconfiguration(current_config);
-                                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                                }
+                                // TODO
+                                let current_config = (cs.nodes.clone(), cs.learners.clone());
+                                let pr = ProposalResp::succeeded_reconfiguration(current_config);
+                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                                 store.set_conf_state(cs, None);
                             }
                         }
@@ -467,7 +454,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     }
                 } else {
                     // normal proposals
-                    if self.cached_client {
+                    if self.raw_raft.raft.state == StateRole::Leader{
                         let id = entry.data.as_slice().get_u64();
                         let pr = ProposalResp::succeeded_normal(id);
                         self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));

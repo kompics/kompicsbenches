@@ -14,5 +14,4 @@ pub mod raft {
 
 pub mod client {
     pub const PROPOSAL_TIMEOUT: u64 = 800;
-    pub const DUPLICATE_FACTOR: u64 = 20;  // for every duplicate response: PROPOSAL_TIMEOUT += PROPOSAL_TIMEOUT/DUPLICATE_FACTOR
 }

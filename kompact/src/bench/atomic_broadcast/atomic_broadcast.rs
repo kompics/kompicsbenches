@@ -206,7 +206,7 @@ impl AtomicBroadcastMaster {
         }
     }
 
-    fn initialise_iteration(&self, nodes: Vec<ActorPath>) -> Arc<Component<PartitioningActor>> {
+    fn initialise_iteration(&self, nodes: Vec<ActorPath>, client: ActorPath) -> Arc<Component<PartitioningActor>> {
         let system = self.system.as_ref().unwrap();
         let prepare_latch = Arc::new(CountdownEvent::new(1));
         /*** Setup partitioning actor ***/
@@ -228,7 +228,9 @@ impl AtomicBroadcastMaster {
         partitioning_actor_f
             .wait_timeout(Duration::from_millis(1000))
             .expect("PartitioningComp never started!");
-        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+        let mut ser_client = Vec::<u8>::new();
+        client.serialise(&mut ser_client).expect("Failed to serialise ClientComp actorpath");
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(Some(ser_client)));
         prepare_latch.wait();
         partitioning_actor
     }
@@ -237,7 +239,7 @@ impl AtomicBroadcastMaster {
         &self,
         nodes_id: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>
-    ) -> Arc<Component<Client>> {
+    ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
@@ -254,12 +256,23 @@ impl AtomicBroadcastMaster {
             Duration::from_millis(1000),
             "Client failed to register!",
         );
-
         let client_comp_f = system.start_notify(&client_comp);
         client_comp_f
             .wait_timeout(Duration::from_millis(1000))
             .expect("ClientComp never started!");
-        client_comp
+        let named_reg_f = system.register_by_alias(
+            &client_comp,
+            format!("client{}", &self.iteration_id),
+        );
+        named_reg_f.wait_expect(
+            Duration::from_millis(1000),
+            "Failed to register alias for ClientComp"
+        );
+        let client_path = ActorPath::Named(NamedPath::with_system(
+            system.system_path(),
+            vec![format!("client{}", &self.iteration_id).into()],
+        ));
+        (client_comp, client_path)
     }
 
     fn validate_and_set_experiment_args(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
@@ -397,9 +410,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         for (id, actorpath) in nodes.iter().enumerate() {
                             nodes_id.insert(id as u64 + 1, actorpath.clone());
                         }
-
-                        self.partitioning_actor = Some(self.initialise_iteration(nodes));
-                        self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
+                        let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
+                        self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
+                        self.client_comp = Some(client_comp);
                         self.paxos_replica = Some(replica_comp);
                     }
                     Some(Algorithm::Raft) => {
@@ -435,9 +448,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         for (id, actorpath) in nodes.iter().enumerate() {
                             nodes_id.insert(id as u64 + 1, actorpath.clone());
                         }
-
-                        self.partitioning_actor = Some(self.initialise_iteration(nodes));
-                        self.client_comp = Some(self.create_client(nodes_id, self.reconfiguration.clone()));
+                        let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
+                        self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
+                        self.client_comp = Some(client_comp);
                         self.raft_replica = Some(raft_replica);
                     }
                     _ => unimplemented!(),
