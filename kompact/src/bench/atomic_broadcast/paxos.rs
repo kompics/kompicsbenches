@@ -15,6 +15,7 @@ use kompact::prelude::Buf;
 use rand::Rng;
 use crate::bench::atomic_broadcast::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
+use crate::serialiser_ids::ATOMICBCAST_ID;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -60,6 +61,7 @@ pub struct PaxosReplica<S, P> where
     paxos_comps: HashMap<u32, Arc<Component<PaxosComp<S, P>>>>,
     ble_communicator_comps: HashMap<u32, (Arc<Component<BallotLeaderComp>>, Arc<Component<Communicator>>)>,
     active_config_id: u32,
+    leader_in_active_config: u64,
     nodes: HashMap<u64, ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
     prev_sequences: HashMap<u32, Arc<S>>,
     stopped: bool,
@@ -88,6 +90,7 @@ impl<S, P> PaxosReplica<S, P> where
             paxos_comps: HashMap::new(),
             ble_communicator_comps: HashMap::new(),
             active_config_id: 0,
+            leader_in_active_config: 0,
             nodes: HashMap::new(),
             prev_sequences: HashMap::new(),
             stopped: false,
@@ -183,6 +186,7 @@ impl<S, P> PaxosReplica<S, P> where
         if let Some(config_id) = self.next_config_id {
             info!(self.ctx.log(), "Starting replica pid: {}, config_id: {}", self.pid, config_id);
             self.active_config_id = config_id;
+            self.leader_in_active_config = 0;
             let paxos = self.paxos_comps
                 .get(&config_id)
                 .expect(&format!("Could not find PaxosComp with config_id: {}", config_id));
@@ -206,12 +210,14 @@ impl<S, P> PaxosReplica<S, P> where
             self.ctx.system().kill(paxos);
         }
         self.active_config_id = 0;
+        self.leader_in_active_config = 0;
         self.next_config_id = None;
     }
 
     fn new_iteration(&mut self, init: Init) {
         let nodes = init.nodes;
         self.active_config_id = 0;
+        self.leader_in_active_config = 0;
         self.next_config_id = None;
         self.stopped = false;
         self.prev_sequences.clear();
@@ -427,6 +433,7 @@ impl<S, P> Provide<ControlPort> for PaxosReplica<S, P> where
 
 #[derive(Debug)]
 pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
+    Leader(u32, u64),
     Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse)
 }
@@ -446,6 +453,11 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     fn receive_local(&mut self, msg: Self::Message) -> () {
         if self.stopped { return; }
         match msg {
+            PaxosReplicaMsg::Leader(config_id, pid) => {
+              if self.active_config_id == config_id {
+                  self.leader_in_active_config = pid;
+              }
+            },
             PaxosReplicaMsg::Reconfig(r) => {
                 debug!(self.ctx.log(), "RECONFIG: Next config_id: {}", r.config_id);
                 let prev_config_id = self.active_config_id;
@@ -486,8 +498,33 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let NetMessage{sender, receiver: _, data} = m;
-        match_deser! {data; {
+        match &m.data.ser_id {
+            &ATOMICBCAST_ID => {
+                if !self.stopped {
+                    if self.leader_in_active_config == self.pid {
+                        match m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                            AtomicBroadcastMsg::Proposal(p) => {
+                                if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
+                                    warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
+                                    return;
+                                }
+                                else {
+                                    let active_paxos = &self.paxos_comps.get(&self.active_config_id).expect("Could not get PaxosComp actor ref despite being leader");
+                                    active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
+                                }
+                            },
+                            _ => {},
+                        }
+                    } else if self.leader_in_active_config > 0 {
+                        let leader = self.nodes.get(&self.leader_in_active_config).expect(&format!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        leader.forward_with_original_sender(m, &self.ctx.system());
+                    }
+                    // else no leader... just drop
+                }
+            },
+            _ => {
+                let NetMessage{sender, receiver: _, data} = m;
+                match_deser! {data; {
             p: PartitioningActorMsg [PartitioningActorSer] => {
                 match p {
                     PartitioningActorMsg::Init(init) => {
@@ -627,6 +664,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }
         }
+            },
+        }
     }
 }
 
@@ -641,6 +680,7 @@ struct PaxosComp<S, P> where
     ble_port: RequiredPort<BallotLeaderElection, Self>,
     peers: HashSet<u64>,
     paxos: Paxos<S, P>,
+    config_id: u32,
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
@@ -669,6 +709,7 @@ impl<S, P> PaxosComp<S, P> where
             ble_port: RequiredPort::new(),
             peers,
             paxos,
+            config_id,
             pid,
             current_leader: 0,
             timers: None,
@@ -810,6 +851,8 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
         debug!(self.ctx.log(), "{}", format!("Node {} became leader. Ballot: {:?}", l.pid, l.ballot));
         self.current_leader = l.pid;
         self.paxos.handle_leader(l);
+        // TODO check if rawpaxos has stopped
+        self.supervisor.tell(PaxosReplicaMsg::Leader(self.config_id, l.pid));
     }
 }
 
