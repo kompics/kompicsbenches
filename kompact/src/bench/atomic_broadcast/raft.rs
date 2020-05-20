@@ -16,8 +16,6 @@ use rand::Rng;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
-// const READY_PERIOD: Duration = Duration::from_millis(1);
-// const TICK_PERIOD: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
@@ -188,7 +186,6 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
                             let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
                             self.cached_client = Some(client);
-                            info!(self.ctx.log(), "Got init! My pid: {}", self.pid);
                             for (id, actorpath) in init.nodes.into_iter().enumerate() {
                                 self.nodes.insert(id as u64 + 1, actorpath);
                             }
@@ -257,6 +254,7 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
         fn handle(&mut self, event: ControlEvent) -> () {
             match event {
                 ControlEvent::Start => {
+                    info!(self.ctx.log(), "Started RaftComp pid: {}", self.raw_raft.raft.id);
                     self.start_timers();
                 },
                 _ => {
@@ -357,7 +355,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn propose(&mut self, proposal: Proposal) {
-        let last_index1 = self.raw_raft.raft.raft_log.last_index() + 1;
         let id = proposal.id;
         match proposal.reconfig {
             Some(reconfig) => {
@@ -368,13 +365,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                 data.put_u64(id);
                 self.raw_raft.propose(vec![], data).expect("Failed to propose in TikvRaft");
             }
-        }
-        let last_index2 = self.raw_raft.raft.raft_log.last_index() + 1;
-        if last_index2 == last_index1 {
-            // Propose failed, don't forget to respond to the client.
-            error!(self.ctx.log(), "Failed proposal: Failed to append to storage?");
-            let pr = ProposalResp::failed(id);
-            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
         }
     }
 
@@ -393,15 +383,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             error!(self.ctx.log(), "{}", format!("persist raft log fail: {:?}, need to retry or panic", e));
             return;
         }
-
-        // TODO Apply the snapshot. It's necessary because in `RawNode::advance` we stabilize the snapshot.
-        /* if *ready.snapshot() != Snapshot::default() {
-            let s = ready.snapshot().clone();
-            /*if let Err(e) = store.wl().apply_snapshot(s) {
-                eprintln!("apply snapshot fail: {:?}, need to retry or panic", e);
-                return;
-            }*/
-        }*/
 
         // Send out the messages come from the node.
         for msg in ready.messages.drain(..) {
@@ -443,9 +424,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
                                 self.has_reconfigured = true;
                                 let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                                // TODO
-                                let current_config = (cs.nodes.clone(), cs.learners.clone());
-                                let pr = ProposalResp::succeeded_reconfiguration(current_config);
+                                let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
                                 self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                                 store.set_conf_state(cs, None);
                             }
@@ -456,7 +435,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader{
                         let id = entry.data.as_slice().get_u64();
-                        let pr = ProposalResp::succeeded_normal(id);
+                        let pr = ProposalResp::with(id, self.raw_raft.raft.id);
                         self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
                 }
