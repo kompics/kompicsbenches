@@ -165,7 +165,7 @@ object ParameterSpacePB {
       ParameterSpacePB(iter.map(f).toSeq)
     }
 
-    def merge(other: TupleSpace[T]): TupleSpace[T] = {
+    def append(other: TupleSpace[T]): TupleSpace[T] = {
       val iter = this.iter ++ other.iter;
       new TupleSpace(iter)
     }
