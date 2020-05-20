@@ -236,8 +236,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3, 5);
-  private val atomicBroadcastTestProposals = List(2L.k, 4L.k, 8L.k, 16L.k);
-  private val atomicBroadcastTestBatchSizes = List(1L.k, 2L.k, 4L.k, 8L.k, 16L.k);
+  private val atomicBroadcastTestProposals = List(8L.k, 16L.k, 32L.k);
+  private val atomicBroadcastTestBatchSizes = List(4L.k, 8L.k, 16L.k, 32L.k);
 
   private val atomicBroadcastNodes = List(3, 5, 7, 9);
   private val atomicBroadcastProposals = List(100L.k, 200L.k, 400L.k, 800L.k);
@@ -264,10 +264,10 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestBatchSizes,
       List("single", "majority"),
       List("pull", "eager"),
-      List(true, false)
+      List(false)
     );
 
-  private val paxosTestSpace = paxosNormalTestSpace.merge(paxosReconfigTestSpace);
+  private val paxosTestSpace = paxosNormalTestSpace.append(paxosReconfigTestSpace);
 
   private val raftTestSpace = ParameterSpacePB
     .cross(
@@ -302,7 +302,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List(true, false)
     );
 
-  private val paxosSpace = paxosNormalSpace.merge(paxosReconfigSpace);
+  private val paxosSpace = paxosNormalSpace.append(paxosReconfigSpace);
 
   private val raftSpace = ParameterSpacePB
     .cross(
@@ -321,7 +321,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = paxosSpace.merge(raftSpace)
+    space = paxosSpace.append(raftSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r, tp, fd) =>
           AtomicBroadcastRequest(
@@ -334,7 +334,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             forwardDiscarded = fd
           )
       },
-    testSpace = paxosTestSpace.merge(raftTestSpace)
+    testSpace = paxosTestSpace.append(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, pp, r, tp, fd) =>
           AtomicBroadcastRequest(
