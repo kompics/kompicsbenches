@@ -769,25 +769,12 @@ impl Proposal {
 #[derive(Clone, Debug)]
 pub struct ProposalResp {
     pub id: u64,
-    pub succeeded: bool,
-    pub current_config: Option<(Vec<u64>, Vec<u64>)>,
+    pub last_leader: u64,
 }
 
 impl ProposalResp {
-    pub fn succeeded_normal(id: u64) -> ProposalResp {
-        ProposalResp{ id, succeeded: true, current_config: None }
-    }
-
-    pub fn succeeded_reconfiguration(current_config: (Vec<u64>, Vec<u64>)) -> ProposalResp {
-        ProposalResp {
-            id: RECONFIG_ID,
-            succeeded: true,
-            current_config: Some(current_config)
-        }
-    }
-
-    pub fn failed(id: u64) -> ProposalResp {
-        ProposalResp{ id, succeeded: false, current_config: None }
+    pub fn with(id: u64, last_leader: u64) -> ProposalResp {
+        ProposalResp{ id, last_leader }
     }
 }
 
@@ -812,11 +799,8 @@ pub enum AtomicBroadcastMsg {
     ProposalResp(ProposalResp),
 }
 
-const PROPOSAL_ID: u8 = 0;
-const PROPOSALRESP_ID: u8 = 1;
-
-const PROPOSAL_FAILED: u8 = 0;
-const PROPOSAL_SUCCESS: u8 = 1;
+const PROPOSAL_ID: u8 = 1;
+const PROPOSALRESP_ID: u8 = 2;
 
 pub struct AtomicBroadcastSer;
 
@@ -857,29 +841,7 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
                 buf.put_u64(pr.id);
-                if pr.succeeded {
-                    buf.put_u8(PROPOSAL_SUCCESS);
-                } else {
-                    buf.put_u8(PROPOSAL_FAILED);
-                }
-                match &pr.current_config {
-                    Some((voters, followers)) => {
-                        let voters_len: u32 = voters.len() as u32;
-                        buf.put_u32(voters_len);
-                        for voter in voters.to_owned() {
-                            buf.put_u64(voter);
-                        }
-                        let followers_len: u32 = followers.len() as u32;
-                        buf.put_u32(followers_len);
-                        for follower in followers.to_owned() {
-                            buf.put_u64(follower);
-                        }
-                    },
-                    None => {
-                        buf.put_u32(0);
-                        buf.put_u32(0);
-                    }
-                }
+                buf.put_u64(pr.last_leader);
                 Ok(())
             },
         }
@@ -913,30 +875,10 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             },
             PROPOSALRESP_ID => {
                 let id = buf.get_u64();
-                let succeeded: bool = match buf.get_u8() {
-                    0 => false,
-                    _ => true,
-                };
-                let voters_len = buf.get_u32();
-                let mut voters = vec![];
-                for _ in 0..voters_len {
-                    voters.push(buf.get_u64());
-                }
-                let followers_len = buf.get_u32();
-                let mut followers = vec![];
-                for _ in 0..followers_len {
-                    followers.push(buf.get_u64());
-                }
-                let reconfig =
-                    if voters_len == 0 && followers_len == 0 {
-                        None
-                    } else {
-                        Some((voters, followers))
-                    };
+                let last_leader = buf.get_u64();
                 let pr = ProposalResp {
                     id,
-                    succeeded,
-                    current_config: reconfig,
+                    last_leader,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },

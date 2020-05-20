@@ -19,6 +19,7 @@ pub struct Client {
     timer: Option<ScheduledTimer>,
     reconfig_timer: Option<ScheduledTimer>,
     timeout: u64,
+    last_leader: u64,
 }
 
 impl Client {
@@ -40,13 +41,14 @@ impl Client {
             responses: HashSet::with_capacity(num_proposals as usize),
             timer: None,
             reconfig_timer: None,
-            timeout: PROPOSAL_TIMEOUT
+            timeout: PROPOSAL_TIMEOUT,
+            last_leader: MASTER_PID,
         }
     }
 
     fn propose_normal(&mut self, id: u64) {
         let p = Proposal::normal(id);
-        let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+        let node = self.nodes.get(&self.last_leader).expect("Could not find actorpath to raft node!");
         node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
     }
 
@@ -58,6 +60,7 @@ impl Client {
         } else {
             i
         };
+        debug!(self.ctx.log(), "Proposing {}-{}", from, to);
         for id in from ..= to {
             self.propose_normal(id);
         }
@@ -69,14 +72,13 @@ impl Client {
     }
 
     fn propose_reconfiguration(&mut self) {
-        let reconfig = self.reconfig.take().unwrap();
+        let reconfig = self.reconfig.as_ref().expect("No reconfig");
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
-        // TODO send proposal to who?
-        let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+        let raft_node = self.nodes.get(&self.last_leader).expect("Could not find actorpath to raft node!");
         raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
         let timeout = Duration::from_millis(self.timeout);
-        let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig(reconfig));
+        let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig());
         self.reconfig_timer = Some(timer);
     }
 
@@ -93,14 +95,13 @@ impl Client {
         self.timer = Some(timer);
     }
 
-    fn retry_reconfig(&mut self, reconfig: (Vec<u64>, Vec<u64>)) {
-        if !self.responses.contains(&RECONFIG_ID) {
-            debug!(self.ctx.log(), "TIMEOUT RECONFIGURING");
+    fn retry_reconfig(&mut self) {
+        if let Some(reconfig) = self.reconfig.as_ref() {
             let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
-            let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
+            let raft_node = self.nodes.get(&MASTER_PID).expect("Could not find actorpath to raft node!");
             raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
             let timeout = Duration::from_millis(self.timeout);
-            let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig(reconfig));
+            let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig());
             self.reconfig_timer = Some(timer);
         }
     }
@@ -125,34 +126,33 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if pr.succeeded {
-                            match pr.id {
-                                RECONFIG_ID => {
-                                    if let Some(timer) = self.reconfig_timer.take() {
-                                        self.cancel_timer(timer);
-                                        self.reconfig_timer = None;
-                                    }
-                                    self.responses.insert(RECONFIG_ID);
-                                },
-                                _ => {
-                                    if !self.responses.contains(&pr.id) {
-                                        self.responses.insert(pr.id);
-                                        let received_count = self.responses.len() as u64;
-                                        if received_count == self.num_proposals {
+                        match pr.id {
+                            RECONFIG_ID => {
+                                if let Some(timer) = self.reconfig_timer.take() {
+                                    self.cancel_timer(timer);
+                                    self.reconfig_timer = None;
+                                }
+                                self.reconfig = None;
+                                self.last_leader = MASTER_PID;  // MASTER_PID is always present in experiments
+                            },
+                            _ => {
+                                if self.responses.insert(pr.id) {
+                                    self.last_leader = pr.last_leader;
+                                    let received_count = self.responses.len() as u64;
+                                    if received_count == self.num_proposals {
+                                        if let Some(timer) = self.timer.take() {
+                                            self.cancel_timer(timer);
+                                        }
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                    } else {
+                                        if received_count == self.num_proposals/2 && self.reconfig.is_some(){
+                                            self.propose_reconfiguration();
+                                        }
+                                        if received_count % self.batch_size == 0 {
                                             if let Some(timer) = self.timer.take() {
                                                 self.cancel_timer(timer);
                                             }
-                                            self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                        } else {
-                                            if received_count == self.num_proposals/2 && self.reconfig.is_some(){
-                                                self.propose_reconfiguration();
-                                            }
-                                            if received_count % self.batch_size == 0 {
-                                                if let Some(timer) = self.timer.take() {
-                                                    self.cancel_timer(timer);
-                                                }
-                                                self.send_batch();
-                                            }
+                                            self.send_batch();
                                         }
                                     }
                                 }
@@ -214,7 +214,7 @@ pub mod tests {
 
         fn propose_normal(&mut self, id: u64) {
             let ap = self.ctx.actor_path();
-            let p = Proposal::normal(id, ap);
+            let p = Proposal::normal(id);
             let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
             let timeout = Duration::from_millis(PROPOSAL_TIMEOUT);
