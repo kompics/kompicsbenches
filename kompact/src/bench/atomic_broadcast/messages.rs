@@ -3,6 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
+use crate::bench::atomic_broadcast::messages::AtomicBroadcastMsg::FirstLeader;
 
 pub mod raft {
     extern crate raft as tikv_raft;
@@ -782,10 +783,12 @@ impl ProposalResp {
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
+    FirstLeader(u64)
 }
 
 const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
+const FIRSTLEADER_ID: u8 = 3;
 
 pub struct AtomicBroadcastSer;
 
@@ -821,15 +824,18 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                         buf.put_u32(0);
                     }
                 }
-                Ok(())
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
                 buf.put_u64(pr.id);
                 buf.put_u64(pr.last_leader);
-                Ok(())
             },
+            AtomicBroadcastMsg::FirstLeader(pid) => {
+                buf.put_u8(FIRSTLEADER_ID);
+                buf.put_u64(*pid);
+            }
         }
+        Ok(())
     }
 }
 
@@ -867,6 +873,10 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },
+            FIRSTLEADER_ID => {
+                let pid = buf.get_u64();
+                Ok(AtomicBroadcastMsg::FirstLeader(pid))
+            }
             _ => {
                 Err(SerError::InvalidType(
                     "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),

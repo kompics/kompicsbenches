@@ -16,10 +16,11 @@ pub struct Client {
     finished_latch: Arc<CountdownEvent>,
     proposal_count: u64,
     responses: HashSet<u64>,
+    retry_proposals: HashSet<u64>,
     timer: Option<ScheduledTimer>,
     reconfig_timer: Option<ScheduledTimer>,
     timeout: u64,
-    last_leader: u64,
+    current_leader: u64,
 }
 
 impl Client {
@@ -39,20 +40,21 @@ impl Client {
             finished_latch,
             proposal_count: 0,
             responses: HashSet::with_capacity(num_proposals as usize),
+            retry_proposals: HashSet::with_capacity(batch_size as usize),
             timer: None,
             reconfig_timer: None,
             timeout: PROPOSAL_TIMEOUT,
-            last_leader: MASTER_PID,
+            current_leader: 0,
         }
     }
 
-    fn propose_normal(&mut self, id: u64) {
+    fn propose_normal(&self, id: u64, node: &ActorPath) {
         let p = Proposal::normal(id);
-        let node = self.nodes.get(&self.last_leader).expect("Could not find actorpath to raft node!");
         node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
     }
 
     fn send_batch(&mut self) {
+        if self.current_leader == 0 { return; }
         let from = self.proposal_count + 1;
         let i = self.proposal_count + self.batch_size;
         let to = if i > self.num_proposals {
@@ -61,13 +63,14 @@ impl Client {
             i
         };
         debug!(self.ctx.log(), "Proposing {}-{}", from, to);
+        let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
         for id in from ..= to {
-            self.propose_normal(id);
+            self.propose_normal(id.clone(), leader);
+            self.retry_proposals.insert(id);
         }
-        let batch = from..=to;
         self.proposal_count += self.batch_size;
         let timeout = Duration::from_millis(self.timeout);
-        let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals(batch));
+        let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals());
         self.timer = Some(timer);
     }
 
@@ -75,24 +78,23 @@ impl Client {
         let reconfig = self.reconfig.as_ref().expect("No reconfig");
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
-        let raft_node = self.nodes.get(&self.last_leader).expect("Could not find actorpath to raft node!");
+        let raft_node = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
         raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
         let timeout = Duration::from_millis(self.timeout);
         let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig());
         self.reconfig_timer = Some(timer);
     }
 
-    fn retry_proposals<T>(&mut self, check_proposals: T) where T: IntoIterator<Item = u64> {
-        let mut timed_out: HashSet<u64> = HashSet::new();
-        for id in check_proposals.into_iter() {
-            if !self.responses.contains(&id) {
-                self.propose_normal(id);
-                timed_out.insert(id);
+    fn retry_proposals(&mut self) {
+        if self.current_leader > 0 && !self.retry_proposals.is_empty(){
+            let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
+            for id in &self.retry_proposals {
+                self.propose_normal(*id, leader);
             }
+            let timeout = Duration::from_millis(self.timeout);
+            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals());
+            self.timer = Some(timer);
         }
-        let timeout = Duration::from_millis(self.timeout);
-        let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals(timed_out));
-        self.timer = Some(timer);
     }
 
     fn retry_reconfig(&mut self) {
@@ -125,6 +127,14 @@ impl Actor for Client {
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
+                    AtomicBroadcastMsg::FirstLeader(pid) => {
+                        let prev_leader = self.current_leader;
+                        self.current_leader = pid;
+                        if prev_leader == 0 {
+                            self.send_batch();
+                            self.retry_proposals();
+                        }
+                    },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         match pr.id {
                             RECONFIG_ID => {
@@ -133,11 +143,12 @@ impl Actor for Client {
                                     self.reconfig_timer = None;
                                 }
                                 self.reconfig = None;
-                                self.last_leader = MASTER_PID;  // MASTER_PID is always present in experiments
+                                self.current_leader = pr.last_leader;
                             },
                             _ => {
                                 if self.responses.insert(pr.id) {
-                                    self.last_leader = pr.last_leader;
+                                    self.retry_proposals.remove(&pr.id);
+                                    self.current_leader = pr.last_leader;
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals {
                                         if let Some(timer) = self.timer.take() {

@@ -455,6 +455,12 @@ impl<S, P> Actor for PaxosReplica<S, P> where
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config_id == config_id {
+                    if self.leader_in_active_config == 0 && pid == self.pid {
+                        self.cached_client
+                            .as_ref()
+                            .expect("No cached client!")
+                            .tell((AtomicBroadcastMsg::FirstLeader(pid), AtomicBroadcastSer), self);
+                    }
                     self.leader_in_active_config = pid;
                 }
             },
@@ -750,7 +756,8 @@ impl<S, P> PaxosComp<S, P> where
                     let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
                     // TODO
-                    let pr = ProposalResp::with(RECONFIG_ID, self.current_leader);
+                    let leader = 0; // we don't know who will become leader in new config
+                    let pr = ProposalResp::with(RECONFIG_ID, leader);
                     self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }
