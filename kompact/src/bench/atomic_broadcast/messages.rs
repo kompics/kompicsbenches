@@ -779,21 +779,6 @@ impl ProposalResp {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProposalForward {
-    pub leader_id: u64,
-    pub proposal: Proposal
-}
-
-impl ProposalForward {
-    pub fn with(leader_id: u64, proposal: Proposal) -> ProposalForward {
-        ProposalForward {
-            leader_id,
-            proposal
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
