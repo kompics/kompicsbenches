@@ -1,11 +1,13 @@
 package se.kth.benchmarks.visualisation.generator.plots
 
 import scala.reflect._
-import se.kth.benchmarks.visualisation.generator.{BenchmarkData, ImplGroupedResult, JsRaw, JsString, PlotData, PlotGroup, Series, Statistics}
+import se.kth.benchmarks.visualisation.generator.{BenchmarkData, DataSeries, ErrorBarSeries, ImplGroupedResult, JsRaw, JsString, PlotData, PlotGroup, Series, Statistics}
 import se.kth.benchmarks.runner.{Benchmark, BenchmarkWithSpace, ParameterSpacePB, Parameters}
 import kompics.benchmarks.benchmarks._
 
 import scala.collection.immutable
+import scala.collection.immutable.TreeMap
+import scala.collection.mutable.ListBuffer
 
 abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: BenchmarkWithSpace[Params],
                                                                      val space: ParameterSpacePB[Params],
@@ -145,9 +147,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
         val paramSeries = data.paramSeries(mainAxis);
         val groupedSeries = impls.mapValues(_.map2D(identity, paramSeries));
         val groupedErrorSeries = impls.mapValues(_.map2DErrorBars(identity, paramSeries));
-        val mergedSeries = (for (key <- groupedSeries.keys) yield {
-          (key, groupedSeries(key), groupedErrorSeries(key))
-        }).toList;
+        var merged = new ListBuffer[(K, DataSeries, ErrorBarSeries)]();
+        for (key <- groupedSeries.keys) {
+          val m = (key, groupedSeries(key), groupedErrorSeries(key));
+          merged += m;
+        }
+        val mergedSeries = merged.toList;
         val sortedSeries: List[Series] = mergedSeries.map(t => List[Series](t._2, t._3)).flatten; // already sorted preslice
         val pimpedSeries: List[Series] = sortedSeries.map(
           _.addMeta(
@@ -170,7 +175,7 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
         val calculatedSeries = impls
           .mapValues(_.map2DWithCalc(identity, paramSeries, (t, stats) => calculateValue(calculatedParams, t, stats)))
           .toList;
-        val sortedCalculatedSeries: List[Series] = calculatedSeries.sortBy(_._1).map(t => t._2);
+        val sortedCalculatedSeries: List[Series] = calculatedSeries.map(t => t._2);
         val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(
           _.addMeta(
             "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}")
