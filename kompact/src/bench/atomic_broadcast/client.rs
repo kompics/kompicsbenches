@@ -75,6 +75,7 @@ impl Client {
     }
 
     fn propose_reconfiguration(&mut self) {
+        if self.current_leader == 0 { return; }
         let reconfig = self.reconfig.as_ref().expect("No reconfig");
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
@@ -119,7 +120,11 @@ impl Actor for Client {
     type Message = Run;
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
-        self.send_batch();
+        if self.reconfig.is_some() && self.batch_size == self.num_proposals {
+            self.propose_reconfiguration();
+        } else {
+            self.send_batch();
+        }
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
@@ -131,8 +136,12 @@ impl Actor for Client {
                         let prev_leader = self.current_leader;
                         self.current_leader = pid;
                         if prev_leader == 0 {
-                            self.send_batch();
-                            self.retry_proposals();
+                            if self.reconfig.is_some() && self.batch_size == self.num_proposals {
+                                self.propose_reconfiguration();
+                            } else {
+                                self.send_batch();
+                                self.retry_proposals();
+                            }
                         }
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
