@@ -158,7 +158,15 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
 
     fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
-            RaftReplicaMsg::Leader(pid) => self.current_leader = pid,
+            RaftReplicaMsg::Leader(pid) => {
+                if self.current_leader == 0 && pid == self.pid {
+                    self.cached_client
+                        .as_ref()
+                        .expect("No cached client!")
+                        .tell((AtomicBroadcastMsg::FirstLeader(pid), AtomicBroadcastSer), self);
+                }
+                self.current_leader = pid
+            },
             RaftReplicaMsg::RegResp(rr) => {
                 if let Some(id) = self.pending_registration {
                     if id == rr.id.0 {
@@ -193,57 +201,48 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
             _ => {
                 let NetMessage{sender, receiver: _, data} = m;
                 match_deser! {data; {
-                p: PartitioningActorMsg [PartitioningActorSer] => {
-                    match p {
-                        PartitioningActorMsg::Init(init) => {
-                            self.iteration_id = init.init_id;
-                            self.pid = init.pid as u64;
-                            let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
-                            let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
-                            self.cached_client = Some(client);
-                            for (id, actorpath) in init.nodes.into_iter().enumerate() {
-                                self.nodes.insert(id as u64 + 1, actorpath);
-                            }
-                            self.partitioning_actor = Some(sender);
-                            self.stopped = false;
-                            self.create_components();
-                        },
-                        PartitioningActorMsg::Run => {
-                            self.start_components();
-                        },
-                        PartitioningActorMsg::Stop => {
-                            self.kill_components();
-                            self.stopped = true;
-                            sender.tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
-                        },
-                        _ => unimplemented!(),
-                    }
-                },
-                am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
-                    match am {
-                        AtomicBroadcastMsg::Proposal(p) => {
-                            if let Some(raft_comp) = self.raft_comp.as_ref() {
-                                raft_comp.actor_ref().tell(RaftCompMsg::Propose(p));
-                            }
-                        },
-                        _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
-                    }
-                },
-                tm: TestMessage [TestMessageSer] => {
-                    match tm {
-                        TestMessage::SequenceReq => {
-                            if let Some(raft_comp) = self.raft_comp.as_ref() {
-                                let seq = raft_comp.actor_ref().ask(|promise| RaftCompMsg::SequenceReq(Ask::new(promise, ()))).wait();
-                                let sr = SequenceResp::with(self.pid, seq);
-                                sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
-                            }
-                        },
-                        _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
-                    }
-                },
-                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-            }
-            }
+                    p: PartitioningActorMsg [PartitioningActorSer] => {
+                        match p {
+                            PartitioningActorMsg::Init(init) => {
+                                self.current_leader = 0;
+                                self.iteration_id = init.init_id;
+                                self.pid = init.pid as u64;
+                                let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
+                                let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
+                                self.cached_client = Some(client);
+                                for (id, actorpath) in init.nodes.into_iter().enumerate() {
+                                    self.nodes.insert(id as u64 + 1, actorpath);
+                                }
+                                self.partitioning_actor = Some(sender);
+                                self.stopped = false;
+                                self.create_components();
+                            },
+                            PartitioningActorMsg::Run => {
+                                self.start_components();
+                            },
+                            PartitioningActorMsg::Stop => {
+                                self.kill_components();
+                                self.stopped = true;
+                                sender.tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
+                            },
+                            _ => unimplemented!(),
+                        }
+                    },
+                    tm: TestMessage [TestMessageSer] => {
+                        match tm {
+                            TestMessage::SequenceReq => {
+                                if let Some(raft_comp) = self.raft_comp.as_ref() {
+                                    let seq = raft_comp.actor_ref().ask(|promise| RaftCompMsg::SequenceReq(Ask::new(promise, ()))).wait();
+                                    let sr = SequenceResp::with(self.pid, seq);
+                                    sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
+                                }
+                            },
+                            _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
+                        }
+                    },
+                    !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                }
+                }
             }
         }
     }
@@ -447,11 +446,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                         _ => unimplemented!(),
                     }
                 } else { // normal proposals
-                    let leader = self.raw_raft.raft.leader_id;
-                    if self.current_leader != leader {
-                        self.current_leader = leader;
-                        self.supervisor.tell(RaftReplicaMsg::Leader(leader));
-                    }
                     if self.raw_raft.raft.state == StateRole::Leader{
                         let id = entry.data.as_slice().get_u64();
                         let pr = ProposalResp::with(id, self.raw_raft.raft.id);

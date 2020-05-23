@@ -376,7 +376,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 let finished_latch = Arc::new(CountdownEvent::new(1));
                 self.finished_latch = Some(finished_latch);
                 self.iteration_id += 1;
-                match self.algorithm {
+                let self_path = match self.algorithm {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
                         let (replica_comp, unique_reg_f) = system.create_and_register(|| {
@@ -386,11 +386,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             Duration::from_millis(1000),
                             "ReplicaComp failed to register!",
                         );
-                        let replica_comp_f = system.start_notify(&replica_comp);
-                        replica_comp_f
-                            .wait_timeout(Duration::from_millis(1000))
-                            .expect("ReplicaComp never started!");
-
                         let named_reg_f = system.register_by_alias(
                             &replica_comp,
                             format!("replica{}", &self.iteration_id),
@@ -399,21 +394,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             Duration::from_millis(1000),
                             "Failed to register alias for ReplicaComp"
                         );
+                        let replica_comp_f = system.start_notify(&replica_comp);
+                        replica_comp_f
+                            .wait_timeout(Duration::from_millis(1000))
+                            .expect("ReplicaComp never started!");
+                        self.paxos_replica = Some(replica_comp);
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
                             vec![format!("replica{}", &self.iteration_id).into()],
                         ));
-
-                        let mut nodes = d;
-                        nodes.insert(0, self_path);
-                        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-                        for (id, actorpath) in nodes.iter().enumerate() {
-                            nodes_id.insert(id as u64 + 1, actorpath.clone());
-                        }
-                        let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
-                        self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
-                        self.client_comp = Some(client_comp);
-                        self.paxos_replica = Some(replica_comp);
+                        self_path
                     }
                     Some(Algorithm::Raft) => {
                         let conf_state = get_initial_conf(self.num_nodes.unwrap() as u64);
@@ -432,29 +422,28 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             Duration::from_millis(1000),
                             "RaftReplica failed to register!",
                         );
-
                         let raft_replica_f = system.start_notify(&raft_replica);
                         raft_replica_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("RaftComp never started!");
-
+                        self.raft_replica = Some(raft_replica);
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
                             vec![format!("raft_replica{}", &self.iteration_id).into()],
                         ));
-                        let mut nodes = d;
-                        nodes.insert(0, self_path);
-                        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-                        for (id, actorpath) in nodes.iter().enumerate() {
-                            nodes_id.insert(id as u64 + 1, actorpath.clone());
-                        }
-                        let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
-                        self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
-                        self.client_comp = Some(client_comp);
-                        self.raft_replica = Some(raft_replica);
+                        self_path
                     }
                     _ => unimplemented!(),
+                };
+                let mut nodes = d;
+                nodes.insert(0, self_path);
+                let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
+                for (id, actorpath) in nodes.iter().enumerate() {
+                    nodes_id.insert(id as u64 + 1, actorpath.clone());
                 }
+                let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
+                self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
+                self.client_comp = Some(client_comp);
             }
             None => unimplemented!()
         }
