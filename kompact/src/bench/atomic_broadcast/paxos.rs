@@ -1002,7 +1002,7 @@ pub mod raw_paxos{
         /*** Leader ***/
         pub fn handle_leader(&mut self, l: Leader) {
             let n = l.ballot;
-            if n <= self.n_leader || n < self.storage.get_promise() {
+            if n <= self.n_leader || n <= self.storage.get_promise() {
                 return;
             }
             self.clear_peers_state();

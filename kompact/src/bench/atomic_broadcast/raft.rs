@@ -13,13 +13,14 @@ use uuid::Uuid;
 use std::collections::HashSet;
 use super::parameters::{*, raft::*};
 use rand::Rng;
+use crate::serialiser_ids::ATOMICBCAST_ID;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
 
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
-    ProposalForward(ProposalForward),
+    Leader(u64),
     RegResp(RegistrationResponse)
 }
 
@@ -41,7 +42,8 @@ pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     iteration_id: u32,
     stopped: bool,
     partitioning_actor: Option<ActorPath>,
-    cached_client: Option<ActorPath>
+    cached_client: Option<ActorPath>,
+    current_leader: u64,
 }
 
 impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
@@ -57,7 +59,8 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             iteration_id: 0,
             stopped: false,
             partitioning_actor: None,
-            cached_client: None
+            cached_client: None,
+            current_leader: 0
         }
     }
 
@@ -155,11 +158,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
 
     fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
-            RaftReplicaMsg::ProposalForward(pf) => {
-                if let Some(ap) = self.nodes.get(&pf.leader_id) {
-                    ap.tell( (AtomicBroadcastMsg::Proposal(pf.proposal), AtomicBroadcastSer), self);
-                }
-            },
+            RaftReplicaMsg::Leader(pid) => self.current_leader = pid,
             RaftReplicaMsg::RegResp(rr) => {
                 if let Some(id) = self.pending_registration {
                     if id == rr.id.0 {
@@ -176,8 +175,24 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let NetMessage{sender, receiver: _, data} = m;
-        match_deser! {data; {
+        match &m.data.ser_id {
+            &ATOMICBCAST_ID => {
+                if !self.stopped {
+                    if self.current_leader == self.pid {
+                        match m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                            AtomicBroadcastMsg::Proposal(p) => self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p)),
+                            _ => {},
+                        }
+                    } else if self.current_leader > 0 {
+                        let leader = self.nodes.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
+                        leader.forward_with_original_sender(m, &self.ctx.system());
+                    }
+                    // else no leader... just drop
+                }
+            },
+            _ => {
+                let NetMessage{sender, receiver: _, data} = m;
+                match_deser! {data; {
                 p: PartitioningActorMsg [PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
@@ -229,6 +244,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }
             }
+            }
+        }
     }
 }
 
@@ -241,12 +258,13 @@ pub enum RaftCompMsg {
 #[derive(ComponentDefinition)]
 pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     ctx: ComponentContext<Self>,
-    replica: ActorRef<RaftReplicaMsg>,
+    supervisor: ActorRef<RaftReplicaMsg>,
     raw_raft: RawNode<S>,
     communication_port: RequiredPort<CommunicationPort, Self>,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     has_reconfigured: bool,
     stopped: bool,
+    current_leader: u64,
 }
 
 impl<S> Provide<ControlPort> for RaftComp<S> where
@@ -273,16 +291,7 @@ impl<S> Actor for RaftComp<S> where
         match msg {
             RaftCompMsg::Propose(p) => {
                 if !self.stopped {
-                    if self.raw_raft.raft.state == StateRole::Leader{
-                        self.propose(p);    // TODO propose no matter what state if TikV forwards automatically
-                    }
-                    else {
-                        let leader_id = self.raw_raft.raft.leader_id;
-                        if leader_id > 0 {
-                            let pf = ProposalForward::with(leader_id, p);
-                            self.replica.tell(RaftReplicaMsg::ProposalForward(pf));
-                        }
-                    }
+                    self.propose(p);
                 }
             },
             RaftCompMsg::SequenceReq(sr) => {
@@ -324,12 +333,13 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     pub fn with(raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>) -> RaftComp<S> {
         RaftComp {
             ctx: ComponentContext::new(),
-            replica,
+            supervisor: replica,
             raw_raft,
             communication_port: RequiredPort::new(),
             timers: None,
             has_reconfigured: false,
-            stopped: false
+            stopped: false,
+            current_leader: 0
         }
     }
 
@@ -348,6 +358,11 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
     fn tick(&mut self) {
         self.raw_raft.tick();
+        let leader = self.raw_raft.raft.leader_id;
+        if leader != self.current_leader {
+            self.current_leader = leader;
+            self.supervisor.tell(RaftReplicaMsg::Leader(leader));
+        }
     }
 
     fn step(&mut self, msg: TikvRaftMsg) {
@@ -431,8 +446,12 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                         }
                         _ => unimplemented!(),
                     }
-                } else {
-                    // normal proposals
+                } else { // normal proposals
+                    let leader = self.raw_raft.raft.leader_id;
+                    if self.current_leader != leader {
+                        self.current_leader = leader;
+                        self.supervisor.tell(RaftReplicaMsg::Leader(leader));
+                    }
                     if self.raw_raft.raft.state == StateRole::Leader{
                         let id = entry.data.as_slice().get_u64();
                         let pr = ProposalResp::with(id, self.raw_raft.raft.id);
@@ -607,7 +626,7 @@ mod tests {
     fn raft_test() {
         let n: u64 = 3;
         let quorum = n/2 + 1;
-        let num_proposals = 1000;
+        let num_proposals = 2000;
         let batch_size = 1000;
         let config = (vec![1,2,3], vec![]);
         let reconfig = None;

@@ -2,7 +2,7 @@ pub const ELECTION_TIMEOUT: u64 = 300;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
 
 pub mod paxos {
-    pub const GET_DECIDED_PERIOD: u64 = 5;
+    pub const GET_DECIDED_PERIOD: u64 = 50;
     pub const TRANSFER_TIMEOUT: u64 = 800;
 }
 
