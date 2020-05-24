@@ -19,6 +19,9 @@ use crate::partitioning_actor::IterationControlMsg;
 use super::storage::raft::DiskStorage;
 use tikv_raft::{storage::MemStorage};
 
+const PAXOS_PATH: &'static str = "paxos_replica";
+const RAFT_PATH: &'static str = "raft_replica";
+
 #[derive(Debug, Clone)]
 pub struct ClientParams {
     algorithm: Algorithm,
@@ -379,7 +382,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 let self_path = match self.algorithm {
                     Some(Algorithm::Paxos) => {
                         let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
-                        let (replica_comp, unique_reg_f) = system.create_and_register(|| {
+                        let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
                             PaxosReplica::with(initial_config, self.paxos_transfer_policy.clone().unwrap(), self.forward_discarded)
                         });
                         unique_reg_f.wait_expect(
@@ -387,22 +390,23 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             "ReplicaComp failed to register!",
                         );
                         let named_reg_f = system.register_by_alias(
-                            &replica_comp,
-                            format!("replica{}", &self.iteration_id),
+                            &paxos_replica,
+                            format!("{}{}", PAXOS_PATH, &self.iteration_id),
                         );
                         named_reg_f.wait_expect(
                             Duration::from_millis(1000),
                             "Failed to register alias for ReplicaComp"
                         );
-                        let replica_comp_f = system.start_notify(&replica_comp);
-                        replica_comp_f
+                        let paxos_replica_f = system.start_notify(&paxos_replica);
+                        paxos_replica_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("ReplicaComp never started!");
-                        self.paxos_replica = Some(replica_comp);
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
-                            vec![format!("replica{}", &self.iteration_id).into()],
+                            vec![format!("{}{}", PAXOS_PATH, &self.iteration_id).into()],
                         ));
+
+                        self.paxos_replica = Some(paxos_replica);
                         self_path
                     }
                     Some(Algorithm::Raft) => {
@@ -416,7 +420,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         );
                         let named_reg_f = system.register_by_alias(
                             &raft_replica,
-                            format!("raft_replica{}", &self.iteration_id),
+                            format!("{}{}", RAFT_PATH, &self.iteration_id),
                         );
                         named_reg_f.wait_expect(
                             Duration::from_millis(1000),
@@ -426,15 +430,17 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                         raft_replica_f
                             .wait_timeout(Duration::from_millis(1000))
                             .expect("RaftComp never started!");
-                        self.raft_replica = Some(raft_replica);
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
-                            vec![format!("raft_replica{}", &self.iteration_id).into()],
+                            vec![format!("{}{}", RAFT_PATH, &self.iteration_id).into()],
                         ));
+
+                        self.raft_replica = Some(raft_replica);
                         self_path
                     }
                     _ => unimplemented!(),
                 };
+                println!("Master replica path: {:?}", self_path);
                 let mut nodes = d;
                 nodes.insert(0, self_path);
                 let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
@@ -547,31 +553,31 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let named_path = match c.algorithm {
             Algorithm::Paxos => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
-                let (replica_comp, unique_reg_f) = system.create_and_register(|| {
+                let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
                     PaxosReplica::with(initial_config, c.transfer_policy.unwrap(), c.forward_discarded)
                 });
-                let replica_comp_f = system.start_notify(&replica_comp);
-                replica_comp_f
-                    .wait_timeout(Duration::from_millis(1000))
-                    .expect("ReplicaComp never started!");
                 unique_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "ReplicaComp failed to register!",
                 );
                 let named_reg_f = system.register_by_alias(
-                    &replica_comp,
-                    "replica",
+                    &paxos_replica,
+                    PAXOS_PATH,
                 );
                 named_reg_f.wait_expect(
                     Duration::from_millis(1000),
                     "Failed to register alias for ReplicaComp"
                 );
+                let paxos_replica_f = system.start_notify(&paxos_replica);
+                paxos_replica_f
+                    .wait_timeout(Duration::from_millis(1000))
+                    .expect("ReplicaComp never started!");
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
-                    vec!["replica".into()],
+                    vec![PAXOS_PATH.into()],
                 ));
 
-                self.paxos_replica = Some(replica_comp);
+                self.paxos_replica = Some(paxos_replica);
                 self_path
             }
             Algorithm::Raft => {
@@ -589,7 +595,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 );
                 let named_reg_f = system.register_by_alias(
                     &raft_replica,
-                    "raft_replica",
+                    RAFT_PATH,
                 );
                 named_reg_f.wait_expect(
                     Duration::from_millis(1000),
@@ -599,13 +605,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 raft_replica_f
                     .wait_timeout(Duration::from_millis(1000))
                     .expect("RaftComp never started!");
-                self.raft_replica = Some(raft_replica);
-
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
-                    vec!["raft_replica".into()],
+                    vec![RAFT_PATH.into()],
                 ));
 
+                self.raft_replica = Some(raft_replica);
                 self_path
             }
         };

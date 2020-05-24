@@ -54,7 +54,9 @@ impl Client {
     }
 
     fn send_batch(&mut self) {
-        if self.current_leader == 0 { return; }
+        if self.current_leader == 0 || self.proposal_count == self.num_proposals{
+            return;
+        }
         let from = self.proposal_count + 1;
         let i = self.proposal_count + self.batch_size;
         let to = if i > self.num_proposals {
@@ -133,6 +135,7 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
+                        // info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
                         let prev_leader = self.current_leader;
                         self.current_leader = pid;
                         if prev_leader == 0 {
@@ -147,12 +150,18 @@ impl Actor for Client {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         match pr.id {
                             RECONFIG_ID => {
-                                if let Some(timer) = self.reconfig_timer.take() {
+                                if let Some(timer) = self.reconfig_timer.take() {   // first reconfig response
                                     self.cancel_timer(timer);
-                                    self.reconfig_timer = None;
-                                }
-                                self.reconfig = None;
-                                self.current_leader = pr.last_leader;
+                                    self.reconfig = None;
+                                    self.current_leader = pr.last_leader;
+                                    // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.last_leader);
+                                    if self.num_proposals == self.batch_size && self.proposal_count == 0 {
+                                        // info!(self.ctx.log(), "Sending batch after reconfig");
+                                        self.send_batch();
+                                    }
+                                } /*else {
+                                   info!(self.ctx.log(), "Got redundant reconfig. Leader is {}", pr.last_leader);
+                                }*/
                             },
                             _ => {
                                 if self.responses.insert(pr.id) {
@@ -160,10 +169,10 @@ impl Actor for Client {
                                     self.current_leader = pr.last_leader;
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals {
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);
                                         }
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
                                         if received_count == self.num_proposals/2 && self.reconfig.is_some(){
                                             self.propose_reconfiguration();

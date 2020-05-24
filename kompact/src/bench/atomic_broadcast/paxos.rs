@@ -523,7 +523,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     } else if self.leader_in_active_config > 0 {
                         let leader = self.nodes.get(&self.leader_in_active_config).expect(&format!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
-                        leader.forward_with_original_sender(m, &self.ctx.system());
+                        leader.forward_with_original_sender(m, self);
                     }
                     // else no leader... just drop
                 }
@@ -1384,7 +1384,6 @@ mod ballot_leader_election {
         hb_delay: u64,
         delta: u64,
         majority: usize,
-        stopped: bool,
         timer: Option<ScheduledTimer>
     }
 
@@ -1404,7 +1403,6 @@ mod ballot_leader_election {
                 max_ballot: Ballot::with(0, pid),
                 hb_delay: delta,
                 delta,
-                stopped: false,
                 timer: None
             }
         }
@@ -1461,6 +1459,10 @@ mod ballot_leader_election {
         fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
             match event {
                 ControlEvent::Start => {
+                    for peer in &self.peers {
+                        let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
+                        peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
+                    }
                     self.start_timer();
                 },
                 _ => self.stop_timer(),
@@ -1482,7 +1484,6 @@ mod ballot_leader_election {
         }
 
         fn receive_network(&mut self, m: NetMessage) -> () {
-            if self.stopped { return; }
             let NetMessage{sender, receiver: _, data} = m;
             match_deser!{data; {
                 hb: HeartbeatMsg [BallotLeaderSer] => {
