@@ -193,7 +193,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                         }
                     } else if self.current_leader > 0 {
                         let leader = self.nodes.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
-                        leader.forward_with_original_sender(m, &self.ctx.system());
+                        leader.forward_with_original_sender(m, self);
                     }
                     // else no leader... just drop
                 }
@@ -372,12 +372,12 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         let id = proposal.id;
         match proposal.reconfig {
             Some(reconfig) => {
-                let _ = self.raw_raft.raft.propose_membership_change(reconfig).unwrap();
+                let _ = self.raw_raft.raft.propose_membership_change(reconfig);
             }
             None => {   // i.e normal operation
                 let mut data: Vec<u8> = Vec::with_capacity(8);
                 data.put_u64(id);
-                self.raw_raft.propose(vec![], data).expect("Failed to propose in TikvRaft");
+                let _ = self.raw_raft.propose(vec![], data);
             }
         }
     }
