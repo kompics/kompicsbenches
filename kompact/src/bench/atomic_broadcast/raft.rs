@@ -228,6 +228,19 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             _ => unimplemented!(),
                         }
                     },
+                    am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+                        match am {
+                            AtomicBroadcastMsg::Proposal(p) => {
+                                if self.current_leader == self.pid {
+                                    self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p));
+                                } else if self.current_leader > 0 {
+                                    let leader = self.nodes.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
+                                    leader.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+                                }
+                            },
+                            _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
+                        }
+                    },
                     tm: TestMessage [TestMessageSer] => {
                         match tm {
                             TestMessage::SequenceReq => {

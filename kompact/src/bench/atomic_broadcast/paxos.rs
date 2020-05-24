@@ -504,33 +504,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        match &m.data.ser_id {
-            &ATOMICBCAST_ID => {
-                if !self.stopped {
-                    if self.leader_in_active_config == self.pid {
-                        match m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
-                            AtomicBroadcastMsg::Proposal(p) => {
-                                if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
-                                    warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
-                                    return;
-                                }
-                                else {
-                                    let active_paxos = &self.paxos_comps.get(&self.active_config_id).expect("Could not get PaxosComp actor ref despite being leader");
-                                    active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
-                                }
-                            },
-                            _ => {},
-                        }
-                    } else if self.leader_in_active_config > 0 {
-                        let leader = self.nodes.get(&self.leader_in_active_config).expect(&format!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
-                        leader.forward_with_original_sender(m, self);
-                    }
-                    // else no leader... just drop
-                }
-            },
-            _ => {
-                let NetMessage{sender, receiver: _, data} = m;
-                match_deser! {data; {
+        let NetMessage{sender, receiver: _, data} = m;
+        match_deser! {data; {
                     p: PartitioningActorMsg [PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
@@ -554,6 +529,27 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                 debug!(self.ctx.log(), "StopAck sent!");
                             },
                             _ => unimplemented!()
+                        }
+                    },
+                    am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+                        match am {
+                            AtomicBroadcastMsg::Proposal(p) => {
+                                if !self.stopped {
+                                    if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
+                                        warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
+                                        return;
+                                    }
+                                    else if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
+                                        if self.leader_in_active_config == self.pid {
+                                            active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
+                                        } else if self.leader_in_active_config > 0 {
+                                            let leader = self.nodes.get(&self.leader_in_active_config).expect("Could not get leader actorpath");
+                                            leader.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+                                        }
+                                    }
+                                }
+                            },
+                            _ => unimplemented!(),
                         }
                     },
                     rm: ReconfigurationMsg [ReconfigSer] => {
@@ -653,8 +649,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
                     }
                 }
-            },
-        }
     }
 }
 
