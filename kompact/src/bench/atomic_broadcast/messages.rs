@@ -3,7 +3,6 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
-use crate::bench::atomic_broadcast::messages::AtomicBroadcastMsg::FirstLeader;
 
 pub mod raft {
     extern crate raft as tikv_raft;
