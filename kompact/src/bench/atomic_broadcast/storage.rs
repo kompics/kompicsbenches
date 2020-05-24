@@ -745,14 +745,6 @@ pub mod paxos {
             }
         }
 
-        pub fn get_sequence(&self) -> Vec<Entry> {
-            match &self.sequence {
-                PaxosSequence::Active(s) => s.get_sequence(),
-                PaxosSequence::Stopped(s) => s.get_sequence(),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_sequence"),
-            }
-        }
-
         pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_ser_entries(from_idx, to_idx),
@@ -810,6 +802,15 @@ pub mod paxos {
                     arc_s
                 },
                 _ => panic!("Storage should already have been stopped!"),
+            }
+        }
+
+        #[cfg(test)]
+        pub fn get_sequence(&self) -> Vec<Entry> {
+            match &self.sequence {
+                PaxosSequence::Active(s) => s.get_sequence(),
+                PaxosSequence::Stopped(s) => s.get_sequence(),
+                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_sequence"),
             }
         }
     }

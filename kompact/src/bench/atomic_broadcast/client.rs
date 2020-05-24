@@ -242,7 +242,6 @@ pub mod tests {
         }
 
         fn propose_normal(&mut self, id: u64) {
-            let ap = self.ctx.actor_path();
             let p = Proposal::normal(id);
             let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
             node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
@@ -270,7 +269,6 @@ pub mod tests {
         }
 
         fn propose_reconfiguration(&mut self) {
-            let ap = self.ctx.actor_path();
             let reconfig = self.reconfig.take().unwrap();
             info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
             let p = Proposal::reconfiguration(0, reconfig);
@@ -313,7 +311,6 @@ pub mod tests {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if pr.succeeded {
                             match pr.id {
                                 RECONFIG_ID => {
                                     info!(self.ctx.log(), "reconfiguration succeeded?");
@@ -366,16 +363,6 @@ pub mod tests {
                                     }
                                 }
                             }
-                        } else {    // failed proposal
-                            // info!(self.ctx.log(), "{}", format!("Received failed proposal response: {}", pr.id));
-                            let id = pr.id;
-                            if let Some(timer) = self.proposal_timeouts.remove(&id) {
-                                self.cancel_timer(timer);
-                            }
-                            let timeout = Duration::from_millis(PROPOSAL_TIMEOUT);
-                            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
-                            self.proposal_timeouts.insert(pr.id, timer);
-                        }
                     },
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }
