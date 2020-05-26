@@ -165,7 +165,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, kill_recipient)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA, kill_recipient)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -882,11 +882,11 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
 {
     fn handle(&mut self, l: Leader) -> () {
         debug!(self.ctx.log(), "{}", format!("Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot));
+        self.paxos.handle_leader(l);
         if self.current_leader != l.pid && !self.paxos.stopped() {
+            self.current_leader = l.pid;
             self.supervisor.tell(PaxosReplicaMsg::Leader(self.config_id, l.pid));
         }
-        self.paxos.handle_leader(l);
-        self.current_leader = l.pid;
     }
 }
 
@@ -1441,7 +1441,7 @@ mod ballot_leader_election {
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: HashSet<ActorPath>, pid: u64, delta: u64, supervisor: Recipient<KillResponse>) -> BallotLeaderComp {
+        pub fn with(peers: HashSet<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<KillResponse>) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1454,7 +1454,7 @@ mod ballot_leader_election {
                 current_ballot: Ballot::with(0, pid),
                 leader: None,
                 max_ballot: Ballot::with(0, pid),
-                hb_delay: delta,
+                hb_delay,
                 delta,
                 timer: None,
                 supervisor
@@ -1557,6 +1557,7 @@ mod ballot_leader_election {
                             if rep.round == self.round {
                                 self.ballots.push((rep.max_ballot, rep.sender_pid));
                             } else {
+                                debug!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                                 self.hb_delay += self.delta;
                             }
                         }

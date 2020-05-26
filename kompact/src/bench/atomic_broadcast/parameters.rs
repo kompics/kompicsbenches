@@ -5,6 +5,7 @@ pub const CAPACITY: usize = 100000;   // capacity of number of messages in paral
 pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 20;
     pub const TRANSFER_TIMEOUT: u64 = 300;
+    pub const BLE_DELTA: u64 = 20;
 }
 
 pub mod raft {
