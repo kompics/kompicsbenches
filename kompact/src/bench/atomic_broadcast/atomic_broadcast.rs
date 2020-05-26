@@ -21,6 +21,7 @@ use tikv_raft::{storage::MemStorage};
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
@@ -256,19 +257,19 @@ impl AtomicBroadcastMaster {
             )
         });
         unique_reg_f.wait_expect(
-            Duration::from_millis(1000),
+            REGISTER_TIMEOUT,
             "Client failed to register!",
         );
         let client_comp_f = system.start_notify(&client_comp);
         client_comp_f
-            .wait_timeout(Duration::from_millis(1000))
+            .wait_timeout(REGISTER_TIMEOUT)
             .expect("ClientComp never started!");
         let named_reg_f = system.register_by_alias(
             &client_comp,
             format!("client{}", &self.iteration_id),
         );
         named_reg_f.wait_expect(
-            Duration::from_millis(1000),
+            REGISTER_TIMEOUT,
             "Failed to register alias for ClientComp"
         );
         let client_path = ActorPath::Named(NamedPath::with_system(
@@ -386,7 +387,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             PaxosReplica::with(initial_config, self.paxos_transfer_policy.clone().unwrap(), self.forward_discarded)
                         });
                         unique_reg_f.wait_expect(
-                            Duration::from_millis(1000),
+                            REGISTER_TIMEOUT,
                             "ReplicaComp failed to register!",
                         );
                         let named_reg_f = system.register_by_alias(
@@ -394,12 +395,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             format!("{}{}", PAXOS_PATH, &self.iteration_id),
                         );
                         named_reg_f.wait_expect(
-                            Duration::from_millis(1000),
+                            REGISTER_TIMEOUT,
                             "Failed to register alias for ReplicaComp"
                         );
                         let paxos_replica_f = system.start_notify(&paxos_replica);
                         paxos_replica_f
-                            .wait_timeout(Duration::from_millis(1000))
+                            .wait_timeout(REGISTER_TIMEOUT)
                             .expect("ReplicaComp never started!");
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
@@ -415,7 +416,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             RaftReplica::<Storage>::with(conf_state.0)
                         });
                         unique_reg_f.wait_expect(
-                            Duration::from_millis(1000),
+                            REGISTER_TIMEOUT,
                             "RaftComp failed to register!",
                         );
                         let named_reg_f = system.register_by_alias(
@@ -423,12 +424,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                             format!("{}{}", RAFT_PATH, &self.iteration_id),
                         );
                         named_reg_f.wait_expect(
-                            Duration::from_millis(1000),
+                            REGISTER_TIMEOUT,
                             "RaftReplica failed to register!",
                         );
                         let raft_replica_f = system.start_notify(&raft_replica);
                         raft_replica_f
-                            .wait_timeout(Duration::from_millis(1000))
+                            .wait_timeout(REGISTER_TIMEOUT)
                             .expect("RaftComp never started!");
                         let self_path = ActorPath::Named(NamedPath::with_system(
                             system.system_path(),
@@ -479,7 +480,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let client = self.client_comp.take().unwrap();
         let kill_client_f = system.kill_notify(client);
         kill_client_f
-            .wait_timeout(Duration::from_millis(1000))
+            .wait_timeout(REGISTER_TIMEOUT)
             .expect("Client never died");
 
         if let Some(partitioning_actor) = self.partitioning_actor.take() {
@@ -493,21 +494,21 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
-                .wait_timeout(Duration::from_millis(1000))
+                .wait_timeout(REGISTER_TIMEOUT)
                 .expect("Partitioning Actor never died!");
         }
 
         if let Some(paxos_replica_comp) = self.paxos_replica.take() {
             let kill_replica_f = system.kill_notify(paxos_replica_comp);
             kill_replica_f
-                .wait_timeout(Duration::from_millis(1000))
+                .wait_timeout(REGISTER_TIMEOUT)
                 .expect("Paxos Replica never died!");
         }
 
         if let Some(raft_replica) = self.raft_replica.take() {
             let kill_raft_f = system.kill_notify(raft_replica);
             kill_raft_f
-                .wait_timeout(Duration::from_millis(1000))
+                .wait_timeout(REGISTER_TIMEOUT)
                 .expect("RaftComp never died!");
         }
 
@@ -557,7 +558,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     PaxosReplica::with(initial_config, c.transfer_policy.unwrap(), c.forward_discarded)
                 });
                 unique_reg_f.wait_expect(
-                    Duration::from_millis(1000),
+                    REGISTER_TIMEOUT,
                     "ReplicaComp failed to register!",
                 );
                 let named_reg_f = system.register_by_alias(
@@ -565,12 +566,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     PAXOS_PATH,
                 );
                 named_reg_f.wait_expect(
-                    Duration::from_millis(1000),
+                    REGISTER_TIMEOUT,
                     "Failed to register alias for ReplicaComp"
                 );
                 let paxos_replica_f = system.start_notify(&paxos_replica);
                 paxos_replica_f
-                    .wait_timeout(Duration::from_millis(1000))
+                    .wait_timeout(REGISTER_TIMEOUT)
                     .expect("ReplicaComp never started!");
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
@@ -590,7 +591,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     RaftReplica::<Storage>::with(conf_state.0)
                 });
                 unique_reg_f.wait_expect(
-                    Duration::from_millis(1000),
+                    REGISTER_TIMEOUT,
                     "RaftComp failed to register!",
                 );
                 let named_reg_f = system.register_by_alias(
@@ -598,12 +599,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     RAFT_PATH,
                 );
                 named_reg_f.wait_expect(
-                    Duration::from_millis(1000),
+                    REGISTER_TIMEOUT,
                     "Communicator failed to register!",
                 );
                 let raft_replica_f = system.start_notify(&raft_replica);
                 raft_replica_f
-                    .wait_timeout(Duration::from_millis(1000))
+                    .wait_timeout(REGISTER_TIMEOUT)
                     .expect("RaftComp never started!");
                 let self_path = ActorPath::Named(NamedPath::with_system(
                     system.system_path(),
@@ -630,13 +631,13 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             if let Some(replica) = self.paxos_replica.take() {
                 let kill_replica_f = system.kill_notify(replica);
                 kill_replica_f
-                    .wait_timeout(Duration::from_secs(1))
+                    .wait_timeout(REGISTER_TIMEOUT)
                     .expect("Paxos Replica never died!");
             }
             if let Some(raft_replica) = self.raft_replica.take() {
                 let kill_raft_f = system.kill_notify(raft_replica);
                 kill_raft_f
-                    .wait_timeout(Duration::from_millis(1000))
+                    .wait_timeout(REGISTER_TIMEOUT)
                     .expect("Atomic Broadcast never died!");
             }
             system

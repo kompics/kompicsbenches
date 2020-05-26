@@ -5,7 +5,7 @@ use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
 use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer};
 use std::collections::HashMap;
-use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer};
+use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer, KillResponse};
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
 
 #[derive(Clone, Debug)]
@@ -34,44 +34,44 @@ pub struct Communicator {
     atomic_broadcast_port: ProvidedPort<CommunicationPort, Communicator>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
     client: ActorPath,    // cached client to send SequenceResp to
-    stopped: bool
+    supervisor: Recipient<KillResponse>
 }
 
 impl Communicator {
-    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath) -> Communicator {
+    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath, supervisor: Recipient<KillResponse>) -> Communicator {
         Communicator {
             ctx: ComponentContext::new(),
             atomic_broadcast_port: ProvidedPort::new(),
             peers,
             client,
-            stopped: false
+            supervisor,
         }
     }
 }
 
 impl Provide<ControlPort> for Communicator {
-    fn handle(&mut self, _: <ControlPort as Port>::Request) -> () {
-        // ignore
+    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        if let ControlEvent::Kill = event {
+            self.supervisor.tell(KillResponse);
+        }
     }
 }
 
 impl Provide<CommunicationPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) {
-        if !self.stopped {
-            match msg {
-                CommunicatorMsg::RawRaftMsg(rm) => {
-                    let receiver = self.peers.get(&rm.get_to()).expect(&format!("Could not find actorpath for id={}. Known peers: {:?}", &rm.get_to(), self.peers.keys()));
-                    receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
-                },
-                CommunicatorMsg::RawPaxosMsg(pm) => {
-                    let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
-                    receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
-                },
-                CommunicatorMsg::ProposalResponse(pr) => {
-                    let am = AtomicBroadcastMsg::ProposalResp(pr);
-                    self.client.tell((am, AtomicBroadcastSer), self);
-                },
-            }
+        match msg {
+            CommunicatorMsg::RawRaftMsg(rm) => {
+                let receiver = self.peers.get(&rm.get_to()).expect(&format!("Could not find actorpath for id={}. Known peers: {:?}", &rm.get_to(), self.peers.keys()));
+                receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
+            },
+            CommunicatorMsg::RawPaxosMsg(pm) => {
+                let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
+                receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
+            },
+            CommunicatorMsg::ProposalResponse(pr) => {
+                let am = AtomicBroadcastMsg::ProposalResp(pr);
+                self.client.tell((am, AtomicBroadcastSer), self);
+            },
         }
     }
 }
@@ -80,8 +80,7 @@ impl Actor for Communicator {
     type Message = ();
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
-        // self.stopped = true;
-        // let _ = msg.0.reply(());
+        // ignore
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {

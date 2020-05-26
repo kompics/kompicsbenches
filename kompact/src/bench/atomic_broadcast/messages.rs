@@ -440,7 +440,7 @@ pub mod paxos {
         }
     }
 
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Debug, Eq, PartialEq, Hash)]
     pub struct SequenceRequest {
         pub config_id: u32,
         pub tag: u32,   // keep track of which segment of the sequence this is
@@ -739,6 +739,9 @@ pub mod paxos {
 /*** Shared Messages***/
 #[derive(Clone, Debug)]
 pub struct Run;
+
+#[derive(Debug)]
+pub struct KillResponse;
 
 pub const RECONFIG_ID: u64 = 0;
 

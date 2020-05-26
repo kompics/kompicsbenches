@@ -6,7 +6,7 @@ use raw_paxos::{Entry, Paxos};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use super::messages::{TestMessage, TestMessageSer, SequenceResp, paxos::ballot_leader_election::Leader};
+use super::messages::{KillResponse, TestMessage, TestMessageSer, SequenceResp, paxos::ballot_leader_election::Leader};
 use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
 use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, RECONFIG_ID};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
@@ -57,7 +57,8 @@ pub struct PaxosReplica<S, P> where
     pid: u64,
     initial_config: Vec<u64>,
     paxos_comps: HashMap<u32, Arc<Component<PaxosComp<S, P>>>>,
-    ble_communicator_comps: HashMap<u32, (Arc<Component<BallotLeaderComp>>, Arc<Component<Communicator>>)>,
+    ble_comps: HashMap<u32, Arc<Component<BallotLeaderComp>>>,
+    communicator_comps: HashMap<u32, Arc<Component<Communicator>>>,
     active_config_id: u32,
     leader_in_active_config: u64,
     nodes: HashMap<u64, ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
@@ -74,7 +75,8 @@ pub struct PaxosReplica<S, P> where
     forward_discarded: bool,
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
     cached_client: Option<ActorPath>,
-    pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>
+    pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>,
+    pending_kill_comps: usize,
 }
 
 impl<S, P> PaxosReplica<S, P> where
@@ -87,7 +89,8 @@ impl<S, P> PaxosReplica<S, P> where
             pid: 0,
             initial_config,
             paxos_comps: HashMap::new(),
-            ble_communicator_comps: HashMap::new(),
+            ble_comps: HashMap::new(),
+            communicator_comps: HashMap::new(),
             active_config_id: 0,
             leader_in_active_config: 0,
             nodes: HashMap::new(),
@@ -104,7 +107,8 @@ impl<S, P> PaxosReplica<S, P> where
             forward_discarded,
             retry_transfer_timers: HashMap::new(),
             cached_client: None,
-            pending_local_seq_requests: HashMap::new()
+            pending_local_seq_requests: HashMap::new(),
+            pending_kill_comps: 0,
         }
     }
 
@@ -144,6 +148,7 @@ impl<S, P> PaxosReplica<S, P> where
             }
         }
         let system = self.ctx.system();
+        let kill_recipient: Recipient<KillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
         let paxos_comp = system.create(|| {
             PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid, self.forward_discarded)
@@ -151,12 +156,16 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
         let communicator = system.create( || {
-            Communicator::with(communicator_peers, self.cached_client.as_ref().expect("No cached client!").clone())
+            Communicator::with(
+                communicator_peers,
+                self.cached_client.as_ref().expect("No cached client!").clone(),
+                kill_recipient.clone()
+            )
         });
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, kill_recipient)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -178,7 +187,8 @@ impl<S, P> PaxosReplica<S, P> where
             .expect("Could not connect BLE and PaxosComp!");
 
         self.paxos_comps.insert(config_id, paxos_comp);
-        self.ble_communicator_comps.insert(config_id, (ble_comp, communicator));
+        self.ble_comps.insert(config_id, ble_comp);
+        self.communicator_comps.insert(config_id, communicator);
         self.next_config_id = Some(config_id);
     }
 
@@ -190,40 +200,45 @@ impl<S, P> PaxosReplica<S, P> where
             let paxos = self.paxos_comps
                 .get(&config_id)
                 .expect(&format!("Could not find PaxosComp with config_id: {}", config_id));
-            let (ble, communicator) = self.ble_communicator_comps
+            let ble = self.ble_comps
                 .get(&config_id)
-                .expect(&format!("Could not find BLE and Communicator with config_id: {}", config_id));
+                .expect(&format!("Could not find BLE config_id: {}", config_id));
+            let communicator = self.communicator_comps
+                .get(&config_id)
+                .expect(&format!("Could not find Communicator with config_id: {}", config_id));
             self.ctx.system().start(paxos);
-            self.ctx.system().start(communicator);
             self.ctx.system().start(ble);
+            self.ctx.system().start(communicator);
             self.next_config_id = None;
         }
     }
 
     fn kill_all_replicas(&mut self) {
-        debug!(self.ctx.log(), "Killing replicas...");
-        for (_, (ble, communicator)) in self.ble_communicator_comps.drain() {
-            self.ctx.system().kill(ble);
-            self.ctx.system().kill(communicator);
+        self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
+        debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
+        if self.pending_kill_comps == 0 {
+            debug!(self.ctx.log(), "Stopped all child components");
+            self.partitioning_actor
+                .as_ref()
+                .unwrap()
+                .tell_serialised(PartitioningActorMsg::StopAck, self)
+                .expect("Should serialise");
+        } else {
+            for (_, ble) in self.ble_comps.drain() {
+                self.ctx.system().kill(ble);
+            }
+            for (_, paxos) in self.paxos_comps.drain() {
+                self.ctx.system().kill(paxos);
+            }
+            for (_, communicator) in self.communicator_comps.drain() {
+                self.ctx.system().kill(communicator);
+            }
         }
-        for (_, paxos) in self.paxos_comps.drain() {
-            self.ctx.system().kill(paxos);
-        }
-        self.active_config_id = 0;
-        self.leader_in_active_config = 0;
-        self.next_config_id = None;
     }
 
     fn new_iteration(&mut self, init: Init) {
-        let nodes = init.nodes;
-        self.active_config_id = 0;
-        self.leader_in_active_config = 0;
-        self.next_config_id = None;
         self.stopped = false;
-        self.prev_sequences.clear();
-        self.active_peers.0.clear();
-        self.active_peers.1.clear();
-        self.complete_sequences.clear();
+        let nodes = init.nodes;
         self.pid = init.pid as u64;
         self.iteration_id = init.init_id;
         let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
@@ -431,12 +446,19 @@ pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
     Leader(u32, u64),
     Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse),
-    SequenceResp(SequenceRequest, Option<Vec<u8>>)
+    SequenceResp(SequenceRequest, Option<Vec<u8>>),
+    KillResp
 }
 
 impl<S> From<RegistrationResponse> for PaxosReplicaMsg<S> where S: SequenceTraits {
     fn from(rr: RegistrationResponse) -> Self {
         PaxosReplicaMsg::RegResp(rr)
+    }
+}
+
+impl<S> From<KillResponse> for PaxosReplicaMsg<S> where S: SequenceTraits{
+    fn from(_: KillResponse) -> Self {
+        PaxosReplicaMsg::KillResp
     }
 }
 
@@ -447,7 +469,20 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     type Message = PaxosReplicaMsg<S>;
 
     fn receive_local(&mut self, msg: Self::Message) -> () {
-        if self.stopped { return; }
+        if self.stopped {
+            if let PaxosReplicaMsg::KillResp = msg {
+                self.pending_kill_comps -= 1;
+                if self.pending_kill_comps == 0 {
+                    debug!(self.ctx.log(), "Stopped all child components");
+                    self.partitioning_actor
+                        .as_ref()
+                        .unwrap()
+                        .tell_serialised(PartitioningActorMsg::StopAck, self)
+                        .expect("Should serialise");
+                }
+            }
+            return;
+        }
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config_id == config_id {
@@ -507,7 +542,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
                 }
                 self.pending_local_seq_requests.remove(&sr);
-            }
+            },
+            _ => {}
         }
     }
 
@@ -524,17 +560,20 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         self.start_replica();
                     },
                     PartitioningActorMsg::Stop => {
+                        self.partitioning_actor = Some(sender);
                         self.kill_all_replicas();
-                        let retry_timers = std::mem::replace(&mut self.retry_transfer_timers, HashMap::new());
+                        let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
                         for (_, timer) in retry_timers {
                             self.cancel_timer(timer);
                         }
-                        debug!(self.ctx.log(), "Stopped all child components");
+                        self.active_config_id = 0;
+                        self.leader_in_active_config = 0;
+                        self.next_config_id = None;
+                        self.prev_sequences.clear();
+                        self.active_peers.0.clear();
+                        self.active_peers.1.clear();
+                        self.complete_sequences.clear();
                         self.stopped = true;
-                        sender
-                            .tell_serialised(PartitioningActorMsg::StopAck, self)
-                            .expect("Should serialise");
-                        debug!(self.ctx.log(), "StopAck sent!");
                     },
                     _ => unimplemented!()
                 }
@@ -817,9 +856,11 @@ impl<S, P> Provide<ControlPort> for PaxosComp<S, P> where
             ControlEvent::Start => {
                 self.start_timers();
             },
-            _ => {
+            ControlEvent::Kill => {
                 self.stop_timers();
-            }
+                self.supervisor.tell(PaxosReplicaMsg::KillResp);
+            },
+            _ => {}
         }
     }
 }
@@ -1397,11 +1438,12 @@ mod ballot_leader_election {
         hb_delay: u64,
         delta: u64,
         majority: usize,
-        timer: Option<ScheduledTimer>
+        timer: Option<ScheduledTimer>,
+        supervisor: Recipient<KillResponse>,
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: HashSet<ActorPath>, pid: u64, hb_delay: u64, delta: u64) -> BallotLeaderComp {
+        pub fn with(peers: HashSet<ActorPath>, pid: u64, delta: u64, supervisor: Recipient<KillResponse>) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1416,7 +1458,8 @@ mod ballot_leader_election {
                 max_ballot: Ballot::with(0, pid),
                 hb_delay,
                 delta,
-                timer: None
+                timer: None,
+                supervisor
             }
         }
 
@@ -1478,7 +1521,11 @@ mod ballot_leader_election {
                     }
                     self.start_timer();
                 },
-                _ => self.stop_timer(),
+                ControlEvent::Kill => {
+                    self.stop_timer();
+                    self.supervisor.tell(KillResponse);
+                },
+                _ => {}
             }
         }
     }

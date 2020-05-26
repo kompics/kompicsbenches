@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, collections::HashMap, marker::Send, clone::Clone};
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
+use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer, IterationControlMsg};
 use super::messages::{*};
 use super::storage::raft::*;
 use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg};
@@ -21,12 +21,19 @@ const DELAY: Duration = Duration::from_millis(0);
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
     Leader(u64),
-    RegResp(RegistrationResponse)
+    RegResp(RegistrationResponse),
+    KillResp
 }
 
 impl From<RegistrationResponse> for RaftReplicaMsg {
     fn from(rr: RegistrationResponse) -> Self {
         RaftReplicaMsg::RegResp(rr)
+    }
+}
+
+impl From<KillResponse> for RaftReplicaMsg {
+    fn from(_: KillResponse) -> Self {
+        RaftReplicaMsg::KillResp
     }
 }
 
@@ -44,6 +51,7 @@ pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     partitioning_actor: Option<ActorPath>,
     cached_client: Option<ActorPath>,
     current_leader: u64,
+    pending_kill_comps: usize,
 }
 
 impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
@@ -60,7 +68,8 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             stopped: false,
             partitioning_actor: None,
             cached_client: None,
-            current_leader: 0
+            current_leader: 0,
+            pending_kill_comps: 0
         }
     }
 
@@ -116,8 +125,13 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             RaftComp::with(raw_raft, self.actor_ref())
         });
         system.register_without_response(&raft_comp);
+        let kill_recipient: Recipient<KillResponse> = self.actor_ref().recipient();
         let communicator = system.create(|| {
-            Communicator::with(communicator_peers, self.cached_client.as_ref().expect("No cached client").clone())
+            Communicator::with(
+                communicator_peers,
+                self.cached_client.as_ref().expect("No cached client").clone(),
+                kill_recipient
+            )
         });
         system.register_without_response(&communicator);
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
@@ -139,10 +153,18 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     fn kill_components(&mut self) {
         let system = self.ctx.system();
         if let Some(raft) = self.raft_comp.take() {
+            self.pending_kill_comps += 1;
             system.kill(raft);
         }
         if let Some(communicator) = self.communicator.take() {
+            self.pending_kill_comps += 1;
             system.kill(communicator);
+        }
+        if self.pending_kill_comps == 0 {
+            self.partitioning_actor
+                .as_ref()
+                .expect("No cached partitioning actor")
+                .tell_serialised(PartitioningActorMsg::StopAck, self);
         }
     }
 }
@@ -177,6 +199,15 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             .tell_serialised(PartitioningActorMsg::InitAck(self.iteration_id), self)
                             .expect("Should serialise");
                     }
+                }
+            },
+            RaftReplicaMsg::KillResp => {
+                self.pending_kill_comps -= 1;
+                if self.pending_kill_comps == 0 {
+                    self.partitioning_actor
+                        .as_ref()
+                        .expect("No cached partitioning actor")
+                        .tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
                 }
             }
         }
@@ -287,10 +318,12 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
                     info!(self.ctx.log(), "Started RaftComp pid: {}", self.raw_raft.raft.id);
                     self.start_timers();
                 },
-                _ => {
+                ControlEvent::Kill => {
                     self.stop_timers();
                     self.raw_raft.mut_store().clear().expect("Failed to clear storage!");
-                }
+                    self.supervisor.tell(RaftReplicaMsg::KillResp);
+                },
+                _ => {},
             }
         }
 }
