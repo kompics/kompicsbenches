@@ -54,9 +54,6 @@ impl Client {
     }
 
     fn send_batch(&mut self) {
-        if self.current_leader == 0 || self.proposal_count == self.num_proposals{
-            return;
-        }
         let from = self.proposal_count + 1;
         let i = self.proposal_count + self.batch_size;
         let to = if i > self.num_proposals {
@@ -64,11 +61,18 @@ impl Client {
         } else {
             i
         };
-        debug!(self.ctx.log(), "Proposing {}-{}", from, to);
-        let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
-        for id in from ..= to {
-            self.propose_normal(id.clone(), leader);
-            self.retry_proposals.insert(id);
+        if self.current_leader != 0 {
+            debug!(self.ctx.log(), "Proposing {}-{}", from, to);
+            let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
+            for id in from ..= to {
+                self.propose_normal(id.clone(), leader);
+                self.retry_proposals.insert(id);
+            }
+        } else {
+            debug!(self.ctx.log(), "No leader... will retry {}-{} later", from, to);
+            for id in from ..= to {
+                self.retry_proposals.insert(id);
+            }
         }
         self.proposal_count += self.batch_size;
         let timeout = Duration::from_millis(self.timeout);
@@ -89,15 +93,19 @@ impl Client {
     }
 
     fn retry_proposals(&mut self) {
-        if self.current_leader > 0 && !self.retry_proposals.is_empty(){
+        if self.retry_proposals.is_empty() {
+            debug!(self.ctx.log(), "No proposals to retry. Received: {}", self.responses.len());
+            return;
+        }
+        if self.current_leader > 0 {
             let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
             for id in &self.retry_proposals {
                 self.propose_normal(*id, leader);
             }
-            let timeout = Duration::from_millis(self.timeout);
-            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals());
-            self.timer = Some(timer);
         }
+        let timeout = Duration::from_millis(self.timeout);
+        let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals());
+        self.timer = Some(timer);
     }
 
     fn retry_reconfig(&mut self) {
@@ -135,14 +143,15 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        // info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
+                        info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
                         let prev_leader = self.current_leader;
                         self.current_leader = pid;
                         if prev_leader == 0 {
                             if self.reconfig.is_some() && self.batch_size == self.num_proposals {
                                 self.propose_reconfiguration();
-                            } else {
-                                self.send_batch();
+                            } else if let Some(timer) = self.timer.take() {
+                                info!(self.ctx.log(), "Retrying proposals after first leader");
+                                self.cancel_timer(timer);
                                 self.retry_proposals();
                             }
                         }
@@ -159,16 +168,18 @@ impl Actor for Client {
                                         // info!(self.ctx.log(), "Sending batch after reconfig");
                                         self.send_batch();
                                     }
-                                } /*else {
-                                   info!(self.ctx.log(), "Got redundant reconfig. Leader is {}", pr.last_leader);
-                                }*/
+                                }
                             },
                             _ => {
                                 if self.responses.insert(pr.id) {
+                                    /*if pr.id % 4000 == 0 {
+                                        info!(self.ctx.log(), "Got response {}. Leader: {}, received {}", pr.id, pr.last_leader, self.responses.len());
+                                    }*/
                                     self.retry_proposals.remove(&pr.id);
                                     self.current_leader = pr.last_leader;
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals {
+                                        info!(self.ctx.log(), "Got all responses");
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);

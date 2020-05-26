@@ -38,7 +38,7 @@ impl<S> FinalMsg<S> where S: SequenceTraits {
 #[derive(Debug)]
 pub enum PaxosCompMsg {
     Propose(Proposal),
-    SequenceReq(Ask<(u64, u64), Option<Vec<u8>>>),
+    SequenceReq(SequenceRequest),
     GetAllEntries(Ask<(), Vec<Entry>>)
 }
 
@@ -73,7 +73,8 @@ pub struct PaxosReplica<S, P> where
     active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
     forward_discarded: bool,
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
-    cached_client: Option<ActorPath>
+    cached_client: Option<ActorPath>,
+    pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>
 }
 
 impl<S, P> PaxosReplica<S, P> where
@@ -103,6 +104,7 @@ impl<S, P> PaxosReplica<S, P> where
             forward_discarded,
             retry_transfer_timers: HashMap::new(),
             cached_client: None,
+            pending_local_seq_requests: HashMap::new()
         }
     }
 
@@ -154,7 +156,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -328,7 +330,7 @@ impl<S, P> PaxosReplica<S, P> where
         st
     }
 
-    fn handle_sequence_request(&self, sr: SequenceRequest, requestor: ActorPath) {
+    fn handle_sequence_request(&mut self, sr: SequenceRequest, requestor: ActorPath) {
         let (succeeded, ser_entries) = match self.prev_sequences.get(&sr.config_id) {
             Some(seq) => {
                 if let Some(entries) = seq.get_ser_entries(sr.from_idx, sr.to_idx) {
@@ -347,16 +349,11 @@ impl<S, P> PaxosReplica<S, P> where
                 }
             },
             None => {
-                if self.active_config_id == sr.config_id {
+                if self.active_config_id == sr.config_id {  // we have not reached final sequence, but might still have requested elements
                     let paxos = self.paxos_comps.get(&sr.config_id).expect(&format!("No paxos comp with config_id: {} when handling SequenceRequest. My config_ids: {:?}", sr.config_id, self.paxos_comps.keys()));
-                    let ser_entries_f = paxos
-                        .actor_ref()
-                        .ask(|promise| PaxosCompMsg::SequenceReq(Ask::new(promise, (sr.from_idx, sr.to_idx))))
-                        .wait();
-                    match ser_entries_f {
-                        Some(ser_entries) => (true, ser_entries),
-                        None => (false, vec![]),
-                    }
+                    paxos.actor_ref().tell(PaxosCompMsg::SequenceReq(sr.clone()));
+                    self.pending_local_seq_requests.insert(sr, requestor);
+                    return;
                 } else {
                     (false, vec![])
                 }
@@ -433,7 +430,8 @@ impl<S, P> Provide<ControlPort> for PaxosReplica<S, P> where
 pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
     Leader(u32, u64),
     Reconfig(FinalMsg<S>),
-    RegResp(RegistrationResponse)
+    RegResp(RegistrationResponse),
+    SequenceResp(SequenceRequest, Option<Vec<u8>>)
 }
 
 impl<S> From<RegistrationResponse> for PaxosReplicaMsg<S> where S: SequenceTraits {
@@ -497,6 +495,18 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
                     ap.tell_serialised(resp, self).expect("Should serialise");
                 }
+            },
+            PaxosReplicaMsg::SequenceResp(sr, ser_entries) => {
+                if let Some(requestor) = self.pending_local_seq_requests.get(&sr) {
+                    let (succeeded, serialised) = match ser_entries {
+                        Some(sr) => (true, sr),
+                        None => (false, vec![]),
+                    };
+                    let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
+                    let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, serialised, prev_seq_metadata);
+                    requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
+                }
+                self.pending_local_seq_requests.remove(&sr);
             }
         }
     }
@@ -780,10 +790,9 @@ impl<S, P> Actor for PaxosComp<S, P> where
             PaxosCompMsg::Propose(p) => {
                 self.propose(p);
             },
-            PaxosCompMsg::SequenceReq(a) => {
-                let (from_idx, to_idx) = a.request();
-                let ser_entries = self.paxos.get_ser_entries(*from_idx, *to_idx);
-                a.reply(ser_entries).expect("Failed to reply ReplicaComp's Ask with serialised entries");
+            PaxosCompMsg::SequenceReq(seq_req) => {
+                let ser_entries = self.paxos.get_chosen_ser_entries(seq_req.from_idx, seq_req.to_idx);
+                self.supervisor.tell(PaxosReplicaMsg::SequenceResp(seq_req, ser_entries));
             },
             #[cfg(test)]
                 PaxosCompMsg::GetAllEntries(a) => { // for testing only
@@ -832,11 +841,11 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
 {
     fn handle(&mut self, l: Leader) -> () {
         debug!(self.ctx.log(), "{}", format!("Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot));
+        self.paxos.handle_leader(l);
         if self.current_leader != l.pid && !self.paxos.stopped() {
+            self.current_leader = l.pid;
             self.supervisor.tell(PaxosReplicaMsg::Leader(self.config_id, l.pid));
         }
-        self.paxos.handle_leader(l);
-        self.current_leader = l.pid;
     }
 }
 
@@ -975,8 +984,14 @@ pub mod raw_paxos{
             }
         }
 
-        pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
-            self.storage.get_ser_entries(from_idx, to_idx)
+        pub fn get_chosen_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
+            let ld = self.storage.get_decided_len();
+            let max_idx = std::cmp::max(ld, self.lc);
+            if to_idx > max_idx {
+                None
+            } else {
+                self.storage.get_ser_entries(from_idx, to_idx)
+            }
         }
 
         pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
@@ -1384,7 +1399,7 @@ mod ballot_leader_election {
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: HashSet<ActorPath>, pid: u64, delta: u64) -> BallotLeaderComp {
+        pub fn with(peers: HashSet<ActorPath>, pid: u64, hb_delay: u64, delta: u64) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1397,7 +1412,7 @@ mod ballot_leader_election {
                 current_ballot: Ballot::with(0, pid),
                 leader: None,
                 max_ballot: Ballot::with(0, pid),
-                hb_delay: delta,
+                hb_delay,
                 delta,
                 timer: None
             }
@@ -1495,6 +1510,7 @@ mod ballot_leader_election {
                             if rep.round == self.round {
                                 self.ballots.push((rep.max_ballot, rep.sender_pid));
                             } else {
+                                debug!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                                 self.hb_delay += self.delta;
                             }
                         }
