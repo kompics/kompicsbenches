@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, collections::HashMap, marker::Send, clone::Clone};
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer, IterationControlMsg};
+use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*};
 use super::storage::raft::*;
 use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg};
@@ -164,7 +164,8 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             self.partitioning_actor
                 .as_ref()
                 .expect("No cached partitioning actor")
-                .tell_serialised(PartitioningActorMsg::StopAck, self);
+                .tell_serialised(PartitioningActorMsg::StopAck, self)
+                .expect("Failed to serialise StopAck");
         }
     }
 }
