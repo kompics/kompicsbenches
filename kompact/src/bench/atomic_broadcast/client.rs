@@ -121,8 +121,11 @@ impl Client {
 }
 
 impl Provide<ControlPort> for Client {
-    fn handle(&mut self, _event: <ControlPort as Port>::Request) -> () {
-        // ignore
+    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        if let ControlEvent::Kill = event {
+            if let Some(timer) = self.timer.take() { self.cancel_timer(timer); }
+            if let Some(reconfig_timer) = self.reconfig_timer.take() { self.cancel_timer(reconfig_timer); }
+        }
     }
 }
 
@@ -166,15 +169,15 @@ impl Actor for Client {
                                     // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.last_leader);
                                     if self.num_proposals == self.batch_size && self.proposal_count == 0 {
                                         // info!(self.ctx.log(), "Sending batch after reconfig");
+                                        if let Some(timer) = self.timer.take() {
+                                            self.cancel_timer(timer);
+                                        }
                                         self.send_batch();
                                     }
                                 }
                             },
                             _ => {
                                 if self.responses.insert(pr.id) {
-                                    /*if pr.id % 4000 == 0 {
-                                        info!(self.ctx.log(), "Got response {}. Leader: {}, received {}", pr.id, pr.last_leader, self.responses.len());
-                                    }*/
                                     self.retry_proposals.remove(&pr.id);
                                     self.current_leader = pr.last_leader;
                                     let received_count = self.responses.len() as u64;
