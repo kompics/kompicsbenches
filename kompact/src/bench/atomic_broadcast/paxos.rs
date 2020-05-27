@@ -15,6 +15,7 @@ use kompact::prelude::Buf;
 use rand::Rng;
 use crate::bench::atomic_broadcast::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
+use crate::serialiser_ids::ATOMICBCAST_ID;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -549,165 +550,171 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let NetMessage{sender, receiver: _, data} = m;
-        match_deser! {data; {
-            p: PartitioningActorMsg [PartitioningActorSer] => {
-                match p {
-                    PartitioningActorMsg::Init(init) => {
-                        self.partitioning_actor = Some(sender);
-                        self.new_iteration(init);
-                    },
-                    PartitioningActorMsg::Run => {
-                        self.start_replica();
-                    },
-                    PartitioningActorMsg::Stop => {
-                        self.partitioning_actor = Some(sender);
-                        self.kill_all_replicas();
-                        let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
-                        for (_, timer) in retry_timers {
-                            self.cancel_timer(timer);
-                        }
-                        self.active_config_id = 0;
-                        self.leader_in_active_config = 0;
-                        self.next_config_id = None;
-                        self.prev_sequences.clear();
-                        self.active_peers.0.clear();
-                        self.active_peers.1.clear();
-                        self.complete_sequences.clear();
-                        self.stopped = true;
-                    },
-                    _ => unimplemented!()
-                }
-            },
-            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
-                match am {
-                    AtomicBroadcastMsg::Proposal(p) => {
-                        if !self.stopped {
-                            if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
-                                warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
-                                return;
-                            }
-                            else if let Some(active_paxos) = &self.paxos_comps.get(&self.active_config_id) {
-                                if self.leader_in_active_config == self.pid {
-                                    active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
-                                } else if self.leader_in_active_config > 0 {
-                                    let leader = self.nodes.get(&self.leader_in_active_config).expect("Could not get leader actorpath");
-                                    leader.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+        match &m.data.ser_id {
+            &ATOMICBCAST_ID => {
+                if !self.stopped {
+                    if self.leader_in_active_config == self.pid {
+                        match m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                            AtomicBroadcastMsg::Proposal(p) => {
+                                if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
+                                    warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
+                                    return;
                                 }
-                            }
+                                else {
+                                    let active_paxos = &self.paxos_comps.get(&self.active_config_id).expect("Could not get PaxosComp actor ref despite being leader");
+                                    active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
+                                }
+                            },
+                            _ => {},
                         }
-                    },
-                    _ => unimplemented!(),
+                    } else if self.leader_in_active_config > 0 {
+                        let leader = self.nodes.get(&self.leader_in_active_config).expect(&format!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        leader.forward_with_original_sender(m, self);
+                    }
+                    // else no leader... just drop
                 }
             },
-            rm: ReconfigurationMsg [ReconfigSer] => {
-                match rm {
-                    ReconfigurationMsg::Init(r) => {
-                        if self.stopped || self.active_config_id >= r.config_id {
-                            return;
-                        } else {
-                            match self.next_config_id {
-                                None => {
-                                    debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
-                                    for pid in &r.nodes.continued_nodes {
-                                        if pid == &r.from {
-                                            self.active_peers.0.push(*pid);
-                                        } else {
-                                            self.active_peers.1.push(*pid);
-                                        }
-                                    }
-                                    let num_expected_transfers = r.nodes.continued_nodes.len();
-                                    let mut nodes = r.nodes.continued_nodes;
-                                    let mut new_nodes = r.nodes.new_nodes;
-                                    nodes.append(&mut new_nodes);
-                                    match self.policy {
-                                        TransferPolicy::Pull => {
-                                            if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
-                                                // only SS in final sequence and no other prev sequences -> start directly
-                                                let final_sequence = S::new_with_sequence(vec![]);
-                                                self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                                self.create_replica(r.config_id, nodes, false);
-                                                self.start_replica();
-                                                return;
-                                            } else {
-                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
+            _ => {
+                let NetMessage{sender, receiver: _, data} = m;
+                match_deser! {data; {
+                    p: PartitioningActorMsg [PartitioningActorSer] => {
+                        match p {
+                            PartitioningActorMsg::Init(init) => {
+                                self.partitioning_actor = Some(sender);
+                                self.new_iteration(init);
+                            },
+                            PartitioningActorMsg::Run => {
+                                self.start_replica();
+                            },
+                            PartitioningActorMsg::Stop => {
+                                self.partitioning_actor = Some(sender);
+                                self.kill_all_replicas();
+                                let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
+                                for (_, timer) in retry_timers {
+                                    self.cancel_timer(timer);
+                                }
+                                self.active_config_id = 0;
+                                self.leader_in_active_config = 0;
+                                self.next_config_id = None;
+                                self.prev_sequences.clear();
+                                self.active_peers.0.clear();
+                                self.active_peers.1.clear();
+                                self.complete_sequences.clear();
+                                self.stopped = true;
+                            },
+                            _ => unimplemented!()
+                        }
+                    },
+                    rm: ReconfigurationMsg [ReconfigSer] => {
+                        match rm {
+                            ReconfigurationMsg::Init(r) => {
+                                if self.stopped || self.active_config_id >= r.config_id {
+                                    return;
+                                } else {
+                                    match self.next_config_id {
+                                        None => {
+                                            debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
+                                            for pid in &r.nodes.continued_nodes {
+                                                if pid == &r.from {
+                                                    self.active_peers.0.push(*pid);
+                                                } else {
+                                                    self.active_peers.1.push(*pid);
+                                                }
+                                            }
+                                            let num_expected_transfers = r.nodes.continued_nodes.len();
+                                            let mut nodes = r.nodes.continued_nodes;
+                                            let mut new_nodes = r.nodes.new_nodes;
+                                            nodes.append(&mut new_nodes);
+                                            match self.policy {
+                                                TransferPolicy::Pull => {
+                                                    if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
+                                                        // only SS in final sequence and no other prev sequences -> start directly
+                                                        let final_sequence = S::new_with_sequence(vec![]);
+                                                        self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
+                                                        self.create_replica(r.config_id, nodes, false);
+                                                        self.start_replica();
+                                                        return;
+                                                    } else {
+                                                        self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
+                                                    }
+                                                }
+                                                TransferPolicy::Eager => {
+                                                    let config_id = r.seq_metadata.config_id;
+                                                    self.pending_seq_transfers.insert(r.seq_metadata.config_id, (num_expected_transfers as u32, HashMap::with_capacity(num_expected_transfers)));
+                                                    let seq_len = r.seq_metadata.len;
+                                                    let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+                                                    self.retry_transfer_timers.insert(config_id, timer);
+                                                }
+                                            }
+                                            self.create_replica(r.config_id, nodes, false);
+                                        },
+                                        Some(next_config_id) => {
+                                            if next_config_id == r.config_id {
+                                                if r.nodes.continued_nodes.contains(&r.from) {
+                                                    // update who we know already decided final seq
+                                                    self.active_peers.1.retain(|x| x == &r.from);
+                                                    self.active_peers.0.push(r.from);
+                                                }
                                             }
                                         }
-                                        TransferPolicy::Eager => {
-                                            let config_id = r.seq_metadata.config_id;
-                                            self.pending_seq_transfers.insert(r.seq_metadata.config_id, (num_expected_transfers as u32, HashMap::with_capacity(num_expected_transfers)));
-                                            let seq_len = r.seq_metadata.len;
-                                            let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
-                                            self.retry_transfer_timers.insert(config_id, timer);
-                                        }
                                     }
-                                    self.create_replica(r.config_id, nodes, false);
-                                },
-                                Some(next_config_id) => {
-                                    if next_config_id == r.config_id {
-                                        if r.nodes.continued_nodes.contains(&r.from) {
-                                            // update who we know already decided final seq
-                                            self.active_peers.1.retain(|x| x == &r.from);
-                                            self.active_peers.0.push(r.from);
-                                        }
-                                    }
+                                }
+                            },
+                            ReconfigurationMsg::SequenceRequest(sr) => {
+                                if !self.stopped {
+                                    self.handle_sequence_request(sr, sender);
+                                }
+                            },
+                            ReconfigurationMsg::SequenceTransfer(st) => {
+                                if !self.stopped {
+                                    self.handle_sequence_transfer(st);
                                 }
                             }
                         }
                     },
-                    ReconfigurationMsg::SequenceRequest(sr) => {
-                        if !self.stopped {
-                            self.handle_sequence_request(sr, sender);
+                    tm: TestMessage [TestMessageSer] => {
+                        match tm {
+                            TestMessage::SequenceReq => {
+                                let mut all_entries = vec![];
+                                let mut unique = HashSet::new();
+                                for i in 1..self.active_config_id {
+                                    if let Some(seq) = self.prev_sequences.get(&i) {
+                                        let sequence = seq.get_sequence();
+                                        for entry in sequence {
+                                            if let Entry::Normal(n) = entry {
+                                                let id = n.data.as_slice().get_u64();
+                                                all_entries.push(id);
+                                                unique.insert(id);
+                                            }
+                                        }
+                                    }
+                                }
+                                if self.active_config_id > 0 {
+                                    let active_paxos = self.paxos_comps.get(&self.active_config_id).unwrap();
+                                    let sequence = active_paxos.actor_ref().ask(|promise| PaxosCompMsg::GetAllEntries(Ask::new(promise, ()))).wait();
+                                    for entry in sequence {
+                                        if let Entry::Normal(n) = entry {
+                                            let id = n.data.as_slice().get_u64();
+                                            all_entries.push(id);
+                                            unique.insert(id);
+                                         }
+                                    }
+                                    let min = unique.iter().min();
+                                    let max = unique.iter().max();
+                                    debug!(self.ctx.log(), "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}", all_entries.len(), unique.len(), min, max);
+                                } else {
+                                    warn!(self.ctx.log(), "Got SequenceReq but no active paxos: {}", self.active_config_id);
+                                }
+                                let sr = SequenceResp::with(self.pid, all_entries);
+                                sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
+                            },
+                            _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
                         }
                     },
-                    ReconfigurationMsg::SequenceTransfer(st) => {
-                        if !self.stopped {
-                            self.handle_sequence_transfer(st);
-                        }
+                    !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
                     }
                 }
             },
-            tm: TestMessage [TestMessageSer] => {
-                match tm {
-                    TestMessage::SequenceReq => {
-                        let mut all_entries = vec![];
-                        let mut unique = HashSet::new();
-                        for i in 1..self.active_config_id {
-                            if let Some(seq) = self.prev_sequences.get(&i) {
-                                let sequence = seq.get_sequence();
-                                for entry in sequence {
-                                    if let Entry::Normal(n) = entry {
-                                        let id = n.data.as_slice().get_u64();
-                                        all_entries.push(id);
-                                        unique.insert(id);
-                                    }
-                                }
-                            }
-                        }
-                        if self.active_config_id > 0 {
-                            let active_paxos = self.paxos_comps.get(&self.active_config_id).unwrap();
-                            let sequence = active_paxos.actor_ref().ask(|promise| PaxosCompMsg::GetAllEntries(Ask::new(promise, ()))).wait();
-                            for entry in sequence {
-                                if let Entry::Normal(n) = entry {
-                                    let id = n.data.as_slice().get_u64();
-                                    all_entries.push(id);
-                                    unique.insert(id);
-                                 }
-                            }
-                            let min = unique.iter().min();
-                            let max = unique.iter().max();
-                            debug!(self.ctx.log(), "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}", all_entries.len(), unique.len(), min, max);
-                        } else {
-                            warn!(self.ctx.log(), "Got SequenceReq but no active paxos: {}", self.active_config_id);
-                        }
-                        let sr = SequenceResp::with(self.pid, all_entries);
-                        sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
-                    },
-                    _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
-                }
-            },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-            }
         }
     }
 }
