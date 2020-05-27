@@ -287,7 +287,8 @@ impl<S, P> PaxosReplica<S, P> where
             debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
             self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
         }
-        self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+        let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+        self.retry_transfer_timers.insert(config_id, timer);
     }
 
     fn request_sequence(&self, pid: u64, config_id: u32, from_idx: u64, to_idx: u64, tag: u32) {
@@ -316,7 +317,8 @@ impl<S, P> PaxosReplica<S, P> where
                     }
                 }
             }
-            self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+            let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+            self.retry_transfer_timers.insert(config_id, timer);
         }
     }
 
@@ -380,7 +382,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
-        if self.active_config_id > st.config_id || self.complete_sequences.contains(&st.config_id) || self.stopped {
+        if self.active_config_id > st.config_id || self.complete_sequences.contains(&st.config_id) || self.next_config_id.unwrap_or(0) <= st.config_id {
             return; // ignore late sequence transfers
         }
         let prev_config_id = st.metadata.config_id;
@@ -390,7 +392,7 @@ impl<S, P> PaxosReplica<S, P> where
             self.pull_sequence(prev_config_id, prev_seq_len);
         }
         if st.succeeded {
-            let segments = self.pending_seq_transfers.get_mut(&st.config_id).expect(&format!("Got unexpected sequence transfer config_id: {}, tag: {}, index: {}-{}. Stopped: {}", st.config_id, st.tag, st.from_idx, st.to_idx, self.stopped));
+            let segments = self.pending_seq_transfers.get_mut(&st.config_id).expect(&format!("Got unexpected sequence transfer config_id: {}, tag: {}, index: {}-{}. active config: {}, Stopped: {}", st.config_id, st.tag, st.from_idx, st.to_idx, self.active_config_id, self.stopped));
             debug!(self.ctx.log(), "Got segment config_id: {}, tag: {}", st.config_id, st.tag);
             let seq = PaxosSer::deserialise_entries(&mut st.ser_entries.as_slice());
             segments.1.insert(st.tag, seq);
@@ -425,7 +427,6 @@ impl<S, P> PaxosReplica<S, P> where
                 let mut rng = rand::thread_rng();
                 let rnd = rng.gen_range(0, num_active);
                 let pid = self.active_peers.0[rnd];
-                // let pid = self.active_peers.0.get(rnd).expect(&format!("Failed to get random active pid. Rnd: {}, len: {}", rnd, self.active_peers.0.len()));
                 self.request_sequence(pid, config_id, from_idx, to_idx, tag);
             } // else let timeout handle it to retry
         }
@@ -496,9 +497,9 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 }
             },
             PaxosReplicaMsg::Reconfig(r) => {
-                debug!(self.ctx.log(), "RECONFIG: Next config_id: {}", r.config_id);
                 let prev_config_id = self.active_config_id;
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
+                debug!(self.ctx.log(), "RECONFIG: Next config_id: {}, prev_config: {}, len: {}", r.config_id, prev_config_id, final_seq_len);
                 let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
                 self.prev_sequences.insert(prev_config_id, r.final_sequence);
                 let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid));
@@ -615,19 +616,31 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             self.active_peers.1.push(*pid);
                                         }
                                     }
-                                    match self.policy {
-                                        TransferPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
-                                        TransferPolicy::Eager => {
-                                            let n = r.nodes.continued_nodes.len();
-                                            let config_id = r.seq_metadata.config_id;
-                                            self.pending_seq_transfers.insert(r.seq_metadata.config_id, (n as u32, HashMap::with_capacity(n)));
-                                            let seq_len = r.seq_metadata.len;
-                                            self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
-                                        }
-                                    }
+                                    let num_expected_transfers = r.nodes.continued_nodes.len();
                                     let mut nodes = r.nodes.continued_nodes;
                                     let mut new_nodes = r.nodes.new_nodes;
                                     nodes.append(&mut new_nodes);
+                                    match self.policy {
+                                        TransferPolicy::Pull => {
+                                            if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
+                                                // only SS in final sequence and no other prev sequences -> start directly
+                                                let final_sequence = S::new_with_sequence(vec![]);
+                                                self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
+                                                self.create_replica(r.config_id, nodes, false);
+                                                self.start_replica();
+                                                return;
+                                            } else {
+                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
+                                            }
+                                        }
+                                        TransferPolicy::Eager => {
+                                            let config_id = r.seq_metadata.config_id;
+                                            self.pending_seq_transfers.insert(r.seq_metadata.config_id, (num_expected_transfers as u32, HashMap::with_capacity(num_expected_transfers)));
+                                            let seq_len = r.seq_metadata.len;
+                                            let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
+                                            self.retry_transfer_timers.insert(config_id, timer);
+                                        }
+                                    }
                                     self.create_replica(r.config_id, nodes, false);
                                 },
                                 Some(next_config_id) => {
