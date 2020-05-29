@@ -85,7 +85,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             id: self.pid,
             election_tick,  // number of ticks without HB before starting election
             heartbeat_tick,  // leader sends HB every heartbeat_tick
-            max_inflight_msgs: CAPACITY,
+            max_inflight_msgs: MAX_INFLIGHT,
             max_size_per_msg: MAX_MSG_SIZE,
             ..Default::default()
         };
@@ -255,22 +255,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             PartitioningActorMsg::Stop => {
                                 self.kill_components();
                                 self.stopped = true;
-                                sender.tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
                             },
-                            _ => unimplemented!(),
-                        }
-                    },
-                    am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
-                        match am {
-                            AtomicBroadcastMsg::Proposal(p) => {
-                                if self.current_leader == self.pid {
-                                    self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p));
-                                } else if self.current_leader > 0 {
-                                    let leader = self.nodes.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
-                                    leader.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
-                                }
-                            },
-                            _ => error!(self.ctx.log(), "Got unexpected AtomicBroadcastMsg: {:?}", am),
+                            _ => {},
                         }
                     },
                     tm: TestMessage [TestMessageSer] => {
@@ -307,7 +293,6 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     communication_port: RequiredPort<CommunicationPort, Self>,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     has_reconfigured: bool,
-    stopped: bool,
     current_leader: u64,
 }
 
@@ -336,9 +321,7 @@ impl<S> Actor for RaftComp<S> where
     fn receive_local(&mut self, msg: Self::Message) -> () {
         match msg {
             RaftCompMsg::Propose(p) => {
-                if !self.stopped {
-                    self.propose(p);
-                }
+                self.propose(p);
             },
             RaftCompMsg::SequenceReq(sr) => {
                 let raft_entries: Vec<Entry> = self.raw_raft.raft.raft_log.all_entries();
@@ -360,7 +343,7 @@ impl<S> Actor for RaftComp<S> where
     }
 
     fn receive_network(&mut self, _msg: NetMessage) -> () {
-        unimplemented!()
+        // ignore
     }
 }
 
@@ -368,9 +351,7 @@ impl<S> Require<CommunicationPort> for RaftComp<S> where
     S: RaftStorage + Send + Clone + 'static {
         fn handle(&mut self, msg: AtomicBroadcastCompMsg) -> () {
             if let AtomicBroadcastCompMsg::RawRaftMsg(rm) = msg {
-                if !self.stopped {
-                    self.step(rm);
-                }
+                self.step(rm);
             }
         }
 }
@@ -384,7 +365,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             communication_port: RequiredPort::new(),
             timers: None,
             has_reconfigured: false,
-            stopped: false,
             current_leader: 0
         }
     }

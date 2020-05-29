@@ -610,33 +610,31 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             ReconfigurationMsg::Init(r) => {
                                 if self.stopped || self.active_config_id >= r.config_id {
                                     return;
-                                } else {
-                                    match self.next_config_id {
-                                        None => {
-                                            debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
-                                            for pid in &r.nodes.continued_nodes {
-                                                if pid == &r.from {
-                                                    self.active_peers.0.push(*pid);
-                                                } else {
-                                                    self.active_peers.1.push(*pid);
-                                                }
+                                }
+                                match self.next_config_id {
+                                    None => {
+                                        debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
+                                        for pid in &r.nodes.continued_nodes {
+                                            if pid == &r.from {
+                                                self.active_peers.0.push(*pid);
+                                            } else {
+                                                self.active_peers.1.push(*pid);
                                             }
-                                            let num_expected_transfers = r.nodes.continued_nodes.len();
-                                            let mut nodes = r.nodes.continued_nodes;
-                                            let mut new_nodes = r.nodes.new_nodes;
-                                            nodes.append(&mut new_nodes);
+                                        }
+                                        let num_expected_transfers = r.nodes.continued_nodes.len();
+                                        let mut nodes = r.nodes.continued_nodes;
+                                        let mut new_nodes = r.nodes.new_nodes;
+                                        nodes.append(&mut new_nodes);
+                                        if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
+                                            // only SS in final sequence and no other prev sequences -> start directly
+                                            let final_sequence = S::new_with_sequence(vec![]);
+                                            self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
+                                            self.create_replica(r.config_id, nodes, false);
+                                            self.start_replica();
+                                        } else {
                                             match self.policy {
                                                 TransferPolicy::Pull => {
-                                                    if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
-                                                        // only SS in final sequence and no other prev sequences -> start directly
-                                                        let final_sequence = S::new_with_sequence(vec![]);
-                                                        self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                                        self.create_replica(r.config_id, nodes, false);
-                                                        self.start_replica();
-                                                        return;
-                                                    } else {
-                                                        self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
-                                                    }
+                                                    self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
                                                 }
                                                 TransferPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
@@ -647,14 +645,14 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                 }
                                             }
                                             self.create_replica(r.config_id, nodes, false);
-                                        },
-                                        Some(next_config_id) => {
-                                            if next_config_id == r.config_id {
-                                                if r.nodes.continued_nodes.contains(&r.from) {
-                                                    // update who we know already decided final seq
-                                                    self.active_peers.1.retain(|x| x == &r.from);
-                                                    self.active_peers.0.push(r.from);
-                                                }
+                                        }
+                                    },
+                                    Some(next_config_id) => {
+                                        if next_config_id == r.config_id {
+                                            if r.nodes.continued_nodes.contains(&r.from) {
+                                                // update who we know already decided final seq
+                                                self.active_peers.1.retain(|x| x == &r.from);
+                                                self.active_peers.0.push(r.from);
                                             }
                                         }
                                     }
@@ -919,7 +917,6 @@ pub mod raw_paxos{
     use std::collections::{HashMap, HashSet};
     use std::mem;
     use std::sync::Arc;
-    use crate::bench::atomic_broadcast::parameters::CAPACITY;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -972,10 +969,10 @@ pub mod raw_paxos{
                 promises: Vec::with_capacity(num_nodes),
                 las: HashMap::with_capacity(num_nodes),
                 lds: HashMap::with_capacity(num_nodes),
-                proposals: Vec::with_capacity(CAPACITY),
+                proposals: vec![],
                 lc: 0,
-                decided: Vec::with_capacity(CAPACITY),
-                outgoing: Vec::with_capacity(CAPACITY),
+                decided: vec![],
+                outgoing: vec![],
                 hb_forward: vec![],
                 num_proposed: 0,
                 forward_discarded
@@ -983,12 +980,12 @@ pub mod raw_paxos{
         }
 
         pub fn get_decided_entries(&mut self) -> Vec<Entry> {
-            let decided_entries = mem::replace(&mut self.decided, Vec::with_capacity(CAPACITY));
+            let decided_entries = mem::take(&mut self.decided);
             decided_entries
         }
 
         pub fn get_outgoing_messages(&mut self) -> Vec<Message> {
-            let outgoing_msgs = mem::replace(&mut self.outgoing, Vec::with_capacity(CAPACITY));
+            let outgoing_msgs = mem::take(&mut self.outgoing);
             outgoing_msgs
         }
 
@@ -1111,12 +1108,12 @@ pub mod raw_paxos{
                 self.leader = n.pid;
                 if self.forward_discarded {
                     if !self.proposals.is_empty() {
-                        let proposals = mem::replace(&mut self.proposals, Vec::with_capacity(CAPACITY));
+                        let proposals = mem::take(&mut self.proposals);
                         // println!("Lost leadership: Forwarding proposals to {}", self.leader);
                         self.forward_proposals(proposals);
                     }
                     if !self.hb_forward.is_empty() {
-                        let hb_proposals = mem::replace(&mut self.hb_forward, Vec::with_capacity(CAPACITY));
+                        let hb_proposals = mem::take(&mut self.hb_forward);
                         // println!("Lost leadership: Forwarding hb-proposals to {}", self.leader);
                         self.forward_proposals(hb_proposals);
                     }
@@ -1193,7 +1190,7 @@ pub mod raw_paxos{
                         self.proposals.clear();    // will never be decided
                     } else {
                         Self::drop_after_stopsign(&mut self.proposals); // drop after ss, if ss exists
-                        let seq = mem::replace(&mut self.proposals, Vec::with_capacity(CAPACITY));
+                        let seq = mem::take(&mut self.proposals);
                         self.storage.append_sequence(seq, self.forward_discarded);
                     }
                     self.las.insert(self.pid, self.storage.get_sequence_len());
