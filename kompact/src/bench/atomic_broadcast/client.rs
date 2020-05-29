@@ -21,6 +21,7 @@ pub struct Client {
     reconfig_timer: Option<ScheduledTimer>,
     timeout: u64,
     current_leader: u64,
+    finished: bool,
 }
 
 impl Client {
@@ -45,6 +46,7 @@ impl Client {
             reconfig_timer: None,
             timeout: PROPOSAL_TIMEOUT,
             current_leader: 0,
+            finished: false
         }
     }
 
@@ -160,19 +162,29 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
+                        if self.finished{ return; }
                         match pr.id {
                             RECONFIG_ID => {
-                                if let Some(timer) = self.reconfig_timer.take() {   // first reconfig response
-                                    self.cancel_timer(timer);
-                                    self.reconfig = None;
-                                    self.current_leader = pr.last_leader;
-                                    // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.last_leader);
-                                    if self.num_proposals == self.batch_size && self.proposal_count == 0 {
-                                        // info!(self.ctx.log(), "Sending batch after reconfig");
+                                if let Some(reconfig_timer) = self.reconfig_timer.take() {   // first reconfig response
+                                    if self.responses.len() as u64 == self.num_proposals {
+                                        info!(self.ctx.log(), "Got reconfig at last");
+                                        self.finished = true;
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);
                                         }
-                                        self.send_batch();
+                                    } else {
+                                        self.cancel_timer(reconfig_timer);
+                                        self.reconfig = None;
+                                        self.current_leader = pr.last_leader;
+                                        // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.last_leader);
+                                        if self.num_proposals == self.batch_size && self.proposal_count == 0 {
+                                            // info!(self.ctx.log(), "Sending batch after reconfig");
+                                            if let Some(timer) = self.timer.take() {
+                                                self.cancel_timer(timer);
+                                            }
+                                            self.send_batch();
+                                        }
                                     }
                                 }
                             },
@@ -181,8 +193,9 @@ impl Actor for Client {
                                     self.retry_proposals.remove(&pr.id);
                                     self.current_leader = pr.last_leader;
                                     let received_count = self.responses.len() as u64;
-                                    if received_count == self.num_proposals {
+                                    if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");
+                                        self.finished = true;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);
