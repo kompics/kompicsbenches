@@ -931,7 +931,7 @@ pub mod raw_paxos{
         state: (Role, Phase),
         leader: u64,
         n_leader: Ballot,
-        promises: Vec<ReceivedPromise>,
+        promises: HashMap<u64, ReceivedPromise>,
         las: HashMap<u64, u64>,
         lds: HashMap<u64, u64>,
         proposals: Vec<Entry>,
@@ -939,7 +939,6 @@ pub mod raw_paxos{
         prev_ld: u64,
         outgoing: Vec<Message>,
         hb_forward: Vec<Entry>,
-        num_proposed: u64,
         forward_discarded: bool
     }
 
@@ -967,7 +966,7 @@ pub mod raw_paxos{
                 state: (Role::Follower, Phase::None),
                 leader: 0,
                 n_leader,
-                promises: Vec::with_capacity(num_nodes),
+                promises: HashMap::with_capacity(num_nodes),
                 las: HashMap::with_capacity(num_nodes),
                 lds: HashMap::with_capacity(num_nodes),
                 proposals: vec![],
@@ -975,7 +974,6 @@ pub mod raw_paxos{
                 prev_ld: 0,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 hb_forward: vec![],
-                num_proposed: 0,
                 forward_discarded
             }
         }
@@ -1095,7 +1093,7 @@ pub mod raw_paxos{
                 let ld = self.storage.get_decided_len();
                 let sfx = self.storage.get_suffix(ld);
                 let rp = ReceivedPromise::with( na, sfx);
-                self.promises.push(rp);
+                self.promises.insert(self.pid, rp);
                 /* insert my longest decided sequnce */
                 self.lds.insert(self.pid, ld);
                 /* initialise longest chosen sequence and update state */
@@ -1172,42 +1170,64 @@ pub mod raw_paxos{
         fn handle_promise_prepare(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
                 let rp = ReceivedPromise::with(prom.n_accepted, prom.sfx);
-                self.promises.push(rp);
+                self.promises.insert(from, rp);
                 self.lds.insert(from, prom.ld);
+                println!("Got promise from {}", from);
                 if self.promises.len() >= self.majority {
-                    let promises = mem::replace(&mut self.promises, Vec::with_capacity(self.majority * 2));
-                    let (from, suffix) = Self::max_value(promises);
-                    let last_is_stop = match suffix.last() {
+                    let max_pid = self.get_max_promise_pid();
+                    let max_promise = self.promises.remove(&max_pid).unwrap();
+                    let max_promise_meta = (max_promise.n_accepted, max_promise.sfx.len());
+                    // let promises = mem::replace(&mut self.promises, Vec::with_capacity(self.majority * 2));
+                    // let (from, suffix) = Self::max_value(promises);
+                    let last_is_stop = match max_promise.sfx.last() {
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
                     // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
-                    if from != self.pid {
-                        self.storage.append_on_decided_prefix(suffix);
+                    if max_pid != self.pid {
+                        let my_promise = self.promises.remove(&self.pid).unwrap();
+                        let my_promise_meta = (my_promise.n_accepted, my_promise.sfx.len());
+                        if my_promise_meta != max_promise_meta {
+                            self.storage.append_on_decided_prefix(max_promise.sfx);
+                        }
                     }
                     if last_is_stop {
                         self.proposals.clear();    // will never be decided
                     } else {
                         Self::drop_after_stopsign(&mut self.proposals); // drop after ss, if ss exists
-                        self.storage.append_sequence(&mut self.proposals);
                     }
+                    // create accept_sync with only new proposals for all pids with max_promise
+                    let mut new_entries = mem::take(&mut self.proposals);
+                    let max_promise_acc_sync = AcceptSync::with(self.n_leader.clone(), new_entries.clone(), self.lds.get(&max_pid).unwrap().clone(), false);
+                    // append new proposals in my sequence
+                    self.storage.append_sequence(&mut new_entries);
                     self.las.insert(self.pid, self.storage.get_sequence_len());
                     self.state = (Role::Leader, Phase::Accept);
+                    // send accept_sync to followers
                     let my_pid = self.pid;
-                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != &my_pid) {
-                        let sfx = self.storage.get_suffix(*lds);
-                        let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, *lds);
-                        self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
+                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != &my_pid && *pid != &max_pid) {
+                        let promise = self.promises.remove(&pid).expect(&format!("No promise from {}. Max pid: {}. Promises received from: {:?}", pid, max_pid, self.promises.keys()));
+                        let promise_meta = (promise.n_accepted, promise.sfx.len());
+                        if promise_meta == max_promise_meta {
+                            self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone())));
+                        } else {
+                            let sfx = self.storage.get_suffix(*lds);
+                            let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, *lds, true);
+                            self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
+                        }
                     }
+                    // send acceptsync to max_pid
+                    self.outgoing.push(Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync)));
                 }
             }
         }
 
         fn handle_promise_accept(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
+                println!("Got late promise from {}", from);
                 self.lds.insert(from, prom.ld);
                 let sfx = self.storage.get_suffix(prom.ld);
-                let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, prom.ld);
+                let acc_sync = AcceptSync::with(self.n_leader.clone(), sfx, prom.ld, true);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
                 // inform what got decided already
                 let idx = if self.lc > 0 {
@@ -1270,8 +1290,12 @@ pub mod raw_paxos{
             if self.state == (Role::Follower, Phase::Prepare) {
                 if self.storage.get_promise() == acc_sync.n {
                     self.storage.set_accepted_ballot(acc_sync.n.clone());
-                    let mut sfx = acc_sync.sfx;
-                    self.storage.append_on_prefix(acc_sync.ld, &mut sfx);
+                    let mut entries = acc_sync.entries;
+                    if acc_sync.sync {
+                        self.storage.append_on_prefix(acc_sync.ld, &mut entries);
+                    } else {
+                        self.storage.append_sequence(&mut entries);
+                    }
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
@@ -1305,6 +1329,17 @@ pub mod raw_paxos{
                 }
             ).unwrap();
             (max_promise.n_accepted.pid, max_promise.sfx)
+        }
+
+        fn get_max_promise_pid(&self) -> u64 {
+            let (max_promise_pid, _max_promise) = self.promises.iter().max_by(|(_pid, promise), (_other_pid, other_promise)|
+                if promise.n_accepted > other_promise.n_accepted || (promise.n_accepted == other_promise.n_accepted && promise.sfx.len() > other_promise.sfx.len()){
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            ).unwrap();
+            *max_promise_pid
         }
 
         fn drop_after_stopsign(entries: &mut Vec<Entry>) {   // drop all entries ordered after stopsign (if any)

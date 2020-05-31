@@ -88,13 +88,14 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub struct AcceptSync {
         pub n: Ballot,
-        pub sfx: Vec<Entry>,
+        pub entries: Vec<Entry>,
         pub ld: u64,
+        pub sync: bool, // true -> append on prefix(ld), false -> append
     }
 
     impl AcceptSync {
-        pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64) -> AcceptSync {
-            AcceptSync { n, sfx, ld }
+        pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64, sync: bool) -> AcceptSync {
+            AcceptSync { n, entries: sfx, ld, sync }
         }
     }
 
@@ -169,10 +170,10 @@ pub mod paxos {
     const NORMAL_ENTRY_ID: u8 = 1;
     const SS_ENTRY_ID: u8 = 2;
 
-    const PAXOS_MSG_OVERHEAD: usize = 17;
-    const BALLOT_OVERHEAD: usize = 16;
-    const DATA_SIZE: usize = 8;
-    const ENTRY_OVERHEAD: usize = 21 + DATA_SIZE;
+    // const PAXOS_MSG_OVERHEAD: usize = 17;
+    // const BALLOT_OVERHEAD: usize = 16;
+    // const DATA_SIZE: usize = 8;
+    // const ENTRY_OVERHEAD: usize = 21 + DATA_SIZE;
 
     pub struct PaxosSer;
 
@@ -229,7 +230,7 @@ pub mod paxos {
                     let ss = StopSign::with(config_id, nodes);
                     Entry::StopSign(ss)
                 },
-                ERROR_ID => panic!(format!("Got unexpected id in deserialise_entry: {}", ERROR_ID)),
+                error_id => panic!(format!("Got unexpected id in deserialise_entry: {}", error_id)),
             }
         }
 
@@ -284,8 +285,10 @@ pub mod paxos {
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
                     buf.put_u64(acc_sync.ld);
+                    let sync: u8 = if acc_sync.sync { 1 } else { 0 };
+                    buf.put_u8(sync);
                     PaxosSer::serialise_ballot(&acc_sync.n, buf);
-                    PaxosSer::serialise_entries(&acc_sync.sfx, buf);
+                    PaxosSer::serialise_entries(&acc_sync.entries, buf);
                 },
                 PaxosMsg::Accept(a) => {
                     buf.put_u8(ACCEPT_ID);
@@ -340,9 +343,14 @@ pub mod paxos {
                 },
                 ACCEPTSYNC_ID => {
                     let ld = buf.get_u64();
+                    let sync = match buf.get_u8() {
+                        1 => true,
+                        0 => false,
+                        _ => panic!("Unexpected sync flag when deserialising acceptsync"),
+                    };
                     let n = Self::deserialise_ballot(buf);
                     let sfx = Self::deserialise_entries(buf);
-                    let acc_sync = AcceptSync::with(n, sfx, ld);
+                    let acc_sync = AcceptSync::with(n, sfx, ld, sync);
                     let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
                     Ok(msg)
                 },
