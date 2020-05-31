@@ -571,7 +571,7 @@ pub mod paxos {
 
         fn append_sequence(&mut self, seq: &mut Vec<Entry>);
 
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry>;
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
 
@@ -649,18 +649,11 @@ pub mod paxos {
             }
         }
 
-        pub fn append_sequence(&mut self, seq: Vec<Entry>, forward_discarded: bool) {
-            if seq.is_empty() { return; }
+        pub fn append_sequence(&mut self, sequence: &mut Vec<Entry>) {
+            if sequence.is_empty() { return; }
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    if forward_discarded {
-                        if let None = self.paxos_state.get_pending_chosen_offset(){
-                            let current_offset = s.get_sequence_len();
-                            self.paxos_state.set_pending_chosen_offset(Some(current_offset));
-                        }
-                    }
-                    let mut sequence = seq;
-                    s.append_sequence(&mut sequence);
+                    s.append_sequence(sequence);
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -669,20 +662,14 @@ pub mod paxos {
             }
         }
 
-        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) -> Vec<Entry> {
+        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>){
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    let get_discarded = self.paxos_state.get_pending_chosen_offset().is_some();
-                    if get_discarded {
-                        self.paxos_state.set_pending_chosen_offset(None);
-                    }
-                    s.append_on_prefix(from_idx, seq, get_discarded)
+                    s.append_on_prefix(from_idx, seq);
                 },
                 PaxosSequence::Stopped(s) => {
                     if &s.get_suffix(from_idx) != seq {
                         panic!("Sequence should not be modified after reconfiguration");
-                    } else {
-                        vec![]
                     }
                 },
                 _ => panic!("Got unexpected intermediate PaxosSequence::None")
@@ -694,7 +681,7 @@ pub mod paxos {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     let mut sequence = seq;
-                    let _ = s.append_on_prefix(from_idx, &mut sequence, false);
+                    s.append_on_prefix(from_idx, &mut sequence);
                 },
                 PaxosSequence::Stopped(_) => {
                     if !seq.is_empty() {
@@ -709,12 +696,8 @@ pub mod paxos {
             self.paxos_state.set_promise(nprom);
         }
 
-        pub fn set_decided_len(&mut self, ld: u64) -> u64 {
-            let prev_ld = self.get_decided_len();
-            if ld > prev_ld {
-                self.paxos_state.set_decided_len(ld);
-            }
-            prev_ld
+        pub fn set_decided_len(&mut self, ld: u64) {
+            self.paxos_state.set_decided_len(ld);
         }
 
         pub fn set_accepted_ballot(&mut self, na: Ballot) {
@@ -815,8 +798,6 @@ pub mod paxos {
         }
     }
 
-    const INITIAL_CAP: usize = 5000;
-
     #[derive(Debug)]
     pub struct MemorySequence {
         sequence: Vec<Entry>
@@ -826,7 +807,7 @@ pub mod paxos {
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence{ sequence: Vec::with_capacity(INITIAL_CAP) }
+            MemorySequence{ sequence: vec![] }
         }
 
         fn new_with_sequence(seq: Vec<Entry>) -> Self {
@@ -841,21 +822,9 @@ pub mod paxos {
             self.sequence.append(seq);
         }
 
-        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>, get_discarded: bool) -> Vec<Entry> {
-            if get_discarded {
-                let discarded_entries: Vec<Entry> =
-                    self.sequence
-                        .drain(from_idx as usize..)
-                        .filter( |e| !seq.contains(e) )
-                        .collect();
-
-                self.sequence.append(seq);
-                discarded_entries
-            } else {
-                self.sequence.truncate(from_idx as usize);
-                self.sequence.append(seq);
-                vec![]
-            }
+        fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) {
+            self.sequence.truncate(from_idx as usize);
+            self.sequence.append(seq);
         }
 
         fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
