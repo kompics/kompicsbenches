@@ -86,7 +86,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             election_tick,  // number of ticks without HB before starting election
             heartbeat_tick,  // leader sends HB every heartbeat_tick
             max_inflight_msgs: MAX_INFLIGHT,
-            max_size_per_msg: MAX_MSG_SIZE,
+            max_size_per_msg: 0,    // no batching
             ..Default::default()
         };
         assert_eq!(c.validate().is_ok(), true);
