@@ -87,6 +87,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             heartbeat_tick,  // leader sends HB every heartbeat_tick
             max_inflight_msgs: MAX_INFLIGHT,
             max_size_per_msg: 0,    // no batching
+            batch_append: false,
             ..Default::default()
         };
         assert_eq!(c.validate().is_ok(), true);
@@ -105,7 +106,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
                         let addr = sys_path.address();
                         let named_communicator = NamedPath::new(
                             protocol,
-                            addr.clone(),
+                            *addr,
                             port,
                             vec![format!("{}{}-{}", COMMUNICATOR, pid, self.iteration_id).into()]
                         );
@@ -215,13 +216,12 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        match &m.data.ser_id {
-            &ATOMICBCAST_ID => {
+        match m.data.ser_id {
+            ATOMICBCAST_ID => {
                 if !self.stopped {
                     if self.current_leader == self.pid {
-                        match m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
-                            AtomicBroadcastMsg::Proposal(p) => self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p)),
-                            _ => {},
+                        if let  AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                            self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p));
                         }
                     } else if self.current_leader > 0 {
                         let leader = self.nodes.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
@@ -231,7 +231,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 }
             },
             _ => {
-                let NetMessage{sender, receiver: _, data} = m;
+                let NetMessage{sender, data, ..} = m;
                 match_deser! {data; {
                     p: PartitioningActorMsg [PartitioningActorSer] => {
                         match p {
