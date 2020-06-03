@@ -875,6 +875,7 @@ impl<S, P> Provide<ControlPort> for PaxosComp<S, P> where
                 self.start_timers();
             },
             ControlEvent::Kill => {
+                info!(self.ctx.log(), "Got kill! Sequence len: {}", self.paxos.get_sequence_len());
                 self.stop_timers();
                 self.supervisor.tell(PaxosReplicaMsg::KillResp);
             },
@@ -1059,6 +1060,10 @@ pub mod raw_paxos{
 
         pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
             self.storage.stop_and_get_sequence()
+        }
+
+        pub fn get_sequence_len(&self) -> u64 {
+            self.storage.get_sequence_len()
         }
         /*
         fn create_normal_entry(&mut self, data: Vec<u8>) -> Normal {
@@ -1274,14 +1279,13 @@ pub mod raw_paxos{
                 self.storage.set_promise(prep.n.clone());
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
-                let ser_sfx = if &na >= &prep.n_accepted {
-                    self.storage.get_ser_suffix(prep.ld)
+                let sfx = if &na >= &prep.n_accepted {
+                    self.storage.get_suffix(prep.ld)
+                    // self.storage.get_ser_suffix(prep.ld)
                 } else {
-                    let mut bytes = Vec::<u8>::with_capacity(4);
-                    bytes.put_u32(0);
-                    bytes
+                    vec![]
                 };
-                let p = Promise::with_serialised_sfx(prep.n, na, ser_sfx, self.storage.get_decided_len());
+                let p = Promise::with(prep.n, na, sfx, self.storage.get_decided_len());
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Promise(p)));
             }
         }

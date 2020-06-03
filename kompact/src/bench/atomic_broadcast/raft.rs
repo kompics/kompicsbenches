@@ -305,6 +305,7 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
                     self.start_timers();
                 },
                 ControlEvent::Kill => {
+                    info!(self.ctx.log(), "Got kill! RaftLog commited: {}", self.raw_raft.raft.raft_log.committed);
                     self.stop_timers();
                     self.raw_raft.mut_store().clear().expect("Failed to clear storage!");
                     self.supervisor.tell(RaftReplicaMsg::KillResp);
@@ -424,6 +425,20 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             error!(self.ctx.log(), "{}", format!("persist raft log fail: {:?}, need to retry or panic", e));
             return;
         }
+
+        // Apply the snapshot. It's necessary because in `RawNode::advance` we stabilize the snapshot.
+        if *ready.snapshot() != Snapshot::default() {
+            unimplemented!("Handle snapshot?");
+            /*let s = ready.snapshot().clone();
+            if let Err(e) = store.wl().apply_snapshot(s) {
+                error!(
+                    logger,
+                    "apply snapshot fail: {:?}, need to retry or panic", e
+                );
+                return;
+            }*/
+        }
+
 
         // Send out the messages come from the node.
         for msg in ready.messages.drain(..) {
