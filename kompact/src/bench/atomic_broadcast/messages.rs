@@ -250,7 +250,7 @@ pub mod paxos {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(1000)
+            Some(500)
             /*match &self.msg {
                 PaxosMsg::Prepare(_) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8),
                 PaxosMsg::Promise(p) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8 + 4 + p.sfx.len() * ENTRY_OVERHEAD),
@@ -571,7 +571,7 @@ pub mod paxos {
                 SEQ_TRANSFER_ID => {
                     let config_id = buf.get_u32();
                     let tag = buf.get_u32();
-                    let succeeded = if buf.get_u8() == 1 { true } else { false };
+                    let succeeded = buf.get_u8() == 1;
                     let from_idx = buf.get_u64();
                     let to_idx = buf.get_u64();
                     let metadata_config_id = buf.get_u32();

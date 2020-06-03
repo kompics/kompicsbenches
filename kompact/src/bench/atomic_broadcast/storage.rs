@@ -156,7 +156,7 @@ pub mod raft {
         const FILE_SIZE: u64 = 20971520;
 
         fn new(dir: &str) -> DiskStorageCore {
-            create_dir_all(dir).expect(&format!("Failed to create given directory: {}", dir));
+            create_dir_all(dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
 
             let log_path = PathBuf::from(format!("{}/log", dir));
             let log_file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&log_path).expect("Failed to create/open log file");
@@ -225,7 +225,7 @@ pub mod raft {
             let num_added_entries = entries.len() as u64;
             let new_first_index = entries[0].index;
             let new_last_index = entries.last().unwrap().index;
-            for (i, e) in entries.into_iter().enumerate() {
+            for (i, e) in entries.iter().enumerate() {
                 let current_offset = self.log.file.seek(SeekFrom::Current(0)).expect("Failed to get current seeked offset");    // byte offset in log file
                 let ser_entry = e.write_to_bytes().expect("Protobuf failed to serialise Entry");
                 let ser_entry_len = ser_entry.len() as u64;
@@ -269,7 +269,7 @@ pub mod raft {
             let entry_len = self.log.mem_map.get(start..stop);
             let des_entry_len = u64::from_be_bytes(entry_len.unwrap().try_into().unwrap());
             let r = stop..(stop + des_entry_len as usize);
-            let entry = self.log.mem_map.get(r).expect(&format!("Failed to get serialised entry in range {}..{}", stop, stop + des_entry_len as usize));
+            let entry = self.log.mem_map.get(r).unwrap_or_else(|| panic!("Failed to get serialised entry in range {}..{}", stop, stop + des_entry_len as usize));
             let des_entry = parse_from_bytes::<Entry>(entry).expect("Protobuf failed to deserialise entry");
             des_entry
         }
@@ -635,7 +635,7 @@ pub mod paxos {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     if forward_discarded {
-                        if let None = self.paxos_state.get_pending_chosen_offset() {
+                        if self.paxos_state.get_pending_chosen_offset().is_none() {
                             let current_offset = s.get_sequence_len();
                             self.paxos_state.set_pending_chosen_offset(Some(current_offset));
                         }
@@ -893,7 +893,7 @@ pub mod paxos {
     impl PaxosState for MemoryState {
         fn new() -> Self {
             let ballot = Ballot::with(0, 0);
-            MemoryState{ n_prom: ballot.clone(), acc_round: ballot, ld: 0, pending_chosen_offset:  None }
+            MemoryState{ n_prom: ballot, acc_round: ballot, ld: 0, pending_chosen_offset:  None }
         }
 
         fn set_pending_chosen_offset(&mut self, offset: Option<u64>) { self.pending_chosen_offset = offset }
@@ -911,7 +911,7 @@ pub mod paxos {
         }
 
         fn get_accepted_ballot(&self) -> Ballot {
-            self.acc_round.clone()
+            self.acc_round
         }
 
         fn get_decided_len(&self) -> u64 {
@@ -919,7 +919,7 @@ pub mod paxos {
         }
 
         fn get_promise(&self) -> Ballot {
-            self.n_prom.clone()
+            self.n_prom
         }
 
         fn get_pending_chosen_offset(&self) -> Option<u64> {

@@ -61,11 +61,11 @@ impl Provide<CommunicationPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) {
         match msg {
             CommunicatorMsg::RawRaftMsg(rm) => {
-                let receiver = self.peers.get(&rm.get_to()).expect(&format!("Could not find actorpath for id={}. Known peers: {:?}", &rm.get_to(), self.peers.keys()));
+                let receiver = self.peers.get(&rm.get_to()).unwrap_or_else(|| panic!("Could not find actorpath for id={}. Known peers: {:?}. RaftMsg: {:?}", &rm.get_to(), self.peers.keys(), rm));
                 receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
             },
             CommunicatorMsg::RawPaxosMsg(pm) => {
-                let receiver = self.peers.get(&pm.to).expect(&format!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}", &pm.to, self.peers.keys()));
+                let receiver = self.peers.get(&pm.to).unwrap_or_else(|| panic!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}. PaxosMsg: {:?}", &pm.to, self.peers.keys(), pm));
                 receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
             },
             CommunicatorMsg::ProposalResponse(pr) => {
