@@ -73,7 +73,6 @@ pub struct PaxosReplica<S, P> where
     pending_seq_transfers: HashMap<u32, (u32, HashMap<u32, Vec<Entry>>)>,   // <config_id, (num_segments, <segment_id, entries>)
     complete_sequences: HashSet<u32>,
     active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
-    forward_discarded: bool,
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
     cached_client: Option<ActorPath>,
     pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>,
@@ -84,7 +83,7 @@ impl<S, P> PaxosReplica<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    pub fn with(initial_config: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> PaxosReplica<S, P> {
+    pub fn with(initial_config: Vec<u64>, policy: TransferPolicy) -> PaxosReplica<S, P> {
         PaxosReplica {
             ctx: ComponentContext::new(),
             pid: 0,
@@ -105,7 +104,6 @@ impl<S, P> PaxosReplica<S, P> where
             pending_seq_transfers: HashMap::new(),
             complete_sequences: HashSet::new(),
             active_peers: (Vec::new(), Vec::new()),
-            forward_discarded,
             retry_transfer_timers: HashMap::new(),
             cached_client: None,
             pending_local_seq_requests: HashMap::new(),
@@ -152,7 +150,7 @@ impl<S, P> PaxosReplica<S, P> where
         let kill_recipient: Recipient<KillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
         let paxos_comp = system.create(|| {
-            PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid, self.forward_discarded)
+            PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid)
         });
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
@@ -740,13 +738,12 @@ impl<S, P> PaxosComp<S, P> where
         peers: HashSet<u64>,
         config_id: u32,
         pid: u64,
-        forward_discarded: bool
     ) -> PaxosComp<S, P>
     {
         let seq = S::new();
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
-        let paxos = Paxos::with(config_id, pid, peers.clone(), storage, forward_discarded);
+        let paxos = Paxos::with(config_id, pid, peers.clone(), storage);
         PaxosComp {
             ctx: ComponentContext::new(),
             supervisor,
@@ -763,7 +760,7 @@ impl<S, P> PaxosComp<S, P> where
 
     fn start_timers(&mut self) {
         let decided_timer = self.schedule_periodic(
-            Duration::from_millis(0),
+            Duration::from_millis(1),
             Duration::from_millis(GET_DECIDED_PERIOD),
             move |c, _| c.get_decided()
         );
@@ -783,7 +780,7 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn send_outgoing(&mut self) {
-        for out_msg in self.paxos.get_outgoing_messages() {
+        for out_msg in self.paxos.outgoing.drain(..) {
             self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(out_msg));
         }
     }
@@ -844,12 +841,12 @@ impl<S, P> Actor for PaxosComp<S, P> where
                 let ser_entries = self.paxos.get_chosen_ser_entries(seq_req.from_idx, seq_req.to_idx);
                 self.supervisor.tell(PaxosReplicaMsg::SequenceResp(seq_req, ser_entries));
             },
-            #[cfg(test)]
-                PaxosCompMsg::GetAllEntries(a) => { // for testing only
+            PaxosCompMsg::GetAllEntries(a) => { // for testing only
+                #[cfg(test)] {
                     let seq = self.paxos.get_sequence();
                     a.reply(seq).expect("Failed to reply to GetAllEntries");
-                },
-            _ => {},
+                }
+            },
         }
     }
 
@@ -931,9 +928,7 @@ pub mod raw_paxos{
         proposals: Vec<Entry>,
         lc: u64,    // length of longest chosen seq
         prev_ld: u64,
-        outgoing: Vec<Message>,
-        hb_forward: Vec<Entry>,
-        forward_discarded: bool
+        pub outgoing: Vec<Message>,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -946,7 +941,6 @@ pub mod raw_paxos{
             pid: u64,
             peers: HashSet<u64>,
             storage: Storage<S, P>,
-            forward_discarded: bool
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes/2 + 1;
@@ -968,8 +962,6 @@ pub mod raw_paxos{
                 lc: 0,
                 prev_ld: 0,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
-                hb_forward: vec![],
-                forward_discarded
             }
         }
 
@@ -982,11 +974,6 @@ pub mod raw_paxos{
             } else {
                 vec![]
             }
-        }
-
-        pub fn get_outgoing_messages(&mut self) -> Vec<Message> {
-            let outgoing_msgs = self.outgoing.drain(..).collect();
-            outgoing_msgs
         }
 
         pub fn handle(&mut self, m: Message) {
@@ -1075,7 +1062,6 @@ pub mod raw_paxos{
             self.clear_peers_state();
             if self.stopped() {
                 self.proposals.clear();
-                self.hb_forward.clear();
             }
             if self.pid == l.pid {
                 self.n_leader = n;
@@ -1092,10 +1078,6 @@ pub mod raw_paxos{
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
-                if !self.hb_forward.is_empty(){
-                    // println!("Appending hb proposals, len: {}", self.hb_forward.len());
-                    self.proposals.append(&mut self.hb_forward);
-                }
                 /* send prepare */
                 for pid in &self.peers {
                     let prep = Prepare::with(n, ld, self.storage.get_accepted_ballot());
@@ -1143,7 +1125,7 @@ pub mod raw_paxos{
                     let acc = Accept::with(self.n_leader, entry.clone());
                     self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Accept(acc)));
                 }
-                self.storage.append_entry(entry, self.forward_discarded);
+                self.storage.append_entry(entry);
                 self.las.insert(self.pid, self.storage.get_sequence_len());
             }
         }
@@ -1281,7 +1263,7 @@ pub mod raw_paxos{
         fn handle_accept(&mut self, acc: Accept, from: u64) {
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
-                    self.storage.append_entry(acc.entry, false);
+                    self.storage.append_entry(acc.entry);
                     let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
@@ -1318,12 +1300,10 @@ pub mod raw_paxos{
         }
 
         fn drop_after_stopsign(entries: &mut Vec<Entry>) {   // drop all entries ordered after stopsign (if any)
-            for (idx, e) in entries.iter().enumerate() {
-                if e.is_stopsign() {
-                    entries.truncate(idx + 1);
-                    return;
-                }
-            }
+            let ss_idx = entries.iter().position(|e| e.is_stopsign());
+            if let Some(idx) = ss_idx {
+                entries.truncate(idx + 1);
+            };
         }
 
         #[cfg(test)]
@@ -1591,7 +1571,6 @@ mod tests {
     use super::super::messages::Run;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
     use super::super::messages::paxos::ballot_leader_election::Ballot;
-    use crate::bench::atomic_broadcast::paxos::raw_paxos::EntryMetaData;
     use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
 
     fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
@@ -1647,6 +1626,41 @@ mod tests {
         let quorum = active_n/2 + 1;
 
         let (systems, nodes, actorpaths) = create_replica_nodes(n, config, policy, forward_discarded);
+        /*** Setup client ***/
+        let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
+        let (client_comp, unique_reg_f) = systems[0].create_and_register( || {
+            TestClient::with(
+                num_proposals,
+                batch_size,
+                nodes,
+                reconfig.clone(),
+                p,
+                check_sequences,
+            )
+        });
+        unique_reg_f.wait_expect(
+            Duration::from_millis(1000),
+            "Client failed to register!",
+        );
+        let system = systems.first().unwrap();
+        let client_comp_f = system.start_notify(&client_comp);
+        client_comp_f
+            .wait_timeout(Duration::from_secs(2), )
+            .expect("ClientComp never started!");
+        let named_reg_f = system.register_by_alias(
+            &client_comp,
+            "client",
+        );
+        named_reg_f.wait_expect(
+            Duration::from_secs(2),
+            "Failed to register alias for ClientComp"
+        );
+        let client_path = ActorPath::Named(NamedPath::with_system(
+            system.system_path(),
+            vec![String::from("client")],
+        ));
+        let mut ser_client = Vec::<u8>::new();
+        client_path.serialise(&mut ser_client).expect("Failed to serialise ClientComp actorpath");
         /*** Setup partitioning actor ***/
         let prepare_latch = Arc::new(CountdownEvent::new(1));
         let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
@@ -1667,29 +1681,10 @@ mod tests {
         partitioning_actor_f
             .wait_timeout(Duration::from_millis(1000))
             .expect("PartitioningComp never started!");
-        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(Some(ser_client)));
         prepare_latch.wait();
         partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
-        /*** Setup client ***/
-        let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
-        let (client, unique_reg_f) = systems[0].create_and_register( || {
-            TestClient::with(
-                num_proposals,
-                batch_size,
-                nodes,
-                reconfig.clone(),
-                p,
-                check_sequences,
-            )
-        });
-        unique_reg_f.wait_expect(
-            Duration::from_millis(1000),
-            "Client failed to register!",
-        );
-        let client_f = systems[0].start_notify(&client);
-        client_f.wait_timeout(Duration::from_millis(1000))
-            .expect("Client never started!");
-        client.actor_ref().tell(Run);
+        client_comp.actor_ref().tell(Run);
         let all_sequences = f.wait_timeout(Duration::from_secs(60)).expect("Failed to get results");
         let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
         for system in systems {

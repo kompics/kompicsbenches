@@ -391,7 +391,7 @@ pub mod tests {
                                 }
                             }
                     },
-                    _ => error!(self.ctx.log(), "Client received unexpected msg"),
+                    e => error!(self.ctx.log(), "Client received unexpected msg {:?}", e),
                 }
             },
             tm: TestMessage [TestMessageSer] => {

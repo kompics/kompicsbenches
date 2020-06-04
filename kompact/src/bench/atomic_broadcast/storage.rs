@@ -561,6 +561,7 @@ pub mod paxos {
     use std::sync::Arc;
     use std::mem;
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
+    use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
 
     pub trait Sequence {
         fn new() -> Self;
@@ -631,15 +632,9 @@ pub mod paxos {
             Storage { sequence, paxos_state }
         }
 
-        pub fn append_entry(&mut self, entry: Entry, forward_discarded: bool) {
+        pub fn append_entry(&mut self, entry: Entry) {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
-                    if forward_discarded {
-                        if self.paxos_state.get_pending_chosen_offset().is_none() {
-                            let current_offset = s.get_sequence_len();
-                            self.paxos_state.set_pending_chosen_offset(Some(current_offset));
-                        }
-                    }
                     s.append_entry(entry);
                 },
                 PaxosSequence::Stopped(_) => {
@@ -807,7 +802,7 @@ pub mod paxos {
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence{ sequence: vec![] }
+            MemorySequence{ sequence: Vec::with_capacity(MAX_INFLIGHT) }
         }
 
         fn new_with_sequence(seq: Vec<Entry>) -> Self {
