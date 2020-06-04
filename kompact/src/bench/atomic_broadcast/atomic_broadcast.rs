@@ -233,7 +233,8 @@ impl AtomicBroadcastMaster {
     fn create_client(
         &self,
         nodes_id: HashMap<u64, ActorPath>,
-        reconfig: Option<(Vec<u64>, Vec<u64>)>
+        reconfig: Option<(Vec<u64>, Vec<u64>)>,
+        leader_election_latch: Arc<CountdownEvent>,
     ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
@@ -244,6 +245,7 @@ impl AtomicBroadcastMaster {
                 self.batch_size.unwrap(),
                 nodes_id,
                 reconfig,
+                leader_election_latch,
                 finished_latch,
             )
         });
@@ -432,8 +434,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 for (id, actorpath) in nodes.iter().enumerate() {
                     nodes_id.insert(id as u64 + 1, actorpath.clone());
                 }
-                let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone());
-                self.partitioning_actor = Some(self.initialise_iteration(nodes, client_path));
+                let leader_election_latch = Arc::new(CountdownEvent::new(1));
+                let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
+                let partitioning_actor = self.initialise_iteration(nodes, client_path);
+                partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
+                leader_election_latch.wait();
+                self.partitioning_actor = Some(partitioning_actor);
                 self.client_comp = Some(client_comp);
             }
             None => unimplemented!()
@@ -442,12 +448,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn run_iteration(&mut self) -> () {
         println!("Running Atomic Broadcast experiment!");
-        match self.partitioning_actor {
-            Some(ref p_actor) => {
-                p_actor.actor_ref().tell(IterationControlMsg::Run);
-            },
-            _ => panic!("No partitioning actor found!"),
-        }
         match self.client_comp {
             Some(ref client_comp) => {
                 client_comp.actor_ref().tell(Run);
