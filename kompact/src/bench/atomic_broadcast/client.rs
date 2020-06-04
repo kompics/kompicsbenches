@@ -6,6 +6,13 @@ use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, REC
 use std::time::Duration;
 use super::parameters::client::*;
 
+#[derive(PartialEq)]
+enum ExperimentState {
+    LeaderElection,
+    Running,
+    Finished
+}
+
 #[derive(ComponentDefinition)]
 pub struct Client {
     ctx: ComponentContext<Self>,
@@ -13,6 +20,7 @@ pub struct Client {
     batch_size: u64,
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
+    leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     proposal_count: u64,
     responses: HashSet<u64>,
@@ -21,7 +29,7 @@ pub struct Client {
     reconfig_timer: Option<ScheduledTimer>,
     timeout: u64,
     current_leader: u64,
-    finished: bool,
+    state: ExperimentState,
 }
 
 impl Client {
@@ -30,6 +38,7 @@ impl Client {
         batch_size: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
+        leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
         Client {
@@ -38,6 +47,7 @@ impl Client {
             batch_size,
             nodes,
             reconfig,
+            leader_election_latch,
             finished_latch,
             proposal_count: 0,
             responses: HashSet::with_capacity(num_proposals as usize),
@@ -46,7 +56,7 @@ impl Client {
             reconfig_timer: None,
             timeout: PROPOSAL_TIMEOUT,
             current_leader: 0,
-            finished: false
+            state: ExperimentState::LeaderElection
         }
     }
 
@@ -135,6 +145,7 @@ impl Actor for Client {
     type Message = Run;
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
+        self.state = ExperimentState::Running;
         if self.reconfig.is_some() && self.batch_size == self.num_proposals {
             self.propose_reconfiguration();
         } else {
@@ -151,24 +162,28 @@ impl Actor for Client {
                         info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
                         let prev_leader = self.current_leader;
                         self.current_leader = pid;
-                        if prev_leader == 0 {
-                            if self.reconfig.is_some() && self.batch_size == self.num_proposals {
-                                self.propose_reconfiguration();
-                            } else if let Some(timer) = self.timer.take() {
-                                info!(self.ctx.log(), "Retrying proposals after first leader");
-                                self.cancel_timer(timer);
-                                self.retry_proposals();
+                        match self.state {
+                            ExperimentState::LeaderElection => {
+                                self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
                             }
+                            ExperimentState::Running => {
+                                if let Some(timer) = self.timer.take() {
+                                    info!(self.ctx.log(), "Retrying proposals after first leader");
+                                    self.cancel_timer(timer);
+                                    self.retry_proposals();
+                                }
+                            },
+                            _ => {}
                         }
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if self.finished{ return; }
+                        if self.state != ExperimentState::Running { return; }
                         match pr.id {
                             RECONFIG_ID => {
                                 if let Some(reconfig_timer) = self.reconfig_timer.take() {   // first reconfig response
                                     if self.responses.len() as u64 == self.num_proposals {
                                         info!(self.ctx.log(), "Got reconfig at last");
-                                        self.finished = true;
+                                        self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);
@@ -195,7 +210,7 @@ impl Actor for Client {
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");
-                                        self.finished = true;
+                                        self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                         if let Some(timer) = self.timer.take() {
                                             self.cancel_timer(timer);
