@@ -32,11 +32,13 @@ object AtomicBroadcast {
         var normal_axis = MutTreeMap[(String, Long), TreeMap[(String, Long), ImplGroupedResult[Long]]]();
         var reconfig_axis = MutTreeMap[(String, Long, Long), TreeMap[(String, String), ImplGroupedResult[Long]]]();
         var forward_discarded_axis = MutTreeMap[(String, Long, Long), TreeMap[(String, Boolean), ImplGroupedResult[Long]]]();
+        var latency_axis = MutTreeMap[(String, Long), TreeMap[String, ImplGroupedResult[Long]]]();
         for ((_impl, res) <- data.results) { // Map: KOMPACTMIX -> ImplGroupedResult
           val params = res.params;
           var normalPlots: MutTreeMap[(String, Long), MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           var reconfigPlots: MutTreeMap[(String, Long, Long), MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           var forwardDiscardedPlots: MutTreeMap[(String, Long, Long), MutTreeMap[(String, Boolean), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
+          val latencyPlots: MutTreeMap[(String, Long), MutTreeMap[String, (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           for ((p, stats) <- params.zip(res.stats)) { // go through each row in summary
             val reconfig = p.reconfiguration;
             reconfig match {
@@ -50,14 +52,25 @@ object AtomicBroadcast {
                 all_fd_series(fd_serie_key) = fd_serie;
                 forwardDiscardedPlots(fd_plot_key) = all_fd_series;
                 if (!p.forwardDiscarded) {  // only put forward_discarded = false in normal plot
-                  val normal_plot_key = (p.reconfiguration, p.numberOfNodes);
-                  val all_normal_series = normalPlots.getOrElse(normal_plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
-                  val normal_serie_key = (p.algorithm, p.batchSize);
-                  val normal_serie = all_normal_series.getOrElse(normal_serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
-                  normal_serie._1 += p.numberOfProposals;
-                  normal_serie._2 += stats;
-                  all_normal_series(normal_serie_key) = normal_serie;
-                  normalPlots(normal_plot_key) = all_normal_series;
+                  if (p.batchSize == 1) { // latency
+                    val latency_plot_key = (p.reconfiguration, p.numberOfNodes);
+                    val all_latency_series = latencyPlots.getOrElse(latency_plot_key, MutTreeMap[String, (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
+                    val latency_serie_key = p.algorithm;
+                    val latency_serie = all_latency_series.getOrElse(latency_serie_key,  (ListBuffer[Long](), ListBuffer[Statistics]()));
+                    latency_serie._1 += p.numberOfProposals;
+                    latency_serie._2 += stats;
+                    all_latency_series(latency_serie_key) = latency_serie;
+                    latencyPlots(latency_plot_key) = all_latency_series;
+                  } else {
+                    val normal_plot_key = (p.reconfiguration, p.numberOfNodes);
+                    val all_normal_series = normalPlots.getOrElse(normal_plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
+                    val normal_serie_key = (p.algorithm, p.batchSize);
+                    val normal_serie = all_normal_series.getOrElse(normal_serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
+                    normal_serie._1 += p.numberOfProposals;
+                    normal_serie._2 += stats;
+                    all_normal_series(normal_serie_key) = normal_serie;
+                    normalPlots(normal_plot_key) = all_normal_series;
+                  }
                 }
               }
               case "single" | "majority" => {
@@ -75,6 +88,18 @@ object AtomicBroadcast {
                 }
               }
             }
+          }
+          for (latencyPlot <- latencyPlots) {
+            val reconfig_numNodes = latencyPlot._1;
+            var all_series = TreeMap.newBuilder[String, ImplGroupedResult[Long]];
+            for (serie <- latencyPlot._2) {
+              val algorithm = serie._1;
+              val num_proposals = serie._2._1.toList;
+              val stats = serie._2._2.toList;
+              val grouped_res = ImplGroupedResult(algorithm, num_proposals, stats);
+              all_series += (algorithm -> grouped_res);
+            }
+            latency_axis += (reconfig_numNodes -> all_series.result());
           }
           for (normalPlot <- normalPlots) {
             val reconfig_numNodes = normalPlot._1;
@@ -200,7 +225,32 @@ object AtomicBroadcast {
           seriesParams = (params: Params) => (params.algorithm, params.forwardDiscarded),
           forward_discarded_axis
         );
-        List(normal_plotgroup, reconfig_plotgroup, forward_discarded_plotgroup)
+        val latency_plotgroup = this.plotAlongPreSliced(
+          mainAxis = (params: Params) => params.numberOfProposals,
+          groupings = (params: Params) => (params.reconfiguration, params.numberOfNodes),
+          plotId = (params: (String, Long)) => s"latency-reconfiguration-${params._1}-num_nodes-${params._2}",
+          plotParams = (params: (String, Long)) =>
+            List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}"),
+          plotTitle = "Execution Time",
+          xAxisLabel = "number of proposals",
+          xAxisTitle = "Latency, Number of Proposals",
+          xAxisId = "latency-number-of-proposals",
+          yAxisLabel = "execution time (ms)",
+          units = "ms",
+          calculateParams = (_params: (String, Long)) => (),
+          calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
+            val meanTime = stats.sampleMean;
+            val totalOperations = numberOfProposals.toDouble;
+            val latency = meanTime / totalOperations;
+            latency
+          },
+          calculatedTitle = "Latency",
+          calculatedYAxisLabel = "avg. latency (ms/operation)",
+          calculatedUnits = "ms/operation",
+          seriesParams = (params: Params) => params.algorithm,
+          latency_axis
+        );
+        List(normal_plotgroup, reconfig_plotgroup, forward_discarded_plotgroup, latency_plotgroup)
       }
   }
 
