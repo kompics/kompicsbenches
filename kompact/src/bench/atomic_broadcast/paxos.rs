@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use super::messages::{KillResponse, TestMessage, TestMessageSer, SequenceResp, paxos::ballot_leader_election::Leader};
 use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
-use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer, RECONFIG_ID};
+use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use uuid::Uuid;
 use kompact::prelude::Buf;
@@ -490,7 +490,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         self.cached_client
                             .as_ref()
                             .expect("No cached client!")
-                            .tell((AtomicBroadcastMsg::FirstLeader(pid), AtomicBroadcastSer), self);
+                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                            .expect("Should serialise FirstLeader");
                     }
                     self.leader_in_active_config = pid;
                 }
@@ -552,7 +553,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             ATOMICBCAST_ID => {
                 if !self.stopped {
                     if self.leader_in_active_config == self.pid {
-                        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>().expect("Should be AtomicBroadcastMsg!") {
                             if p.reconfig.is_some() && self.active_config_id > 1 {   // TODO make proposal enum and check reconfig id
                                 warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config_id);
                                 return;
@@ -576,7 +577,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         match p {
                             PartitioningActorMsg::Init(init) => {
                                 self.partitioning_actor = Some(sender);
-                                self.new_iteration(init);
+                                    self.new_iteration(init);
                             },
                             PartitioningActorMsg::Run => {
                                 self.start_replica();
@@ -945,7 +946,6 @@ pub mod raw_paxos{
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes/2 + 1;
             let n_leader = Ballot::with(0, 0);
-            println!("Majority: {}", majority);
             Paxos {
                 storage,
                 pid,
@@ -1214,7 +1214,6 @@ pub mod raw_paxos{
                     let num_accepted = self.las.values().filter(|la| *la >= &accepted.la).count();
                     if num_accepted >= self.majority {
                         self.lc = accepted.la;
-                        self.storage.set_pending_chosen_offset(self.lc);
                         let d = Decide::with(self.lc, self.n_leader);
                         let my_pid = self.pid;
                         for pid in self.lds.keys().filter(|x| *x != &my_pid) {
@@ -1234,7 +1233,6 @@ pub mod raw_paxos{
                 let na = self.storage.get_accepted_ballot();
                 let sfx = if na >= prep.n_accepted {
                     self.storage.get_suffix(prep.ld)
-                    // self.storage.get_ser_suffix(prep.ld)
                 } else {
                     vec![]
                 };
@@ -1277,17 +1275,6 @@ pub mod raw_paxos{
         }
 
         /*** algorithm specific functions ***/
-        fn max_value(promises: Vec<ReceivedPromise>) -> (u64, Vec<Entry>) { // (pid, suffix)
-            let max_promise = promises.into_iter().max_by(|x, y|
-                if x.n_accepted > y.n_accepted || (x.n_accepted == y.n_accepted && x.sfx.len() > y.sfx.len()){
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                }
-            ).unwrap();
-            (max_promise.n_accepted.pid, max_promise.sfx)
-        }
-
         fn get_max_promise_pid(&self) -> u64 {
             let (max_promise_pid, _max_promise) = self.promises.iter().max_by(|(_pid, promise), (_other_pid, other_promise)|
                 if promise.n_accepted > other_promise.n_accepted || (promise.n_accepted == other_promise.n_accepted && promise.sfx.len() > other_promise.sfx.len()){
@@ -1452,14 +1439,9 @@ mod ballot_leader_election {
             }
         }
 
-        fn max_by_ballot(ballots: Vec<(Ballot, u64)>) -> (Ballot, u64) {
-            ballots.into_iter().max().expect("Should be at least majority of ballots")
-        }
-
         fn check_leader(&mut self) {
             self.ballots.push((self.current_ballot, self.pid));
-            let ballots = std::mem::replace(&mut self.ballots, Vec::with_capacity(self.majority*2));
-            let (top_ballot, top_pid) = Self::max_by_ballot(ballots);
+            let (top_ballot, top_pid) = self.ballots.drain(..).max().unwrap();
             if top_ballot < self.max_ballot {
                 self.current_ballot.n = self.max_ballot.n + 1;
                 self.leader = None;
@@ -1475,8 +1457,9 @@ mod ballot_leader_election {
         fn hb_timeout(&mut self) {
             if self.ballots.len() + 1 >= self.majority {
                 self.check_leader();
+            } else {
+                self.ballots.clear();
             }
-            self.ballots.clear();
             self.round += 1;
             for peer in &self.peers {
                 let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);

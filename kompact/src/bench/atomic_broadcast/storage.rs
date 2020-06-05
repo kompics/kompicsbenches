@@ -598,15 +598,11 @@ pub mod paxos {
 
         fn set_accepted_ballot(&mut self, na: Ballot);
 
-        fn set_pending_chosen_offset(&mut self, offset: Option<u64>);
-
         fn get_accepted_ballot(&self) -> Ballot;
 
         fn get_decided_len(&self) -> u64;
 
         fn get_promise(&self) -> Ballot;
-
-        fn get_pending_chosen_offset(&self) -> Option<u64>;
     }
 
     enum PaxosSequence<S> where S: Sequence {
@@ -699,18 +695,6 @@ pub mod paxos {
             self.paxos_state.set_accepted_ballot(na);
         }
 
-        pub fn set_pending_chosen_offset(&mut self, offset: u64) {
-            if offset == self.get_sequence_len() {
-                self.paxos_state.set_pending_chosen_offset(None);
-            } else if let Some(pending_offset) = self.paxos_state.get_pending_chosen_offset() {
-                if pending_offset == offset {
-                    self.paxos_state.set_pending_chosen_offset(None);
-                }
-            } else {
-                self.paxos_state.set_pending_chosen_offset(Some(offset));
-            }
-        }
-
         pub fn get_accepted_ballot(&self) -> Ballot {
             self.paxos_state.get_accepted_ballot()
         }
@@ -747,14 +731,6 @@ pub mod paxos {
             match self.sequence {
                 PaxosSequence::Active(ref s) => s.get_suffix(from),
                 PaxosSequence::Stopped(ref arc_s) => arc_s.get_suffix(from),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_suffix"),
-            }
-        }
-
-        pub fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>> {
-            match self.sequence {
-                PaxosSequence::Active(ref s) => s.get_ser_suffix(from),
-                PaxosSequence::Stopped(ref arc_s) => arc_s.get_ser_suffix(from),
                 _ => panic!("Got unexpected intermediate PaxosSequence::None in get_suffix"),
             }
         }
@@ -880,7 +856,6 @@ pub mod paxos {
         n_prom: Ballot,
         acc_round: Ballot,
         ld: u64,
-        pending_chosen_offset: Option<u64>,
     }
 
     impl PaxosStateTraits for MemoryState {}
@@ -888,10 +863,8 @@ pub mod paxos {
     impl PaxosState for MemoryState {
         fn new() -> Self {
             let ballot = Ballot::with(0, 0);
-            MemoryState{ n_prom: ballot, acc_round: ballot, ld: 0, pending_chosen_offset:  None }
+            MemoryState{ n_prom: ballot, acc_round: ballot, ld: 0 }
         }
-
-        fn set_pending_chosen_offset(&mut self, offset: Option<u64>) { self.pending_chosen_offset = offset }
 
         fn set_promise(&mut self, nprom: Ballot) {
             self.n_prom = nprom;
@@ -915,10 +888,6 @@ pub mod paxos {
 
         fn get_promise(&self) -> Ballot {
             self.n_prom
-        }
-
-        fn get_pending_chosen_offset(&self) -> Option<u64> {
-            self.pending_chosen_offset
         }
     }
 }

@@ -25,13 +25,13 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
-    algorithm: Algorithm,
+    algorithm: String,
     last_node_id: u64,
-    transfer_policy: Option<TransferPolicy>,
+    transfer_policy: String,
 }
 
 impl ClientParams {
-    fn with(algorithm: Algorithm, last_node_id: u64, transfer_policy: Option<TransferPolicy>) -> ClientParams {
+    fn with(algorithm: String, last_node_id: u64, transfer_policy: String) -> ClientParams {
         ClientParams{ algorithm, last_node_id, transfer_policy }
     }
 }
@@ -65,33 +65,20 @@ impl DistributedBenchmark for AtomicBroadcast {
                 s
             )))
         } else {
-            let algorithm = match split[0].to_lowercase().as_ref() {
-                "paxos" => Algorithm::Paxos,
-                "raft" => Algorithm::Raft,
-                _ => {
-                    return Err(BenchmarkError::InvalidMessage(format!(
-                        "String to ClientConf error: '{}' does not represent an algorithm",
-                        split[0]
-                    )));
-                }
-            };
+            let algorithm = split[0].to_lowercase();
+            if algorithm != "paxos" && algorithm != "raft" {
+                return Err(BenchmarkError::InvalidMessage(format!(
+                    "String to ClientConf error: '{}' does not represent an algorithm",
+                    algorithm
+                )));
+            }
             let last_node_id = split[1].parse::<u64>().map_err(|e| {
                 BenchmarkError::InvalidMessage(format!(
                     "String to ClientConf error: '{}' does not represent a node id: {:?}",
                     split[1], e
                 ))
             })?;
-            let transfer_policy = match split[2].to_lowercase().as_ref() {
-                "eager" => Some(TransferPolicy::Eager),
-                "pull" => Some(TransferPolicy::Pull),
-                "none" => None,
-                _ => {
-                    return Err(BenchmarkError::InvalidMessage(format!(
-                        "String to ClientConf error: '{}' does not represent a transfer policy",
-                        split[2]
-                    )));
-                }
-            };
+            let transfer_policy = split[2].to_lowercase();
             Ok(ClientParams::with(algorithm, last_node_id, transfer_policy))
         }
     }
@@ -104,16 +91,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn client_conf_to_str(c: Self::ClientConf) -> String {
-        let a = match c.algorithm {
-            Algorithm::Paxos => "paxos",
-            Algorithm::Raft => "raft",
-        };
-        let tp = match c.transfer_policy {
-            Some(TransferPolicy::Eager) => "eager",
-            Some(TransferPolicy::Pull) => "pull",
-            None => "none"
-        };
-        let s = format!("{},{},{}", a, c.last_node_id, tp);
+        let s = format!("{},{},{}", c.algorithm, c.last_node_id, c.transfer_policy);
 //        println!("ClientConf string: {}", &s);
         s
     }
@@ -157,27 +135,15 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
         _ => Err(BenchmarkError::InvalidMessage(String::from("Got unknown reconfiguration parameter")))
     }
 }
-
-#[derive(Clone, Debug, PartialEq)]
-enum Algorithm {
-    Paxos,
-    Raft,
-}
-
 type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
-    algorithm: Option<Algorithm>,
-    num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     batch_size: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
-    paxos_transfer_policy: Option<TransferPolicy>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    paxos_replica: Option<Arc<Component<PaxosReplica<MemorySequence, MemoryState>>>>,
-    raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
 }
@@ -185,17 +151,12 @@ pub struct AtomicBroadcastMaster {
 impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
-            algorithm: None,
-            num_nodes: None,
             num_proposals: None,
             batch_size: None,
             reconfiguration: None,
-            paxos_transfer_policy: Some(TransferPolicy::Pull),
             system: None,
             finished_latch: None,
             iteration_id: 0,
-            paxos_replica: None,
-            raft_replica: None,
             client_comp: None,
             partitioning_actor: None,
         }
@@ -272,10 +233,7 @@ impl AtomicBroadcastMaster {
         (client_comp, client_path)
     }
 
-    fn validate_and_set_experiment_args(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
-        self.num_nodes = Some(c.number_of_nodes);
-        self.num_proposals = Some(c.number_of_proposals);
-        self.batch_size = Some(c.batch_size);
+    fn validate_experiment_params(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
         if c.batch_size > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(
                 format!("Batch size: {} should be less or equal to number of proposals: {}", c.batch_size, c.number_of_proposals)
@@ -283,7 +241,6 @@ impl AtomicBroadcastMaster {
         }
         match c.algorithm.to_lowercase().as_ref() {
             "paxos" => {
-                self.algorithm = Some(Algorithm::Paxos);
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
                         if c.transfer_policy.to_lowercase() != "none" {
@@ -293,29 +250,26 @@ impl AtomicBroadcastMaster {
                         }
                     },
                     s if s == "single" || s == "majority" => {
-                        self.paxos_transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
-                            "eager" => Some(TransferPolicy::Eager),
-                            "pull" => Some(TransferPolicy::Pull),
-                            _ => {
-                                return Err(BenchmarkError::InvalidTest(
-                                    format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
-                                ));
-                            }
+                        let transfer_policy: &str = &c.transfer_policy.to_lowercase();
+                        if transfer_policy != "eager" && transfer_policy != "pull" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
+                            ));
                         }
                     },
-                    _ => {}
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(
+                            format!("Unimplemented Paxos reconfiguration: {}", &c.reconfiguration)
+                        ));
+                    }
                 }
             },
             "raft" => {
-                self.algorithm = Some(Algorithm::Raft);
-                self.paxos_transfer_policy = match c.transfer_policy.to_lowercase().as_ref() {
-                    "none" => None,
-                    _ => {
-                        return Err(BenchmarkError::InvalidTest(
-                            format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
-                        ));
-                    }
-                };
+                if &c.transfer_policy.to_lowercase() != "none" {
+                    return Err(BenchmarkError::InvalidTest(
+                        format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
+                    ));
+                }
             },
             _ => {
                 return Err(BenchmarkError::InvalidTest(
@@ -326,11 +280,11 @@ impl AtomicBroadcastMaster {
         match get_reconfig_data(&c.reconfiguration, c.number_of_nodes) {
             Ok((additional_n, reconfig)) => {
                 let n = c.number_of_nodes + additional_n;
-                if num_clients as u64 + 1 < n {
+                if (num_clients as u64) < n {
                     return Err(BenchmarkError::InvalidTest(format!(
                         "Not enough clients: {}, Required: {}",
-                        &num_clients,
-                        &(n-1)
+                        num_clients,
+                        n
                     )));
                 }
                 self.reconfiguration = reconfig;
@@ -348,102 +302,36 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
-        self.validate_and_set_experiment_args(&c, m.number_of_clients())?;
+        self.validate_experiment_params(&c, m.number_of_clients())?;
+        self.num_proposals = Some(c.number_of_proposals);
+        self.batch_size = Some(c.batch_size);
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
         let params = ClientParams::with(
-            self.algorithm.clone().unwrap(),
+            c.algorithm,
             c.number_of_nodes,
-            self.paxos_transfer_policy.clone(),
+            c.transfer_policy,
         );
         Ok(params)
     }
 
     fn prepare_iteration(&mut self, d: Vec<Self::ClientData>) -> () {
         println!("Preparing iteration");
-        match self.system {
-            Some(ref system) => {
-                let finished_latch = Arc::new(CountdownEvent::new(1));
-                self.finished_latch = Some(finished_latch);
-                self.iteration_id += 1;
-                let self_path = match self.algorithm {
-                    Some(Algorithm::Paxos) => {
-                        let initial_config = get_initial_conf(self.num_nodes.unwrap()).0;
-                        let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
-                            PaxosReplica::with(initial_config, self.paxos_transfer_policy.clone().unwrap())
-                        });
-                        unique_reg_f.wait_expect(
-                            REGISTER_TIMEOUT,
-                            "ReplicaComp failed to register!",
-                        );
-                        let named_reg_f = system.register_by_alias(
-                            &paxos_replica,
-                            format!("{}{}", PAXOS_PATH, &self.iteration_id),
-                        );
-                        named_reg_f.wait_expect(
-                            REGISTER_TIMEOUT,
-                            "Failed to register alias for ReplicaComp"
-                        );
-                        let paxos_replica_f = system.start_notify(&paxos_replica);
-                        paxos_replica_f
-                            .wait_timeout(REGISTER_TIMEOUT)
-                            .expect("ReplicaComp never started!");
-                        let self_path = ActorPath::Named(NamedPath::with_system(
-                            system.system_path(),
-                            vec![format!("{}{}", PAXOS_PATH, &self.iteration_id).into()],
-                        ));
-
-                        self.paxos_replica = Some(paxos_replica);
-                        self_path
-                    }
-                    Some(Algorithm::Raft) => {
-                        let conf_state = get_initial_conf(self.num_nodes.unwrap() as u64);
-                        let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                            RaftReplica::<Storage>::with(conf_state.0)
-                        });
-                        unique_reg_f.wait_expect(
-                            REGISTER_TIMEOUT,
-                            "RaftComp failed to register!",
-                        );
-                        let named_reg_f = system.register_by_alias(
-                            &raft_replica,
-                            format!("{}{}", RAFT_PATH, &self.iteration_id),
-                        );
-                        named_reg_f.wait_expect(
-                            REGISTER_TIMEOUT,
-                            "RaftReplica failed to register!",
-                        );
-                        let raft_replica_f = system.start_notify(&raft_replica);
-                        raft_replica_f
-                            .wait_timeout(REGISTER_TIMEOUT)
-                            .expect("RaftComp never started!");
-                        let self_path = ActorPath::Named(NamedPath::with_system(
-                            system.system_path(),
-                            vec![format!("{}{}", RAFT_PATH, &self.iteration_id).into()],
-                        ));
-
-                        self.raft_replica = Some(raft_replica);
-                        self_path
-                    }
-                    _ => unimplemented!(),
-                };
-                println!("Master replica path: {:?}", self_path);
-                let mut nodes = d;
-                nodes.insert(0, self_path);
-                let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-                for (id, actorpath) in nodes.iter().enumerate() {
-                    nodes_id.insert(id as u64 + 1, actorpath.clone());
-                }
-                let leader_election_latch = Arc::new(CountdownEvent::new(1));
-                let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
-                let partitioning_actor = self.initialise_iteration(nodes, client_path);
-                partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
-                leader_election_latch.wait();
-                self.partitioning_actor = Some(partitioning_actor);
-                self.client_comp = Some(client_comp);
-            }
-            None => unimplemented!()
+        if self.system.is_none() { panic!("No KompactSystem found!") }
+        let finished_latch = Arc::new(CountdownEvent::new(1));
+        self.finished_latch = Some(finished_latch);
+        self.iteration_id += 1;
+        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
+        for (id, actorpath) in d.iter().enumerate() {
+            nodes_id.insert(id as u64 + 1, actorpath.clone());
         }
+        let leader_election_latch = Arc::new(CountdownEvent::new(1));
+        let (client_comp, client_path) = self.create_client(nodes_id, self.reconfiguration.clone(), leader_election_latch.clone());
+        let partitioning_actor = self.initialise_iteration(d, client_path);
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
+        leader_election_latch.wait();   // wait until leader is established
+        self.partitioning_actor = Some(partitioning_actor);
+        self.client_comp = Some(client_comp);
     }
 
     fn run_iteration(&mut self) -> () {
@@ -482,29 +370,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 .expect("Partitioning Actor never died!");
         }
 
-        if let Some(paxos_replica_comp) = self.paxos_replica.take() {
-            let kill_replica_f = system.kill_notify(paxos_replica_comp);
-            kill_replica_f
-                .wait_timeout(REGISTER_TIMEOUT)
-                .expect("Paxos Replica never died!");
-        }
-
-        if let Some(raft_replica) = self.raft_replica.take() {
-            let kill_raft_f = system.kill_notify(raft_replica);
-            kill_raft_f
-                .wait_timeout(REGISTER_TIMEOUT)
-                .expect("RaftComp never died!");
-        }
-
         if last_iteration {
             println!("Cleaning up last iteration");
+            self.reconfiguration = None;
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
-            self.num_proposals = None;
-            self.algorithm = None;
-            self.batch_size = None;
-            self.num_nodes = None;
         } else {
             self.system = Some(system);
         }
@@ -535,11 +406,17 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         println!("Setting up Atomic Broadcast (client)");
         let system =
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
-        let named_path = match c.algorithm {
-            Algorithm::Paxos => {
+        let transfer_policy = match c.transfer_policy.as_ref() {
+            "none" => None,
+            "eager" => Some(TransferPolicy::Eager),
+            "pull" => Some(TransferPolicy::Pull),
+            unknown => panic!("Got unknown transfer policy: {}", unknown),
+        };
+        let named_path = match c.algorithm.as_ref() {
+            "paxos" => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
-                    PaxosReplica::with(initial_config, c.transfer_policy.unwrap())
+                    PaxosReplica::with(initial_config, transfer_policy.unwrap_or(TransferPolicy::Pull))
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
@@ -565,7 +442,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self.paxos_replica = Some(paxos_replica);
                 self_path
             }
-            Algorithm::Raft => {
+            "raft" => {
                 let conf_state = get_initial_conf(c.last_node_id);
 //                let storage = MemStorage::new_with_conf_state(conf_state);
 //                let dir = "./diskstorage";
@@ -597,7 +474,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 
                 self.raft_replica = Some(raft_replica);
                 self_path
-            }
+            },
+            unknown => panic!("Got unknown algorithm: {}", unknown),
         };
         self.system = Some(system);
         println!("Got path for Atomic Broadcast actor: {}", named_path);
