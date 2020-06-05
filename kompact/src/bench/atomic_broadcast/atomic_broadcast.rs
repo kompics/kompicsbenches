@@ -139,7 +139,7 @@ type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
     num_proposals: Option<u64>,
-    batch_size: Option<u64>,
+    concurrent_proposals: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
@@ -152,7 +152,7 @@ impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             num_proposals: None,
-            batch_size: None,
+            concurrent_proposals: None,
             reconfiguration: None,
             system: None,
             finished_latch: None,
@@ -203,7 +203,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
                 self.num_proposals.unwrap(),
-                self.batch_size.unwrap(),
+                self.concurrent_proposals.unwrap(),
                 nodes_id,
                 reconfig,
                 leader_election_latch,
@@ -234,9 +234,9 @@ impl AtomicBroadcastMaster {
     }
 
     fn validate_experiment_params(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
-        if c.batch_size > c.number_of_proposals {
+        if c.concurrent_proposals > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(
-                format!("Batch size: {} should be less or equal to number of proposals: {}", c.batch_size, c.number_of_proposals)
+                format!("Batch size: {} should be less or equal to number of proposals: {}", c.concurrent_proposals, c.number_of_proposals)
             ));
         }
         match c.algorithm.to_lowercase().as_ref() {
@@ -304,7 +304,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Setting up Atomic Broadcast (Master)");
         self.validate_experiment_params(&c, m.number_of_clients())?;
         self.num_proposals = Some(c.number_of_proposals);
-        self.batch_size = Some(c.batch_size);
+        self.concurrent_proposals = Some(c.concurrent_proposals);
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
         let params = ClientParams::with(
