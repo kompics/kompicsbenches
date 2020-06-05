@@ -80,9 +80,6 @@ pub mod paxos {
         pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
             Promise { n, n_accepted, sfx, ld, ser_sfx: None }
         }
-        pub fn with_serialised_sfx(n: Ballot, n_accepted: Ballot, ser_sfx: Option<Vec<u8>>, ld: u64) -> Promise {
-            Promise { n, n_accepted, sfx: vec![], ld, ser_sfx }
-        }
     }
 
     #[derive(Clone, Debug)]
@@ -759,12 +756,12 @@ impl Proposal {
 #[derive(Clone, Debug)]
 pub struct ProposalResp {
     pub id: u64,
-    pub last_leader: u64,
+    pub latest_leader: u64,
 }
 
 impl ProposalResp {
-    pub fn with(id: u64, last_leader: u64) -> ProposalResp {
-        ProposalResp{ id, last_leader }
+    pub fn with(id: u64, latest_leader: u64) -> ProposalResp {
+        ProposalResp{ id, latest_leader }
     }
 }
 
@@ -779,10 +776,8 @@ const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
 const FIRSTLEADER_ID: u8 = 3;
 
-pub struct AtomicBroadcastSer;
-
-impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
-    fn ser_id(&self) -> SerId {
+impl Serialisable for AtomicBroadcastMsg {
+    fn ser_id(&self) -> u64 {
         serialiser_ids::ATOMICBCAST_ID
     }
 
@@ -790,8 +785,8 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
         Some(50)
     }
 
-    fn serialise(&self, enm: &AtomicBroadcastMsg, buf: &mut dyn BufMut) -> Result<(), SerError> {
-        match enm {
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match self {
             AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
                 buf.put_u64(p.id);
@@ -817,7 +812,7 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
                 buf.put_u64(pr.id);
-                buf.put_u64(pr.last_leader);
+                buf.put_u64(pr.latest_leader);
             },
             AtomicBroadcastMsg::FirstLeader(pid) => {
                 buf.put_u8(FIRSTLEADER_ID);
@@ -826,9 +821,15 @@ impl Serialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
         }
         Ok(())
     }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
+    }
 }
 
-impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
+pub struct AtomicBroadcastDeser;
+
+impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
     const SER_ID: u64 = serialiser_ids::ATOMICBCAST_ID;
 
     fn deserialise(buf: &mut dyn Buf) -> Result<AtomicBroadcastMsg, SerError> {
@@ -858,7 +859,7 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastSer {
                 let last_leader = buf.get_u64();
                 let pr = ProposalResp {
                     id,
-                    last_leader,
+                    latest_leader: last_leader,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },

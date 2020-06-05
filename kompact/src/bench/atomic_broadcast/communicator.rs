@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
-use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg, AtomicBroadcastSer};
+use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg};
 use std::collections::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer, KillResponse};
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
@@ -70,7 +70,7 @@ impl Provide<CommunicationPort> for Communicator {
             },
             CommunicatorMsg::ProposalResponse(pr) => {
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
-                self.client.tell((am, AtomicBroadcastSer), self);
+                self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },
         }
     }
@@ -84,16 +84,16 @@ impl Actor for Communicator {
     }
 
     fn receive_network(&mut self, m: NetMessage) -> () {
-        let NetMessage{sender: _, receiver: _, data} = m;
+        let NetMessage{data, ..} = m;
         match_deser! {data; {
-                r: RawRaftMsg [RawRaftSer] => {
-                    self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
-                },
-                p: RawPaxosMsg [PaxosSer] => {
-                    self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
-                },
-                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-            }
-            }
+            r: RawRaftMsg [RawRaftSer] => {
+                self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
+            },
+            p: RawPaxosMsg [PaxosSer] => {
+                self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
+            },
+            !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+        }
+        }
     }
 }

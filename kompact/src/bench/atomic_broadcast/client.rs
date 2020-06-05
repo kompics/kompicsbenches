@@ -2,7 +2,7 @@ use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use std::collections::{HashMap, HashSet};
-use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastSer, Run, RECONFIG_ID};
+use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, Run, RECONFIG_ID};
 use std::time::Duration;
 use super::parameters::client::*;
 
@@ -62,7 +62,7 @@ impl Client {
 
     fn propose_normal(&self, id: u64, node: &ActorPath) {
         let p = Proposal::normal(id);
-        node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+        node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise Proposal");
     }
 
     fn send_batch(&mut self) {
@@ -94,11 +94,11 @@ impl Client {
 
     fn propose_reconfiguration(&mut self) {
         if self.current_leader == 0 { return; }
-        let reconfig = self.reconfig.as_ref().expect("No reconfig");
+        let reconfig = self.reconfig.as_ref().unwrap();
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
         let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
-        let raft_node = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
-        raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+        let ap = self.nodes.get(&self.current_leader).expect("Could not find actorpath to leader");
+        ap.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise reconfig Proposal");
         let timeout = Duration::from_millis(self.timeout);
         let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig());
         self.reconfig_timer = Some(timer);
@@ -123,8 +123,8 @@ impl Client {
     fn retry_reconfig(&mut self) {
         if let Some(reconfig) = self.reconfig.as_ref() {
             let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
-            let raft_node = self.nodes.get(&MASTER_PID).expect("Could not find actorpath to raft node!");
-            raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+            let ap = self.nodes.get(&self.current_leader).expect("Could not find actorpath to current leader!");
+            ap.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise Reconfig Proposal");
             let timeout = Duration::from_millis(self.timeout);
             let timer = self.schedule_once(timeout, move |c, _| c.retry_reconfig());
             self.reconfig_timer = Some(timer);
@@ -156,11 +156,10 @@ impl Actor for Client {
     fn receive_network(&mut self, m: NetMessage) -> () {
         let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
-            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+            am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
-                        let prev_leader = self.current_leader;
                         self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {
@@ -191,8 +190,8 @@ impl Actor for Client {
                                     } else {
                                         self.cancel_timer(reconfig_timer);
                                         self.reconfig = None;
-                                        self.current_leader = pr.last_leader;
-                                        // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.last_leader);
+                                        self.current_leader = pr.latest_leader;
+                                        // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.latest_leader);
                                         if self.num_proposals == self.batch_size && self.proposal_count == 0 {
                                             // info!(self.ctx.log(), "Sending batch after reconfig");
                                             if let Some(timer) = self.timer.take() {
@@ -206,7 +205,7 @@ impl Actor for Client {
                             _ => {
                                 if self.responses.insert(pr.id) {
                                     self.retry_proposals.remove(&pr.id);
-                                    self.current_leader = pr.last_leader;
+                                    self.current_leader = pr.latest_leader;
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");
@@ -286,7 +285,7 @@ pub mod tests {
         fn propose_normal(&mut self, id: u64) {
             let p = Proposal::normal(id);
             let node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-            node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+            node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise proposal");
             let timeout = Duration::from_millis(PROPOSAL_TIMEOUT);
             let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
             self.proposal_timeouts.insert(id, timer);
@@ -315,7 +314,7 @@ pub mod tests {
             info!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
             let p = Proposal::reconfiguration(0, reconfig);
             let raft_node = self.nodes.get(&1).expect("Could not find actorpath to raft node!");
-            raft_node.tell((AtomicBroadcastMsg::Proposal(p), AtomicBroadcastSer), self);
+            raft_node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise reconfig proposal");
         }
 
         fn retry_proposal(&mut self, id: u64) {
@@ -350,7 +349,7 @@ pub mod tests {
         fn receive_network(&mut self, msg: NetMessage) -> () {
             let NetMessage{sender: _, receiver: _, data} = msg;
             match_deser!{data; {
-            am: AtomicBroadcastMsg [AtomicBroadcastSer] => {
+            am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                             match pr.id {

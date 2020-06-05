@@ -187,7 +187,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
-                        .tell((AtomicBroadcastMsg::FirstLeader(pid), AtomicBroadcastSer), self);
+                        .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                        .expect("Should serialise FirstLeader");
                 }
                 self.current_leader = pid
             },
@@ -199,7 +200,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             .as_ref()
                             .expect("No partitioning actor found!")
                             .tell_serialised(PartitioningActorMsg::InitAck(self.iteration_id), self)
-                            .expect("Should serialise");
+                            .expect("Should serialise InitAck")
                     }
                 }
             },
@@ -209,7 +210,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                     self.partitioning_actor
                         .as_ref()
                         .expect("No cached partitioning actor")
-                        .tell_serialised(PartitioningActorMsg::StopAck, self).expect("Should serialise");
+                        .tell_serialised(PartitioningActorMsg::StopAck, self)
+                        .expect("Should serialise StopAck");
                 }
             }
         }
@@ -220,7 +222,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
             ATOMICBCAST_ID => {
                 if !self.stopped {
                     if self.current_leader == self.pid {
-                        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastSer>().expect("Should be AtomicBroadcastMsg!") {
+                        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>().expect("Should be AtomicBroadcastMsg!") {
                             self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p));
                         }
                     } else if self.current_leader > 0 {
