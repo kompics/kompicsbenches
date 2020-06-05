@@ -17,7 +17,7 @@ enum ExperimentState {
 pub struct Client {
     ctx: ComponentContext<Self>,
     num_proposals: u64,
-    batch_size: u64,
+    num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
     leader_election_latch: Arc<CountdownEvent>,
@@ -35,7 +35,7 @@ pub struct Client {
 impl Client {
     pub fn with(
         num_proposals: u64,
-        batch_size: u64,
+        num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         leader_election_latch: Arc<CountdownEvent>,
@@ -44,14 +44,14 @@ impl Client {
         Client {
             ctx: ComponentContext::new(),
             num_proposals,
-            batch_size,
+            num_concurrent_proposals,
             nodes,
             reconfig,
             leader_election_latch,
             finished_latch,
             proposal_count: 0,
             responses: HashSet::with_capacity(num_proposals as usize),
-            retry_proposals: HashSet::with_capacity(batch_size as usize),
+            retry_proposals: HashSet::with_capacity(num_concurrent_proposals as usize),
             timer: None,
             reconfig_timer: None,
             timeout: PROPOSAL_TIMEOUT,
@@ -65,9 +65,9 @@ impl Client {
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise Proposal");
     }
 
-    fn send_batch(&mut self) {
+    fn send_concurrent_proposals(&mut self) {
         let from = self.proposal_count + 1;
-        let i = self.proposal_count + self.batch_size;
+        let i = self.proposal_count + self.num_concurrent_proposals;
         let to = if i > self.num_proposals {
             self.num_proposals
         } else {
@@ -86,7 +86,7 @@ impl Client {
                 self.retry_proposals.insert(id);
             }
         }
-        self.proposal_count += self.batch_size;
+        self.proposal_count += self.num_concurrent_proposals;
         let timeout = Duration::from_millis(self.timeout);
         let timer = self.schedule_once(timeout, move |c, _| c.retry_proposals());
         self.timer = Some(timer);
@@ -146,10 +146,10 @@ impl Actor for Client {
 
     fn receive_local(&mut self, _msg: Self::Message) -> () {
         self.state = ExperimentState::Running;
-        if self.reconfig.is_some() && self.batch_size == self.num_proposals {
+        if self.reconfig.is_some() && self.num_concurrent_proposals == self.num_proposals {
             self.propose_reconfiguration();
         } else {
-            self.send_batch();
+            self.send_concurrent_proposals();
         }
     }
 
@@ -192,12 +192,12 @@ impl Actor for Client {
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
                                         // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.latest_leader);
-                                        if self.num_proposals == self.batch_size && self.proposal_count == 0 {
+                                        if self.num_proposals == self.num_concurrent_proposals && self.proposal_count == 0 {
                                             // info!(self.ctx.log(), "Sending batch after reconfig");
                                             if let Some(timer) = self.timer.take() {
                                                 self.cancel_timer(timer);
                                             }
-                                            self.send_batch();
+                                            self.send_concurrent_proposals();
                                         }
                                     }
                                 }
@@ -218,11 +218,11 @@ impl Actor for Client {
                                         if received_count == self.num_proposals/2 && self.reconfig.is_some(){
                                             self.propose_reconfiguration();
                                         }
-                                        if received_count % self.batch_size == 0 {
+                                        if received_count % self.num_concurrent_proposals == 0 {
                                             if let Some(timer) = self.timer.take() {
                                                 self.cancel_timer(timer);
                                             }
-                                            self.send_batch();
+                                            self.send_concurrent_proposals();
                                         }
                                     }
                                 }
@@ -247,7 +247,7 @@ pub mod tests {
     pub struct TestClient {
         ctx: ComponentContext<Self>,
         num_proposals: u64,
-        batch_size: u64,
+        concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         test_results: HashMap<u64, Vec<u64>>,
@@ -260,7 +260,7 @@ pub mod tests {
     impl TestClient {
         pub fn with(
             num_proposals: u64,
-            batch_size: u64,
+            concurrent_proposals: u64,
             nodes: HashMap<u64, ActorPath>,
             reconfig: Option<(Vec<u64>, Vec<u64>)>,
             finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
@@ -271,14 +271,14 @@ pub mod tests {
             TestClient {
                 ctx: ComponentContext::new(),
                 num_proposals,
-                batch_size,
+                concurrent_proposals,
                 nodes,
                 reconfig,
                 test_results: tr,
                 finished_promise,
                 check_sequences,
                 responses: HashSet::with_capacity(num_proposals as usize),
-                proposal_timeouts: HashMap::with_capacity(batch_size as usize),
+                proposal_timeouts: HashMap::with_capacity(concurrent_proposals as usize),
             }
         }
 
@@ -300,7 +300,7 @@ pub mod tests {
         fn send_batch(&mut self) {
             let received_count = self.responses.len() as u64;
             let from = received_count + 1;
-            let i = received_count + self.batch_size;
+            let i = received_count + self.concurrent_proposals;
             let to = if i > self.num_proposals {
                 self.num_proposals
             } else {
@@ -395,7 +395,7 @@ pub mod tests {
                                                     .fulfil(self.test_results.clone())
                                                     .expect("Failed to fulfill finished promise after getting all sequences");
                                             }
-                                        } else if received_count % self.batch_size == 0 {
+                                        } else if received_count % self.concurrent_proposals == 0 {
                                             if received_count >= self.num_proposals/2 && self.reconfig.is_some() {
                                                 self.propose_reconfiguration();
                                             }
