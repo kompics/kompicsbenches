@@ -236,24 +236,23 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3, 5);
-  private val atomicBroadcastTestProposals = List(8L.k, 16L.k, 32L.k);
-  private val atomicBroadcastTestBatchSizes = List(4L.k, 8L.k, 16L.k, 32L.k);
+  private val atomicBroadcastTestProposals = List(1L.k, 2L.k, 4L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(1L.k, 2L.k, 4L.k);
 
   private val atomicBroadcastNodes = List(3, 5, 7, 9);
   private val atomicBroadcastProposals = List(100L.k, 200L.k, 400L.k, 800L.k);
-  private val atomicBroadcastBatchSizes = List(10L.k, 50L.k, 100L.k);
+  private val atomicBroadcastConcurrentProposals = List(10L.k, 50L.k, 100L.k);
 
-  private val atomicBroadcastReconfigurations = List("off", "single", "majority");
+  private val atomicBroadcastReconfigurations = List("off", "single");
 
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
       List("paxos"),
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
-      atomicBroadcastTestBatchSizes,
+      atomicBroadcastTestConcurrentProposals,
       List("off"),
       List("none"),
-      List(true, false)
     );
 
   private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
@@ -261,10 +260,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("paxos"),
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
-      atomicBroadcastTestBatchSizes,
-      List("single", "majority"),
+      atomicBroadcastTestConcurrentProposals,
+      List("single"),
       List("pull", "eager"),
-      List(false)
     );
 
   private val paxosTestSpace = paxosNormalTestSpace.append(paxosReconfigTestSpace);
@@ -274,10 +272,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("raft"),
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
-      atomicBroadcastTestBatchSizes,
+      atomicBroadcastTestConcurrentProposals,
       atomicBroadcastReconfigurations,
       List("none"),
-      List(false)
     );
 
   private val paxosNormalSpace = ParameterSpacePB
@@ -285,10 +282,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("paxos"),
       atomicBroadcastNodes,
       atomicBroadcastProposals,
-      atomicBroadcastBatchSizes,
+      atomicBroadcastConcurrentProposals,
       List("off"),
       List("none"),
-      List(true, false)
     );
 
   private val paxosReconfigSpace = ParameterSpacePB
@@ -296,10 +292,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("paxos"),
       atomicBroadcastNodes,
       atomicBroadcastProposals,
-      atomicBroadcastBatchSizes,
+      atomicBroadcastConcurrentProposals,
       List("single", "majority"),
       List("pull", "eager"),
-      List(true, false)
     );
 
   private val paxosSpace = paxosNormalSpace.append(paxosReconfigSpace);
@@ -309,10 +304,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("raft"),
       atomicBroadcastNodes,
       atomicBroadcastProposals,
-      atomicBroadcastBatchSizes,
+      atomicBroadcastConcurrentProposals,
       atomicBroadcastReconfigurations,
       List("none"),
-      List(false)
     );
 
   val atomicBroadcast = Benchmark(
@@ -323,28 +317,26 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = paxosSpace.append(raftSpace)
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, pp, r, tp, fd) =>
+        case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
-            batchSize = pp,
+            concurrentProposals = cp,
             reconfiguration = r,
             transferPolicy = tp,
-            forwardDiscarded = fd
           )
       },
     testSpace = paxosTestSpace.append(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, pp, r, tp, fd) =>
+        case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
-            batchSize = pp,
+            concurrentProposals = cp,
             reconfiguration = r,
             transferPolicy = tp,
-            forwardDiscarded = fd
           )
       }
   );
