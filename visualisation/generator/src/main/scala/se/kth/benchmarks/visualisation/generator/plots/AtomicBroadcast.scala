@@ -107,10 +107,10 @@ object AtomicBroadcast {
               val algo_transferPolicy = serie._1;
               val num_proposals = serie._2._1.toList;
               val stats = serie._2._2.toList;
-              val impl_str = if (algo_transferPolicy._1 == "paxos") {
-                s"${algo_transferPolicy._1}, ${algo_transferPolicy._2}"
-              } else {
+              val impl_str = if (algo_transferPolicy._1 == "raft" && algo_transferPolicy._2 == "none") {
                 "raft"
+              } else {
+                s"${algo_transferPolicy._1}, ${algo_transferPolicy._2}"
               };
               val grouped_res = ImplGroupedResult(impl_str, num_proposals, stats);
               all_series += (algo_transferPolicy -> grouped_res);
