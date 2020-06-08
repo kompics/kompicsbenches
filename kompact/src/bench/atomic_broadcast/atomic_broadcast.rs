@@ -114,8 +114,7 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
             Ok((0, None))
         },
         "single" => {
-            let mut reconfig: Vec<u64> = (1..n).collect();
-            reconfig.push(n+1);
+            let reconfig: Vec<u64> = (2..=n+1).collect();
             let new_followers: Vec<u64> = vec![];
             let reconfiguration = Some((reconfig, new_followers));
             Ok((1, reconfiguration))
