@@ -299,15 +299,27 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val paxosTestSpace = paxosNormalTestSpace.append(paxosReconfigTestSpace);
 
-  private val raftTestSpace = ParameterSpacePB
+  private val raftNormalTestSpace = ParameterSpacePB
     .cross(
       List("raft"),
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
-      atomicBroadcastReconfigurations,
+      List("off"),
       List("none"),
     );
+
+  private val raftReconfigTestSpace = ParameterSpacePB
+    .cross(
+      List("raft"),
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
+      List("single"),
+      List("none", "joint-consensus"),
+    );
+
+  private val raftTestSpace = raftNormalTestSpace.append(raftReconfigTestSpace);
 
   private val paxosNormalSpace = ParameterSpacePB
     .cross(
@@ -325,21 +337,33 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
-      List("single", "majority"),
+      List("single"),
       List("pull", "eager"),
     );
 
   private val paxosSpace = paxosNormalSpace.append(paxosReconfigSpace);
 
-  private val raftSpace = ParameterSpacePB
+  private val raftNormalSpace = ParameterSpacePB
     .cross(
       List("raft"),
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
-      atomicBroadcastReconfigurations,
+      List("off"),
       List("none"),
     );
+
+  private val raftReconfigSpace = ParameterSpacePB
+    .cross(
+      List("raft"),
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("single"),
+      List("none", "joint-consensus"),
+    );
+
+  private val raftSpace = raftNormalSpace.append(raftReconfigSpace);
 
   val atomicBroadcast = Benchmark(
     name = "Atomic Broadcast",
@@ -359,20 +383,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             transferPolicy = tp,
           )
       },
-    testSpace = paxosNormalTestSpace
-      .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, pp, r, tp, fd) =>
-          AtomicBroadcastRequest(
-            algorithm = a,
-            numberOfNodes = nn,
-            numberOfProposals = np,
-            batchSize = pp,
-            reconfiguration = r,
-            transferPolicy = tp,
-            forwardDiscarded = fd
-          )
-      },
-    convergeSpace = Some(paxosNormalTestSpace
+    testSpace = raftReconfigTestSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
