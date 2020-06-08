@@ -1228,6 +1228,7 @@ pub mod raw_paxos{
         /*** Follower ***/
         fn handle_prepare(&mut self, prep: Prepare, from: u64) {
             if self.storage.get_promise() < prep.n {
+                self.leader = from;
                 self.storage.set_promise(prep.n.clone());
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
