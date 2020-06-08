@@ -7,7 +7,7 @@ use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
 use super::raft::{RaftReplica};
-use super::paxos::{PaxosReplica, TransferPolicy};
+use super::paxos::{PaxosReplica};
 use super::storage::paxos::{MemoryState, MemorySequence};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
@@ -35,6 +35,15 @@ impl ClientParams {
         ClientParams{ algorithm, last_node_id, transfer_policy }
     }
 }
+
+
+#[derive(Clone, Debug)]
+pub enum TransferPolicy {
+    Eager,
+    Pull,
+    JointConsensus
+}
+
 
 #[derive(Default)]
 pub struct AtomicBroadcast;
@@ -235,7 +244,7 @@ impl AtomicBroadcastMaster {
     fn validate_experiment_params(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
         if c.concurrent_proposals > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(
-                format!("Batch size: {} should be less or equal to number of proposals: {}", c.concurrent_proposals, c.number_of_proposals)
+                format!("Concurrent proposals: {} should be less or equal to number of proposals: {}", c.concurrent_proposals, c.number_of_proposals)
             ));
         }
         match c.algorithm.to_lowercase().as_ref() {
@@ -264,10 +273,27 @@ impl AtomicBroadcastMaster {
                 }
             },
             "raft" => {
-                if &c.transfer_policy.to_lowercase() != "none" {
-                    return Err(BenchmarkError::InvalidTest(
-                        format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
-                    ));
+                match c.reconfiguration.to_lowercase().as_ref() {
+                    "off" => {
+                        if c.transfer_policy.to_lowercase() != "none" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
+                            ));
+                        }
+                    },
+                    s if s == "single" || s == "majority" => {
+                        let transfer_policy: &str = &c.transfer_policy.to_lowercase();
+                        if transfer_policy != "none" && transfer_policy != "joint-consensus" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(
+                            format!("Unimplemented Raft reconfiguration: {}", &c.reconfiguration)
+                        ));
+                    }
                 }
             },
             _ => {
@@ -409,6 +435,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             "none" => None,
             "eager" => Some(TransferPolicy::Eager),
             "pull" => Some(TransferPolicy::Pull),
+            "joint-consensus" => Some(TransferPolicy::JointConsensus),
             unknown => panic!("Got unknown transfer policy: {}", unknown),
         };
         let named_path = match c.algorithm.as_ref() {
@@ -448,7 +475,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                    RaftReplica::<Storage>::with(conf_state.0)
+                    RaftReplica::<Storage>::with(conf_state.0, transfer_policy)
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
