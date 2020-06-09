@@ -141,22 +141,20 @@ object ParameterSpacePB {
     } yield (i1, i2, i3, i4, i5);
     new TupleSpace(iter)
   }
-  def cross[T1, T2, T3, T4, T5, T6, T7](p1: Traversable[T1],
+  def cross[T1, T2, T3, T4, T5, T6](p1: Traversable[T1],
                                 p2: Traversable[T2],
                                 p3: Traversable[T3],
                                 p4: Traversable[T4],
                                 p5: Traversable[T5],
-                                p6: Traversable[T6],
-                                p7: Traversable[T7]): TupleSpace[(T1, T2, T3, T4, T5, T6, T7)] = {
+                                p6: Traversable[T6]): TupleSpace[(T1, T2, T3, T4, T5, T6)] = {
     val iter = for {
       i1 <- p1;
       i2 <- p2;
       i3 <- p3;
       i4 <- p4;
       i5 <- p5;
-      i6 <- p6;
-      i7 <- p7
-    } yield (i1, i2, i3, i4, i5, i6, i7);
+      i6 <- p6
+    } yield (i1, i2, i3, i4, i5, i6);
     new TupleSpace(iter)
   }
 

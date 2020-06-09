@@ -7,7 +7,7 @@ use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
 use super::raft::{RaftReplica};
-use super::paxos::{PaxosReplica, TransferPolicy};
+use super::paxos::{PaxosReplica};
 use super::storage::paxos::{MemoryState, MemorySequence};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client};
@@ -35,6 +35,15 @@ impl ClientParams {
         ClientParams{ algorithm, last_node_id, transfer_policy }
     }
 }
+
+
+#[derive(Clone, Debug)]
+pub enum TransferPolicy {
+    Eager,
+    Pull,
+    JointConsensus
+}
+
 
 #[derive(Default)]
 pub struct AtomicBroadcast;
@@ -114,8 +123,7 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
             Ok((0, None))
         },
         "single" => {
-            let mut reconfig: Vec<u64> = (1..n).collect();
-            reconfig.push(n+1);
+            let reconfig: Vec<u64> = (2..=n+1).collect();
             let new_followers: Vec<u64> = vec![];
             let reconfiguration = Some((reconfig, new_followers));
             Ok((1, reconfiguration))
@@ -139,7 +147,7 @@ type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
     num_proposals: Option<u64>,
-    batch_size: Option<u64>,
+    concurrent_proposals: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
@@ -152,7 +160,7 @@ impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             num_proposals: None,
-            batch_size: None,
+            concurrent_proposals: None,
             reconfiguration: None,
             system: None,
             finished_latch: None,
@@ -203,7 +211,7 @@ impl AtomicBroadcastMaster {
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
                 self.num_proposals.unwrap(),
-                self.batch_size.unwrap(),
+                self.concurrent_proposals.unwrap(),
                 nodes_id,
                 reconfig,
                 leader_election_latch,
@@ -234,9 +242,9 @@ impl AtomicBroadcastMaster {
     }
 
     fn validate_experiment_params(&mut self, c: &AtomicBroadcastRequest, num_clients: u32) -> Result<(), BenchmarkError> {  // TODO reconfiguration
-        if c.batch_size > c.number_of_proposals {
+        if c.concurrent_proposals > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(
-                format!("Batch size: {} should be less or equal to number of proposals: {}", c.batch_size, c.number_of_proposals)
+                format!("Concurrent proposals: {} should be less or equal to number of proposals: {}", c.concurrent_proposals, c.number_of_proposals)
             ));
         }
         match c.algorithm.to_lowercase().as_ref() {
@@ -265,10 +273,27 @@ impl AtomicBroadcastMaster {
                 }
             },
             "raft" => {
-                if &c.transfer_policy.to_lowercase() != "none" {
-                    return Err(BenchmarkError::InvalidTest(
-                        format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
-                    ));
+                match c.reconfiguration.to_lowercase().as_ref() {
+                    "off" => {
+                        if c.transfer_policy.to_lowercase() != "none" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
+                            ));
+                        }
+                    },
+                    s if s == "single" || s == "majority" => {
+                        let transfer_policy: &str = &c.transfer_policy.to_lowercase();
+                        if transfer_policy != "none" && transfer_policy != "joint-consensus" {
+                            return Err(BenchmarkError::InvalidTest(
+                                format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(
+                            format!("Unimplemented Raft reconfiguration: {}", &c.reconfiguration)
+                        ));
+                    }
                 }
             },
             _ => {
@@ -304,7 +329,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Setting up Atomic Broadcast (Master)");
         self.validate_experiment_params(&c, m.number_of_clients())?;
         self.num_proposals = Some(c.number_of_proposals);
-        self.batch_size = Some(c.batch_size);
+        self.concurrent_proposals = Some(c.concurrent_proposals);
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
         let params = ClientParams::with(
@@ -410,6 +435,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             "none" => None,
             "eager" => Some(TransferPolicy::Eager),
             "pull" => Some(TransferPolicy::Pull),
+            "joint-consensus" => Some(TransferPolicy::JointConsensus),
             unknown => panic!("Got unknown transfer policy: {}", unknown),
         };
         let named_path = match c.algorithm.as_ref() {
@@ -449,7 +475,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                    RaftReplica::<Storage>::with(conf_state.0)
+                    RaftReplica::<Storage>::with(conf_state.0, transfer_policy)
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,

@@ -6,14 +6,16 @@ use raw_paxos::{Entry, Paxos};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
-use super::messages::{KillResponse, TestMessage, TestMessageSer, SequenceResp, paxos::ballot_leader_election::Leader};
-use crate::bench::atomic_broadcast::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
-use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
+use super::messages::*;
+use super::messages::paxos::ballot_leader_election::Leader;
+use super::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
+// use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
+use super::atomic_broadcast::TransferPolicy;
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use uuid::Uuid;
 use kompact::prelude::Buf;
 use rand::Rng;
-use crate::bench::atomic_broadcast::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
+use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
 use crate::serialiser_ids::ATOMICBCAST_ID;
 
@@ -41,12 +43,6 @@ pub enum PaxosCompMsg {
     Propose(Proposal),
     SequenceReq(SequenceRequest),
     GetAllEntries(Ask<(), Vec<Entry>>)
-}
-
-#[derive(Clone, Debug)]
-pub enum TransferPolicy {
-    Eager,
-    Pull
 }
 
 #[derive(ComponentDefinition)]
@@ -629,16 +625,15 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             self.start_replica();
                                         } else {
                                             match self.policy {
-                                                TransferPolicy::Pull => {
-                                                    self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len);
-                                                }
+                                                TransferPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
                                                 TransferPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
                                                     self.pending_seq_transfers.insert(r.seq_metadata.config_id, (num_expected_transfers as u32, HashMap::with_capacity(num_expected_transfers)));
                                                     let seq_len = r.seq_metadata.len;
                                                     let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len));
                                                     self.retry_transfer_timers.insert(config_id, timer);
-                                                }
+                                                },
+                                                _ => unimplemented!(),
                                             }
                                             self.create_replica(r.config_id, nodes, false);
                                         }
@@ -866,7 +861,6 @@ impl<S, P> Provide<ControlPort> for PaxosComp<S, P> where
                 self.start_timers();
             },
             ControlEvent::Kill => {
-                info!(self.ctx.log(), "Got kill! Sequence len: {}", self.paxos.get_sequence_len());
                 self.stop_timers();
                 self.supervisor.tell(PaxosReplicaMsg::KillResp);
             },
@@ -1228,6 +1222,7 @@ pub mod raw_paxos{
         /*** Follower ***/
         fn handle_prepare(&mut self, prep: Prepare, from: u64) {
             if self.storage.get_promise() < prep.n {
+                self.leader = from;
                 self.storage.set_promise(prep.n.clone());
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();

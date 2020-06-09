@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use super::parameters::{*, raft::*};
 use rand::Rng;
 use crate::serialiser_ids::ATOMICBCAST_ID;
+use super::atomic_broadcast::TransferPolicy;
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -52,10 +53,11 @@ pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     cached_client: Option<ActorPath>,
     current_leader: u64,
     pending_kill_comps: usize,
+    transfer_policy: Option<TransferPolicy>
 }
 
 impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
-    pub fn with(initial_config: Vec<u64>) -> Self {
+    pub fn with(initial_config: Vec<u64>, transfer_policy: Option<TransferPolicy>) -> Self {
         RaftReplica {
             ctx: ComponentContext::new(),
             pid: 0,
@@ -69,7 +71,8 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             partitioning_actor: None,
             cached_client: None,
             current_leader: 0,
-            pending_kill_comps: 0
+            pending_kill_comps: 0,
+            transfer_policy
         }
     }
 
@@ -123,7 +126,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         let store = S::new_with_conf_state(Some(dir), conf_state);
         let raw_raft = RawNode::new(&self.create_rawraft_config(), store).expect("Failed to create tikv Raft");
         let raft_comp = system.create( || {
-            RaftComp::with(raw_raft, self.actor_ref())
+            RaftComp::with(raw_raft, self.actor_ref(), self.transfer_policy.clone())
         });
         system.register_without_response(&raft_comp);
         let kill_recipient: Recipient<KillResponse> = self.actor_ref().recipient();
@@ -287,6 +290,13 @@ pub enum RaftCompMsg {
     SequenceReq(Ask<(), Vec<u64>>)
 }
 
+#[derive(Debug)]
+enum ReconfigurationState {
+    None,
+    Pending,
+    Finished
+}
+
 #[derive(ComponentDefinition)]
 pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     ctx: ComponentContext<Self>,
@@ -294,8 +304,11 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     raw_raft: RawNode<S>,
     communication_port: RequiredPort<CommunicationPort, Self>,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
-    has_reconfigured: bool,
+    reconfig_state: ReconfigurationState,
     current_leader: u64,
+    add_nodes: Vec<u64>,
+    remove_nodes: Vec<u64>,
+    transfer_policy: Option<TransferPolicy>
 }
 
 impl<S> Provide<ControlPort> for RaftComp<S> where
@@ -307,7 +320,7 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
                     self.start_timers();
                 },
                 ControlEvent::Kill => {
-                    info!(self.ctx.log(), "Got kill! RaftLog commited: {}", self.raw_raft.raft.raft_log.committed);
+                    // info!(self.ctx.log(), "Got kill! RaftLog commited: {}", self.raw_raft.raft.raft_log.committed);
                     self.stop_timers();
                     self.raw_raft.mut_store().clear().expect("Failed to clear storage!");
                     self.supervisor.tell(RaftReplicaMsg::KillResp);
@@ -360,15 +373,18 @@ impl<S> Require<CommunicationPort> for RaftComp<S> where
 }
 
 impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
-    pub fn with(raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>) -> RaftComp<S> {
+    pub fn with(raw_raft: RawNode<S>, replica: ActorRef<RaftReplicaMsg>, transfer_policy: Option<TransferPolicy>) -> RaftComp<S> {
         RaftComp {
             ctx: ComponentContext::new(),
             supervisor: replica,
             raw_raft,
             communication_port: RequiredPort::new(),
             timers: None,
-            has_reconfigured: false,
-            current_leader: 0
+            reconfig_state: ReconfigurationState::None,
+            current_leader: 0,
+            add_nodes: vec![],
+            remove_nodes: vec![],
+            transfer_policy
         }
     }
 
@@ -383,6 +399,13 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             self.cancel_timer(timers.0);
             self.cancel_timer(timers.1);
         }
+    }
+
+    fn propose_conf_change(&mut self, pid: u64, change_type: ConfChangeType) {
+        let mut conf_change = ConfChange::default();
+        conf_change.node_id = pid;
+        conf_change.set_change_type(change_type);
+        self.raw_raft.propose_conf_change(vec![], conf_change).expect("Failed to propose confchange");
     }
 
     fn tick(&mut self) {
@@ -401,8 +424,45 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn propose(&mut self, proposal: Proposal) {
         let id = proposal.id;
         match proposal.reconfig {
-            Some(reconfig) => {
-                let _ = self.raw_raft.raft.propose_membership_change(reconfig);
+            Some(mut reconfig) => {
+                if let ReconfigurationState::None = self.reconfig_state {
+                    if let Some(TransferPolicy::JointConsensus) = self.transfer_policy {
+                        let _ = self.raw_raft.raft.propose_membership_change(reconfig);
+                    } else {
+                        let current_config = self.raw_raft.raft.prs().configuration().voters();
+                        info!(self.ctx.log(), "current_config: {:?}", self.raw_raft.raft.prs().configuration());
+                        let mut remove_nodes: Vec<u64> = current_config.iter().filter(|pid| !reconfig.0.contains(pid)).cloned().collect();
+                        let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
+                        // let (mut add_nodes, mut remove_nodes): (Vec<u64>, Vec<u64>) = reconfig.0.drain(..).partition(|pid| !current_config.contains(pid));
+                        info!(self.ctx.log(), "add_nodes: {:?}, remove_nodes: {:?}", add_nodes, remove_nodes);
+                        /*let (pid, change_type) = if !add_nodes.is_empty() {
+                            let pid = add_nodes.pop().unwrap();
+                            let change_type = ConfChangeType::AddNode;
+                            info!(self.ctx.log(), "Proposing AddNode {}", pid);
+                            (pid, change_type)
+                        } else {
+                            let pid = remove_nodes.pop().expect("Both add_nodes and remove_nodes are empty");
+                            let change_type = ConfChangeType::RemoveNode;
+                            info!(self.ctx.log(), "Proposing RemoveNode {}", pid);
+                            (pid, change_type)
+                        };*/
+                        let (pid, change_type) = if !remove_nodes.is_empty() {
+                            let pid = remove_nodes.pop().unwrap();
+                            let change_type = ConfChangeType::RemoveNode;
+                            info!(self.ctx.log(), "Proposing RemoveNode {}", pid);
+                            (pid, change_type)
+                        } else {
+                            let pid = add_nodes.pop().expect("Both add_nodes and remove_nodes are empty");
+                            let change_type = ConfChangeType::AddNode;
+                            info!(self.ctx.log(), "Proposing AddNode {}", pid);
+                            (pid, change_type)
+                        };
+                        self.propose_conf_change(pid, change_type);
+                        self.add_nodes = add_nodes;
+                        self.remove_nodes = remove_nodes;
+                    }
+                }
+                self.reconfig_state = ReconfigurationState::Pending;
             }
             None => {   // i.e normal operation
                 let mut data: Vec<u8> = Vec::with_capacity(8);
@@ -455,6 +515,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     continue;
                 }
                 if let EntryType::EntryConfChange = entry.get_entry_type() {
+                    if let ReconfigurationState::Finished = self.reconfig_state { return; }
                     // For conf change messages, make them effective.
                     let mut cc = ConfChange::default();
                     cc.merge_from_bytes(&entry.data).unwrap();
@@ -470,23 +531,57 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 .expect("Failed to begin reconfiguration");
 
                             assert!(self.raw_raft.raft.is_in_membership_change());  // TODO remove?
-                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                            store.set_conf_state(cs, Some((reconfig.clone(), start_index)));
-                        }
+                        },
                         ConfChangeType::FinalizeMembershipChange => {
-                            if !self.has_reconfigured {
-                                self.raw_raft
-                                    .raft
-                                    .finalize_membership_change(&cc)
-                                    .expect("Failed to finalize reconfiguration");
+                            self.raw_raft
+                                .raft
+                                .finalize_membership_change(&cc)
+                                .expect("Failed to finalize reconfiguration");
 
-                                self.has_reconfigured = true;
-                                let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                                let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                                store.set_conf_state(cs, None);
+                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
+                            store.set_conf_state(cs, None);
+                            self.reconfig_state = ReconfigurationState::Finished;
+                            let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
+                            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                        },
+                        ConfChangeType::AddNode => {
+                            self.raw_raft.raft.add_node(cc.node_id).unwrap();
+                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
+                            store.set_conf_state(cs, None);
+                            info!(self.ctx.log(), "AddNode {} OK, add_nodes: {:?}, remove_nodes: {:?}", cc.node_id, self.add_nodes, self.remove_nodes);
+                            if let ReconfigurationState::Pending = self.reconfig_state {
+                                if self.remove_nodes.is_empty() && self.add_nodes.is_empty() {
+                                    info!(self.ctx.log(), "Reconfiguration finished!");
+                                    self.reconfig_state = ReconfigurationState::Finished;
+                                    let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
+                                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                                } else if let Some(pid) = self.remove_nodes.pop() {
+                                    info!(self.ctx.log(), "Proposing RemoveNode {}", pid);
+                                    self.propose_conf_change(pid, ConfChangeType::RemoveNode);
+                                } else if let Some(pid) = self.add_nodes.pop() {
+                                    info!(self.ctx.log(), "Proposing AddNode {}", pid);
+                                    self.propose_conf_change(pid, ConfChangeType::AddNode);
+                                }
                             }
-                        }
+                        },
+                        ConfChangeType::RemoveNode => {
+                            self.raw_raft.raft.remove_node(cc.node_id).unwrap();
+                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
+                            store.set_conf_state(cs, None);
+                            info!(self.ctx.log(), "RemoveNode {} OK, add_nodes: {:?}, remove_nodes: {:?}", cc.node_id, self.add_nodes, self.remove_nodes);
+                            if let ReconfigurationState::Pending = self.reconfig_state {
+                                if self.remove_nodes.is_empty() && self.add_nodes.is_empty() {
+                                    info!(self.ctx.log(), "Reconfiguration finished!");
+                                    self.reconfig_state = ReconfigurationState::Finished;
+                                    let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
+                                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                                } else if let Some(pid) = self.add_nodes.pop() {
+                                    self.propose_conf_change(pid, ConfChangeType::AddNode);
+                                } else if let Some(pid) = self.remove_nodes.pop() {
+                                    self.propose_conf_change(pid, ConfChangeType::RemoveNode);
+                                }
+                            }
+                        },
                         _ => unimplemented!(),
                     }
                 } else { // normal proposals
@@ -504,7 +599,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         // Call `RawNode::advance` interface to update position flags in the raft.
         self.raw_raft.advance(ready);
     }
-
 }
 
 #[cfg(test)]
