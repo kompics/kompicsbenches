@@ -7,9 +7,11 @@ import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success, Try}
 import com.lkroll.common.macros.Macros
 import se.kth.benchmarks.Statistics
+import se.kth.benchmarks.runner.BenchMode.BenchMode
 
 import scala.concurrent.duration._
 
+case class TestConverged(cached: Long, converged: Long);
 case class BenchmarkRun[Params](name: String, symbol: String, invoke: (Runner.Stub, Params) => Future[TestResult]);
 
 object BenchMode extends Enumeration {
@@ -20,8 +22,8 @@ object BenchMode extends Enumeration {
 trait Benchmark {
   def name: String;
   def symbol: String;
-  def withStub(stub: Runner.Stub, testing: Boolean)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit;
-  def requiredRuns(testing: Boolean): Long;
+  def withStub(stub: Runner.Stub, mode: BenchMode)(f: (Future[TestResult], ParameterDescription, Long, Option[TestConverged]) => Unit): Unit;
+  def requiredRuns(benchMode: BenchMode): Long;
 }
 object Benchmark {
   def apply[Params](b: BenchmarkRun[Params],
@@ -49,15 +51,50 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
   override def symbol: String = b.symbol;
   def run = b.invoke;
   override def withStub(stub: Runner.Stub,
-                        testing: Boolean)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit = {
+                        mode: BenchMode)(f: (Future[TestResult], ParameterDescription, Long, Option[TestConverged]) => Unit): Unit = {
     var index = 0L;
-    val useSpace = if (testing) testSpace else space;
+    val useSpace = mode match {
+      case BenchMode.NORMAL => space
+      case BenchMode.TEST => testSpace
+      case BenchMode.CONVERGE => convergeSpace.get
+    }
+    var cached_conv_value = 0L;
     useSpace.foreach { p =>
       index += 1L;
-      f(run(stub, p), useSpace.describe(p), index)
+      val res = run(stub, p);
+      if (mode == BenchMode.CONVERGE) {
+        val result = Await.ready(res, Duration.Inf).value.get;
+        result match {
+          case Success(r) => {
+            r match {
+              case TestSuccess(_, data) => {
+                val stats = new Statistics(data);
+                val mean = stats.sampleMean;
+                val calculated_conv_value = convergeFunction.get.apply(p, mean.toLong);
+                val converged = if (calculated_conv_value <= cached_conv_value) {
+                  Some(TestConverged(cached_conv_value, calculated_conv_value))
+                } else {
+                  None
+                };
+                cached_conv_value = calculated_conv_value;
+                f(res, useSpace.describe(p), index, converged)
+              }
+              case _ => f(res, useSpace.describe(p), index, None)
+            }
+          }
+          case _ => f(res, useSpace.describe(p), index, None)
+        }
+      } else {
+        f(res, useSpace.describe(p), index, None)
+      }
     }
   }
-  override def requiredRuns(testing: Boolean): Long = if (testing) testSpace.size else space.size;
+  override def requiredRuns(mode: BenchMode): Long = mode match {
+    case BenchMode.NORMAL => space.size
+    case BenchMode.TEST => testSpace.size
+    case BenchMode.CONVERGE => convergeSpace.get.size
+
+  }
 }
 
 object Benchmarks extends ParameterDescriptionImplicits {
@@ -280,9 +317,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
       List("paxos"),
-      atomicBroadcastTestNodes,
-      atomicBroadcastTestProposals,
-      atomicBroadcastTestConcurrentProposals,
+      List(3),
+      List(1L.k, 900L),
+      List(500L),
       List("off"),
       List("none"),
     );
@@ -365,6 +402,16 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftSpace = raftNormalSpace.append(raftReconfigSpace);
 
+  private val atomicBroadcastConvergeSpace = ParameterSpacePB // TODO
+    .cross(
+      List("paxos"),
+      List(3),
+      1L.mio to 5L.mio by 500L.k,
+      List(100L.k),
+      List("off"),
+      List("none"),
+    );
+
   val atomicBroadcast = Benchmark(
     name = "Atomic Broadcast",
     symbol = "ATOMICBROADCAST",
@@ -383,7 +430,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             transferPolicy = tp,
           )
       },
-    testSpace = raftReconfigTestSpace
+    testSpace = paxosNormalTestSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
@@ -394,9 +441,23 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             transferPolicy = tp,
           )
-      }),
+      },
+    convergeSpace = Some(
+      atomicBroadcastConvergeSpace
+        .msg[AtomicBroadcastRequest] {
+          case (a, nn, np, cp, r, tp) =>
+            AtomicBroadcastRequest(
+              algorithm = a,
+              numberOfNodes = nn,
+              numberOfProposals = np,
+              concurrentProposals = cp,
+              reconfiguration = r,
+              transferPolicy = tp,
+            )
+        }
+      ),
     convergeFunction = Some((a: AtomicBroadcastRequest, l: Long) => {
-      a.numberOfProposals/l
+      a.numberOfProposals * 1000/l  // ops/s
     })
   );
 
