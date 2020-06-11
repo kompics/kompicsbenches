@@ -93,7 +93,6 @@ case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
     case BenchMode.NORMAL => space.size
     case BenchMode.TEST => testSpace.size
     case BenchMode.CONVERGE => convergeSpace.get.size
-
   }
 }
 
@@ -308,11 +307,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestProposals = List(1L.k, 2L.k, 4L.k);
   private val atomicBroadcastTestConcurrentProposals = List(1L.k, 2L.k, 4L.k);
 
-  private val atomicBroadcastNodes = List(3, 5, 7, 9);
-  private val atomicBroadcastProposals = List(100L.k, 200L.k, 400L.k, 800L.k);
-  private val atomicBroadcastConcurrentProposals = List(10L.k, 50L.k, 100L.k);
-
-  private val atomicBroadcastReconfigurations = List("off", "single");
+  private val atomicBroadcastNodes = List(3, 5, 7);
+  private val atomicBroadcastProposals = 10L.mio to 20L.mio by 1L.mio;
+  private val atomicBroadcastConcurrentProposals = List(100L.k, 500L.k, 1L.mio);
 
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
@@ -402,12 +399,22 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftSpace = raftNormalSpace.append(raftReconfigSpace);
 
-  private val atomicBroadcastConvergeSpace = ParameterSpacePB // TODO
+  private val latencySpace = ParameterSpacePB
+    .cross(
+      List("paxos", "raft"),
+      List(3),
+      100L.k to 1L.mio by 100L.k,
+      List(1L),
+      List("off"),
+      List("none"),
+    );
+
+  private val atomicBroadcastConvergeSpace = ParameterSpacePB
     .cross(
       List("paxos"),
       List(3),
-      1L.mio to 5L.mio by 500L.k,
-      List(100L.k),
+      10L.mio to 50L.mio by 2L.mio,
+      List(1L.mio),
       List("off"),
       List("none"),
     );
@@ -418,7 +425,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = paxosSpace.append(raftSpace)
+    space = paxosSpace.append(raftSpace).append(latencySpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
@@ -430,7 +437,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             transferPolicy = tp,
           )
       },
-    testSpace = paxosNormalTestSpace
+    testSpace = paxosTestSpace.append(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, tp) =>
           AtomicBroadcastRequest(
