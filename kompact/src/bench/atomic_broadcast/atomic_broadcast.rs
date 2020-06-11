@@ -41,7 +41,9 @@ impl ClientParams {
 pub enum TransferPolicy {
     Eager,
     Pull,
-    JointConsensus
+    JointConsensus,
+    RemoveFollower,
+    RemoveLeader,
 }
 
 
@@ -283,7 +285,7 @@ impl AtomicBroadcastMaster {
                     },
                     s if s == "single" || s == "majority" => {
                         let transfer_policy: &str = &c.transfer_policy.to_lowercase();
-                        if transfer_policy != "none" && transfer_policy != "joint-consensus" {
+                        if transfer_policy != "remove-leader" && transfer_policy != "remove-follower" && transfer_policy != "joint-consensus" {
                             return Err(BenchmarkError::InvalidTest(
                                 format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
                             ));
@@ -436,6 +438,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             "eager" => Some(TransferPolicy::Eager),
             "pull" => Some(TransferPolicy::Pull),
             "joint-consensus" => Some(TransferPolicy::JointConsensus),
+            "remove-leader" => Some(TransferPolicy::RemoveLeader),
+            "remove-follower" => Some(TransferPolicy::RemoveFollower),
             unknown => panic!("Got unknown transfer policy: {}", unknown),
         };
         let named_path = match c.algorithm.as_ref() {
@@ -475,7 +479,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                    RaftReplica::<Storage>::with(conf_state.0, transfer_policy)
+                    RaftReplica::<Storage>::with(conf_state.0, transfer_policy.unwrap_or(TransferPolicy::RemoveFollower))
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
