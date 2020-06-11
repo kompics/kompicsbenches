@@ -1,6 +1,6 @@
-pub const ELECTION_TIMEOUT: u64 = 800;
+pub const ELECTION_TIMEOUT: u64 = 1000;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
-pub const MAX_INFLIGHT: usize = 20000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
+pub const MAX_INFLIGHT: usize = 10000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
 
 pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 1;

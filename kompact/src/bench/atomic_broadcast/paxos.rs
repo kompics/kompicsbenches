@@ -1538,7 +1538,7 @@ mod ballot_leader_election {
         }
     }
 }
-
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1700,3 +1700,5 @@ mod tests {
         println!("PASSED!!!");
     }
 }
+
+ */
