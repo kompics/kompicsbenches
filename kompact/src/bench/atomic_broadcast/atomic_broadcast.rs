@@ -6,11 +6,11 @@ use kompact::prelude::*;
 use synchronoise::CountdownEvent;
 use std::sync::Arc;
 use std::str::FromStr;
-use super::raft::{RaftReplica};
-use super::paxos::{PaxosReplica};
+use super::raft::{RaftReplica, ReconfigurationPolicy as RaftReconfigurationPolicy};
+use super::paxos::{PaxosReplica, ReconfigurationPolicy as PaxosReconfigurationPolicy};
 use super::storage::paxos::{MemoryState, MemorySequence};
 use partitioning_actor::PartitioningActor;
-use super::client::{Client};
+use super::client::{Client, LocalClientMessage};
 use super::messages::Run;
 use std::collections::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
@@ -18,6 +18,10 @@ use crate::partitioning_actor::IterationControlMsg;
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
 use tikv_raft::{storage::MemStorage};
+use crate::bench::atomic_broadcast::parameters::{LATENCY_DIR, LATENCY_FILE};
+use std::fs::{File, create_dir_all, OpenOptions};
+use std::error::Error;
+use std::io::Write;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -27,25 +31,14 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(3);
 pub struct ClientParams {
     algorithm: String,
     last_node_id: u64,
-    transfer_policy: String,
+    reconfig_policy: String,
 }
 
 impl ClientParams {
-    fn with(algorithm: String, last_node_id: u64, transfer_policy: String) -> ClientParams {
-        ClientParams{ algorithm, last_node_id, transfer_policy }
+    fn with(algorithm: String, last_node_id: u64, reconfig_policy: String) -> ClientParams {
+        ClientParams{ algorithm, last_node_id, reconfig_policy }
     }
 }
-
-
-#[derive(Clone, Debug)]
-pub enum TransferPolicy {
-    Eager,
-    Pull,
-    JointConsensus,
-    RemoveFollower,
-    RemoveLeader,
-}
-
 
 #[derive(Default)]
 pub struct AtomicBroadcast;
@@ -77,20 +70,14 @@ impl DistributedBenchmark for AtomicBroadcast {
             )))
         } else {
             let algorithm = split[0].to_lowercase();
-            if algorithm != "paxos" && algorithm != "raft" {
-                return Err(BenchmarkError::InvalidMessage(format!(
-                    "String to ClientConf error: '{}' does not represent an algorithm",
-                    algorithm
-                )));
-            }
             let last_node_id = split[1].parse::<u64>().map_err(|e| {
                 BenchmarkError::InvalidMessage(format!(
                     "String to ClientConf error: '{}' does not represent a node id: {:?}",
                     split[1], e
                 ))
             })?;
-            let transfer_policy = split[2].to_lowercase();
-            Ok(ClientParams::with(algorithm, last_node_id, transfer_policy))
+            let reconfig_policy = split[2].to_lowercase();
+            Ok(ClientParams::with(algorithm, last_node_id, reconfig_policy))
         }
     }
 
@@ -102,7 +89,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn client_conf_to_str(c: Self::ClientConf) -> String {
-        let s = format!("{},{},{}", c.algorithm, c.last_node_id, c.transfer_policy);
+        let s = format!("{},{},{}", c.algorithm, c.last_node_id, c.reconfig_policy);
 //        println!("ClientConf string: {}", &s);
         s
     }
@@ -148,6 +135,7 @@ fn get_reconfig_data(s: &str, n: u64) -> Result<(u64, Option<(Vec<u64>, Vec<u64>
 type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
+    algorithm: Option<String>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
@@ -156,11 +144,13 @@ pub struct AtomicBroadcastMaster {
     iteration_id: u32,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
+    median_latency_sum: u128,   // used to calculate avg of median latency
 }
 
 impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
+            algorithm: None,
             num_proposals: None,
             concurrent_proposals: None,
             reconfiguration: None,
@@ -169,6 +159,7 @@ impl AtomicBroadcastMaster {
             iteration_id: 0,
             client_comp: None,
             partitioning_actor: None,
+            median_latency_sum: 0
         }
     }
 
@@ -253,17 +244,17 @@ impl AtomicBroadcastMaster {
             "paxos" => {
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
-                        if c.transfer_policy.to_lowercase() != "none" {
+                        if c.reconfig_policy.to_lowercase() != "none" {
                             return Err(BenchmarkError::InvalidTest(
-                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
+                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.reconfig_policy)
                             ));
                         }
                     },
                     s if s == "single" || s == "majority" => {
-                        let transfer_policy: &str = &c.transfer_policy.to_lowercase();
-                        if transfer_policy != "eager" && transfer_policy != "pull" {
+                        let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
+                        if reconfig_policy != "eager" && reconfig_policy != "pull" {
                             return Err(BenchmarkError::InvalidTest(
-                                format!("Unimplemented Paxos transfer policy: {}", &c.transfer_policy)
+                                format!("Unimplemented Paxos transfer policy: {}", &c.reconfig_policy)
                             ));
                         }
                     },
@@ -274,20 +265,20 @@ impl AtomicBroadcastMaster {
                     }
                 }
             },
-            "raft" => {
+            raft if raft == "raft-nobatch" || raft == "raft-batch" => {
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
-                        if c.transfer_policy.to_lowercase() != "none" {
+                        if c.reconfig_policy.to_lowercase() != "none" {
                             return Err(BenchmarkError::InvalidTest(
-                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.transfer_policy)
+                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.reconfig_policy)
                             ));
                         }
                     },
                     s if s == "single" || s == "majority" => {
-                        let transfer_policy: &str = &c.transfer_policy.to_lowercase();
-                        if transfer_policy != "remove-leader" && transfer_policy != "remove-follower" && transfer_policy != "joint-consensus" {
+                        let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
+                        if reconfig_policy != "remove-leader" && reconfig_policy != "remove-follower" && reconfig_policy != "joint-consensus-remove-leader" && reconfig_policy != "joint-consensus-remove-follower" {
                             return Err(BenchmarkError::InvalidTest(
-                                format!("Unimplemented Raft transfer policy: {}", &c.transfer_policy)
+                                format!("Unimplemented Raft transfer policy: {}", &c.reconfig_policy)
                             ));
                         }
                     },
@@ -320,6 +311,14 @@ impl AtomicBroadcastMaster {
         }
         Ok(())
     }
+
+    fn write_latency_file(result: &str) -> std::io::Result<()> {
+        create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
+        let mut file = OpenOptions::new().append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE))?;
+        write!(file, "{}", result)?;
+        file.flush()?;
+        Ok(())
+    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -330,6 +329,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
     fn setup(&mut self, c: Self::MasterConf, m: &DeploymentMetaData) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
         self.validate_experiment_params(&c, m.number_of_clients())?;
+        self.algorithm = Some(c.algorithm.clone());
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
@@ -337,7 +337,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let params = ClientParams::with(
             c.algorithm,
             c.number_of_nodes,
-            c.transfer_policy,
+            c.reconfig_policy,
         );
         Ok(params)
     }
@@ -365,7 +365,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Running Atomic Broadcast experiment!");
         match self.client_comp {
             Some(ref client_comp) => {
-                client_comp.actor_ref().tell(Run);
+                client_comp.actor_ref().tell(LocalClientMessage::Run);
                 let finished_latch = self.finished_latch.take().unwrap();
                 finished_latch.wait();
             }
@@ -377,6 +377,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Cleaning up Atomic Broadcast (master) side");
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
+        if let Some(1) = self.concurrent_proposals  {
+            let median_latency =
+                client
+                .actor_ref()
+                .ask( |promise| LocalClientMessage::GetMedianLatency(Ask::new(promise, ())))
+                .wait();
+
+            self.median_latency_sum += median_latency.as_micros();
+        }
+
         let kill_client_f = system.kill_notify(client);
         kill_client_f
             .wait_timeout(REGISTER_TIMEOUT)
@@ -399,7 +409,23 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
         if last_iteration {
             println!("Cleaning up last iteration");
+            if let Some(1) = self.concurrent_proposals {
+                let latency_sum_ms = (self.median_latency_sum/1000) as f64; // micro seconds -> ms
+                let avg_latency = latency_sum_ms/(self.iteration_id as f64);
+                let str = format!(
+                    "{},{},{}\n",
+                    self.algorithm.clone().unwrap(),
+                    self.num_proposals.clone().unwrap(),
+                    avg_latency
+                );
+                Self::write_latency_file(&str).unwrap_or_else(|_| println!("Failed to persist latency results: {}", str));
+            }
+            self.algorithm = None;
             self.reconfiguration = None;
+            self.concurrent_proposals = None;
+            self.num_proposals = None;
+            self.median_latency_sum = 0;
+            self.iteration_id = 0;
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
@@ -433,20 +459,17 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         println!("Setting up Atomic Broadcast (client)");
         let system =
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
-        let transfer_policy = match c.transfer_policy.as_ref() {
-            "none" => None,
-            "eager" => Some(TransferPolicy::Eager),
-            "pull" => Some(TransferPolicy::Pull),
-            "joint-consensus" => Some(TransferPolicy::JointConsensus),
-            "remove-leader" => Some(TransferPolicy::RemoveLeader),
-            "remove-follower" => Some(TransferPolicy::RemoveFollower),
-            unknown => panic!("Got unknown transfer policy: {}", unknown),
-        };
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
                 let initial_config = get_initial_conf(c.last_node_id).0;
+                let reconfig_policy = match c.reconfig_policy.as_ref() {
+                    "none" => None,
+                    "eager" => Some(PaxosReconfigurationPolicy::Eager),
+                    "pull" => Some(PaxosReconfigurationPolicy::Pull),
+                    unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
+                };
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
-                    PaxosReplica::with(initial_config, transfer_policy.unwrap_or(TransferPolicy::Pull))
+                    PaxosReplica::with(initial_config, reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull))
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
@@ -472,14 +495,27 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self.paxos_replica = Some(paxos_replica);
                 self_path
             }
-            "raft" => {
+            raft if raft == "raft-nobatch" || raft == "raft-batch" => {
+                let batch = if raft == "raft-batch" { true } else { false };
                 let conf_state = get_initial_conf(c.last_node_id);
+                let reconfig_policy = match c.reconfig_policy.as_ref() {
+                    "none" => None,
+                    "joint-consensus-remove-leader" => Some(RaftReconfigurationPolicy::JointConsensusRemoveLeader),
+                    "joint-consensus-remove-follower" => Some(RaftReconfigurationPolicy::JointConsensusRemoveFollower),
+                    "remove-leader" => Some(RaftReconfigurationPolicy::RemoveLeader),
+                    "remove-follower" => Some(RaftReconfigurationPolicy::RemoveFollower),
+                    unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
+                };
 //                let storage = MemStorage::new_with_conf_state(conf_state);
 //                let dir = "./diskstorage";
 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                    RaftReplica::<Storage>::with(conf_state.0, transfer_policy.unwrap_or(TransferPolicy::RemoveFollower))
+                    RaftReplica::<Storage>::with(
+                        conf_state.0,
+                        reconfig_policy.unwrap_or(RaftReconfigurationPolicy::RemoveFollower),
+                        batch
+                    )
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,

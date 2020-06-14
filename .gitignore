@@ -3,6 +3,7 @@
 /results/
 /plots/
 /remote_logs/
+/latency_results/
 
 bin/
 

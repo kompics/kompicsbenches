@@ -311,6 +311,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastProposals = 10L.mio to 20L.mio by 1L.mio;
   private val atomicBroadcastConcurrentProposals = List(100L.k, 500L.k, 1L.mio);
 
+  private val raft = List("raft-nobatch", "raft-batch");
+  private val raft_reconfig = List("remove-leader", "remove-follower", "joint-consensus-remove-leader", "joint-consensus-remove-follower");
+
+  private val paxos_reconfig = List("pull", "eager");
+
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
       List("paxos"),
@@ -328,14 +333,14 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
       List("single"),
-      List("pull", "eager"),
+      paxos_reconfig,
     );
 
   private val paxosTestSpace = paxosNormalTestSpace.append(paxosReconfigTestSpace);
 
   private val raftNormalTestSpace = ParameterSpacePB
     .cross(
-      List("raft"),
+      raft,
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
@@ -345,12 +350,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigTestSpace = ParameterSpacePB
     .cross(
-      List("raft"),
+      raft,
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
       List("single"),
-      List("remove-leader", "remove-follower", "joint-consensus"),
+      raft_reconfig,
     );
 
   private val raftTestSpace = raftNormalTestSpace.append(raftReconfigTestSpace);
@@ -372,14 +377,14 @@ object Benchmarks extends ParameterDescriptionImplicits {
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
       List("single"),
-      List("pull", "eager"),
+      paxos_reconfig,
     );
 
   private val paxosSpace = paxosNormalSpace.append(paxosReconfigSpace);
 
   private val raftNormalSpace = ParameterSpacePB
     .cross(
-      List("raft"),
+      raft,
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
@@ -389,12 +394,12 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigSpace = ParameterSpacePB
     .cross(
-      List("raft"),
+      raft,
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
       List("single"),
-      List("remove-leader", "remove-follower", "joint-consensus"),
+      raft_reconfig,
     );
 
   private val raftSpace = raftNormalSpace.append(raftReconfigSpace);
@@ -427,39 +432,39 @@ object Benchmarks extends ParameterDescriptionImplicits {
     },
     space = paxosSpace.append(raftSpace).append(latencySpace)
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, tp) =>
+        case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
             concurrentProposals = cp,
             reconfiguration = r,
-            transferPolicy = tp,
+            reconfigPolicy = rp,
           )
       },
-    testSpace = raftReconfigTestSpace
+    testSpace = paxosTestSpace.append(raftTestSpace)
       .msg[AtomicBroadcastRequest] {
-        case (a, nn, np, cp, r, tp) =>
+        case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
             algorithm = a,
             numberOfNodes = nn,
             numberOfProposals = np,
             concurrentProposals = cp,
             reconfiguration = r,
-            transferPolicy = tp,
+            reconfigPolicy = rp,
           )
       },
     convergeSpace = Some(
       atomicBroadcastConvergeSpace
         .msg[AtomicBroadcastRequest] {
-          case (a, nn, np, cp, r, tp) =>
+          case (a, nn, np, cp, r, rp) =>
             AtomicBroadcastRequest(
               algorithm = a,
               numberOfNodes = nn,
               numberOfProposals = np,
               concurrentProposals = cp,
               reconfiguration = r,
-              transferPolicy = tp,
+              reconfigPolicy = rp,
             )
         }
       ),

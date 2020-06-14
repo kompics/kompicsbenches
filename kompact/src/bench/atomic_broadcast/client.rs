@@ -3,14 +3,21 @@ use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use std::collections::{HashMap, HashSet};
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, Run, RECONFIG_ID};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use super::parameters::client::*;
 
 #[derive(PartialEq)]
 enum ExperimentState {
     LeaderElection,
     Running,
+    ReconfigurationElection,
     Finished
+}
+
+#[derive(Debug)]
+pub enum LocalClientMessage {
+    Run,
+    GetMedianLatency(Ask<(), Duration>)
 }
 
 #[derive(ComponentDefinition)]
@@ -23,8 +30,8 @@ pub struct Client {
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     proposal_count: u64,
-    responses: HashSet<u64>,
-    retry_proposals: HashSet<u64>,
+    responses: HashMap<u64, Option<Duration>>,
+    pending_proposals: HashMap<u64, Option<SystemTime>>,
     timer: Option<ScheduledTimer>,
     reconfig_timer: Option<ScheduledTimer>,
     timeout: u64,
@@ -50,8 +57,8 @@ impl Client {
             leader_election_latch,
             finished_latch,
             proposal_count: 0,
-            responses: HashSet::with_capacity(num_proposals as usize),
-            retry_proposals: HashSet::with_capacity(num_concurrent_proposals as usize),
+            responses: HashMap::with_capacity(num_proposals as usize),
+            pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             timer: None,
             reconfig_timer: None,
             timeout: PROPOSAL_TIMEOUT,
@@ -66,6 +73,12 @@ impl Client {
     }
 
     fn send_concurrent_proposals(&mut self) {
+        if self.proposal_count == self.num_proposals || !self.pending_proposals.is_empty() || self.current_leader == 0 {
+            return;
+        }
+        if let Some(timer) = self.timer.take() {
+            self.cancel_timer(timer);
+        }
         let from = self.proposal_count + 1;
         let i = self.proposal_count + self.num_concurrent_proposals;
         let to = if i > self.num_proposals {
@@ -73,18 +86,15 @@ impl Client {
         } else {
             i
         };
-        if self.current_leader != 0 {
-            debug!(self.ctx.log(), "Proposing {}-{}", from, to);
-            let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
-            for id in from ..= to {
-                self.propose_normal(id.clone(), leader);
-                self.retry_proposals.insert(id);
-            }
-        } else {
-            debug!(self.ctx.log(), "No leader... will retry {}-{} later", from, to);
-            for id in from ..= to {
-                self.retry_proposals.insert(id);
-            }
+        debug!(self.ctx.log(), "Proposing {}-{}", from, to);
+        let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to leader node!");
+        for id in from ..= to {
+            let current_time = match self.num_concurrent_proposals {
+                1 => Some(SystemTime::now()),
+                _ => None,
+            };
+            self.propose_normal(id.clone(), leader);
+            self.pending_proposals.insert(id, current_time);
         }
         self.proposal_count += self.num_concurrent_proposals;
         let timeout = Duration::from_millis(self.timeout);
@@ -105,13 +115,13 @@ impl Client {
     }
 
     fn retry_proposals(&mut self) {
-        if self.retry_proposals.is_empty() {
+        if self.pending_proposals.is_empty() {
             debug!(self.ctx.log(), "No proposals to retry. Received: {}", self.responses.len());
             return;
         }
         if self.current_leader > 0 {
             let leader = self.nodes.get(&self.current_leader).expect("Could not find actorpath to raft node!");
-            for id in &self.retry_proposals {
+            for id in self.pending_proposals.keys() {
                 self.propose_normal(*id, leader);
             }
         }
@@ -142,14 +152,29 @@ impl Provide<ControlPort> for Client {
 }
 
 impl Actor for Client {
-    type Message = Run;
+    type Message = LocalClientMessage;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
-        self.state = ExperimentState::Running;
-        if self.reconfig.is_some() && self.num_concurrent_proposals == self.num_proposals {
-            self.propose_reconfiguration();
-        } else {
-            self.send_concurrent_proposals();
+    fn receive_local(&mut self, msg: Self::Message) -> () {
+        match msg {
+            LocalClientMessage::Run => {
+                self.state = ExperimentState::Running;
+                assert_ne!(self.current_leader, 0);
+                self.send_concurrent_proposals();
+            },
+            LocalClientMessage::GetMedianLatency(ask) => {
+                let l = std::mem::take(&mut self.responses);
+                let mut latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();
+                latencies.sort();
+                let len = latencies.len();
+                assert_eq!(len as u64, self.num_proposals);
+                let mid = if len % 2 == 0 {
+                    (len/2 - 1 + len/2) / 2
+                } else {
+                    len/2
+                };
+                let median = latencies.get(mid).unwrap();
+                ask.reply(*median).expect("Failed to reply median latency!");
+            }
         }
     }
 
@@ -164,13 +189,12 @@ impl Actor for Client {
                         match self.state {
                             ExperimentState::LeaderElection => {
                                 self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
-                            }
-                            ExperimentState::Running => {
-                                if let Some(timer) = self.timer.take() {
-                                    info!(self.ctx.log(), "Retrying proposals after first leader");
-                                    self.cancel_timer(timer);
-                                    self.retry_proposals();
+                            },
+                            ExperimentState::ReconfigurationElection if self.current_leader != 0 => {
+                                if self.pending_proposals.is_empty() {
+                                    self.send_concurrent_proposals();
                                 }
+                                self.state = ExperimentState::Running;
                             },
                             _ => {}
                         }
@@ -191,21 +215,29 @@ impl Actor for Client {
                                         self.cancel_timer(reconfig_timer);
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig succeeded first time! Leader is: {}", pr.latest_leader);
-                                        if self.num_proposals == self.num_concurrent_proposals && self.proposal_count == 0 {
-                                            // info!(self.ctx.log(), "Sending batch after reconfig");
-                                            if let Some(timer) = self.timer.take() {
-                                                self.cancel_timer(timer);
+                                        if self.current_leader == 0 {
+                                            self.state = ExperimentState::ReconfigurationElection;
+                                        } else {
+                                            if self.pending_proposals.is_empty() {
+                                                self.send_concurrent_proposals();
                                             }
-                                            self.send_concurrent_proposals();
                                         }
                                     }
                                 }
                             },
                             _ => {
-                                if self.responses.insert(pr.id) {
-                                    self.retry_proposals.remove(&pr.id);
-                                    self.current_leader = pr.latest_leader;
+                                if let Some(st) = self.pending_proposals.remove(&pr.id) {
+                                    let latency = match self.num_concurrent_proposals {
+                                        1 => {
+                                            let start_time = st.expect("No start time found!");
+                                            Some(start_time.elapsed().expect("Failed to get elapsed duration"))
+                                        },
+                                        _ => None,
+                                    };
+                                    self.responses.insert(pr.id, latency);
+                                    if self.state != ExperimentState::ReconfigurationElection {
+                                        self.current_leader = pr.latest_leader;
+                                    }
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");
@@ -218,10 +250,7 @@ impl Actor for Client {
                                         if received_count == self.num_proposals/2 && self.reconfig.is_some(){
                                             self.propose_reconfiguration();
                                         }
-                                        if received_count % self.num_concurrent_proposals == 0 {
-                                            if let Some(timer) = self.timer.take() {
-                                                self.cancel_timer(timer);
-                                            }
+                                        if self.pending_proposals.is_empty() {
                                             self.send_concurrent_proposals();
                                         }
                                     }
