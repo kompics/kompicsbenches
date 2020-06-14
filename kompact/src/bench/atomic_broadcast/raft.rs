@@ -649,7 +649,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
     }
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,18 +660,21 @@ mod tests {
     #[allow(unused_imports)]
     use tikv_raft::storage::MemStorage;
     use protobuf::parse_from_bytes;
-/*
+
     fn create_raft_nodes<T: RaftStorage + std::marker::Send + std::clone::Clone + 'static>(
         n: u64,
         systems: &mut Vec<KompactSystem>,
         peers: &mut HashMap<u64, ActorPath>,
+        actorpaths: &mut Vec<ActorPath>,
         conf_state: (Vec<u64>, Vec<u64>),
+        reconfig_policy: ReconfigurationPolicy,
+        batch: bool
     ) {
         for i in 1..=n {
             let system =
                 kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("raft{}", i), 4);
             let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                RaftReplica::<T>::with(conf_state.0.clone())
+                RaftReplica::<T>::with(conf_state.0.clone(), reconfig_policy.clone(), batch)
             });
             let raft_replica_f = system.start_notify(&raft_replica);
             raft_replica_f
@@ -698,10 +701,11 @@ mod tests {
                 vec![format!("raft_replica{}", i).into()],
             ));
             systems.push(system);
-            peers.insert(i, self_path);
+            peers.insert(i, self_path.clone());
+            actorpaths.push(self_path);
         }
     }
-*/
+/*
     #[test]
     fn kompact_raft_ser_test() {
         use super::*;
@@ -789,27 +793,64 @@ mod tests {
             _ => panic!("Failed to deserialise ProposalResp")
         }
     }
-
+*/
     #[test]
     fn raft_test() {
         let n: u64 = 3;
-        let quorum = n/2 + 1;
+        let quorum = (n/2 + 1) as usize;
         let num_proposals = 2000;
         let batch_size = 1000;
         let config = (vec![1,2,3], vec![]);
-        let reconfig = None;
-       // let reconfig = Some((vec![1,4,5], vec![]));
-        let check_sequences = false;
+        let reconfig = Some((vec![1,2,4], vec![]));
+        let check_sequences = true;
+        let batch = true;
+        let reconfig_policy = ReconfigurationPolicy::RemoveLeader;
 
         type Storage = MemStorage;
 
+        let num_nodes = match reconfig {
+            None => config.0.len(),
+            Some(ref r) => config.0.len() + r.0.iter().filter(|pid| !config.0.contains(pid) ).count(),
+        };
         let mut systems: Vec<KompactSystem> = Vec::new();
         let mut peers: HashMap<u64, ActorPath> = HashMap::new();
-        create_raft_nodes::<Storage>(n , &mut systems, &mut peers, config);
-        let mut nodes = vec![];
-        for i in 1..=n {
-            nodes.push(peers.get(&i).unwrap().clone());
-        }
+        let mut actorpaths = vec![];
+        create_raft_nodes::<Storage>(num_nodes as u64 , &mut systems, &mut peers, &mut actorpaths, config, reconfig_policy, batch);
+        /*** Setup client ***/
+        let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
+        let (client_comp, unique_reg_f) = systems[0].create_and_register( || {
+            TestClient::with(
+                num_proposals,
+                batch_size,
+                peers,
+                reconfig.clone(),
+                p,
+                check_sequences,
+            )
+        });
+        unique_reg_f.wait_expect(
+            Duration::from_millis(1000),
+            "Client failed to register!",
+        );
+        let system = systems.first().unwrap();
+        let client_comp_f = system.start_notify(&client_comp);
+        client_comp_f
+            .wait_timeout(Duration::from_secs(2), )
+            .expect("ClientComp never started!");
+        let named_reg_f = system.register_by_alias(
+            &client_comp,
+            "client",
+        );
+        named_reg_f.wait_expect(
+            Duration::from_secs(2),
+            "Failed to register alias for ClientComp"
+        );
+        let client_path = ActorPath::Named(NamedPath::with_system(
+            system.system_path(),
+            vec![String::from("client")],
+        ));
+        let mut ser_client = Vec::<u8>::new();
+        client_path.serialise(&mut ser_client).expect("Failed to serialise ClientComp actorpath");
         /*** Setup partitioning actor ***/
         let prepare_latch = Arc::new(CountdownEvent::new(1));
         let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
@@ -817,7 +858,7 @@ mod tests {
                 prepare_latch.clone(),
                 None,
                 1,
-                nodes,
+                actorpaths,
                 None,
             )
         });
@@ -830,29 +871,10 @@ mod tests {
         partitioning_actor_f
             .wait_timeout(Duration::from_millis(1000))
             .expect("PartitioningComp never started!");
-        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+        partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(Some(ser_client)));
         prepare_latch.wait();
         partitioning_actor.actor_ref().tell(IterationControlMsg::Run);
-        /*** Setup client ***/
-        let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
-        let (client, unique_reg_f) = systems[0].create_and_register( || {
-            TestClient::with(
-                num_proposals,
-                batch_size,
-                peers,
-                reconfig.clone(),
-                p,
-                check_sequences
-            )
-        });
-        unique_reg_f.wait_expect(
-            Duration::from_millis(1000),
-            "Client failed to register!",
-        );
-        let client_f = systems[0].start_notify(&client);
-        client_f.wait_timeout(Duration::from_millis(1000))
-            .expect("Client never started!");
-        client.actor_ref().tell(Run);
+        client_comp.actor_ref().tell(Run);
         let all_sequences = f.wait();
         let client_sequence = all_sequences.get(&0).expect("Client's sequence should be in 0...").to_owned();
         for system in systems {
@@ -866,23 +888,23 @@ mod tests {
             let found = iter.find(|&&x| x == i).is_some();
             assert_eq!(true, found);
         }
-        let mut counter = 0;
+        let mut quorum_nodes = HashSet::new();
         if check_sequences {
             for i in 1..=n {
                 let sequence = all_sequences.get(&i).expect(&format!("Did not get sequence for node {}", i));
-                // println!("Node {}: {:?}", i, sequence.len());
-                // assert!(client_sequence.starts_with(sequence));
+                quorum_nodes.insert(i);
+                println!("Node {}: {:?}", i, sequence.len());
                 for id in &client_sequence {
                     if !sequence.contains(&id) {
-                        counter += 1;
+                        quorum_nodes.remove(&i);
                         break;
                     }
                 }
             }
-            if counter >= quorum {
-                panic!("Majority DOES NOT have all client elements: counter: {}, quorum: {}", counter, quorum);
+            if quorum_nodes.len() < quorum {
+                panic!("Majority DOES NOT have all client elements: counter: {}, quorum: {}", quorum_nodes.len(), quorum);
             }
         }
     }
 }
- */
+

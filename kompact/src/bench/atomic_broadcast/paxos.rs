@@ -1543,7 +1543,7 @@ mod ballot_leader_election {
         }
     }
 }
-/*
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1556,7 +1556,7 @@ mod tests {
     use super::super::messages::paxos::ballot_leader_election::Ballot;
     use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
 
-    fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: ReconfigurationPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
+    fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: ReconfigurationPolicy) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
         let mut systems = Vec::with_capacity(n as usize);
         let mut nodes = HashMap::with_capacity(n as usize);
         let mut actorpaths = Vec::with_capacity(n as usize);
@@ -1564,7 +1564,7 @@ mod tests {
             let system =
                 kompact_benchmarks::kompact_system_provider::global().new_remote_system_with_threads(format!("paxos_replica{}", i), 4);
             let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                PaxosReplica::<MemorySequence, MemoryState>::with(initial_conf.clone(), policy.clone(), forward_discarded)
+                PaxosReplica::<MemorySequence, MemoryState>::with(initial_conf.clone(), policy.clone())
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1604,11 +1604,10 @@ mod tests {
         };
         let check_sequences = true;
         let policy = ReconfigurationPolicy::Pull;
-        let forward_discarded = true;
         let active_n = config.len() as u64;
         let quorum = active_n/2 + 1;
 
-        let (systems, nodes, actorpaths) = create_replica_nodes(n, config, policy, forward_discarded);
+        let (systems, nodes, actorpaths) = create_replica_nodes(n, config, policy);
         /*** Setup client ***/
         let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
         let (client_comp, unique_reg_f) = systems[0].create_and_register( || {
@@ -1705,5 +1704,3 @@ mod tests {
         println!("PASSED!!!");
     }
 }
-
- */
