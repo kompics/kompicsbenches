@@ -10,7 +10,6 @@ use super::messages::*;
 use super::messages::paxos::ballot_leader_election::Leader;
 use super::messages::paxos::{PaxosSer, ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
 // use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
-use super::atomic_broadcast::TransferPolicy;
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use uuid::Uuid;
 use kompact::prelude::Buf;
@@ -45,6 +44,12 @@ pub enum PaxosCompMsg {
     GetAllEntries(Ask<(), Vec<Entry>>)
 }
 
+#[derive(Clone, Debug)]
+pub enum ReconfigurationPolicy {
+    Eager,
+    Pull,
+}
+
 #[derive(ComponentDefinition)]
 pub struct PaxosReplica<S, P> where
     S: SequenceTraits,
@@ -64,7 +69,7 @@ pub struct PaxosReplica<S, P> where
     iteration_id: u32,
     partitioning_actor: Option<ActorPath>,
     alias_registrations: HashSet<Uuid>,
-    policy: TransferPolicy,
+    policy: ReconfigurationPolicy,
     next_config_id: Option<u32>,
     pending_seq_transfers: HashMap<u32, (u32, HashMap<u32, Vec<Entry>>)>,   // <config_id, (num_segments, <segment_id, entries>)
     complete_sequences: HashSet<u32>,
@@ -79,7 +84,7 @@ impl<S, P> PaxosReplica<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    pub fn with(initial_config: Vec<u64>, policy: TransferPolicy) -> PaxosReplica<S, P> {
+    pub fn with(initial_config: Vec<u64>, policy: ReconfigurationPolicy) -> PaxosReplica<S, P> {
         PaxosReplica {
             ctx: ComponentContext::new(),
             pid: 0,
@@ -508,7 +513,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 let mut nodes = r.nodes.continued_nodes;
                 let mut new_nodes = r.nodes.new_nodes;
                 if nodes.contains(&self.pid) {
-                    if let TransferPolicy::Eager = self.policy {
+                    if let ReconfigurationPolicy::Eager = self.policy {
                         let st = self.create_eager_sequence_transfer(nodes.as_slice(), prev_config_id);
                         for pid in &new_nodes {
                             let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
@@ -625,8 +630,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             self.start_replica();
                                         } else {
                                             match self.policy {
-                                                TransferPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
-                                                TransferPolicy::Eager => {
+                                                ReconfigurationPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
+                                                ReconfigurationPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
                                                     self.pending_seq_transfers.insert(r.seq_metadata.config_id, (num_expected_transfers as u32, HashMap::with_capacity(num_expected_transfers)));
                                                     let seq_len = r.seq_metadata.len;
@@ -1551,7 +1556,7 @@ mod tests {
     use super::super::messages::paxos::ballot_leader_election::Ballot;
     use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
 
-    fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: TransferPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
+    fn create_replica_nodes(n: u64, initial_conf: Vec<u64>, policy: ReconfigurationPolicy, forward_discarded: bool) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
         let mut systems = Vec::with_capacity(n as usize);
         let mut nodes = HashMap::with_capacity(n as usize);
         let mut actorpaths = Vec::with_capacity(n as usize);
@@ -1598,7 +1603,7 @@ mod tests {
             Some(ref r) => *(r.0.last().unwrap()),
         };
         let check_sequences = true;
-        let policy = TransferPolicy::Pull;
+        let policy = ReconfigurationPolicy::Pull;
         let forward_discarded = true;
         let active_n = config.len() as u64;
         let quorum = active_n/2 + 1;

@@ -66,7 +66,7 @@ object AtomicBroadcast {
                 val concurrent_proposals = p.concurrentProposals;
                 val plot_key = (reconfig, num_nodes, concurrent_proposals);
                 var all_series = reconfigPlots.getOrElse(plot_key, MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]());
-                val serie_key = (p.algorithm, p.transferPolicy);
+                val serie_key = (p.algorithm, p.reconfigPolicy);
                 var serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
                 serie._1 += p.numberOfProposals;
                 serie._2 += stats;
@@ -104,16 +104,16 @@ object AtomicBroadcast {
             val reconfig_numNodes_concurrentProposals = reconfigPlot._1;
             var all_series = TreeMap.newBuilder[(String, String), ImplGroupedResult[Long]];
             for (serie <- reconfigPlot._2) {
-              val algo_transferPolicy = serie._1;
+              val algo_reconfigPolicy = serie._1;
               val num_proposals = serie._2._1.toList;
               val stats = serie._2._2.toList;
-              val impl_str = if (algo_transferPolicy._1 == "raft" && algo_transferPolicy._2 == "none") {
+              val impl_str = if (algo_reconfigPolicy._1 == "raft" && algo_reconfigPolicy._2 == "none") {
                 "raft"
               } else {
-                s"${algo_transferPolicy._1}, ${algo_transferPolicy._2}"
+                s"${algo_reconfigPolicy._1}, ${algo_reconfigPolicy._2}"
               };
               val grouped_res = ImplGroupedResult(impl_str, num_proposals, stats);
-              all_series += (algo_transferPolicy -> grouped_res);
+              all_series += (algo_reconfigPolicy -> grouped_res);
             }
             reconfig_axis += (reconfig_numNodes_concurrentProposals -> all_series.result());
           }
@@ -170,7 +170,7 @@ object AtomicBroadcast {
             calculatedTitle = "Throughput",
             calculatedYAxisLabel = "avg. throughput (operations/s)",
             calculatedUnits = "operations/s",
-            seriesParams = (params: Params) => (params.algorithm, params.transferPolicy),
+            seriesParams = (params: Params) => (params.algorithm, params.reconfigPolicy),
             reconfig_axis
           );
           all_plotgroups += reconfig_plotgroup
