@@ -350,7 +350,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigTestSpace = ParameterSpacePB
     .cross(
-      raft,
+      List("raft-batch"),
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
@@ -394,7 +394,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigSpace = ParameterSpacePB
     .cross(
-      raft,
+      List("raft-batch"),
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
