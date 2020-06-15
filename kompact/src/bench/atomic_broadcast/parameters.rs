@@ -14,7 +14,7 @@ pub mod raft {
     pub const TICK_PERIOD: u64 = 100;   // one tick = +1 in logical clock
     pub const LEADER_HEARTBEAT_PERIOD: u64 = 100;
     pub const RANDOM_DELTA: u64 = 200;
-    pub const MAX_BATCH_SIZE: u64 = 1000000;
+    pub const MAX_BATCH_SIZE: u64 = u64::max_value();
 }
 
 pub mod client {
