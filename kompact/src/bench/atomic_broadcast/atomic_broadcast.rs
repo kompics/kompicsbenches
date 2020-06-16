@@ -136,6 +136,7 @@ type Storage = MemStorage;
 
 pub struct AtomicBroadcastMaster {
     algorithm: Option<String>,
+    num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
@@ -151,6 +152,7 @@ impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             algorithm: None,
+            num_nodes: None,
             num_proposals: None,
             concurrent_proposals: None,
             reconfiguration: None,
@@ -314,9 +316,9 @@ impl AtomicBroadcastMaster {
 
     fn write_latency_file(result: &str) -> std::io::Result<()> {
         create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-        let mut file = OpenOptions::new().append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE))?;
-        write!(file, "{}", result)?;
-        file.flush()?;
+        let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE)).expect("Failed to open file");
+        write!(file, "{}", result).expect("Failed to write to file");
+        file.flush().expect("Failed to flush");
         Ok(())
     }
 }
@@ -330,6 +332,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Setting up Atomic Broadcast (Master)");
         self.validate_experiment_params(&c, m.number_of_clients())?;
         self.algorithm = Some(c.algorithm.clone());
+        self.num_nodes = Some(c.number_of_nodes);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
@@ -413,14 +416,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 let latency_sum_ms = (self.median_latency_sum/1000) as f64; // micro seconds -> ms
                 let avg_latency = latency_sum_ms/(self.iteration_id as f64);
                 let str = format!(
-                    "{},{},{}\n",
+                    "{},{},{},{}\n",
                     self.algorithm.clone().unwrap(),
+                    self.num_nodes.clone().unwrap(),
                     self.num_proposals.clone().unwrap(),
                     avg_latency
                 );
                 Self::write_latency_file(&str).unwrap_or_else(|_| println!("Failed to persist latency results: {}", str));
             }
             self.algorithm = None;
+            self.num_nodes = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
