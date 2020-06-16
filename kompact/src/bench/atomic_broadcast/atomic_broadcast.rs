@@ -22,6 +22,7 @@ use crate::bench::atomic_broadcast::parameters::{LATENCY_DIR, LATENCY_FILE};
 use std::fs::{File, create_dir_all, OpenOptions};
 use std::error::Error;
 use std::io::Write;
+use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -209,6 +210,7 @@ impl AtomicBroadcastMaster {
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
                 reconfig,
+                PROPOSAL_TIMEOUT,
                 leader_election_latch,
                 finished_latch,
             )
@@ -316,9 +318,9 @@ impl AtomicBroadcastMaster {
 
     fn write_latency_file(result: &str) -> std::io::Result<()> {
         create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-        let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE)).expect("Failed to open file");
-        write!(file, "{}", result).expect("Failed to write to file");
-        file.flush().expect("Failed to flush");
+        let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE))?;
+        write!(file, "{}", result)?;
+        file.flush()?;
         Ok(())
     }
 }
