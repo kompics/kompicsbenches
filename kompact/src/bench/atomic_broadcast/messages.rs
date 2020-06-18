@@ -485,9 +485,9 @@ pub mod paxos {
 
         fn size_hint(&self) -> Option<usize> {
             match self {
-                ReconfigurationMsg::Init(r) => Some(64),
+                ReconfigurationMsg::Init(_) => Some(64),
                 ReconfigurationMsg::SequenceRequest(_) => Some(25),
-                ReconfigurationMsg::SequenceTransfer(st) => Some(1000),
+                ReconfigurationMsg::SequenceTransfer(_) => Some(1000),
             }
         }
 
