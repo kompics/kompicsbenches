@@ -49,6 +49,8 @@ pub struct Client {
     timeout: Duration,
     current_leader: u64,
     state: ExperimentState,
+    retry_after_reconfig: bool,
+    retry_count: u64,
 }
 
 impl Client {
@@ -60,6 +62,7 @@ impl Client {
         timeout: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
+        retry_after_reconfig: bool,
     ) -> Client {
         Client {
             ctx: ComponentContext::new(),
@@ -74,7 +77,9 @@ impl Client {
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             timeout: Duration::from_millis(timeout),
             current_leader: 0,
-            state: ExperimentState::LeaderElection
+            state: ExperimentState::LeaderElection,
+            retry_after_reconfig,
+            retry_count: 0
         }
     }
 
@@ -92,7 +97,8 @@ impl Client {
 
     fn send_concurrent_proposals(&mut self) {
         let num_inflight = self.pending_proposals.len() as u64;
-        if self.latest_proposal_id == self.num_proposals || self.current_leader == 0 || num_inflight == self.num_concurrent_proposals {
+        assert!(num_inflight <= self.num_concurrent_proposals);
+        if self.latest_proposal_id == self.num_proposals ||  num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
         let from = self.latest_proposal_id + 1;
@@ -102,27 +108,30 @@ impl Client {
         } else {
             i
         };
-        debug!(self.ctx.log(), "Proposing {}-{}", from, to);
+        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         for id in from ..= to {
             let current_time = match self.num_concurrent_proposals {
                 1 => Some(SystemTime::now()),
                 _ => None,
             };
-            let leader = self.nodes.get(&self.current_leader).unwrap();
             self.propose_normal(id.clone(), &leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
         }
+        self.state = ExperimentState::Running;
         self.latest_proposal_id = to;
     }
 
     fn retry_proposal(&mut self, id: u64) {
+        if self.responses.contains_key(&id) { panic!("Failed to cancel timer?"); }
         if let Some(leader) = self.nodes.get(&self.current_leader) {
             match id {
                 RECONFIG_ID => self.propose_reconfiguration(leader),
-                _ => self.propose_normal(id, leader),
+                _ => self.propose_normal(id, leader)
             }
+            self.retry_count += 1;
+            self.state = ExperimentState::Running;
         }
         let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
         let proposal_meta = self.pending_proposals.get_mut(&id)
@@ -175,19 +184,28 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        info!(self.ctx.log(), "Got first leader: {}. Current: {}", pid, self.current_leader);
+                        info!(self.ctx.log(), "Got first leader: {}. Current: {}. retry_count: {}", pid, self.current_leader, self.retry_count);
                         self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {
                                 self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
                             },
-                            ExperimentState::ReconfigurationElection if self.current_leader != 0 => {
-                                if self.pending_proposals.is_empty() {
-                                    self.send_concurrent_proposals();
+                            ExperimentState::ReconfigurationElection => {
+                                if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
+                                    let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+                                    let pending_proposals = std::mem::take(&mut self.pending_proposals);
+                                    for (id, meta) in pending_proposals {
+                                        self.cancel_timer(meta.timer);
+                                        self.propose_normal(id, &leader);
+                                        let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
+                                        let proposal_meta = ProposalMetaData::with(meta.start_time, timer);
+                                        self.pending_proposals.insert(id, proposal_meta);
+                                    }
                                 }
-                                self.state = ExperimentState::Running;
+                                self.send_concurrent_proposals();
                             },
-                            _ => {}
+                            ExperimentState::Running => self.send_concurrent_proposals(),
+                            _ => {},
                         }
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -197,12 +215,13 @@ impl Actor for Client {
                             match pr.id {
                                 RECONFIG_ID => {
                                     if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
+                                        info!(self.ctx.log(), "Got reconfig at last,retry_count: {}", self.retry_count);
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
+                                        info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
                                         if self.current_leader == 0 {
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {
@@ -219,12 +238,9 @@ impl Actor for Client {
                                         _ => None,
                                     };
                                     self.responses.insert(pr.id, latency);
-                                    if self.state != ExperimentState::ReconfigurationElection {
-                                        self.current_leader = pr.latest_leader;
-                                    }
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses");
+                                        info!(self.ctx.log(), "Got all responses, retry_count: {}", self.retry_count);
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
@@ -236,7 +252,10 @@ impl Actor for Client {
                                             let proposal_meta = ProposalMetaData::with(None, timer);
                                             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
                                         }
-                                        self.send_concurrent_proposals();
+                                        if self.state != ExperimentState::ReconfigurationElection {
+                                            self.current_leader = pr.latest_leader;
+                                            self.send_concurrent_proposals();
+                                        }
                                     }
                                 }
                             }

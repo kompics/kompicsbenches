@@ -1595,7 +1595,7 @@ pub struct AtomicBroadcastRequest {
     pub number_of_proposals: u64,
     pub concurrent_proposals: u64,
     pub reconfiguration: ::std::string::String,
-    pub transfer_policy: ::std::string::String,
+    pub reconfig_policy: ::std::string::String,
     // special fields
     pub unknown_fields: ::protobuf::UnknownFields,
     pub cached_size: ::protobuf::CachedSize,
@@ -1709,30 +1709,30 @@ impl AtomicBroadcastRequest {
         ::std::mem::replace(&mut self.reconfiguration, ::std::string::String::new())
     }
 
-    // string transfer_policy = 6;
+    // string reconfig_policy = 6;
 
 
-    pub fn get_transfer_policy(&self) -> &str {
-        &self.transfer_policy
+    pub fn get_reconfig_policy(&self) -> &str {
+        &self.reconfig_policy
     }
-    pub fn clear_transfer_policy(&mut self) {
-        self.transfer_policy.clear();
+    pub fn clear_reconfig_policy(&mut self) {
+        self.reconfig_policy.clear();
     }
 
     // Param is passed by value, moved
-    pub fn set_transfer_policy(&mut self, v: ::std::string::String) {
-        self.transfer_policy = v;
+    pub fn set_reconfig_policy(&mut self, v: ::std::string::String) {
+        self.reconfig_policy = v;
     }
 
     // Mutable pointer to the field.
     // If field is not initialized, it is initialized with default value first.
-    pub fn mut_transfer_policy(&mut self) -> &mut ::std::string::String {
-        &mut self.transfer_policy
+    pub fn mut_reconfig_policy(&mut self) -> &mut ::std::string::String {
+        &mut self.reconfig_policy
     }
 
     // Take field
-    pub fn take_transfer_policy(&mut self) -> ::std::string::String {
-        ::std::mem::replace(&mut self.transfer_policy, ::std::string::String::new())
+    pub fn take_reconfig_policy(&mut self) -> ::std::string::String {
+        ::std::mem::replace(&mut self.reconfig_policy, ::std::string::String::new())
     }
 }
 
@@ -1773,7 +1773,7 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfiguration)?;
                 },
                 6 => {
-                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.transfer_policy)?;
+                    ::protobuf::rt::read_singular_proto3_string_into(wire_type, is, &mut self.reconfig_policy)?;
                 },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
@@ -1802,8 +1802,8 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         if !self.reconfiguration.is_empty() {
             my_size += ::protobuf::rt::string_size(5, &self.reconfiguration);
         }
-        if !self.transfer_policy.is_empty() {
-            my_size += ::protobuf::rt::string_size(6, &self.transfer_policy);
+        if !self.reconfig_policy.is_empty() {
+            my_size += ::protobuf::rt::string_size(6, &self.reconfig_policy);
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
         self.cached_size.set(my_size);
@@ -1826,8 +1826,8 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
         if !self.reconfiguration.is_empty() {
             os.write_string(5, &self.reconfiguration)?;
         }
-        if !self.transfer_policy.is_empty() {
-            os.write_string(6, &self.transfer_policy)?;
+        if !self.reconfig_policy.is_empty() {
+            os.write_string(6, &self.reconfig_policy)?;
         }
         os.write_unknown_fields(self.get_unknown_fields())?;
         ::std::result::Result::Ok(())
@@ -1897,9 +1897,9 @@ impl ::protobuf::Message for AtomicBroadcastRequest {
                     |m: &mut AtomicBroadcastRequest| { &mut m.reconfiguration },
                 ));
                 fields.push(::protobuf::reflect::accessor::make_simple_field_accessor::<_, ::protobuf::types::ProtobufTypeString>(
-                    "transfer_policy",
-                    |m: &AtomicBroadcastRequest| { &m.transfer_policy },
-                    |m: &mut AtomicBroadcastRequest| { &mut m.transfer_policy },
+                    "reconfig_policy",
+                    |m: &AtomicBroadcastRequest| { &m.reconfig_policy },
+                    |m: &mut AtomicBroadcastRequest| { &mut m.reconfig_policy },
                 ));
                 ::protobuf::reflect::MessageDescriptor::new::<AtomicBroadcastRequest>(
                     "AtomicBroadcastRequest",
@@ -1928,7 +1928,7 @@ impl ::protobuf::Clear for AtomicBroadcastRequest {
         self.number_of_proposals = 0;
         self.concurrent_proposals = 0;
         self.reconfiguration.clear();
-        self.transfer_policy.clear();
+        self.reconfig_policy.clear();
         self.unknown_fields.clear();
     }
 }
@@ -1972,7 +1972,7 @@ static file_descriptor_proto_data: &'static [u8] = b"\
     des\x12.\n\x13number_of_proposals\x18\x03\x20\x01(\x04R\x11numberOfPropo\
     sals\x121\n\x14concurrent_proposals\x18\x04\x20\x01(\x04R\x13concurrentP\
     roposals\x12(\n\x0freconfiguration\x18\x05\x20\x01(\tR\x0freconfiguratio\
-    n\x12'\n\x0ftransfer_policy\x18\x06\x20\x01(\tR\x0etransferPolicy2\xbf\
+    n\x12'\n\x0freconfig_policy\x18\x06\x20\x01(\tR\x0ereconfigPolicy2\xbf\
     \x08\n\x0fBenchmarkRunner\x12L\n\x05Ready\x12\x20.kompics.benchmarks.Rea\
     dyRequest\x1a!.kompics.benchmarks.ReadyResponse\x12P\n\x08Shutdown\x12#.\
     kompics.benchmarks.ShutdownRequest\x1a\x1f.kompics.benchmarks.ShutdownAc\

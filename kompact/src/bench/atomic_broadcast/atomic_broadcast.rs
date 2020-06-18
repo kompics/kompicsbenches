@@ -203,6 +203,10 @@ impl AtomicBroadcastMaster {
     ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
+        let retry_after_reconfig = match self.algorithm {
+            Some(ref p) if p == "paxos" => true,
+            _ => false,
+        };
         /*** Setup client ***/
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
@@ -213,6 +217,7 @@ impl AtomicBroadcastMaster {
                 PROPOSAL_TIMEOUT,
                 leader_election_latch,
                 finished_latch,
+                retry_after_reconfig
             )
         });
         unique_reg_f.wait_expect(

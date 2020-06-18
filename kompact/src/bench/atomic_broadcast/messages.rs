@@ -429,12 +429,13 @@ pub mod paxos {
         pub config_id: u32,
         pub tag: u32,   // keep track of which segment of the sequence this is
         pub from_idx: u64,
-        pub to_idx: u64
+        pub to_idx: u64,
+        pub requestor_pid: u64,
     }
 
     impl SequenceRequest {
-        pub fn with(config_id: u32, tag: u32, from_idx: u64, to_idx: u64) -> SequenceRequest {
-            SequenceRequest{ config_id, tag, from_idx, to_idx }
+        pub fn with(config_id: u32, tag: u32, from_idx: u64, to_idx: u64, requestor_pid: u64) -> SequenceRequest {
+            SequenceRequest{ config_id, tag, from_idx, to_idx, requestor_pid }
         }
     }
 
@@ -484,9 +485,9 @@ pub mod paxos {
 
         fn size_hint(&self) -> Option<usize> {
             match self {
-                ReconfigurationMsg::Init(r) => Some(33 + r.nodes.continued_nodes.len() * 8 + r.nodes.new_nodes.len() * 8),
+                ReconfigurationMsg::Init(r) => Some(64),
                 ReconfigurationMsg::SequenceRequest(_) => Some(25),
-                ReconfigurationMsg::SequenceTransfer(st) => Some(46 + st.ser_entries.len()),
+                ReconfigurationMsg::SequenceTransfer(st) => Some(1000),
             }
         }
 
@@ -509,6 +510,7 @@ pub mod paxos {
                     buf.put_u32(sr.tag);
                     buf.put_u64(sr.from_idx);
                     buf.put_u64(sr.to_idx);
+                    buf.put_u64(sr.requestor_pid);
                 },
                 ReconfigurationMsg::SequenceTransfer(st) => {
                     buf.put_u8(SEQ_TRANSFER_ID);
@@ -562,7 +564,8 @@ pub mod paxos {
                     let tag = buf.get_u32();
                     let from_idx = buf.get_u64();
                     let to_idx = buf.get_u64();
-                    let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx);
+                    let requestor_pid = buf.get_u64();
+                    let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx, requestor_pid);
                     Ok(ReconfigurationMsg::SequenceRequest(sr))
                 },
                 SEQ_TRANSFER_ID => {
