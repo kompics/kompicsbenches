@@ -369,19 +369,20 @@ impl<S, P> PaxosReplica<S, P> where
                 }
             },
             None => {
-                if self.active_config_id == sr.config_id {  // we have not reached final sequence, but might still have requested elements
+                (false, vec![])
+                /*if self.active_config_id == sr.config_id {  // we have not reached final sequence, but might still have requested elements
                     let paxos = self.paxos_comps.get(&sr.config_id).expect(&format!("No paxos comp with config_id: {} when handling SequenceRequest. My config_ids: {:?}", sr.config_id, self.paxos_comps.keys()));
                     paxos.actor_ref().tell(PaxosCompMsg::SequenceReq(sr.clone()));
                     self.pending_local_seq_requests.insert(sr, requestor);
                     return;
                 } else {
                     (false, vec![])
-                }
+                }*/
             }
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
         let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, ser_entries, prev_seq_metadata);
-        info!(self.ctx.log(), "Replying seq transfer: {:?}", st);
+        info!(self.ctx.log(), "Replying seq transfer: tag: {}, idx: {}-{}", st.tag, st.from_idx, st.to_idx);
         requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
     }
 
@@ -546,7 +547,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     };
                     let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
                     let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, serialised, prev_seq_metadata);
-                    info!(self.ctx.log(), "Replying async seq transfer: {:?}", st);
+                    info!(self.ctx.log(), "Replying async seq transfer: tag: {}", st.tag);
                     requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
                 }
                 self.pending_local_seq_requests.remove(&sr);

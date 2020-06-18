@@ -1,10 +1,9 @@
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::collections::{HashMap, HashSet};
-use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, Run, RECONFIG_ID};
+use std::collections::HashMap;
+use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
-use super::parameters::client::*;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -108,13 +107,13 @@ impl Client {
         } else {
             i
         };
-        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         for id in from ..= to {
             let current_time = match self.num_concurrent_proposals {
                 1 => Some(SystemTime::now()),
                 _ => None,
             };
-            self.propose_normal(id.clone(), &leader);
+            let leader = self.nodes.get(&self.current_leader).unwrap();
+            self.propose_normal(id.clone(), leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
@@ -137,6 +136,17 @@ impl Client {
         let proposal_meta = self.pending_proposals.get_mut(&id)
             .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
         proposal_meta.set_timer(timer);
+    }
+
+    fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
+        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+        for (id, meta) in pending_proposals {
+            self.propose_normal(*id, &leader);
+            let i = id.clone();
+            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(i));
+            let old_timer = std::mem::replace(&mut meta.timer, timer);
+            self.cancel_timer(old_timer);
+        }
     }
 }
 
@@ -192,15 +202,9 @@ impl Actor for Client {
                             },
                             ExperimentState::ReconfigurationElection => {
                                 if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
-                                    let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-                                    let pending_proposals = std::mem::take(&mut self.pending_proposals);
-                                    for (id, meta) in pending_proposals {
-                                        self.cancel_timer(meta.timer);
-                                        self.propose_normal(id, &leader);
-                                        let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
-                                        let proposal_meta = ProposalMetaData::with(meta.start_time, timer);
-                                        self.pending_proposals.insert(id, proposal_meta);
-                                    }
+                                    let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
+                                    self.retry_after_reconfig(&mut pending_proposals);
+                                    self.pending_proposals = pending_proposals;
                                 }
                                 self.send_concurrent_proposals();
                             },
