@@ -427,7 +427,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         self.raw_raft.tick();
         let leader = self.raw_raft.raft.leader_id;
         if leader != self.current_leader && !self.removed_nodes.contains(&leader){
-            info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
+            // info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
             self.current_leader = leader;
             self.supervisor.tell(RaftReplicaMsg::Leader(leader));
         }
@@ -451,7 +451,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             let mut new_voters = current_config.into_iter().collect::<Vec<u64>>();
                             new_voters.append(&mut add_nodes);
                             let new_config = (new_voters, vec![]);
-                            info!(self.ctx.log(), "Joint consensus remove leader: my pid: {}, reconfig: {:?}", leader_pid, new_config);
+                            // info!(self.ctx.log(), "Joint consensus remove leader: my pid: {}, reconfig: {:?}", leader_pid, new_config);
                             self.raw_raft.raft.propose_membership_change(new_config).expect("Failed to propose joint consensus reconfiguration (remove leader)");
                         },
                         ReconfigurationPolicy::JointConsensusRemoveFollower => {
@@ -463,7 +463,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 let mut new_voters = current_config.into_iter().collect::<Vec<u64>>();
                                 new_voters.append(&mut add_nodes);
                                 let new_config = (new_voters, vec![]);
-                                info!(self.ctx.log(), "Joint consensus remove follower: my pid: {}, reconfig: {:?}", leader_pid, new_config);
+                                // info!(self.ctx.log(), "Joint consensus remove follower: my pid: {}, reconfig: {:?}", leader_pid, new_config);
                                 self.raw_raft.raft.propose_membership_change(new_config).expect("Failed to propose joint consensus reconfiguration");
                             } else {
                                 self.raw_raft.raft.propose_membership_change(reconfig).expect("Failed to propose joint consensus reconfiguration (remove follower)");
@@ -475,7 +475,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
                             // let (mut add_nodes, mut remove_nodes): (Vec<u64>, Vec<u64>) = reconfig.0.drain(..).partition(|pid| !current_config.contains(pid));
                             let pid = add_nodes.pop().expect("No new node to add?");
-                            info!(self.ctx.log(), "Proposing AddNode {}", pid);
+                            // info!(self.ctx.log(), "Proposing AddNode {}", pid);
                             let next_change = if num_remove_nodes > 0 {
                                 Some(ConfChangeType::RemoveNode)
                             } else if !add_nodes.is_empty() {
@@ -594,14 +594,14 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             store.set_conf_state(cs, None);
                             next_conf_change = Self::get_next_change(cc.get_context());
                             if next_conf_change.is_none() {
-                                info!(self.ctx.log(), "Reconfiguration finished!");
+                                // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
                                 let pr = ProposalResp::with(RECONFIG_ID, self.current_leader);  // use current_leader as removed node could be leader
                                 self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                             }
                         },
                         ConfChangeType::RemoveNode => {
-                            info!(self.ctx.log(), "RemoveNode {} OK", cc.node_id);
+                            // info!(self.ctx.log(), "RemoveNode {} OK", cc.node_id);
                             self.raw_raft.raft.remove_node(cc.node_id).unwrap();
                             let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
                             store.set_conf_state(cs, None);
@@ -612,7 +612,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             }
                             next_conf_change = Self::get_next_change(cc.get_context());
                             if next_conf_change.is_none() {
-                                info!(self.ctx.log(), "Reconfiguration finished!");
+                                // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
                                 let pr = ProposalResp::with(RECONFIG_ID, self.current_leader);  // use current_leader as removed node could be leader
                                 self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));

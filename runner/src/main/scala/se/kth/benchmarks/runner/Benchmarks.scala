@@ -406,7 +406,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val latencySpace = ParameterSpacePB
     .cross(
-      List("paxos", "raft"),
+      List("paxos", "raft-batch", "raft-nobatch"),
       List(3),
       100L.k to 1L.mio by 100L.k,
       List(1L),
@@ -416,10 +416,10 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val atomicBroadcastConvergeSpace = ParameterSpacePB
     .cross(
-      List("paxos"),
+      List("raft-batch"),
       List(3),
-      10L.mio to 50L.mio by 2L.mio,
-      List(1L.mio),
+      5L.mio to 15L.mio by 1L.mio,
+      List(1L.k),
       List("off"),
       List("none"),
     );

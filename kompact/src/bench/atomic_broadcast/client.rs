@@ -49,7 +49,6 @@ pub struct Client {
     current_leader: u64,
     state: ExperimentState,
     retry_after_reconfig: bool,
-    retry_count: u64,
 }
 
 impl Client {
@@ -78,7 +77,6 @@ impl Client {
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             retry_after_reconfig,
-            retry_count: 0
         }
     }
 
@@ -129,7 +127,6 @@ impl Client {
                 RECONFIG_ID => self.propose_reconfiguration(leader),
                 _ => self.propose_normal(id, leader)
             }
-            self.retry_count += 1;
             self.state = ExperimentState::Running;
         }
         let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
@@ -194,7 +191,7 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        info!(self.ctx.log(), "Got first leader: {}. Current: {}. retry_count: {}", pid, self.current_leader, self.retry_count);
+                        // info!(self.ctx.log(), "Got first leader: {}. Current: {}. retry_count: {}", pid, self.current_leader, self.retry_count);
                         self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {
@@ -219,13 +216,13 @@ impl Actor for Client {
                             match pr.id {
                                 RECONFIG_ID => {
                                     if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last,retry_count: {}", self.retry_count);
+                                        info!(self.ctx.log(), "Got reconfig at last");
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
-                                        info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
                                         if self.current_leader == 0 {
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {
@@ -244,7 +241,7 @@ impl Actor for Client {
                                     self.responses.insert(pr.id, latency);
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses, retry_count: {}", self.retry_count);
+                                        info!(self.ctx.log(), "Got all responses");
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
