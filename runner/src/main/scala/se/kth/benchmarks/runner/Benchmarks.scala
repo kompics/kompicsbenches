@@ -303,11 +303,11 @@ object Benchmarks extends ParameterDescriptionImplicits {
   );
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
-  private val atomicBroadcastTestNodes = List(3, 5);
-  private val atomicBroadcastTestProposals = List(1L.k, 2L.k, 4L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(1L.k, 2L.k, 4L.k);
+  private val atomicBroadcastTestNodes = List(3);
+  private val atomicBroadcastTestProposals = List(4L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(2L.k);
 
-  private val atomicBroadcastNodes = List(3, 5, 7);
+  private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = 10L.mio to 20L.mio by 1L.mio;
   private val atomicBroadcastConcurrentProposals = List(100L.k, 500L.k, 1L.mio);
 
