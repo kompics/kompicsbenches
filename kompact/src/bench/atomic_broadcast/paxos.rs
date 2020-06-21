@@ -312,7 +312,7 @@ impl<S, P> PaxosReplica<S, P> where
                     if !received_segments.contains_key(&tag) {    // missing segment, retry from a replica we know have the final seq
                         let from_idx = i as u64 * offset;
                         let to_idx = from_idx + offset;
-                        info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
+                        // info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
                         let pid = self.active_peers.0.get(i as usize % num_active).expect(&format!("Failed to get active pid. idx: {}, len: {}", i, self.active_peers.0.len()));
                         self.request_sequence(*pid, config_id, from_idx, to_idx, tag);
                     }
@@ -342,7 +342,7 @@ impl<S, P> PaxosReplica<S, P> where
         let offset = seq_len/n_continued as u64;
         let from_idx = index as u64 * offset;
         let to_idx = from_idx + offset;
-        info!(self.ctx.log(), "Creating eager sequence transfer. Tag: {}, idx: {}-{}, continued_nodes: {:?}", tag, from_idx, to_idx, continued_nodes);
+        // info!(self.ctx.log(), "Creating eager sequence transfer. Tag: {}, idx: {}-{}, continued_nodes: {:?}", tag, from_idx, to_idx, continued_nodes);
         let ser_entries = final_seq.get_ser_entries(from_idx, to_idx).expect("Should have entries of final sequence");
         let prev_seq_metadata = self.get_sequence_metadata(config_id-1);
         let st = SequenceTransfer::with(config_id, tag, true, from_idx, to_idx, ser_entries, prev_seq_metadata);
@@ -382,7 +382,7 @@ impl<S, P> PaxosReplica<S, P> where
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
         let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, ser_entries, prev_seq_metadata);
-        info!(self.ctx.log(), "Replying seq transfer: tag: {}, idx: {}-{}", st.tag, st.from_idx, st.to_idx);
+        // info!(self.ctx.log(), "Replying seq transfer: tag: {}, idx: {}-{}", st.tag, st.from_idx, st.to_idx);
         requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
     }
 
@@ -398,7 +398,7 @@ impl<S, P> PaxosReplica<S, P> where
         }
         if st.succeeded {
             let segments = self.pending_seq_transfers.get_mut(&st.config_id).expect(&format!("Got unexpected sequence transfer config_id: {}, tag: {}, index: {}-{}. active config: {}, Stopped: {}", st.config_id, st.tag, st.from_idx, st.to_idx, self.active_config_id, self.stopped));
-            info!(self.ctx.log(), "Got segment config_id: {}, tag: {}", st.config_id, st.tag);
+            // info!(self.ctx.log(), "Got segment config_id: {}, tag: {}", st.config_id, st.tag);
             let seq = PaxosSer::deserialise_entries(&mut st.ser_entries.as_slice());
             segments.1.insert(st.tag, seq);
             if segments.1.len() as u32 == segments.0 {  // got all segments, i.e. complete sequence
@@ -425,7 +425,7 @@ impl<S, P> PaxosReplica<S, P> where
             let tag = st.tag;
             let from_idx = st.from_idx;
             let to_idx = st.to_idx;
-            info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
+            // info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
             // query someone we know have reached final seq
             let num_active = self.active_peers.0.len();
             if num_active > 0 {
@@ -547,7 +547,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     };
                     let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
                     let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, serialised, prev_seq_metadata);
-                    info!(self.ctx.log(), "Replying async seq transfer: tag: {}", st.tag);
+                    // info!(self.ctx.log(), "Replying async seq transfer: tag: {}", st.tag);
                     requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
                 }
                 self.pending_local_seq_requests.remove(&sr);
