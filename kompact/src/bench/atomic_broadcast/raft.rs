@@ -335,7 +335,9 @@ impl<S> Provide<ControlPort> for RaftComp<S> where
                     self.raw_raft.mut_store().clear().expect("Failed to clear storage!");
                     self.supervisor.tell(RaftReplicaMsg::KillResp);
                 },
-                _ => {},
+                _ => {
+                    self.stop_timers();
+                },
             }
         }
 }

@@ -876,7 +876,9 @@ impl<S, P> Provide<ControlPort> for PaxosComp<S, P> where
                 self.stop_timers();
                 self.supervisor.tell(PaxosReplicaMsg::KillResp);
             },
-            _ => {}
+            _ => {
+                self.stop_timers();
+            }
         }
     }
 }

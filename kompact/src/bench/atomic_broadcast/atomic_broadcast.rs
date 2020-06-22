@@ -26,7 +26,7 @@ use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
-const REGISTER_TIMEOUT: Duration = Duration::from_secs(3);
+const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ClientParams {
@@ -578,7 +578,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let kill_raft_f = system.kill_notify(raft_replica);
                 kill_raft_f
                     .wait_timeout(REGISTER_TIMEOUT)
-                    .expect("Atomic Broadcast never died!");
+                    .expect("Raft Replica never died!");
             }
             system
                 .shutdown()

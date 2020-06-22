@@ -191,10 +191,10 @@ impl Actor for Client {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        // info!(self.ctx.log(), "Got first leader: {}. Current: {}. retry_count: {}", pid, self.current_leader, self.retry_count);
                         self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {
+                                info!(self.ctx.log(), "Got first leader: {}. Decrementing election latch", pid);
                                 self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
                             },
                             ExperimentState::ReconfigurationElection => {
