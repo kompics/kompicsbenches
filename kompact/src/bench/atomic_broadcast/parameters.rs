@@ -18,5 +18,5 @@ pub mod raft {
 }
 
 pub mod client {
-    pub const PROPOSAL_TIMEOUT: u64 = 1500;
+    pub const PROPOSAL_TIMEOUT: u64 = 10000;
 }
