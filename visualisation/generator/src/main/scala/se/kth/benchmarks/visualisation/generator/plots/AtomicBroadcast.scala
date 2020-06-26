@@ -29,12 +29,12 @@ object AtomicBroadcast {
                                 data: BenchmarkData[Params])
     extends ExperimentPlots[Params](_bench, _space, data) {
       def plot(): List[PlotGroup.Along] = {
-        var normal_axis = MutTreeMap[(String, Long), TreeMap[(String, Long), ImplGroupedResult[Long]]]();
+        var normal_axis = MutTreeMap[(String, Long, Long), TreeMap[String, ImplGroupedResult[Long]]]();
         var reconfig_axis = MutTreeMap[(String, Long, Long), TreeMap[(String, String), ImplGroupedResult[Long]]]();
         var latency_axis = MutTreeMap[(String, Long), TreeMap[String, ImplGroupedResult[Long]]]();
         for ((_impl, res) <- data.results) { // Map: KOMPACTMIX -> ImplGroupedResult
           val params = res.params;
-          val normalPlots: MutTreeMap[(String, Long), MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
+          val normalPlots: MutTreeMap[(String, Long, Long), MutTreeMap[String, (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           val reconfigPlots: MutTreeMap[(String, Long, Long), MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           val latencyPlots: MutTreeMap[(String, Long), MutTreeMap[String, (ListBuffer[Long], ListBuffer[Statistics])]] = MutTreeMap();
           for ((p, stats) <- params.zip(res.stats)) { // go through each row in summary
@@ -51,24 +51,22 @@ object AtomicBroadcast {
                   all_latency_series(latency_serie_key) = latency_serie;
                   latencyPlots(latency_plot_key) = all_latency_series;
                 } else {
-                  val normal_plot_key = (p.reconfiguration, p.numberOfNodes);
-                  val all_normal_series = normalPlots.getOrElse(normal_plot_key, MutTreeMap[(String, Long), (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
-                  val normal_serie_key = (p.algorithm, p.concurrentProposals);
+                  val normal_plot_key = (p.reconfiguration, p.numberOfNodes, p.numberOfProposals);
+                  val all_normal_series = normalPlots.getOrElse(normal_plot_key, MutTreeMap[String, (ListBuffer[Long], ListBuffer[Statistics])]()); // get all series of this plot
+                  val normal_serie_key = p.algorithm;
                   val normal_serie = all_normal_series.getOrElse(normal_serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
-                  normal_serie._1 += p.numberOfProposals;
+                  normal_serie._1 += p.concurrentProposals;
                   normal_serie._2 += stats;
                   all_normal_series(normal_serie_key) = normal_serie;
                   normalPlots(normal_plot_key) = all_normal_series;
                 }
               }
               case "single" | "majority" => {
-                val num_nodes = p.numberOfNodes;
-                val concurrent_proposals = p.concurrentProposals;
-                val plot_key = (reconfig, num_nodes, concurrent_proposals);
-                var all_series = reconfigPlots.getOrElse(plot_key, MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]());
+                val plot_key = (reconfig, p.numberOfNodes, p.numberOfProposals);
+                val all_series = reconfigPlots.getOrElse(plot_key, MutTreeMap[(String, String), (ListBuffer[Long], ListBuffer[Statistics])]());
                 val serie_key = (p.algorithm, p.reconfigPolicy);
-                var serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
-                serie._1 += p.numberOfProposals;
+                val serie = all_series.getOrElse(serie_key, (ListBuffer[Long](), ListBuffer[Statistics]()));
+                serie._1 += p.concurrentProposals;
                 serie._2 += stats;
                 all_series(serie_key) = serie;
                 reconfigPlots(plot_key) = all_series;
@@ -89,14 +87,13 @@ object AtomicBroadcast {
           }
           for (normalPlot <- normalPlots) {
             val reconfig_numNodes = normalPlot._1;
-            var all_series = TreeMap.newBuilder[(String, Long), ImplGroupedResult[Long]];
+            var all_series = TreeMap.newBuilder[String, ImplGroupedResult[Long]];
             for (serie <- normalPlot._2) {
-              val algo_concurrentProposals = serie._1;
+              val algorithm = serie._1;
               val num_proposals = serie._2._1.toList;
               val stats = serie._2._2.toList;
-              val impl_str = s"${algo_concurrentProposals._1}, concurrent_proposals: ${algo_concurrentProposals._2}";
-              val grouped_res = ImplGroupedResult(impl_str, num_proposals, stats);
-              all_series += (algo_concurrentProposals -> grouped_res);
+              val grouped_res = ImplGroupedResult(algorithm, num_proposals, stats);
+              all_series += (algorithm -> grouped_res);
             }
             normal_axis += (reconfig_numNodes -> all_series.result());
           }
@@ -121,19 +118,19 @@ object AtomicBroadcast {
         var all_plotgroups: ListBuffer[PlotGroup.Along] = ListBuffer();
         if (normal_axis.nonEmpty) {
           val normal_plotgroup = this.plotAlongPreSliced(
-            mainAxis = (params: Params) => params.numberOfProposals,
-            groupings = (params: Params) => (params.reconfiguration, params.numberOfNodes),
-            plotId = (params: (String, Long)) => s"reconfiguration-${params._1}-num_nodes-${params._2}",
-            plotParams = (params: (String, Long)) =>
-              List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}"),
+            mainAxis = (params: Params) => params.concurrentProposals,
+            groupings = (params: Params) => (params.reconfiguration, params.numberOfNodes, params.numberOfProposals),
+            plotId = (params: (String, Long, Long)) => s"reconfiguration-${params._1}-num_nodes-${params._2}-num_proposals-${params._3}",
+            plotParams = (params: (String, Long, Long)) =>
+              List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}, num_proposals = ${params._3}"),
             plotTitle = "Execution Time",
-            xAxisLabel = "number of proposals",
-            xAxisTitle = "Number of Proposals",
-            xAxisId = "normal-number-of-proposals",
+            xAxisLabel = "number of concurrent proposals",
+            xAxisTitle = "Number of Concurrent Proposals",
+            xAxisId = "normal-number-of-concurrent-proposals",
             yAxisLabel = "execution time (ms)",
             units = "ms",
-            calculateParams = (_params: (String, Long)) => (),
-            calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
+            calculateParams = (params: (String, Long, Long)) => params._3,
+            calculateValue = (numberOfProposals: Long, _concurrentProposals: Long, stats: Statistics) => {
               val meanTime = stats.sampleMean;
               val totalOperations = numberOfProposals.toDouble;
               val throughput = (totalOperations * 1000.0) / meanTime; // ops/s
@@ -142,26 +139,26 @@ object AtomicBroadcast {
             calculatedTitle = "Throughput",
             calculatedYAxisLabel = "avg. throughput (operations/s)",
             calculatedUnits = "operations/s",
-            seriesParams = (params: Params) => (params.algorithm, params.concurrentProposals),
+            seriesParams = (params: Params) => params.algorithm,
             normal_axis
           );
           all_plotgroups += normal_plotgroup;
         }
         if (reconfig_axis.nonEmpty) {
           val reconfig_plotgroup = this.plotAlongPreSliced(
-            mainAxis = (params: Params) => params.numberOfProposals,
+            mainAxis = (params: Params) => params.concurrentProposals,
             groupings = (params: Params) => (params.reconfiguration, params.numberOfNodes, params.concurrentProposals),
-            plotId = (params: (String, Long, Long)) => s"reconfiguration-${params._1}-num_nodes-${params._2}-concurrent_proposals-${params._3}",
+            plotId = (params: (String, Long, Long)) => s"reconfiguration-${params._1}-num_nodes-${params._2}-num_proposals-${params._3}",
             plotParams = (params: (String, Long, Long)) =>
-              List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}, concurrent_proposals = ${params._3}"),
+              List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}, num_proposals = ${params._3}"),
             plotTitle = "Execution Time",
             xAxisLabel = "number of proposals",
-            xAxisTitle = "Reconfiguration, Number of Proposals",
-            xAxisId = "reconfig-number-of-proposals",
+            xAxisTitle = "Reconfiguration, Number of Concurrent Proposals",
+            xAxisId = "reconfig-number-of-concurrent-proposals",
             yAxisLabel = "execution time (ms)",
             units = "ms",
-            calculateParams = (_params: (String, Long, Long)) => (),
-            calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
+            calculateParams = (params: (String, Long, Long)) => params._3,
+            calculateValue = (numberOfProposals: Long, _concurrentProposals: Long, stats: Statistics) => {
               val meanTime = stats.sampleMean;
               val totalOperations = numberOfProposals.toDouble;
               val throughput = (totalOperations * 1000.0) / meanTime; // ops/s
@@ -179,7 +176,7 @@ object AtomicBroadcast {
           val latency_plotgroup = this.plotAlongPreSliced(
             mainAxis = (params: Params) => params.numberOfProposals,
             groupings = (params: Params) => (params.reconfiguration, params.numberOfNodes),
-            plotId = (params: (String, Long)) => s"latency-reconfiguration-${params._1}-num_nodes-${params._2}",
+            plotId = (params: (String, Long)) => s"latency-${params._1}-num_nodes-${params._2}",
             plotParams = (params: (String, Long)) =>
               List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}"),
             plotTitle = "Execution Time",
@@ -187,7 +184,7 @@ object AtomicBroadcast {
             xAxisTitle = "Latency, Number of Proposals",
             xAxisId = "latency-number-of-proposals",
             yAxisLabel = "execution time (ms)",
-            units = "ms",
+            units = "something",
             calculateParams = (_params: (String, Long)) => (),
             calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
               val meanTime = stats.sampleMean;
