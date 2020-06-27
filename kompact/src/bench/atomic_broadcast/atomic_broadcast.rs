@@ -388,10 +388,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
         if let Some(1) = self.concurrent_proposals  {
+            let file_str = format!("{}/raw_{}_{}", LATENCY_DIR, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap());
             let median_latency =
                 client
                 .actor_ref()
-                .ask( |promise| LocalClientMessage::GetMedianLatency(Ask::new(promise, ())))
+                .ask( |promise| LocalClientMessage::GetMedianLatency(Ask::new(promise, (file_str))))
                 .wait();
 
             self.median_latency_sum += median_latency.as_micros();

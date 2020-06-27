@@ -3,7 +3,6 @@ use super::storage::paxos::*;
 use std::fmt::{Debug};
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection};
 use raw_paxos::{Entry, Paxos};
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use super::messages::*;
@@ -17,6 +16,9 @@ use rand::Rng;
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
 use crate::serialiser_ids::ATOMICBCAST_ID;
+use crate::bench::atomic_broadcast::messages::paxos::PaxosMsg;
+use indexmap::IndexMap;
+use hashbrown::{HashMap, HashSet};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -63,7 +65,7 @@ pub struct PaxosReplica<S, P> where
     communicator_comps: HashMap<u32, Arc<Component<Communicator>>>,
     active_config_id: u32,
     leader_in_active_config: u64,
-    nodes: HashMap<u64, ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
+    nodes: Vec<ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
     prev_sequences: HashMap<u32, Arc<S>>,
     stopped: bool,
     iteration_id: u32,
@@ -94,7 +96,7 @@ impl<S, P> PaxosReplica<S, P> where
             communicator_comps: HashMap::new(),
             active_config_id: 0,
             leader_in_active_config: 0,
-            nodes: HashMap::new(),
+            nodes: vec![],
             prev_sequences: HashMap::new(),
             stopped: false,
             iteration_id: 0,
@@ -114,44 +116,43 @@ impl<S, P> PaxosReplica<S, P> where
 
     fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool) {
         let num_peers = nodes.len() - 1;
-        let mut paxos_peers = HashSet::with_capacity(num_peers);
         let mut communicator_peers = HashMap::with_capacity(num_peers);
-        let mut ble_peers = HashSet::with_capacity(num_peers);
-        for pid in nodes {
-            if pid != self.pid {
-                let actorpath = self.nodes.get(&pid).expect("No actorpath found");
-                match actorpath {
-                    ActorPath::Named(n) => {
-                        // derive paxos and ble actorpath of peers from replica actorpath
-                        let sys_path = n.system();
-                        let protocol = sys_path.protocol();
-                        let port = sys_path.port();
-                        let addr = sys_path.address();
-                        let named_communicator = NamedPath::new(
-                            protocol,
-                            *addr,
-                            port,
-                            vec![format!("{}{},{}-{}", COMMUNICATOR, pid, config_id, self.iteration_id)]
-                        );
-                        let named_ble = NamedPath::new(
-                            protocol,
-                            *addr,
-                            port,
-                            vec![format!("{}{},{}-{}", BLE, pid, config_id, self.iteration_id)]
-                        );
-                        paxos_peers.insert(pid);
-                        communicator_peers.insert(pid, ActorPath::Named(named_communicator));
-                        ble_peers.insert(ActorPath::Named(named_ble));
-                    },
-                    _ => error!(self.ctx.log(), "{}", format!("Actorpath is not named for node {}", pid)),
-                }
+        let mut ble_peers = Vec::with_capacity(num_peers);
+        let mut peers = nodes;
+        peers.retain(|pid| pid != &self.pid);
+        for pid in &peers {
+            let idx = *pid as usize - 1;
+            let actorpath = self.nodes.get(idx).expect("No actorpath found");
+            match actorpath {
+                ActorPath::Named(n) => {
+                    // derive paxos and ble actorpath of peers from replica actorpath
+                    let sys_path = n.system();
+                    let protocol = sys_path.protocol();
+                    let port = sys_path.port();
+                    let addr = sys_path.address();
+                    let named_communicator = NamedPath::new(
+                        protocol,
+                        *addr,
+                        port,
+                        vec![format!("{}{},{}-{}", COMMUNICATOR, pid, config_id, self.iteration_id)]
+                    );
+                    let named_ble = NamedPath::new(
+                        protocol,
+                        *addr,
+                        port,
+                        vec![format!("{}{},{}-{}", BLE, pid, config_id, self.iteration_id)]
+                    );
+                    communicator_peers.insert(*pid, ActorPath::Named(named_communicator));
+                    ble_peers.push(ActorPath::Named(named_ble));
+                },
+                _ => error!(self.ctx.log(), "{}", format!("Actorpath is not named for node {}", pid)),
             }
         }
         let system = self.ctx.system();
         let kill_recipient: Recipient<KillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
         let paxos_comp = system.create(|| {
-            PaxosComp::with(self.ctx.actor_ref(), paxos_peers, config_id, self.pid)
+            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid)
         });
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
@@ -238,15 +239,12 @@ impl<S, P> PaxosReplica<S, P> where
 
     fn new_iteration(&mut self, init: Init) {
         self.stopped = false;
-        let nodes = init.nodes;
+        self.nodes = init.nodes;
         self.pid = init.pid as u64;
         self.iteration_id = init.init_id;
         let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
         let client = ActorPath::deserialise(&mut ser_client.as_slice()).expect("Failed to deserialise Client's actorpath");
         self.cached_client = Some(client);
-        for (id, actorpath) in nodes.into_iter().enumerate() {
-            self.nodes.insert(id as u64 + 1, actorpath);
-        }
         if self.initial_config.contains(&self.pid){
             self.next_config_id = Some(1);
             self.create_replica(1, self.initial_config.clone(), true);
@@ -293,8 +291,9 @@ impl<S, P> PaxosReplica<S, P> where
 
     fn request_sequence(&self, pid: u64, config_id: u32, from_idx: u64, to_idx: u64, tag: u32) {
         let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx, self.pid);
+        let idx = pid as usize - 1;
         self.nodes
-            .get(&pid)
+            .get(idx)
             .expect(&format!("Failed to get Actorpath of node {}", pid))
             .tell_serialised(ReconfigurationMsg::SequenceRequest(sr), self)
             .expect("Should serialise!");
@@ -512,7 +511,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid));
                 for pid in &r.nodes.new_nodes {
                     if pid != &self.pid {
-                        let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
+                        let idx = *pid as usize - 1;
+                        let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
                         actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
                     }
                 }
@@ -522,7 +522,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     if let ReconfigurationPolicy::Eager = self.policy {
                         let st = self.create_eager_sequence_transfer(nodes.as_slice(), prev_config_id);
                         for pid in &new_nodes {
-                            let actorpath = self.nodes.get(pid).expect(&format!("No actorpath found for new node {}", pid));
+                            let idx = *pid as usize - 1;
+                            let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
                             actorpath.tell_serialised(ReconfigurationMsg::SequenceTransfer(st.clone()), self).expect("Should serialise!");
                         }
                     }
@@ -572,7 +573,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             }
                         }
                     } else if self.leader_in_active_config > 0 {
-                        let leader = self.nodes.get(&self.leader_in_active_config).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        let idx = self.leader_in_active_config as usize - 1;
+                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
                         leader.forward_with_original_sender(m, self);
                     }
                     // else no leader... just drop
@@ -729,7 +731,7 @@ struct PaxosComp<S, P> where
     supervisor: ActorRef<PaxosReplicaMsg<S>>,
     communication_port: RequiredPort<CommunicationPort, Self>,
     ble_port: RequiredPort<BallotLeaderElection, Self>,
-    peers: HashSet<u64>,
+    peers: Vec<u64>,
     paxos: Paxos<S, P>,
     config_id: u32,
     pid: u64,
@@ -743,7 +745,7 @@ impl<S, P> PaxosComp<S, P> where
 {
     fn with(
         supervisor: ActorRef<PaxosReplicaMsg<S>>,
-        peers: HashSet<u64>,
+        peers: Vec<u64>,
         config_id: u32,
         pid: u64,
     ) -> PaxosComp<S, P>
@@ -788,7 +790,9 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn send_outgoing(&mut self) {
-        for out_msg in self.paxos.outgoing.drain(..) {
+        let mut outgoing = Vec::with_capacity(MAX_INFLIGHT);
+        std::mem::swap(&mut self.paxos.outgoing, &mut outgoing);
+        for out_msg in outgoing {
             self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(out_msg));
         }
     }
@@ -918,6 +922,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
+    use indexmap::map::IndexMap;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -927,16 +932,17 @@ pub mod raw_paxos{
         config_id: u32,
         pid: u64,
         majority: usize,
-        peers: HashSet<u64>,    // excluding self pid
+        peers: Vec<u64>,    // excluding self pid
         state: (Role, Phase),
         leader: u64,
         n_leader: Ballot,
         promises: HashMap<u64, ReceivedPromise>,
-        las: HashMap<u64, u64>,
-        lds: HashMap<u64, u64>,
+        las: IndexMap<u64, u64>,
+        lds: IndexMap<u64, u64>,
         proposals: Vec<Entry>,
         lc: u64,    // length of longest chosen seq
         prev_ld: u64,
+        cached_ld: u64,
         pub outgoing: Vec<Message>,
     }
 
@@ -948,7 +954,7 @@ pub mod raw_paxos{
         pub fn with(
             config_id: u32,
             pid: u64,
-            peers: HashSet<u64>,
+            peers: Vec<u64>,
             storage: Storage<S, P>,
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
@@ -964,11 +970,12 @@ pub mod raw_paxos{
                 leader: 0,
                 n_leader,
                 promises: HashMap::with_capacity(num_nodes),
-                las: HashMap::with_capacity(num_nodes),
-                lds: HashMap::with_capacity(num_nodes),
+                las: IndexMap::with_capacity(num_nodes),
+                lds: IndexMap::with_capacity(num_nodes),
                 proposals: vec![],
                 lc: 0,
                 prev_ld: 0,
+                cached_ld: 0,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
             }
         }
@@ -1082,7 +1089,7 @@ pub mod raw_paxos{
                 let rp = ReceivedPromise::with( na, sfx);
                 self.promises.insert(self.pid, rp);
                 /* insert my longest decided sequnce */
-                self.lds.insert(self.pid, ld);
+                self.cached_ld = ld;
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
@@ -1128,8 +1135,7 @@ pub mod raw_paxos{
 
         fn send_accept(&mut self, entry: Entry) {
             if !self.stopped() {
-                let my_pid = self.pid;
-                for pid in self.lds.keys().filter(|x| *x != &my_pid) {
+                for pid in self.lds.keys() {
                     let acc = Accept::with(self.n_leader, entry.clone());
                     self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Accept(acc)));
                 }
@@ -1152,7 +1158,7 @@ pub mod raw_paxos{
                         None => false
                     };
                     // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
-                    if max_pid != self.pid {
+                    if max_pid != self.pid {    // sync self with max pid's sequence
                         let my_promise = self.promises.remove(&self.pid).unwrap();
                         let my_promise_meta = (my_promise.n_accepted, my_promise.sfx.len());
                         if my_promise_meta != max_promise_meta {
@@ -1166,15 +1172,13 @@ pub mod raw_paxos{
                     }
                     // create accept_sync with only new proposals for all pids with max_promise
                     let mut new_entries = mem::take(&mut self.proposals);
-                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(&max_pid).unwrap()), false);
+                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(&max_pid).unwrap_or(&self.cached_ld)), false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
                     self.las.insert(self.pid, self.storage.get_sequence_len());
                     self.state = (Role::Leader, Phase::Accept);
-                    self.lds.remove(&self.pid);
                     // send accept_sync to followers
-                    let my_pid = self.pid;
-                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != &my_pid && *pid != &max_pid) {
+                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != &max_pid) {
                         let promise = self.promises.remove(&pid).expect(&format!("No promise from {}. Max pid: {}. Promises received from: {:?}", pid, max_pid, self.promises.keys()));
                         let promise_meta = (promise.n_accepted, promise.sfx.len());
                         if promise_meta == max_promise_meta {
@@ -1185,7 +1189,7 @@ pub mod raw_paxos{
                             self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
                         }
                     }
-                    if max_pid != my_pid {
+                    if max_pid != self.pid {
                         // send acceptsync to max_pid
                         self.outgoing.push(Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync)));
                     }
@@ -1219,12 +1223,11 @@ pub mod raw_paxos{
                     let d = Decide::with(accepted.la, self.n_leader);
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
                 } else {
-                    let num_accepted = self.las.values().filter(|la| *la >= &accepted.la).count();
-                    if num_accepted >= self.majority {
+                    let chosen = self.las.values().filter(|la| *la >= &accepted.la).count() >= self.majority;
+                    if chosen {
                         self.lc = accepted.la;
                         let d = Decide::with(self.lc, self.n_leader);
-                        let my_pid = self.pid;
-                        for pid in self.lds.keys().filter(|x| *x != &my_pid) {
+                        for pid in self.lds.keys() {
                             self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::Decide(d.clone())));
                         }
                         self.handle_decide(d);
@@ -1414,7 +1417,7 @@ mod ballot_leader_election {
         ctx: ComponentContext<Self>,
         ble_port: ProvidedPort<BallotLeaderElection, Self>,
         pid: u64,
-        peers: HashSet<ActorPath>,
+        peers: Vec<ActorPath>,
         round: u64,
         ballots: Vec<(Ballot, u64)>,
         current_ballot: Ballot,  // (round, pid)
@@ -1428,7 +1431,7 @@ mod ballot_leader_election {
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: HashSet<ActorPath>, pid: u64, delta: u64, supervisor: Recipient<KillResponse>) -> BallotLeaderComp {
+        pub fn with(peers: Vec<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<KillResponse>) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1450,7 +1453,9 @@ mod ballot_leader_election {
 
         fn check_leader(&mut self) {
             self.ballots.push((self.current_ballot, self.pid));
-            let (top_ballot, top_pid) = self.ballots.drain(..).max().unwrap();
+            let mut ballots = Vec::with_capacity(self.peers.len());
+            std::mem::swap(&mut self.ballots, &mut ballots);
+            let (top_ballot, top_pid) = ballots.into_iter().max().unwrap();
             if top_ballot < self.max_ballot {
                 self.current_ballot.n = self.max_ballot.n + 1;
                 self.leader = None;
