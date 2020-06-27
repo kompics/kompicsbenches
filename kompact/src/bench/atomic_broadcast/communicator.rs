@@ -4,7 +4,7 @@ use kompact::prelude::*;
 use super::messages::paxos::Message as RawPaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
 use crate::bench::atomic_broadcast::messages::{ProposalResp, AtomicBroadcastMsg};
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use crate::bench::atomic_broadcast::messages::{raft::RawRaftSer, paxos::PaxosSer, KillResponse};
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
 

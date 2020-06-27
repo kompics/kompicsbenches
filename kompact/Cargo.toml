@@ -24,6 +24,8 @@ chrono                  = "0.4"
 raft                    = "0.6.0-alpha"
 uuid                    = { version = "0.8", features = ["v4"] }
 memmap                  = "0.7.0"
+hashbrown               = "0.8.0"
+indexmap                = "1.4.0"
 
 
 #[dependencies.kompact]

@@ -4,6 +4,7 @@ use synchronoise::CountdownEvent;
 use std::collections::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
+use std::fs::{create_dir_all, OpenOptions};
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -16,7 +17,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    GetMedianLatency(Ask<(), Duration>)
+    GetMedianLatency(Ask<(String), Duration>)
 }
 
 #[derive(Debug)]
@@ -169,6 +170,13 @@ impl Actor for Client {
                 self.send_concurrent_proposals();
             },
             LocalClientMessage::GetMedianLatency(ask) => {
+                /*let l = std::mem::take(&mut self.responses);
+                let mut file = OpenOptions::new().create(true).append(true).open(ask.request())?;
+                // file.flush()?;
+                for (id, latency) in l {
+                    let s = format!("{},{}")
+                    write!()
+                }*/
                 let l = std::mem::take(&mut self.responses);
                 let mut latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();
                 latencies.sort();
