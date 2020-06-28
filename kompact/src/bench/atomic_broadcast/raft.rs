@@ -535,7 +535,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
 
         // Send out the messages come from the node.
-        for msg in ready.messages.drain(..) {
+        let mut ready_msgs = Vec::with_capacity(MAX_INFLIGHT);
+        std::mem::swap(&mut ready.messages, &mut ready_msgs);
+        for msg in ready_msgs {
             self.communication_port.trigger(CommunicatorMsg::RawRaftMsg(msg));
         }
         let mut next_conf_change: Option<ConfChangeType> = None;
