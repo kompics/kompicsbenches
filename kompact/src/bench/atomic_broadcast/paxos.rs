@@ -762,7 +762,7 @@ pub mod raw_paxos{
         proposals: Vec<Entry>,
         lc: u64,    // length of longest chosen seq
         prev_ld: u64,
-        cached_ld: u64,
+        acc_sync_ld: u64,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -802,7 +802,7 @@ pub mod raw_paxos{
                 proposals: vec![],
                 lc: 0,
                 prev_ld: 0,
-                cached_ld: 0,
+                acc_sync_ld: 0,
             }
         }
 
@@ -915,7 +915,7 @@ pub mod raw_paxos{
                 let rp = ReceivedPromise::with( na, sfx);
                 self.promises.insert(self.pid, rp);
                 /* insert my longest decided sequnce */
-                self.cached_ld = ld;
+                self.acc_sync_ld = ld;
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
@@ -999,7 +999,7 @@ pub mod raw_paxos{
                     }
                     // create accept_sync with only new proposals for all pids with max_promise
                     let mut new_entries = mem::take(&mut self.proposals);
-                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(&max_pid).unwrap_or(&self.cached_ld)), false);
+                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(&max_pid).unwrap_or(&self.acc_sync_ld)), false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
                     self.las.insert(self.pid, self.storage.get_sequence_len());
