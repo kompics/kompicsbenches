@@ -24,6 +24,7 @@ use std::fs::{File, create_dir_all, OpenOptions};
 use std::error::Error;
 use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -148,7 +149,8 @@ pub struct AtomicBroadcastMaster {
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
     num_written_latency: usize,   // used to calculate avg of median latency
-    latency_histo: Option<Histogram<u64>>
+    latency_hist: Option<Histogram<u64>>,
+    run_id: u64,
 }
 
 impl AtomicBroadcastMaster {
@@ -165,7 +167,8 @@ impl AtomicBroadcastMaster {
             client_comp: None,
             partitioning_actor: None,
             num_written_latency: 0,
-            latency_histo: None
+            latency_hist: None,
+            run_id: 0,
         }
     }
 
@@ -346,7 +349,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         if c.concurrent_proposals == 1 {
-            self.latency_histo = Some(Histogram::<u64>::new(2).expect("Failed to create latency histogram"));
+            self.latency_hist = Some(Histogram::<u64>::new(2).expect("Failed to create latency histogram"));
+            self.run_id = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
         }
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
@@ -394,13 +398,14 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
         if let Some(1) = self.concurrent_proposals  {
-            create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/raw_{}_{}.out", LATENCY_DIR, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+            let dir = format!("{}/run-{}/raw/", LATENCY_DIR, self.run_id);
+            create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
+            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}{}_{}.out", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
             let latencies = client
                 .actor_ref()
                 .ask( |promise| LocalClientMessage::WriteLatencyFile(Ask::new(promise, ())))
                 .wait();
-            let histo = self.latency_histo.as_mut().unwrap();
+            let histo = self.latency_hist.as_mut().unwrap();
             for latency in latencies {
                 writeln!(file, "{}", latency.as_micros()).expect("Failed to write raw latency");
                 histo.record(latency.as_micros() as u64).expect("Failed to record histogram");
@@ -431,14 +436,15 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if last_iteration {
             println!("Cleaning up last iteration");
             if let Some(1) = self.concurrent_proposals {
-                create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-                let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}_{}.out", LATENCY_DIR, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
-                let histo = std::mem::take(&mut self.latency_histo).unwrap();
+                let dir = format!("{}/run-{}/summary/", LATENCY_DIR, self.run_id);
+                create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
+                let mut file = OpenOptions::new().create(true).append(true).open(format!("{}{}_{}.out", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+                let hist = std::mem::take(&mut self.latency_hist).unwrap();
                 let quantiles = [0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999];
                 for q in &quantiles {
-                    writeln!(file, "Value at quantile {}: {} micro secs", q, histo.value_at_quantile(*q)).expect("Failed to write latency file");
+                    writeln!(file, "Value at quantile {}: {} micro secs", q, hist.value_at_quantile(*q)).expect("Failed to write latency file");
                 }
-                writeln!(file, "Min: {} ns, Max: {} ns, Average: {} micro secs", histo.min(), histo.max(), histo.mean());
+                writeln!(file, "Min: {} micro secs, Max: {} micro secs, Average: {} micro secs", hist.min(), hist.max(), hist.mean());
                 file.flush().expect("Failed to flush histogram file");
             }
             self.algorithm = None;
