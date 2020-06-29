@@ -1,10 +1,11 @@
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
 use std::fs::{create_dir_all, OpenOptions};
+use std::io::Write;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -17,7 +18,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    GetMedianLatency(Ask<(String), Duration>)
+    WriteLatencyFile(Ask<(), Vec<Duration>>)
 }
 
 #[derive(Debug)]
@@ -169,26 +170,14 @@ impl Actor for Client {
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
             },
-            LocalClientMessage::GetMedianLatency(ask) => {
-                /*let l = std::mem::take(&mut self.responses);
-                let mut file = OpenOptions::new().create(true).append(true).open(ask.request())?;
-                // file.flush()?;
-                for (id, latency) in l {
-                    let s = format!("{},{}")
-                    write!()
-                }*/
+            LocalClientMessage::WriteLatencyFile(ask) => {
                 let l = std::mem::take(&mut self.responses);
-                let mut latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();
-                latencies.sort();
-                let len = latencies.len();
-                assert_eq!(len as u64, self.num_proposals);
-                let mid = if len % 2 == 0 {
-                    (len/2 - 1 + len/2) / 2
-                } else {
-                    len/2
-                };
-                let median = latencies.get(mid).unwrap();
-                ask.reply(*median).expect("Failed to reply median latency!");
+                // writeln!(file, "{}", l.len()).expect("Failed to write num latencies");
+                let latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();                // latency_vec.sort();
+                // for (_, latency) in latency_vec {
+                //     write!(file, b"{}", latency.unwrap().as_nanos()).expect("Failed to write latency element");
+                // }
+                ask.reply(latencies).expect("Failed to reply write latency file!");
             }
         }
     }

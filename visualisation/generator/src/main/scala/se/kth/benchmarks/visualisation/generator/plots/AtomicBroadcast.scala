@@ -184,7 +184,7 @@ object AtomicBroadcast {
             xAxisTitle = "Latency, Number of Proposals",
             xAxisId = "latency-number-of-proposals",
             yAxisLabel = "execution time (ms)",
-            units = "something",
+            units = "ms",
             calculateParams = (_params: (String, Long)) => (),
             calculateValue = (_nothing: Unit, numberOfProposals: Long, stats: Statistics) => {
               val meanTime = stats.sampleMean;
