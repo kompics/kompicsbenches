@@ -442,9 +442,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 let hist = std::mem::take(&mut self.latency_hist).unwrap();
                 let quantiles = [0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999];
                 for q in &quantiles {
-                    writeln!(file, "Value at quantile {}: {} micro secs", q, hist.value_at_quantile(*q)).expect("Failed to write latency file");
+                    writeln!(file, "Value at quantile {}: {} ms", q, hist.value_at_quantile(*q) as f64 / 1000).expect("Failed to write latency file");
                 }
-                writeln!(file, "Min: {} micro secs, Max: {} micro secs, Average: {} micro secs", hist.min(), hist.max(), hist.mean());
+                writeln!(file, "Min: {} ms, Max: {} ms, Average: {} ms", hist.min() as f64/1000, hist.max() as f64/1000, hist.mean() as f64/1000);
+                writeln!(file, "Total elements: {}", hist.len());
                 file.flush().expect("Failed to flush histogram file");
             }
             self.algorithm = None;
