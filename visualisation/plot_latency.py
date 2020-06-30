@@ -1,3 +1,8 @@
+# uncomment for use on WSL  
+"""
+import matplotlib
+matplotlib.use('Agg')
+"""
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -8,7 +13,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', required=True, help='Directory of raw results')
 parser.add_argument('-n', nargs='?', default=-1, help='Number of lines to read per file')
-parser.add_argument('-t', nargs='?', default='', help='Output directory')
+parser.add_argument('-t', nargs='?', default='./', help='Output directory')
 
 legends = []
 all_plots = []
@@ -40,5 +45,5 @@ plt.xlabel('Proposal id')
 plt.ylabel('Latency (ms)')
 plt.yscale('linear')
 plt.legend(legends, loc='upper right')
-plt.savefig(args.t + '/latency.png')
-plt.show()
+plt.savefig(args.t + 'latency.png')
+#plt.show()
