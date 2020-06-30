@@ -18,7 +18,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    WriteLatencyFile(Ask<(), Vec<Duration>>)
+    WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
 }
 
 #[derive(Debug)]
@@ -173,7 +173,9 @@ impl Actor for Client {
             LocalClientMessage::WriteLatencyFile(ask) => {
                 let l = std::mem::take(&mut self.responses);
                 // writeln!(file, "{}", l.len()).expect("Failed to write num latencies");
-                let latencies: Vec<Duration> = l.values().into_iter().map(|latency| latency.unwrap() ).collect::<Vec<Duration>>();                // latency_vec.sort();
+                let mut v: Vec<_> = l.into_iter().collect();
+                v.sort();
+                let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
                 // for (_, latency) in latency_vec {
                 //     write!(file, b"{}", latency.unwrap().as_nanos()).expect("Failed to write latency element");
                 // }

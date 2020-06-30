@@ -25,6 +25,7 @@ use std::error::Error;
 use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::io;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -326,14 +327,6 @@ impl AtomicBroadcastMaster {
         }
         Ok(())
     }
-
-    fn write_latency_file(result: &str) -> std::io::Result<()> {
-        create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-        let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE))?;
-        write!(file, "{}", result)?;
-        file.flush()?;
-        Ok(())
-    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -406,8 +399,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 .ask( |promise| LocalClientMessage::WriteLatencyFile(Ask::new(promise, ())))
                 .wait();
             let histo = self.latency_hist.as_mut().unwrap();
-            for latency in latencies {
-                writeln!(file, "{}", latency.as_micros()).expect("Failed to write raw latency");
+            for (_, latency) in latencies {
+                writeln!(file, "{}", latency.as_micros() as f64/1000.0).expect("Failed to write raw latency");
                 histo.record(latency.as_micros() as u64).expect("Failed to record histogram");
             }
             file.flush().expect("Failed to flush raw latency file");
@@ -442,10 +435,17 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 let hist = std::mem::take(&mut self.latency_hist).unwrap();
                 let quantiles = [0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999];
                 for q in &quantiles {
-                    writeln!(file, "Value at quantile {}: {} ms", q, hist.value_at_quantile(*q) as f64 / 1000).expect("Failed to write latency file");
+                    writeln!(file, "Value at quantile {}: {} ms", q, hist.value_at_quantile(*q) as f64/1000.0).expect("Failed to write latency file");
                 }
-                writeln!(file, "Min: {} ms, Max: {} ms, Average: {} ms", hist.min() as f64/1000, hist.max() as f64/1000, hist.mean() as f64/1000);
-                writeln!(file, "Total elements: {}", hist.len());
+                let max = hist.max() as f64/1000.0;
+                writeln!(
+                    file,
+                    "Min: {} ms, Max: {} ms, Average: {} ms",
+                    hist.min() as f64/1000.0,
+                    max,
+                    hist.mean() as f64/1000.0
+                ).expect("Failed to write histogram summary");
+                writeln!(file, "Total elements: {}", hist.len()).expect("Failed to write histogram summary");
                 file.flush().expect("Failed to flush histogram file");
             }
             self.algorithm = None;
