@@ -1051,11 +1051,7 @@ pub mod raw_paxos{
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las.insert(from, accepted.la);
-                if self.lc > 0 && accepted.la <= self.lc { // already chosen i.e. slow follower
-                    let d = Decide::with(accepted.la, self.n_leader);
-                    let msg = Message::with(self.pid, from, PaxosMsg::Decide(d));
-                    self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
-                } else {
+                if accepted.la > self.lc {
                     let chosen = self.las.values().filter(|la| *la >= &accepted.la).count() >= self.majority;
                     if chosen {
                         self.lc = accepted.la;
@@ -1227,6 +1223,7 @@ pub mod raw_paxos{
     {
         fn handle(&mut self, msg: <CommunicationPort as Port>::Indication) -> () {
             if let AtomicBroadcastCompMsg::RawPaxosMsg(pm) = msg {
+            	trace!(self.ctx.log(), "handling {:?}", pm);
                 self.handle(pm)
             }
         }
