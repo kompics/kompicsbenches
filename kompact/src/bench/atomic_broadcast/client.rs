@@ -125,6 +125,7 @@ impl Client {
     }
 
     fn retry_proposal(&mut self, id: u64) {
+        trace!(self.ctx.log(), "Retry proposal {}?", id);
         if self.responses.contains_key(&id) { panic!("Failed to cancel timer?"); }
         if let Some(leader) = self.nodes.get(&self.current_leader) {
             match id {
@@ -174,13 +175,9 @@ impl Actor for Client {
             },
             LocalClientMessage::WriteLatencyFile(ask) => {
                 let l = std::mem::take(&mut self.responses);
-                // writeln!(file, "{}", l.len()).expect("Failed to write num latencies");
                 let mut v: Vec<_> = l.into_iter().collect();
                 v.sort();
                 let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
-                // for (_, latency) in latency_vec {
-                //     write!(file, b"{}", latency.unwrap().as_nanos()).expect("Failed to write latency element");
-                // }
                 ask.reply(latencies).expect("Failed to reply write latency file!");
             }
         }
@@ -190,6 +187,7 @@ impl Actor for Client {
         let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
+                trace!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         self.current_leader = pid;
