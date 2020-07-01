@@ -440,7 +440,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn propose(&mut self, proposal: Proposal) {
-        let id = proposal.id;
+        let data = proposal.data;
         match proposal.reconfig {
             Some(mut reconfig) => {
                 if let ReconfigurationState::None = self.reconfig_state {
@@ -492,8 +492,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                 }
             }
             None => {   // i.e normal operation
-                let mut data: Vec<u8> = Vec::with_capacity(8);
-                data.put_u64(id);
                 let _ = self.raw_raft.propose(vec![], data);
             }
         }
@@ -588,7 +586,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             }
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-                            let pr = ProposalResp::with(RECONFIG_ID, self.raw_raft.raft.leader_id);
+                            let mut data: Vec<u8> = Vec::with_capacity(8);
+                            data.put_u64(RECONFIG_ID);
+                            let pr = ProposalResp::with(data, self.raw_raft.raft.leader_id);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                         },
                         ConfChangeType::AddNode => {
@@ -600,7 +600,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             if next_conf_change.is_none() {
                                 // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                let pr = ProposalResp::with(RECONFIG_ID, self.current_leader);  // use current_leader as removed node could be leader
+                                let mut data: Vec<u8> = Vec::with_capacity(8);
+                                data.put_u64(RECONFIG_ID);
+                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
                                 self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                             }
                         },
@@ -618,7 +620,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             if next_conf_change.is_none() {
                                 // info!(self.ctx.log(), "Reconfiguration finished!");
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                let pr = ProposalResp::with(RECONFIG_ID, self.current_leader);  // use current_leader as removed node could be leader
+                                let mut data: Vec<u8> = Vec::with_capacity(8);
+                                data.put_u64(RECONFIG_ID);
+                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
                                 self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                             }
                             if self.raw_raft.raft.id == cc.node_id {    // I was removed
@@ -631,8 +635,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                     }
                 } else { // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader{
-                        let id = entry.data.as_slice().get_u64();
-                        let pr = ProposalResp::with(id, self.raw_raft.raft.id);
+                        let pr = ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id);
                         self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
                 }

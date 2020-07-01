@@ -689,9 +689,9 @@ pub mod paxos {
             self.paxos_state.set_promise(nprom);
         }
 
-        pub fn set_decided_len(&mut self, ld: u64) {
+        /*pub fn set_decided_len(&mut self, ld: u64) {
             self.paxos_state.set_decided_len(ld);
-        }
+        }*/
 
         pub fn decide(&mut self, ld: u64) -> Entry {
             self.paxos_state.set_decided_len(ld);
@@ -709,13 +709,13 @@ pub mod paxos {
             self.paxos_state.get_accepted_ballot()
         }
 
-        pub fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
+        /*pub fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_entries(from, to),
                 PaxosSequence::Stopped(s) => s.get_entries(from, to),
                 _ => panic!("Got unexpected intermediate PaxosSequence::None in get_entries"),
             }
-        }
+        }*/
 
         pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
             match &self.sequence {
@@ -769,7 +769,6 @@ pub mod paxos {
             }
         }
 
-        #[cfg(test)]
         pub fn get_sequence(&self) -> Vec<Entry> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_sequence(),

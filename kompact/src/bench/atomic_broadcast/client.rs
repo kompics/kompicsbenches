@@ -4,8 +4,6 @@ use synchronoise::CountdownEvent;
 use hashbrown::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
-use std::fs::{create_dir_all, OpenOptions};
-use std::io::Write;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -83,14 +81,18 @@ impl Client {
     }
 
     fn propose_normal(&self, id: u64, node: &ActorPath) {
-        let p = Proposal::normal(id);
+        let mut data: Vec<u8> = Vec::with_capacity(8);
+        data.put_u64(id);
+        let p = Proposal::normal(data);
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise Proposal");
     }
 
     fn propose_reconfiguration(&self, node: &ActorPath) {
         let reconfig = self.reconfig.as_ref().unwrap();
         debug!(self.ctx.log(), "{}", format!("Sending reconfiguration: {:?}", reconfig));
-        let p = Proposal::reconfiguration(RECONFIG_ID, reconfig.clone());
+        let mut data: Vec<u8> = Vec::with_capacity(8);
+        data.put_u64(RECONFIG_ID);
+        let p = Proposal::reconfiguration(data, reconfig.clone());
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise reconfig Proposal");
     }
 
@@ -210,10 +212,11 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&pr.id) {
-                            self.cancel_timer(proposal_meta.timer);
-                            match pr.id {
+                        let id = pr.data.as_slice().get_u64();
+                        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
+                            match id {
                                 RECONFIG_ID => {
+                                    self.cancel_timer(proposal_meta.timer);
                                     if self.responses.len() as u64 == self.num_proposals {
                                         info!(self.ctx.log(), "Got reconfig at last");
                                         self.state = ExperimentState::Finished;
@@ -237,7 +240,8 @@ impl Actor for Client {
                                         },
                                         _ => None,
                                     };
-                                    self.responses.insert(pr.id, latency);
+                                    self.cancel_timer(proposal_meta.timer);
+                                    self.responses.insert(id, latency);
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
                                         info!(self.ctx.log(), "Got all responses");

@@ -11,7 +11,6 @@ use super::paxos::{PaxosReplica, ReconfigurationPolicy as PaxosReconfigurationPo
 use super::storage::paxos::{MemoryState, MemorySequence};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client, LocalClientMessage};
-use super::messages::Run;
 use hashbrown::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
 use hdrhistogram::Histogram;
@@ -19,13 +18,11 @@ use hdrhistogram::Histogram;
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
 use tikv_raft::{storage::MemStorage};
-use crate::bench::atomic_broadcast::parameters::{LATENCY_DIR, LATENCY_FILE};
-use std::fs::{File, create_dir_all, OpenOptions};
-use std::error::Error;
+use crate::bench::atomic_broadcast::parameters::LATENCY_DIR;
+use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::io;
+use std::time::SystemTime;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
