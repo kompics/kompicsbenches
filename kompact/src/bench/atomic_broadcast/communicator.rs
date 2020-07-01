@@ -70,6 +70,7 @@ impl Provide<CommunicationPort> for Communicator {
                 receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
             },
             CommunicatorMsg::ProposalResponse(pr) => {
+                trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },
