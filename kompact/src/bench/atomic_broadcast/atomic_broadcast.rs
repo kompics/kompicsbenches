@@ -393,7 +393,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if let Some(1) = self.concurrent_proposals  {
             let dir = format!("{}/run-{}/", LATENCY_DIR, self.run_id);
             create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
-            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}_{}.out", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}_{}.data", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
             let latencies = client
                 .actor_ref()
                 .ask( |promise| LocalClientMessage::WriteLatencyFile(Ask::new(promise, ())))
