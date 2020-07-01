@@ -21,7 +21,8 @@ all_plots = []
 args = parser.parse_args()
 print("Plotting with args:",args)
 n = int(args.n)
-for filename in os.listdir(args.s):
+data_files = [f for f in os.listdir(args.s) if f.endswith('.data')]
+for filename in data_files :
     count = 0
     x = []
     y = []
@@ -38,12 +39,12 @@ for filename in os.listdir(args.s):
     
 print("Plotting",len(all_plots),"series")    
 for (x, y) in all_plots:
-    plt.scatter(x, y, alpha = 0.7)
+    plt.scatter(x, y, alpha = 0.4)
         
 plt.title('Latency')
 plt.xlabel('Proposal id')
-plt.ylabel('Latency (ms)')
+plt.ylabel('Latency (micro s)')
 plt.yscale('linear')
 plt.legend(legends, loc='upper right')
-plt.savefig(args.t + 'latency.png')
-#plt.show()
+plt.savefig(args.t + 'latency.png', dpi = 600)
+plt.show()
