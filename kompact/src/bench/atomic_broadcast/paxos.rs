@@ -758,7 +758,8 @@ pub mod raw_paxos{
         lc: u64,    // length of longest chosen seq
         prev_ld: u64,
         acc_sync_ld: u64,
-        max_promise_meta: (Ballot, usize, u64)  // ballot, sfx len, pid
+        max_promise_meta: (Ballot, usize, u64),  // ballot, sfx len, pid
+        pub outgoing: Vec<Message>,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -798,7 +799,19 @@ pub mod raw_paxos{
                 lc: 0,
                 prev_ld: 0,
                 acc_sync_ld: 0,
-                max_promise_meta: (Ballot::with(0, 0), 0, 0)
+                max_promise_meta: (Ballot::with(0, 0), 0, 0),
+                outgoing: Vec::with_capacity(MAX_INFLIGHT),
+            }
+        }
+
+        pub fn get_decided_entries(&mut self) -> Vec<Entry> {
+            let ld = self.storage.get_decided_len();
+            if self.prev_ld < ld {
+                let decided = self.storage.get_entries(self.prev_ld, ld);
+                self.prev_ld = ld;
+                decided
+            } else {
+                vec![]
             }
         }
 
@@ -883,7 +896,7 @@ pub mod raw_paxos{
                 let na = self.storage.get_accepted_ballot();
                 let ld = self.storage.get_decided_len();
                 let sfx = self.storage.get_suffix(ld);
-                self.max_promise_meta = (na.clone(), sfx.len(), self.pid);
+                self.max_promise_meta = (na, sfx.len(), self.pid);
                 let rp = ReceivedPromise::with( na, sfx);
                 self.promises.insert(self.pid, rp);
                 /* insert my longest decided sequnce */
@@ -980,18 +993,18 @@ pub mod raw_paxos{
                         let promise_meta = (&promise.n_accepted, &promise.sfx.len());
                         if promise_meta == (max_promise_n, max_sfx_len) {
                             let msg = Message::with(self.pid, *pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
-                            self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
+                            self.outgoing.push(msg);
                         } else {
                             let sfx = self.storage.get_suffix(*lds);
                             let acc_sync = AcceptSync::with(self.n_leader, sfx, *lds, true);
                             let msg = Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync));
-                            self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
+                            self.outgoing.push(msg);
                         }
                     }
                     if max_pid != &self.pid {
                         // send acceptsync to max_pid
                         let msg = Message::with(self.pid, *max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync));
-                        self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
+                        self.outgoing.push(msg);
                     }
                 }
             }
