@@ -759,7 +759,6 @@ pub mod paxos {
             }
         }
 
-        #[cfg(test)]
         pub fn get_sequence(&self) -> Vec<Entry> {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_sequence(),

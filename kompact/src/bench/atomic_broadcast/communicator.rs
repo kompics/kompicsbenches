@@ -65,10 +65,12 @@ impl Provide<CommunicationPort> for Communicator {
                 receiver.tell_serialised(RaftMsg(rm), self).expect("Should serialise RaftMsg");
             },
             CommunicatorMsg::RawPaxosMsg(pm) => {
+                trace!(self.ctx.log(), "sending {:?}", pm);
                 let receiver = self.peers.get(&pm.to).unwrap_or_else(|| panic!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}. PaxosMsg: {:?}", &pm.to, self.peers.keys(), pm));
                 receiver.tell_serialised(pm, self).expect("Should serialise RawPaxosMsg");
             },
             CommunicatorMsg::ProposalResponse(pr) => {
+                trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },

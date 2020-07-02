@@ -11,18 +11,18 @@ use super::paxos::{PaxosReplica, ReconfigurationPolicy as PaxosReconfigurationPo
 use super::storage::paxos::{MemoryState, MemorySequence};
 use partitioning_actor::PartitioningActor;
 use super::client::{Client, LocalClientMessage};
-use super::messages::Run;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use crate::partitioning_actor::IterationControlMsg;
+use hdrhistogram::Histogram;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
 use tikv_raft::{storage::MemStorage};
-use crate::bench::atomic_broadcast::parameters::{LATENCY_DIR, LATENCY_FILE};
-use std::fs::{File, create_dir_all, OpenOptions};
-use std::error::Error;
+use crate::bench::atomic_broadcast::parameters::LATENCY_DIR;
+use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
+use std::time::SystemTime;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -146,7 +146,9 @@ pub struct AtomicBroadcastMaster {
     iteration_id: u32,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
-    median_latency_sum: u128,   // used to calculate avg of median latency
+    num_written_latency: usize,   // used to calculate avg of median latency
+    latency_hist: Option<Histogram<u64>>,
+    run_id: u64,
 }
 
 impl AtomicBroadcastMaster {
@@ -162,7 +164,9 @@ impl AtomicBroadcastMaster {
             iteration_id: 0,
             client_comp: None,
             partitioning_actor: None,
-            median_latency_sum: 0
+            num_written_latency: 0,
+            latency_hist: None,
+            run_id: 0,
         }
     }
 
@@ -320,14 +324,6 @@ impl AtomicBroadcastMaster {
         }
         Ok(())
     }
-
-    fn write_latency_file(result: &str) -> std::io::Result<()> {
-        create_dir_all(LATENCY_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", LATENCY_DIR));
-        let mut file = OpenOptions::new().create(true).append(true).open(format!("{}/{}", LATENCY_DIR, LATENCY_FILE))?;
-        write!(file, "{}", result)?;
-        file.flush()?;
-        Ok(())
-    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -342,6 +338,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_nodes = Some(c.number_of_nodes);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
+        if c.concurrent_proposals == 1 {
+            self.latency_hist = Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
+            self.run_id = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64;
+        }
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         self.system = Some(system);
         let params = ClientParams::with(
@@ -388,14 +388,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
         if let Some(1) = self.concurrent_proposals  {
-            let file_str = format!("{}/raw_{}_{}", LATENCY_DIR, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap());
-            let median_latency =
-                client
+            let dir = format!("{}/run-{}/", LATENCY_DIR, self.run_id);
+            create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
+            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}_{}.data", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+            let latencies = client
                 .actor_ref()
-                .ask( |promise| LocalClientMessage::GetMedianLatency(Ask::new(promise, (file_str))))
+                .ask( |promise| LocalClientMessage::WriteLatencyFile(Ask::new(promise, ())))
                 .wait();
-
-            self.median_latency_sum += median_latency.as_micros();
+            let histo = self.latency_hist.as_mut().unwrap();
+            for (_, l) in latencies {
+                let latency = l.as_micros() as u64;
+                writeln!(file, "{}", latency).expect("Failed to write raw latency");
+                histo.record(latency).expect("Failed to record histogram");
+            }
+            file.flush().expect("Failed to flush raw latency file");
         }
 
         let kill_client_f = system.kill_notify(client);
@@ -421,23 +427,31 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if last_iteration {
             println!("Cleaning up last iteration");
             if let Some(1) = self.concurrent_proposals {
-                let latency_sum_ms = (self.median_latency_sum/1000) as f64; // micro seconds -> ms
-                let avg_latency = latency_sum_ms/(self.iteration_id as f64);
-                let str = format!(
-                    "{},{},{},{}\n",
-                    self.algorithm.clone().unwrap(),
-                    self.num_nodes.clone().unwrap(),
-                    self.num_proposals.clone().unwrap(),
-                    avg_latency
-                );
-                Self::write_latency_file(&str).unwrap_or_else(|_| println!("Failed to persist latency results: {}", str));
+                let dir = format!("{}/run-{}/", LATENCY_DIR, self.run_id);
+                create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
+                let mut file = OpenOptions::new().create(true).append(true).open(format!("{}summary_{}_{}.out", &dir, self.algorithm.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+                let hist = std::mem::take(&mut self.latency_hist).unwrap();
+                let quantiles = [0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999];
+                for q in &quantiles {
+                    writeln!(file, "Value at quantile {}: {} micro s", q, hist.value_at_quantile(*q)).expect("Failed to write latency file");
+                }
+                let max = hist.max();
+                writeln!(
+                    file,
+                    "Min: {} micro s, Max: {} micro s, Average: {} micro s",
+                    hist.min(),
+                    max,
+                    hist.mean()
+                ).expect("Failed to write histogram summary");
+                writeln!(file, "Total elements: {}", hist.len()).expect("Failed to write histogram summary");
+                file.flush().expect("Failed to flush histogram file");
             }
             self.algorithm = None;
             self.num_nodes = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
-            self.median_latency_sum = 0;
+            self.num_written_latency = 0;
             self.iteration_id = 0;
             system
                 .shutdown()

@@ -16,8 +16,6 @@ use rand::Rng;
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
 use crate::serialiser_ids::ATOMICBCAST_ID;
-use crate::bench::atomic_broadcast::messages::paxos::PaxosMsg;
-use indexmap::IndexMap;
 use hashbrown::{HashMap, HashSet};
 
 const BLE: &str = "ble";
@@ -42,7 +40,7 @@ impl<S> FinalMsg<S> where S: SequenceTraits {
 #[derive(Debug)]
 pub enum PaxosCompMsg {
     Propose(Proposal),
-    SequenceReq(SequenceRequest),
+    // SequenceReq(SequenceRequest),
     GetAllEntries(Ask<(), Vec<Entry>>)
 }
 
@@ -78,7 +76,7 @@ pub struct PaxosReplica<S, P> where
     active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
     cached_client: Option<ActorPath>,
-    pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>,
+    // pending_local_seq_requests: HashMap<SequenceRequest, ActorPath>,
     pending_kill_comps: usize,
 }
 
@@ -109,7 +107,7 @@ impl<S, P> PaxosReplica<S, P> where
             active_peers: (Vec::new(), Vec::new()),
             retry_transfer_timers: HashMap::new(),
             cached_client: None,
-            pending_local_seq_requests: HashMap::new(),
+            // pending_local_seq_requests: HashMap::new(),
             pending_kill_comps: 0,
         }
     }
@@ -452,7 +450,7 @@ pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
     Leader(u32, u64),
     Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse),
-    SequenceResp(SequenceRequest, Option<Vec<u8>>),
+    // SequenceResp(SequenceRequest, Option<Vec<u8>>),
     KillResp
 }
 
@@ -540,6 +538,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     ap.tell_serialised(resp, self).expect("Should serialise");
                 }
             },
+            /*
             PaxosReplicaMsg::SequenceResp(sr, ser_entries) => {
                 if let Some(requestor) = self.pending_local_seq_requests.get(&sr) {
                     let (succeeded, serialised) = match ser_entries {
@@ -553,6 +552,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 }
                 self.pending_local_seq_requests.remove(&sr);
             },
+            */
             _ => {}
         }
     }
@@ -647,7 +647,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                     let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT/2), move |c, _| c.retry_request_sequence(config_id, seq_len));
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
-                                                _ => unimplemented!(),
                                             }
                                             self.create_replica(r.config_id, nodes, false);
                                         }
@@ -800,10 +799,9 @@ impl<S, P> PaxosComp<S, P> where
     fn get_decided(&mut self) {
         for decided in self.paxos.get_decided_entries() {
             match decided {
-                Entry::Normal(n) => {
+                Entry::Normal(data) => {
                     if self.current_leader == self.pid {
-                        let id = n.as_slice().get_u64();
-                        let pr = ProposalResp::with(id, self.current_leader);
+                        let pr = ProposalResp::with(data, self.current_leader);
                         self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
                 },
@@ -817,7 +815,9 @@ impl<S, P> PaxosComp<S, P> where
                     let r = FinalMsg::with(ss.config_id, nodes, final_seq);
                     self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
                     let leader = 0; // we don't know who will become leader in new config
-                    let pr = ProposalResp::with(RECONFIG_ID, leader);
+                    let mut data: Vec<u8> = Vec::with_capacity(8);
+                    data.put_u64(RECONFIG_ID);
+                    let pr = ProposalResp::with(data, leader);
                     self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }
@@ -830,9 +830,7 @@ impl<S, P> PaxosComp<S, P> where
                 self.paxos.propose_reconfiguration(reconfig);
             },
             None => {
-                let mut data: Vec<u8> = Vec::with_capacity(8);
-                data.put_u64(p.id);
-                self.paxos.propose_normal(data);
+                self.paxos.propose_normal(p.data);
             }
         }
     }
@@ -849,15 +847,15 @@ impl<S, P> Actor for PaxosComp<S, P> where
             PaxosCompMsg::Propose(p) => {
                 self.propose(p);
             },
+            /*
             PaxosCompMsg::SequenceReq(seq_req) => {
                 let ser_entries = self.paxos.get_chosen_ser_entries(seq_req.from_idx, seq_req.to_idx);
                 self.supervisor.tell(PaxosReplicaMsg::SequenceResp(seq_req, ser_entries));
             },
+            */
             PaxosCompMsg::GetAllEntries(a) => { // for testing only
-                #[cfg(test)] {
-                    let seq = self.paxos.get_sequence();
-                    a.reply(seq).expect("Failed to reply to GetAllEntries");
-                }
+                let seq = self.paxos.get_sequence();
+                a.reply(seq).expect("Failed to reply to GetAllEntries");
             },
         }
     }
@@ -918,7 +916,7 @@ pub mod raw_paxos{
     use super::super::storage::paxos::Storage;
     use super::{SequenceTraits, PaxosStateTraits};
     use std::fmt::Debug;
-    use std::collections::{HashMap, HashSet};
+    use hashbrown::HashMap;
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
@@ -1046,6 +1044,7 @@ pub mod raw_paxos{
             }
         }
 
+        /*
         pub fn get_chosen_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
             let ld = self.storage.get_decided_len();
             let max_idx = std::cmp::max(ld, self.lc);
@@ -1055,6 +1054,7 @@ pub mod raw_paxos{
                 self.storage.get_ser_entries(from_idx, to_idx)
             }
         }
+        */
 
         pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
             self.storage.stop_and_get_sequence()
@@ -1291,16 +1291,6 @@ pub mod raw_paxos{
         }
 
         /*** algorithm specific functions ***/
-        fn get_max_promise_pid(&self) -> u64 {
-            let (max_promise_pid, _max_promise) = self.promises.iter().max_by(|(_pid, promise), (_other_pid, other_promise)|
-                if promise.n_accepted > other_promise.n_accepted || (promise.n_accepted == other_promise.n_accepted && promise.sfx.len() > other_promise.sfx.len()){
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                }
-            ).unwrap();
-            *max_promise_pid
-        }
 
         fn drop_after_stopsign(entries: &mut Vec<Entry>) {   // drop all entries ordered after stopsign (if any)
             let ss_idx = entries.iter().position(|e| e.is_stopsign());
@@ -1309,7 +1299,6 @@ pub mod raw_paxos{
             };
         }
 
-        #[cfg(test)]
         pub fn get_sequence(&self) -> Vec<Entry> {
             self.storage.get_sequence()
         }
