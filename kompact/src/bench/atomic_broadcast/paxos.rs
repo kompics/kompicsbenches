@@ -942,7 +942,8 @@ pub mod raw_paxos{
         proposals: Vec<Entry>,
         lc: u64,    // length of longest chosen seq
         prev_ld: u64,
-        cached_ld: u64,
+        acc_sync_ld: u64,
+        max_promise_meta: (Ballot, usize, u64),  // ballot, sfx len, pid
         pub outgoing: Vec<Message>,
     }
 
@@ -975,7 +976,8 @@ pub mod raw_paxos{
                 proposals: vec![],
                 lc: 0,
                 prev_ld: 0,
-                cached_ld: 0,
+                acc_sync_ld: 0,
+                max_promise_meta: (Ballot::with(0, 0), 0, 0),
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
             }
         }
@@ -1086,10 +1088,11 @@ pub mod raw_paxos{
                 let na = self.storage.get_accepted_ballot();
                 let ld = self.storage.get_decided_len();
                 let sfx = self.storage.get_suffix(ld);
+                self.max_promise_meta = (na, sfx.len(), self.pid);
                 let rp = ReceivedPromise::with( na, sfx);
                 self.promises.insert(self.pid, rp);
                 /* insert my longest decided sequnce */
-                self.cached_ld = ld;
+                self.acc_sync_ld = ld;
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
                 self.state = (Role::Leader, Phase::Prepare);
@@ -1146,22 +1149,23 @@ pub mod raw_paxos{
 
         fn handle_promise_prepare(&mut self, prom: Promise, from: u64) {
             if prom.n == self.n_leader {
+                let promise_meta = &(prom.n_accepted, prom.sfx.len(), from);
+                if promise_meta > &self.max_promise_meta {
+                    self.max_promise_meta = promise_meta.clone();
+                }
                 let rp = ReceivedPromise::with(prom.n_accepted, prom.sfx);
                 self.promises.insert(from, rp);
                 self.lds.insert(from, prom.ld);
                 if self.promises.len() >= self.majority {
-                    let max_pid = self.get_max_promise_pid();
+                    let (max_promise_n, max_sfx_len, max_pid) = &self.max_promise_meta;
                     let max_promise = self.promises.remove(&max_pid).unwrap();
-                    let max_promise_meta = (max_promise.n_accepted, max_promise.sfx.len());
                     let last_is_stop = match max_promise.sfx.last() {
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
-                    // println!("Prepare completed: suffix len={}, ld: {}, la before: {}", suffix.len(), self.storage.get_decided_len(), self.storage.get_sequence_len());
-                    if max_pid != self.pid {    // sync self with max pid's sequence
-                        let my_promise = self.promises.remove(&self.pid).unwrap();
-                        let my_promise_meta = (my_promise.n_accepted, my_promise.sfx.len());
-                        if my_promise_meta != max_promise_meta {
+                    if max_pid != &self.pid {    // sync self with max pid's sequence
+                        let my_promise = self.promises.get(&self.pid).unwrap();
+                        if (&my_promise.n_accepted, &my_promise.sfx.len()) != (max_promise_n, max_sfx_len) {
                             self.storage.append_on_decided_prefix(max_promise.sfx);
                         }
                     }
@@ -1172,26 +1176,29 @@ pub mod raw_paxos{
                     }
                     // create accept_sync with only new proposals for all pids with max_promise
                     let mut new_entries = mem::take(&mut self.proposals);
-                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(&max_pid).unwrap_or(&self.cached_ld)), false);
+                    let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), *(self.lds.get(max_pid).unwrap_or(&self.acc_sync_ld)), false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
                     self.las.insert(self.pid, self.storage.get_sequence_len());
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
-                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != &max_pid) {
-                        let promise = self.promises.remove(&pid).expect(&format!("No promise from {}. Max pid: {}. Promises received from: {:?}", pid, max_pid, self.promises.keys()));
-                        let promise_meta = (promise.n_accepted, promise.sfx.len());
-                        if promise_meta == max_promise_meta {
-                            self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone())));
+                    for (pid, lds) in self.lds.iter().filter(|(pid, _)| *pid != max_pid) {
+                        let promise = self.promises.get(&pid).expect(&format!("No promise from {}. Max pid: {}. Promises received from: {:?}", pid, max_pid, self.promises.keys()));
+                        let promise_meta = (&promise.n_accepted, &promise.sfx.len());
+                        if promise_meta == (max_promise_n, max_sfx_len) {
+                            let msg = Message::with(self.pid, *pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
+                            self.outgoing.push(msg);
                         } else {
                             let sfx = self.storage.get_suffix(*lds);
                             let acc_sync = AcceptSync::with(self.n_leader, sfx, *lds, true);
-                            self.outgoing.push(Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync)));
+                            let msg = Message::with(self.pid, *pid, PaxosMsg::AcceptSync(acc_sync));
+                            self.outgoing.push(msg);
                         }
                     }
-                    if max_pid != self.pid {
+                    if max_pid != &self.pid {
                         // send acceptsync to max_pid
-                        self.outgoing.push(Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync)));
+                        let msg = Message::with(self.pid, *max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync));
+                        self.outgoing.push(msg);
                     }
                 }
             }
@@ -1219,10 +1226,7 @@ pub mod raw_paxos{
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las.insert(from, accepted.la);
-                if self.lc > 0 && accepted.la <= self.lc { // already chosen i.e. slow follower
-                    let d = Decide::with(accepted.la, self.n_leader);
-                    self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
-                } else {
+                if accepted.la > self.lc {
                     let chosen = self.las.values().filter(|la| *la >= &accepted.la).count() >= self.majority;
                     if chosen {
                         self.lc = accepted.la;
