@@ -92,7 +92,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             heartbeat_tick,  // leader sends HB every heartbeat_tick
             max_inflight_msgs: MAX_INFLIGHT,
             max_size_per_msg,
-            batch_append: false,
+            batch_append: self.batch,
             ..Default::default()
         };
         assert_eq!(c.validate().is_ok(), true);

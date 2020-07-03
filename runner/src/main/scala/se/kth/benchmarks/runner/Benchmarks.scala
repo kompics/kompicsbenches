@@ -311,6 +311,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastProposals = List(10L.mio);
   private val atomicBroadcastConcurrentProposals = List(1L.k, 10L.k, 100L.k);
 
+  private val paxos = List("paxos", "paxos-batch");
+
   private val raft = List("raft-nobatch", "raft-batch");
   private val raft_reconfig = List("joint-consensus-remove-leader", "joint-consensus-remove-follower");
 
@@ -318,7 +320,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
-      List("paxos"),
+      paxos,
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
@@ -328,7 +330,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
     .cross(
-      List("paxos"),
+      paxos,
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
@@ -362,7 +364,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val paxosNormalSpace = ParameterSpacePB
     .cross(
-      List("paxos"),
+      paxos,
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
@@ -372,7 +374,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val paxosReconfigSpace = ParameterSpacePB
     .cross(
-      List("paxos"),
+      paxos,
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
