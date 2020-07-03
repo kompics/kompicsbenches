@@ -99,12 +99,12 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub struct Accept {
         pub n: Ballot,
-        pub entry: Entry,
+        pub entries: Vec<Entry>,
     }
 
     impl Accept {
-        pub fn with(n: Ballot, entry: Entry) -> Accept {
-            Accept{ n, entry }
+        pub fn with(n: Ballot, entries: Vec<Entry>) -> Accept {
+            Accept{ n, entries }
         }
     }
 
@@ -290,7 +290,7 @@ pub mod paxos {
                 PaxosMsg::Accept(a) => {
                     buf.put_u8(ACCEPT_ID);
                     PaxosSer::serialise_ballot(&a.n, buf);
-                    PaxosSer::serialise_entry(&a.entry, buf);
+                    PaxosSer::serialise_entries(&a.entries, buf);
                 },
                 PaxosMsg::Accepted(acc) => {
                     buf.put_u8(ACCEPTED_ID);
@@ -353,8 +353,8 @@ pub mod paxos {
                 },
                 ACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let entry = Self::deserialise_entry(buf);
-                    let a = Accept::with(n, entry);
+                    let entries = Self::deserialise_entries(buf);
+                    let a = Accept::with(n, entries);
                     let msg = Message::with(from, to, PaxosMsg::Accept(a));
                     Ok(msg)
                 },

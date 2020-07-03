@@ -253,8 +253,8 @@ impl AtomicBroadcastMaster {
                 format!("Concurrent proposals: {} should be less or equal to number of proposals: {}", c.concurrent_proposals, c.number_of_proposals)
             ));
         }
-        match c.algorithm.to_lowercase().as_ref() {
-            "paxos" => {
+        match &c.algorithm.to_lowercase() {
+            paxos if paxos == "paxos" || paxos == "paxos-batch" => {
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
                         if c.reconfig_policy.to_lowercase() != "none" {
@@ -486,8 +486,9 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         println!("Setting up Atomic Broadcast (client)");
         let system =
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
-        let named_path = match c.algorithm.as_ref() {
-            "paxos" => {
+        let named_path = match &c.algorithm {
+            paxos if paxos == "paxos" || paxos == "paxos-batch" => {
+                let batch_accept = paxos == "paxos-batch";
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
@@ -496,7 +497,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                 };
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
-                    PaxosReplica::with(initial_config, reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull))
+                    PaxosReplica::with(initial_config, reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull), batch_accept)
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
@@ -523,7 +524,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self_path
             }
             raft if raft == "raft-nobatch" || raft == "raft-batch" => {
-                let batch = if raft == "raft-batch" { true } else { false };
+                let batch = raft == "raft-batch";
                 let conf_state = get_initial_conf(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
