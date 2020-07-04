@@ -416,6 +416,12 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
     }
 
+    fn try_campaign_leader(&mut self) { // start campaign to become leader if none has been elected yet
+        if self.current_leader == 0 {
+            self.raw_raft.campaign().expect("Failed to start campaign to become leader");
+        }
+    }
+
     fn get_next_change(context: &[u8]) -> Option<ConfChangeType> {
         match context.get(0) {
             Some(0) => None,
@@ -583,6 +589,12 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             if !current_conf.contains(self.raw_raft.raft.leader_id) { // leader was removed
                                 self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
                                 self.supervisor.tell(RaftReplicaMsg::Leader(0));
+                                let mut rng = rand::thread_rng();
+                                let rnd = rng.gen_range(1, RANDOM_DELTA);
+                                self.schedule_once(
+                                    Duration::from_millis(rnd),
+                                    move |c, _| c.try_campaign_leader()
+                                );
                             }
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);

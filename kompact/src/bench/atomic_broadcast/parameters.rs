@@ -6,6 +6,7 @@ pub const LATENCY_DIR: &str = "../latency_results";
 pub mod paxos {
     pub const TRANSFER_TIMEOUT: u64 = 300;
     pub const BLE_DELTA: u64 = 20;
+    pub const INITIAL_ELECTION_TIMEOUT: u64 = 200;
 }
 
 pub mod raft {
