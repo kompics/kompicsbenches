@@ -1451,7 +1451,6 @@ mod ballot_leader_election {
         }
 
         fn check_leader(&mut self) {
-            self.ballots.push((self.current_ballot, self.pid));
             let mut ballots = Vec::with_capacity(self.peers.len());
             std::mem::swap(&mut self.ballots, &mut ballots);
             let (top_ballot, top_pid) = ballots.into_iter().max().unwrap();
@@ -1469,6 +1468,7 @@ mod ballot_leader_election {
 
         fn hb_timeout(&mut self) {
             if self.ballots.len() + 1 >= self.majority {
+                self.ballots.push((self.current_ballot, self.pid));
                 self.check_leader();
             } else {
                 self.ballots.clear();
@@ -1478,12 +1478,12 @@ mod ballot_leader_election {
                 let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                 peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
             }
-            self.start_timer();
+            self.start_timer(self.hb_delay);
         }
 
-        fn start_timer(&mut self) {
+        fn start_timer(&mut self, t: u64) {
             let timer = self.schedule_once(
-                Duration::from_millis(self.hb_delay),
+                Duration::from_millis(t),
                 move |c, _| c.hb_timeout()
             );
             self.timer = Some(timer);
@@ -1504,7 +1504,7 @@ mod ballot_leader_election {
                         let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                         peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
                     }
-                    self.start_timer();
+                    self.start_timer(INITIAL_ELECTION_TIMEOUT);
                 },
                 ControlEvent::Kill => {
                     self.stop_timer();
