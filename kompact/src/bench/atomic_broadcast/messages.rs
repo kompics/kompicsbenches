@@ -239,6 +239,14 @@ pub mod paxos {
             }
             ents
         }
+
+        pub fn deserialise_entries_into(buf: &mut dyn Buf, target: &mut Vec<Entry>, idx_offset: usize) {
+            let len = buf.get_u32() as usize;
+            for i in 0..len {
+                let entry = Self::deserialise_entry(buf);
+                target[idx_offset + i] = entry;
+            }
+        }
     }
 
     impl Serialisable for Message {
