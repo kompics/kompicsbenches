@@ -38,7 +38,7 @@ impl<S> FinalMsg<S> where S: SequenceTraits {
 #[derive(Debug)]
 pub enum PaxosCompMsg {
     Propose(Proposal),
-    // SequenceReq(SequenceRequest),
+    LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
     GetAllEntries(Ask<(), Vec<Entry>>)
 }
 
@@ -112,7 +112,7 @@ impl<S, P> PaxosReplica<S, P> where
         }
     }
 
-    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool) {
+    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool, start: bool) {
         let num_peers = nodes.len() - 1;
         let mut communicator_peers = HashMap::with_capacity(num_peers);
         let mut ble_peers = Vec::with_capacity(num_peers);
@@ -185,10 +185,20 @@ impl<S, P> PaxosReplica<S, P> where
         biconnect_components::<BallotLeaderElection, _, _>(&ble_comp, &paxos_comp)
             .expect("Could not connect BLE and PaxosComp!");
 
+        if start {
+            self.active_config_id = config_id;
+            self.leader_in_active_config = 0;
+            self.next_config_id = None;
+            system.start(&paxos_comp);
+            system.start(&ble_comp);
+            system.start(&communicator);
+        } else {
+            self.next_config_id = Some(config_id);
+        }
+
         self.paxos_comps.insert(config_id, paxos_comp);
         self.ble_comps.insert(config_id, ble_comp);
         self.communicator_comps.insert(config_id, communicator);
-        self.next_config_id = Some(config_id);
     }
 
     fn start_replica(&mut self) {
@@ -245,7 +255,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.cached_client = Some(client);
         if self.initial_config.contains(&self.pid){
             self.next_config_id = Some(1);
-            self.create_replica(1, self.initial_config.clone(), true);
+            self.create_replica(1, self.initial_config.clone(), true, false);
         } else {
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
@@ -309,7 +319,7 @@ impl<S, P> PaxosReplica<S, P> where
                     if !received_segments.contains_key(&tag) {    // missing segment, retry from a replica we know have the final seq
                         let from_idx = i as u64 * offset;
                         let to_idx = from_idx + offset;
-                        // info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
+                        info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
                         let pid = self.active_peers.0.get(i as usize % num_active).expect(&format!("Failed to get active pid. idx: {}, len: {}", i, self.active_peers.0.len()));
                         self.request_sequence(*pid, config_id, from_idx, to_idx, tag);
                     }
@@ -330,7 +340,7 @@ impl<S, P> PaxosReplica<S, P> where
         SequenceMetaData::with(config_id, seq_len)
     }
 
-    fn create_eager_sequence_transfer(&self, continued_nodes: &[u64], config_id: u32) -> SequenceTransfer {
+    fn create_eager_sequence_transfer(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceTransfer {
         let index = continued_nodes.iter().position(|pid| pid == &self.pid).expect("Could not find my pid in continued_nodes");
         let tag = index as u32 + 1;
         let n_continued = continued_nodes.len();
@@ -366,15 +376,15 @@ impl<S, P> PaxosReplica<S, P> where
                 }
             },
             None => {
-                (false, vec![])
-                /*if self.active_config_id == sr.config_id {  // we have not reached final sequence, but might still have requested elements
+                // (false, vec![])
+                if self.active_config_id == sr.config_id {  // we have not reached final sequence, but might still have requested elements
                     let paxos = self.paxos_comps.get(&sr.config_id).expect(&format!("No paxos comp with config_id: {} when handling SequenceRequest. My config_ids: {:?}", sr.config_id, self.paxos_comps.keys()));
-                    paxos.actor_ref().tell(PaxosCompMsg::SequenceReq(sr.clone()));
-                    self.pending_local_seq_requests.insert(sr, requestor);
+                    let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
+                    paxos.actor_ref().tell(PaxosCompMsg::LocalSequenceReq(requestor, sr, prev_seq_metadata));
                     return;
                 } else {
                     (false, vec![])
-                }*/
+                }
             }
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
@@ -422,7 +432,7 @@ impl<S, P> PaxosReplica<S, P> where
             let tag = st.tag;
             let from_idx = st.from_idx;
             let to_idx = st.to_idx;
-            // info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
+            info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
             // query someone we know have reached final seq
             let num_active = self.active_peers.0.len();
             if num_active > 0 {
@@ -450,7 +460,6 @@ pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
     Leader(u32, u64),
     Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse),
-    // SequenceResp(SequenceRequest, Option<Vec<u8>>),
     KillResp
 }
 
@@ -518,7 +527,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 let mut new_nodes = r.nodes.new_nodes;
                 if nodes.contains(&self.pid) {
                     if let ReconfigurationPolicy::Eager = self.policy {
-                        let st = self.create_eager_sequence_transfer(nodes.as_slice(), prev_config_id);
+                        let st = self.create_eager_sequence_transfer(&nodes, prev_config_id);
                         for pid in &new_nodes {
                             let idx = *pid as usize - 1;
                             let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
@@ -526,8 +535,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     }
                     nodes.append(&mut new_nodes);
-                    self.create_replica(r.config_id, nodes, false);
-                    self.start_replica();
+                    self.create_replica(r.config_id, nodes, false, true);
                 }
             },
             PaxosReplicaMsg::RegResp(rr) => {
@@ -538,19 +546,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     ap.tell_serialised(resp, self).expect("Should serialise");
                 }
             },
-            /*PaxosReplicaMsg::SequenceResp(sr, ser_entries) => {
-                if let Some(requestor) = self.pending_local_seq_requests.get(&sr) {
-                    let (succeeded, serialised) = match ser_entries {
-                        Some(sr) => (true, sr),
-                        None => (false, vec![]),
-                    };
-                    let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
-                    let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, serialised, prev_seq_metadata);
-                    // info!(self.ctx.log(), "Replying async seq transfer: tag: {}", st.tag);
-                    requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
-                }
-                self.pending_local_seq_requests.remove(&sr);
-            },*/
             _ => {}
         }
     }
@@ -634,8 +629,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             // only SS in final sequence and no other prev sequences -> start directly
                                             let final_sequence = S::new_with_sequence(vec![]);
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                            self.create_replica(r.config_id, nodes, false);
-                                            self.start_replica();
+                                            self.create_replica(r.config_id, nodes, false, true);
                                         } else {
                                             match self.policy {
                                                 ReconfigurationPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
@@ -647,7 +641,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
                                             }
-                                            self.create_replica(r.config_id, nodes, false);
+                                            self.create_replica(r.config_id, nodes, false, false);
                                         }
                                     },
                                     Some(next_config_id) => {
@@ -845,12 +839,14 @@ impl<S, P> Actor for PaxosComp<S, P> where
             PaxosCompMsg::Propose(p) => {
                 self.propose(p);
             },
-            /*
-            PaxosCompMsg::SequenceReq(seq_req) => {
-                let ser_entries = self.paxos.get_chosen_ser_entries(seq_req.from_idx, seq_req.to_idx);
-                self.supervisor.tell(PaxosReplicaMsg::SequenceResp(seq_req, ser_entries));
+            PaxosCompMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
+                let (succeeded, ser_entries) = match self.paxos.get_chosen_ser_entries(seq_req.from_idx, seq_req.to_idx) {
+                    Some(ser_entries) => (true, ser_entries),
+                    None => (false, vec![]),
+                };
+                let st = SequenceTransfer::with(seq_req.config_id, seq_req.tag, succeeded, seq_req.from_idx, seq_req.to_idx, ser_entries, prev_seq_metadata);
+                requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
             },
-            */
             PaxosCompMsg::GetAllEntries(a) => { // for testing only
                 let seq = self.paxos.get_sequence();
                 a.reply(seq).expect("Failed to reply to GetAllEntries");
@@ -1072,6 +1068,16 @@ pub mod raw_paxos{
                 _ => {
                     self.forward_proposals(entry)
                 }
+            }
+        }
+
+        pub fn get_chosen_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
+            let ld = self.storage.get_decided_len();
+            let max_idx = std::cmp::max(ld, self.lc);
+            if to_idx > max_idx {
+                None
+            } else {
+                self.storage.get_ser_entries(from_idx, to_idx)
             }
         }
 
