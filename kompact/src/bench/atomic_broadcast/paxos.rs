@@ -802,27 +802,41 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn get_decided(&mut self) {
-        for decided in self.paxos.get_decided_entries() {
-            match decided {
-                Entry::Normal(data) => {
-                    if self.current_leader == self.pid {
-                        let pr = ProposalResp::with(data, self.current_leader);
-                        self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                    }
-                },
-                Entry::StopSign(ss) => {
-                    let final_seq = self.paxos.stop_and_get_sequence();
-                    let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
-                        |&pid| pid == &self.pid || self.peers.contains(pid)
-                    );
-                    debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
-                    let nodes = Reconfig::with(continued_nodes, new_nodes);
-                    let r = FinalMsg::with(ss.config_id, nodes, final_seq);
-                    self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
-                    let leader = 0; // we don't know who will become leader in new config
-                    let mut data: Vec<u8> = Vec::with_capacity(8);
-                    data.put_u64(RECONFIG_ID);
-                    let pr = ProposalResp::with(data, leader);
+        let mut decided_entries = self.paxos.get_decided_entries();
+        let last = decided_entries.pop();
+        match last {
+            Some(Entry::StopSign(ss)) => {
+                let final_seq = self.paxos.stop_and_get_sequence();
+                let new_config_len = ss.nodes.len();
+                let mut data: Vec<u8> = Vec::with_capacity( 8 + 4 + 8 * new_config_len);
+                data.put_u64(RECONFIG_ID);
+                data.put_u32(new_config_len as u32);
+                for pid in &ss.nodes {
+                    data.put_u64(*pid);
+                }
+                let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
+                    |&pid| pid == &self.pid || self.peers.contains(pid)
+                );
+                debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
+                let nodes = Reconfig::with(continued_nodes, new_nodes);
+                let r = FinalMsg::with(ss.config_id, nodes, final_seq);
+                self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
+                let leader = 0; // we don't know who will become leader in new config
+                let pr = ProposalResp::with(data, leader);
+                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+            },
+            Some(Entry::Normal(data)) => {
+                if self.current_leader == self.pid {
+                    let pr = ProposalResp::with(data, self.current_leader);
+                    self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+                }
+            },
+            _ => {}
+        }
+        if self.current_leader == self.pid {
+            for decided in decided_entries {
+                if let Entry::Normal(data) = decided {
+                    let pr = ProposalResp::with(data, self.current_leader);
                     self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }

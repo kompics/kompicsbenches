@@ -19,6 +19,11 @@ pub enum LocalClientMessage {
     WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
 }
 
+enum Response {
+    Normal(u64),
+    Reconfiguration(Vec<u64>)
+}
+
 #[derive(Debug)]
 struct ProposalMetaData {
     start_time: Option<SystemTime>,
@@ -49,10 +54,12 @@ pub struct Client {
     current_leader: u64,
     state: ExperimentState,
     retry_after_reconfig: bool,
+    current_config: Vec<u64>
 }
 
 impl Client {
     pub fn with(
+        initial_config: Vec<u64>,
         num_proposals: u64,
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
@@ -77,6 +84,7 @@ impl Client {
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             retry_after_reconfig,
+            current_config: initial_config
         }
     }
 
@@ -150,6 +158,20 @@ impl Client {
             self.cancel_timer(old_timer);
         }
     }
+
+    fn deserialise_response(data: &mut dyn Buf) -> Response {
+        match data.get_u64() {
+            RECONFIG_ID => {
+                let len = data.get_u32();
+                let mut config = Vec::with_capacity(len as usize);
+                for _ in 0..len {
+                    config.push(data.get_u64());
+                }
+                Response::Reconfiguration(config)
+            },
+            n => Response::Normal(n),
+        }
+    }
 }
 
 impl Provide<ControlPort> for Client {
@@ -210,27 +232,11 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
-                        let id = pr.data.as_slice().get_u64();
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                            match id {
-                                RECONFIG_ID => {
-                                    self.cancel_timer(proposal_meta.timer);
-                                    if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        self.reconfig = None;
-                                        self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
-                                        if self.current_leader == 0 {
-                                            self.state = ExperimentState::ReconfigurationElection;
-                                        } else {
-                                            self.send_concurrent_proposals();
-                                        }
-                                    }
-                                },
-                                _ => {
+                        let data = pr.data;
+                        let response = Self::deserialise_response(&mut data.as_slice());
+                        match response {
+                            Response::Normal(id) => {
+                                if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                                     let latency = match self.num_concurrent_proposals {
                                         1 => {
                                             let start_time = proposal_meta.start_time.expect("No start time found!");
@@ -254,11 +260,32 @@ impl Actor for Client {
                                             let proposal_meta = ProposalMetaData::with(None, timer);
                                             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
                                         }
-                                        if self.state != ExperimentState::ReconfigurationElection {
+                                        if self.state != ExperimentState::ReconfigurationElection && self.current_config.contains(&pr.latest_leader) {
                                             self.current_leader = pr.latest_leader;
                                             self.send_concurrent_proposals();
                                         }
                                     }
+                                }
+                            }
+                            Response::Reconfiguration(new_config) => {
+                                if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
+                                    self.cancel_timer(proposal_meta.timer);
+                                    if self.responses.len() as u64 == self.num_proposals {
+                                        info!(self.ctx.log(), "Got reconfig at last");
+                                        self.state = ExperimentState::Finished;
+                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                    } else {
+                                        self.reconfig = None;
+                                        self.current_leader = pr.latest_leader;
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                                        if self.current_leader == 0 {   // Paxos: wait for leader in new config
+                                            self.state = ExperimentState::ReconfigurationElection;
+                                        } else {    // Raft: continue if there is a leader
+                                            self.send_concurrent_proposals();
+                                        }
+                                    }
+                                    // info!(self.ctx.log(), "Reconfiguration succeeded: {:?}", new_config);
+                                    self.current_config = new_config;
                                 }
                             }
                         }

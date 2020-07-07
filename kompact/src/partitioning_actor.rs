@@ -77,7 +77,7 @@ impl Actor for PartitioningActor {
             },
             IterationControlMsg::Stop(stop_latch) => {
                 self.reply_stop = Some(stop_latch);
-                info!(self.ctx.log(), "Stopping iteration");
+                info!(self.ctx.log(), "Stopping iteration {}", self.init_id);
                 for node in &self.nodes {
                     node.tell_serialised(PartitioningActorMsg::Stop, self)
                         .expect("Should serialise");
