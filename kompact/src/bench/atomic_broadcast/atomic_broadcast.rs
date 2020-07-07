@@ -212,8 +212,10 @@ impl AtomicBroadcastMaster {
             _ => false,
         };
         /*** Setup client ***/
+        let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
+                initial_config,
                 self.num_proposals.unwrap(),
                 self.concurrent_proposals.unwrap(),
                 nodes_id,
