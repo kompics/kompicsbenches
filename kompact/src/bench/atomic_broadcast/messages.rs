@@ -73,12 +73,11 @@ pub mod paxos {
         pub n_accepted: Ballot,
         pub sfx: Vec<Entry>,
         pub ld: u64,
-        pub ser_sfx: Option<Vec<u8>>
     }
 
     impl Promise {
         pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
-            Promise { n, n_accepted, sfx, ld, ser_sfx: None }
+            Promise { n, n_accepted, sfx, ld, }
         }
     }
 
@@ -282,10 +281,7 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
                     buf.put_u64(p.ld);
-                    match &p.ser_sfx {
-                        Some(ser_sfx) => buf.put_slice(ser_sfx.as_slice()),
-                        None => PaxosSer::serialise_entries(&p.sfx, buf),
-                    }
+                    PaxosSer::serialise_entries(&p.sfx, buf);
                 },
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
@@ -414,7 +410,7 @@ pub mod paxos {
         pub succeeded: bool,
         pub from_idx: u64,
         pub to_idx: u64,
-        pub ser_entries: Vec<u8>,
+        pub entries: Vec<Entry>,
         pub metadata: SequenceMetaData
     }
 
@@ -425,10 +421,10 @@ pub mod paxos {
             succeeded: bool,
             from_idx: u64,
             to_idx: u64,
-            ser_entries: Vec<u8>,
+            entries: Vec<Entry>,
             metadata: SequenceMetaData
         ) -> SequenceTransfer {
-            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, ser_entries, metadata }
+            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, entries, metadata }
         }
     }
 
@@ -530,9 +526,7 @@ pub mod paxos {
                     buf.put_u64(st.to_idx);
                     buf.put_u32(st.metadata.config_id);
                     buf.put_u64(st.metadata.len);
-                    let len = st.ser_entries.len() as u64;
-                    buf.put_u64(len);
-                    buf.put_slice(st.ser_entries.as_slice());
+                    PaxosSer::serialise_entries(st.entries.as_slice(), buf);
                 }
             }
             Ok(())
@@ -584,11 +578,9 @@ pub mod paxos {
                     let to_idx = buf.get_u64();
                     let metadata_config_id = buf.get_u32();
                     let metadata_seq_len = buf.get_u64();
-                    let n = buf.get_u64() as usize;
-                    let mut seq_ser: Vec<u8> = vec![0; n];
-                    buf.copy_to_slice(&mut seq_ser);
+                    let entries = PaxosSer::deserialise_entries(buf);
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
-                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, seq_ser, metadata);
+                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, entries, metadata);
                     Ok(ReconfigurationMsg::SequenceTransfer(st))
                 }
                 _ => {

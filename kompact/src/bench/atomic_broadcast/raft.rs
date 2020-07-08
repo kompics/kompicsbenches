@@ -479,6 +479,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             }
                         },
                         _ => {
+                            unreachable!("Should not use Add-Remove node reconfig in experiments!");
+                            /*
                             let current_config = self.raw_raft.raft.prs().configuration().voters();
                             let num_remove_nodes = current_config.iter().filter(|pid| !reconfig.0.contains(pid)).count();
                             let mut add_nodes: Vec<u64> = reconfig.0.drain(..).filter(|pid| !current_config.contains(pid)).collect();
@@ -493,6 +495,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 None
                             };
                             self.propose_conf_change(pid, ConfChangeType::AddNode, next_change);
+                            */
                         }
                     }
                     self.reconfig_state = ReconfigurationState::Pending;
@@ -545,7 +548,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         for msg in ready_msgs {
             self.communication_port.trigger(CommunicatorMsg::RawRaftMsg(msg));
         }
-        let mut next_conf_change: Option<ConfChangeType> = None;
+        // let mut next_conf_change: Option<ConfChangeType> = None;
         // Apply all committed proposals.
         if let Some(committed_entries) = ready.committed_entries.take() {
             for entry in &committed_entries {
@@ -668,6 +671,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
         // Call `RawNode::advance` interface to update position flags in the raft.
         self.raw_raft.advance(ready);
+        /*
         if self.raw_raft.raft.state == StateRole::Leader && next_conf_change.is_some(){
             let next_change_type = next_conf_change.unwrap();
             if let ConfChangeType::RemoveNode = next_change_type {
@@ -689,6 +693,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                 panic!("Expected RemoveNode as next change in this experiment");
             }
         }
+        */
     }
 }
 
