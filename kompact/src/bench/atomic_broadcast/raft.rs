@@ -319,7 +319,7 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     reconfig_state: ReconfigurationState,
     current_leader: u64,
     reconfig_policy: ReconfigurationPolicy,
-    removed_nodes: Vec<u64>
+    removed_nodes: Vec<u64>,
 }
 
 impl<S> Provide<ControlPort> for RaftComp<S> where
@@ -579,38 +579,40 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             assert!(self.raw_raft.raft.is_in_membership_change());  // TODO remove?
                         },
                         ConfChangeType::FinalizeMembershipChange => {
+                            let prev_conf = self.raw_raft.raft.prs().configuration().voters().clone();
                             self.raw_raft
                                 .raft
                                 .finalize_membership_change(&cc)
                                 .expect("Failed to finalize reconfiguration");
 
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
-                            if current_conf.contains(self.raw_raft.raft.id) {
-                                debug!(self.ctx.log(), "Reconfiguration OK");
-                                self.reconfig_state = ReconfigurationState::Finished;
-                            } else {    // I was removed
+                            let mut removed_nodes: Vec<u64> = prev_conf.difference(current_conf.voters()).cloned().collect();
+                            // info!(self.ctx.log(), "Removed nodes are {:?}", removed_nodes);
+                            if removed_nodes.contains(&self.raw_raft.raft.id) {
                                 debug!(self.ctx.log(), "Reconfiguration OK, I was removed");
                                 self.stop_timers();
-                                self.removed_nodes.push(self.raw_raft.raft.id);
                                 self.reconfig_state = ReconfigurationState::Removed
+                            } else {
+                                debug!(self.ctx.log(), "Reconfiguration OK");
+                                self.reconfig_state = ReconfigurationState::Finished;
+                                if removed_nodes.contains(&self.current_leader) || removed_nodes.contains(&self.raw_raft.raft.leader_id){
+                                    self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
+                                    self.supervisor.tell(RaftReplicaMsg::Leader(0));
+                                    let mut rng = rand::thread_rng();
+                                    let rnd = rng.gen_range(1, RANDOM_DELTA);
+                                    self.schedule_once(
+                                        Duration::from_millis(rnd),
+                                        move |c, _| c.try_campaign_leader()
+                                    );
+                                }
                             }
-                            let leader_id = self.raw_raft.raft.leader_id;
-                            if !current_conf.contains(leader_id) { // leader was removed
-                                self.removed_nodes.push(leader_id);
-                                self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
-                                self.supervisor.tell(RaftReplicaMsg::Leader(0));
-                                let mut rng = rand::thread_rng();
-                                let rnd = rng.gen_range(1, RANDOM_DELTA);
-                                self.schedule_once(
-                                    Duration::from_millis(rnd),
-                                    move |c, _| c.try_campaign_leader()
-                                );
-                            }
-                            let conf_len = current_conf.voters().len();
+                            self.removed_nodes.append(&mut removed_nodes);
+                            let current_voters = current_conf.voters();
+                            let conf_len = current_voters.len();
                             let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * conf_len);
                             data.put_u64(RECONFIG_ID);
                             data.put_u32(conf_len as u32);
-                            for pid in current_conf.voters() {
+                            for pid in current_voters {
                                 data.put_u64(*pid);
                             }
                             let cs = ConfState::from(current_conf);
