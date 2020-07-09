@@ -574,7 +574,7 @@ pub mod paxos {
 
         fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>);
 
-        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry>;
+        fn get_entries(&self, from: u64, to: u64) -> &[Entry];
 
         fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>>;
 
@@ -699,19 +699,11 @@ pub mod paxos {
             self.paxos_state.get_accepted_ballot()
         }
 
-        pub fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
+        pub fn get_entries(&self, from: u64, to: u64) -> &[Entry] {
             match &self.sequence {
                 PaxosSequence::Active(s) => s.get_entries(from, to),
                 PaxosSequence::Stopped(s) => s.get_entries(from, to),
                 _ => panic!("Got unexpected intermediate PaxosSequence::None in get_entries"),
-            }
-        }
-
-        pub fn get_ser_entries(&self, from_idx: u64, to_idx: u64) -> Option<Vec<u8>> {
-            match &self.sequence {
-                PaxosSequence::Active(s) => s.get_ser_entries(from_idx, to_idx),
-                PaxosSequence::Stopped(s) => s.get_ser_entries(from_idx, to_idx),
-                _ => panic!("Got unexpected intermediate PaxosSequence::None in get_ser_entries"),
             }
         }
 
@@ -797,9 +789,9 @@ pub mod paxos {
             self.sequence.append(seq);
         }
 
-        fn get_entries(&self, from: u64, to: u64) -> Vec<Entry> {
+        fn get_entries(&self, from: u64, to: u64) -> &[Entry] {
             match self.sequence.get(from as usize..to as usize) {
-                Some(ents) => ents.to_vec(),
+                Some(ents) => ents,
                 None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
             }
         }

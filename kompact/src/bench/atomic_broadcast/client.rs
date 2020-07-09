@@ -278,7 +278,7 @@ impl Actor for Client {
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
                                         // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
-                                        if self.current_leader == 0 {   // Paxos: wait for leader in new config
+                                        if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
                                             self.send_concurrent_proposals();
