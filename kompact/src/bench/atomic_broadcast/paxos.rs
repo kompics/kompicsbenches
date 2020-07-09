@@ -923,6 +923,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
+    use crate::bench::atomic_broadcast::parameters::raft::BATCH_DECIDE;
 
     #[derive(ComponentDefinition)]
     pub struct Paxos<S, P> where
@@ -954,8 +955,8 @@ pub mod raw_paxos{
         batch_accept_meta: Vec<Option<(Ballot, usize)>>,    //  ballot, index in outgoing
         batch_decide_meta: Vec<Option<(Ballot, usize)>>,
         outgoing: Vec<Message>,
-        n: usize,
-        la: u64,
+        num_nodes: usize,
+        cached_la: u64,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -976,7 +977,7 @@ pub mod raw_paxos{
             let n_leader = Ballot::with(0, 0);
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
-            let n = *max_pid as usize;
+            let num_nodes = *max_pid as usize;
             Paxos {
                 ctx: ComponentContext::new(),
                 supervisor,
@@ -990,9 +991,9 @@ pub mod raw_paxos{
                 state: (Role::Follower, Phase::None),
                 leader: 0,
                 n_leader,
-                promises_meta: vec![None; n],
-                las: vec![0; n],
-                lds: vec![None; n],
+                promises_meta: vec![None; num_nodes],
+                las: vec![0; num_nodes],
+                lds: vec![None; num_nodes],
                 proposals: Vec::with_capacity(MAX_INFLIGHT),
                 lc: 0,
                 prev_ld: 0,
@@ -1000,11 +1001,11 @@ pub mod raw_paxos{
                 max_promise_meta: (Ballot::with(0, 0), 0, 0),
                 max_promise_sfx: vec![],
                 batch_accept,
-                batch_accept_meta: vec![None; n],
-                batch_decide_meta: vec![None; n],
+                batch_accept_meta: vec![None; num_nodes],
+                batch_decide_meta: vec![None; num_nodes],
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
-                n,
-                la: 0,
+                num_nodes,
+                cached_la: 0,
             }
         }
 
@@ -1012,8 +1013,8 @@ pub mod raw_paxos{
             let mut outgoing = Vec::with_capacity(MAX_INFLIGHT);
             std::mem::swap(&mut self.outgoing, &mut outgoing);
             if self.batch_accept {
-                self.batch_accept_meta = vec![None; self.n];
-                self.batch_decide_meta = vec![None; self.n];
+                self.batch_accept_meta = vec![None; self.num_nodes];
+                self.batch_decide_meta = vec![None; self.num_nodes];
             }
             outgoing
         }
@@ -1097,9 +1098,9 @@ pub mod raw_paxos{
         }
 
         fn clear_peers_state(&mut self) {
-            self.las = vec![0; self.n];
-            self.promises_meta = vec![None; self.n];
-            self.lds = vec![None; self.n];
+            self.las = vec![0; self.num_nodes];
+            self.promises_meta = vec![None; self.num_nodes];
+            self.lds = vec![None; self.num_nodes];
         }
 
         /*** Leader ***/
@@ -1199,8 +1200,8 @@ pub mod raw_paxos{
                     }
                 }
                 self.storage.append_entry(entry);
-                self.la += 1;
-                self.las[self.pid as usize - 1] = self.la;
+                self.cached_la += 1;
+                self.las[self.pid as usize - 1] = self.cached_la;
             }
         }
 
@@ -1239,8 +1240,8 @@ pub mod raw_paxos{
                     let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), max_ld, false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
-                    self.la = self.storage.get_sequence_len();
-                    self.las[self.pid as usize - 1] = self.la;
+                    self.cached_la = self.storage.get_sequence_len();
+                    self.las[self.pid as usize - 1] = self.cached_la;
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
                     let max_idx = max_pid as usize - 1;
@@ -1286,7 +1287,7 @@ pub mod raw_paxos{
                 let idx = if self.lc > 0 {
                     self.lc
                 } else {
-                    self.la
+                    self.cached_la
                 };
                 if idx > prom.ld {
                     let d = Decide::with(idx, self.n_leader);
@@ -1303,7 +1304,7 @@ pub mod raw_paxos{
                     let chosen = self.las.iter().filter(|la| *la >= &accepted.la).count() >= self.majority;
                     if chosen {
                         self.lc = accepted.la;
-                        if self.batch_accept {
+                        if BATCH_DECIDE {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());
                             for (idx, _) in promised_idx {
                                 match self.batch_decide_meta.get_mut(idx) {
@@ -1374,13 +1375,13 @@ pub mod raw_paxos{
                     let mut entries = acc_sync.entries;
                     if acc_sync.sync {
                         self.storage.append_on_prefix(acc_sync.ld, &mut entries);
-                        self.la = self.storage.get_sequence_len();
+                        self.cached_la = self.storage.get_sequence_len();
                     } else {
                         self.storage.append_sequence(&mut entries);
-                        self.la += entries.len() as u64;
+                        self.cached_la += entries.len() as u64;
                     }
                     self.state = (Role::Follower, Phase::Accept);
-                    let accepted = Accepted::with(acc_sync.n, self.la);
+                    let accepted = Accepted::with(acc_sync.n, self.cached_la);
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
             }
@@ -1390,9 +1391,9 @@ pub mod raw_paxos{
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
                     let mut entries = acc.entries;
-                    self.la += entries.len() as u64;
+                    self.cached_la += entries.len() as u64;
                     self.storage.append_sequence(&mut entries);
-                    let accepted = Accepted::with(acc.n, self.la);
+                    let accepted = Accepted::with(acc.n, self.cached_la);
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
             }
