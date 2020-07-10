@@ -585,18 +585,21 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 .finalize_membership_change(&cc)
                                 .expect("Failed to finalize reconfiguration");
 
+                            self.current_leader = self.raw_raft.raft.leader_id;
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
                             let mut removed_nodes: Vec<u64> = prev_conf.difference(current_conf.voters()).cloned().collect();
                             // info!(self.ctx.log(), "Removed nodes are {:?}", removed_nodes);
                             if removed_nodes.contains(&self.raw_raft.raft.id) {
                                 debug!(self.ctx.log(), "Reconfiguration OK, I was removed");
                                 self.stop_timers();
-                                self.reconfig_state = ReconfigurationState::Removed
+                                self.reconfig_state = ReconfigurationState::Removed;
                             } else {
                                 debug!(self.ctx.log(), "Reconfiguration OK");
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                if removed_nodes.contains(&self.current_leader) || removed_nodes.contains(&self.raw_raft.raft.leader_id){
-                                    self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
+                            }
+                            if removed_nodes.contains(&self.current_leader){    // leader was removed
+                                self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
+                                if self.reconfig_state != ReconfigurationState::Removed {  // campaign later if we are not removed
                                     self.supervisor.tell(RaftReplicaMsg::Leader(0));
                                     let mut rng = rand::thread_rng();
                                     let rnd = rng.gen_range(1, RANDOM_DELTA);
@@ -618,7 +621,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
 
-                            let pr = ProposalResp::with(data, self.raw_raft.raft.leader_id);
+                            let pr = ProposalResp::with(data, self.current_leader);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                         },
                         /*

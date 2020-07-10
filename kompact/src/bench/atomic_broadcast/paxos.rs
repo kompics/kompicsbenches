@@ -922,7 +922,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use crate::bench::atomic_broadcast::parameters::raft::BATCH_DECIDE;
+    use crate::bench::atomic_broadcast::parameters::paxos::BATCH_DECIDE;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
