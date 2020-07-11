@@ -4,6 +4,7 @@ use synchronoise::CountdownEvent;
 use hashbrown::HashMap;
 use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
 use std::time::{Duration, SystemTime};
+use synchronoise::event::CountdownError;
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -216,7 +217,12 @@ impl Actor for Client {
                         match self.state {
                             ExperimentState::LeaderElection => {
                                 info!(self.ctx.log(), "Got first leader: {}. Decrementing election latch", pid);
-                                self.leader_election_latch.decrement().expect("Failed to decrement leader election latch!");
+                                match self.leader_election_latch.decrement() {
+                                    Ok(_) => {},
+                                    Err(e) => if e != CountdownError::AlreadySet {
+                                        panic!("Failed to decrement election latch: {:?}", e);
+                                    }
+                                }
                             },
                             ExperimentState::ReconfigurationElection => {
                                 if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
@@ -226,7 +232,6 @@ impl Actor for Client {
                                 }
                                 self.send_concurrent_proposals();
                             },
-                            ExperimentState::Running => self.send_concurrent_proposals(),
                             _ => {},
                         }
                     },
@@ -277,7 +282,7 @@ impl Actor for Client {
                                     } else {
                                         self.reconfig = None;
                                         self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, retry_count: {}", self.current_leader, self.retry_count);
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}", self.current_leader);
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
