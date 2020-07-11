@@ -880,6 +880,60 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
 }
 
 #[derive(Clone, Debug)]
+pub enum StopMsg {
+    Peer(u64),
+    Client
+}
+
+const PEER_STOP_ID: u8 = 1;
+const CLIENT_STOP_ID: u8 = 2;
+
+impl Serialisable for StopMsg {
+    fn ser_id(&self) -> u64 { serialiser_ids::STOP_ID }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(9)
+    }
+
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match self {
+            StopMsg::Peer(pid) => {
+                buf.put_u8(PEER_STOP_ID);
+                buf.put_u64(*pid);
+            },
+            StopMsg::Client => buf.put_u8(CLIENT_STOP_ID),
+        }
+        Ok(())
+    }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
+    }
+}
+
+pub struct StopMsgDeser;
+
+impl Deserialiser<StopMsg> for StopMsgDeser {
+    const SER_ID: u64 = serialiser_ids::STOP_ID;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<StopMsg, SerError> {
+        match buf.get_u8() {
+            PEER_STOP_ID => {
+                let pid = buf.get_u64();
+                Ok(StopMsg::Peer(pid))
+            },
+            CLIENT_STOP_ID => Ok(StopMsg::Client),
+            _ => {
+                Err(SerError::InvalidType(
+                    "Found unkown id but expected Peer stop or client stop".into(),
+                ))
+            }
+        }
+    }
+}
+
+
+#[derive(Clone, Debug)]
 pub struct SequenceResp {
     pub node_id: u64,
     pub sequence: Vec<u64>
