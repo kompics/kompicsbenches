@@ -2,7 +2,7 @@ use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 use hashbrown::HashMap;
-use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
+use super::messages::{Proposal, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID, StopMsg as NetStopMsg};
 use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
 
@@ -17,6 +17,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
+    Stop,
     WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
 }
 
@@ -173,6 +174,12 @@ impl Client {
             n => Response::Normal(n),
         }
     }
+
+    fn send_stop(&self) {
+        for ap in self.nodes.values() {
+            ap.tell_serialised(NetStopMsg::Client, self).expect("Failed to send Client stop");
+        }
+    }
 }
 
 impl Provide<ControlPort> for Client {
@@ -195,6 +202,9 @@ impl Actor for Client {
                 self.state = ExperimentState::Running;
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
+            },
+            LocalClientMessage::Stop => {
+                self.send_stop();
             },
             LocalClientMessage::WriteLatencyFile(ask) => {
                 let l = std::mem::take(&mut self.responses);

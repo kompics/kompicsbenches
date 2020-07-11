@@ -1,11 +1,11 @@
 use kompact::prelude::*;
 use super::storage::paxos::*;
 use std::fmt::{Debug};
-use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection};
+use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
 use raw_paxos::{Entry, Paxos};
 use std::sync::Arc;
 use std::time::Duration;
-use super::messages::*;
+use super::messages::{*, StopMsg as NetStopMsg};
 use super::messages::paxos::ballot_leader_election::Leader;
 use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
 // use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
@@ -41,7 +41,8 @@ impl<S> FinalMsg<S> where S: SequenceTraits {
 pub enum PaxosCompMsg {
     Propose(Proposal),
     LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
-    GetAllEntries(Ask<(), Vec<Entry>>)
+    GetAllEntries(Ask<(), Vec<Entry>>),
+    Stop
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +67,7 @@ pub struct PaxosReplica<S, P> where
     nodes: Vec<ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
     prev_sequences: HashMap<u32, Arc<S>>,   // TODO vec
     stopped: bool,
+    client_stopped: bool,
     iteration_id: u32,
     partitioning_actor: Option<ActorPath>,
     alias_registrations: HashSet<Uuid>,
@@ -98,6 +100,7 @@ impl<S, P> PaxosReplica<S, P> where
             nodes: vec![],
             prev_sequences: HashMap::new(),
             stopped: false,
+            client_stopped: false,
             iteration_id: 0,
             partitioning_actor: None,
             alias_registrations: HashSet::new(),
@@ -227,30 +230,24 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn kill_all_replicas(&mut self) {
-        self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
+        self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len();
         debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
-        if self.pending_kill_comps == 0 {
+        if self.pending_kill_comps == 0 && self.client_stopped {
             debug!(self.ctx.log(), "Stopped all child components");
-            self.partitioning_actor
-                .as_ref()
-                .unwrap()
-                .tell_serialised(PartitioningActorMsg::StopAck, self)
-                .expect("Should serialise");
+            self.send_stop_ack();
         } else {
             for ble in self.ble_comps.drain(..) {
-                self.ctx.system().kill(ble);
+                ble.actor_ref().tell(BLEStop(self.pid));
             }
             for paxos in self.paxos_comps.drain(..) {
-                self.ctx.system().kill(paxos);
-            }
-            for communicator in self.communicator_comps.drain(..) {
-                self.ctx.system().kill(communicator);
+                paxos.actor_ref().tell(PaxosCompMsg::Stop);
             }
         }
     }
 
     fn new_iteration(&mut self, init: Init) {
         self.stopped = false;
+        self.client_stopped = false;
         self.nodes = init.nodes;
         self.pid = init.pid as u64;
         self.iteration_id = init.init_id;
@@ -265,6 +262,14 @@ impl<S, P> PaxosReplica<S, P> where
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
             ap.tell_serialised(resp, self).expect("Should serialise");
         }
+    }
+
+    fn send_stop_ack(&self) {
+        self.partitioning_actor
+            .as_ref()
+            .unwrap()
+            .tell_serialised(PartitioningActorMsg::StopAck, self)
+            .expect("Should serialise");
     }
 
     fn pull_sequence(&mut self, config_id: u32, seq_len: u64) {
@@ -322,7 +327,7 @@ impl<S, P> PaxosReplica<S, P> where
                     let i = tag - 1;
                     let from_idx = i as u64 * offset;
                     let to_idx = from_idx + offset;
-                    info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
+                    // info!(self.ctx.log(), "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}", tag, from_idx, to_idx, self.policy);
                     let pid = self.active_peers.0.get(i as usize % num_active).expect(&format!("Failed to get active pid. idx: {}, len: {}", i, self.active_peers.0.len()));
                     self.request_sequence(*pid, config_id, from_idx, to_idx, *tag);
                 }
@@ -488,12 +493,15 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             if let PaxosReplicaMsg::KillResp = msg {
                 self.pending_kill_comps -= 1;
                 if self.pending_kill_comps == 0 {
-                    debug!(self.ctx.log(), "Stopped all child components");
-                    self.partitioning_actor
-                        .as_ref()
-                        .unwrap()
-                        .tell_serialised(PartitioningActorMsg::StopAck, self)
-                        .expect("Should serialise");
+                    if self.communicator_comps.is_empty() && self.client_stopped {
+                        debug!(self.ctx.log(), "Stopped all child components");
+                        self.send_stop_ack();
+                    } else {
+                        self.pending_kill_comps = self.communicator_comps.len();
+                        for communicator in self.communicator_comps.drain(..) {
+                            self.ctx.system().kill(communicator);
+                        }
+                    }
                 }
             }
             return;
@@ -672,6 +680,15 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             }
                         }
                     },
+                    client_stop: NetStopMsg [StopMsgDeser] => {
+                        if let NetStopMsg::Client = client_stop {
+                            // info!(self.ctx.log(), "Got client stop");
+                            self.client_stopped = true;
+                            if self.stopped && self.pending_kill_comps == 0 && self.communicator_comps.is_empty() {
+                                self.send_stop_ack();
+                            }
+                        }
+                    },
                     tm: TestMessage [TestMessageSer] => {
                         match tm {
                             TestMessage::SequenceReq => {
@@ -734,6 +751,8 @@ struct PaxosComp<S, P> where
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
+    stopped: bool,
+    stopped_peers: HashSet<u64>
 }
 
 impl<S, P> PaxosComp<S, P> where
@@ -757,12 +776,14 @@ impl<S, P> PaxosComp<S, P> where
             supervisor,
             communication_port: RequiredPort::new(),
             ble_port: RequiredPort::new(),
+            stopped_peers: HashSet::with_capacity(peers.len()),
             peers,
             paxos,
             config_id,
             pid,
             current_leader: 0,
             timers: None,
+            stopped: false,
         }
     }
 
@@ -861,6 +882,15 @@ impl<S, P> Actor for PaxosComp<S, P> where
                 let seq = self.paxos.get_sequence();
                 a.reply(seq).expect("Failed to reply to GetAllEntries");
             },
+            PaxosCompMsg::Stop => {
+                self.stop_timers();
+                self.communication_port.trigger(CommunicatorMsg::SendStop(self.pid));
+                self.stopped = true;
+                if self.stopped_peers.len() == self.peers.len() {
+                    // info!(self.ctx.log(), "Got stopped from all Paxos peers, suiciding...");
+                    self.ctx.suicide();
+                }
+            }
         }
     }
 
@@ -894,8 +924,19 @@ impl<S, P> Require<CommunicationPort> for PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     fn handle(&mut self, msg: <CommunicationPort as Port>::Indication) -> () {
-        if let AtomicBroadcastCompMsg::RawPaxosMsg(pm) = msg {
-            self.paxos.handle(pm);
+        match msg {
+            AtomicBroadcastCompMsg::RawPaxosMsg(pm) => {
+                self.paxos.handle(pm);
+            },
+            AtomicBroadcastCompMsg::StopMsg(pid) => {
+                assert!(self.stopped_peers.insert(pid), "Got duplicate stop from peer {}", pid);
+                // info!(self.ctx.log(), "Got stopped from Paxos peer {}", pid);
+                if self.stopped && self.stopped_peers.len() == self.peers.len() {
+                    // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                    self.ctx.suicide();
+                }
+            },
+            _ => {}
         }
     }
 }
@@ -1563,8 +1604,11 @@ pub mod raw_paxos{
 
 mod ballot_leader_election {
     use super::*;
-    use super::super::messages::{paxos::ballot_leader_election::*};
+    use super::super::messages::{paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser};
     use std::time::Duration;
+
+    #[derive(Clone, Debug)]
+    pub struct Stop(pub u64);
 
     pub struct BallotLeaderElection;
 
@@ -1589,6 +1633,8 @@ mod ballot_leader_election {
         majority: usize,
         timer: Option<ScheduledTimer>,
         supervisor: Recipient<KillResponse>,
+        stopped: bool,
+        stopped_peers: HashSet<u64>,
     }
 
     impl BallotLeaderComp {
@@ -1608,7 +1654,9 @@ mod ballot_leader_election {
                 hb_delay,
                 delta,
                 timer: None,
-                supervisor
+                supervisor,
+                stopped: false,
+                stopped_peers: HashSet::with_capacity(n)
             }
         }
 
@@ -1684,10 +1732,18 @@ mod ballot_leader_election {
     }
 
     impl Actor for BallotLeaderComp {
-        type Message = ();
+        type Message = Stop;
 
-        fn receive_local(&mut self, _: Self::Message) -> () {
-            // ignore
+        fn receive_local(&mut self, stop: Stop) -> () {
+            self.stop_timer();
+            for peer in &self.peers {
+                peer.tell_serialised(NetStopMsg::Peer(stop.0), self).expect("NetStopMsg should serialise!");
+            }
+            self.stopped = true;
+            if self.stopped_peers.len() == self.peers.len() {
+                // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                self.ctx.suicide();
+            }
         }
 
         fn receive_network(&mut self, m: NetMessage) -> () {
@@ -1695,22 +1751,34 @@ mod ballot_leader_election {
             match_deser!{data; {
                 hb: HeartbeatMsg [BallotLeaderSer] => {
                     match hb {
-                        HeartbeatMsg::Request(req) => {
+                        HeartbeatMsg::Request(req) if !self.stopped => {
                             if req.max_ballot > self.max_ballot {
                                 self.max_ballot = req.max_ballot;
                             }
                             let hb_reply = HeartbeatReply::with(self.pid, req.round, self.current_ballot);
                             sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
                         },
-                        HeartbeatMsg::Reply(rep) => {
+                        HeartbeatMsg::Reply(rep) if !self.stopped => {
                             if rep.round == self.round {
                                 self.ballots.push((rep.max_ballot, rep.sender_pid));
                             } else {
                                 debug!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                                 self.hb_delay += self.delta;
                             }
+                        },
+                        _ => {},
+                    }
+                },
+                stop: NetStopMsg [StopMsgDeser] => {
+                    if let NetStopMsg::Peer(pid) = stop {
+                        assert!(self.stopped_peers.insert(pid), "Got duplicate stop from peer {}", pid);
+                        // info!(self.ctx.log(), "Got stopped from BLE peer {}", stop.0);
+                        if self.stopped && self.stopped_peers.len() == self.peers.len() {
+                            // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                            self.ctx.suicide();
                         }
                     }
+
                 },
                 !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
             }

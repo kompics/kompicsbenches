@@ -389,6 +389,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         println!("Cleaning up Atomic Broadcast (master) side");
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
+        client.actor_ref().tell(LocalClientMessage::Stop);
         if let Some(1) = self.concurrent_proposals  {
             let dir = format!("{}/run-{}/", LATENCY_DIR, self.run_id);
             create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
@@ -406,11 +407,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             file.flush().expect("Failed to flush raw latency file");
         }
 
-        let kill_client_f = system.kill_notify(client);
-        kill_client_f
-            .wait_timeout(REGISTER_TIMEOUT)
-            .expect("Client never died");
-
         if let Some(partitioning_actor) = self.partitioning_actor.take() {
             let stop_f =
                 partitioning_actor
@@ -419,6 +415,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
             stop_f.wait();
             // stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
+
+            let kill_client_f = system.kill_notify(client);
+            kill_client_f
+                .wait_timeout(REGISTER_TIMEOUT)
+                .expect("Client never died");
 
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
