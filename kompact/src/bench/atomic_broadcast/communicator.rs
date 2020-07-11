@@ -77,6 +77,7 @@ impl Provide<CommunicationPort> for Communicator {
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },
             CommunicatorMsg::SendStop(my_pid) => {
+                trace!(self.ctx.log(), "Sending stop");
                 for ap in self.peers.values() {
                     ap.tell_serialised(NetStopMsg::Peer(my_pid), self).expect("Should serialise StopMsg")
                 }
