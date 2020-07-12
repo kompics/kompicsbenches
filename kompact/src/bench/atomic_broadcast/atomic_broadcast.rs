@@ -23,6 +23,8 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 use std::time::SystemTime;
+use crate::bench::atomic_broadcast::paxos::PaxosReplicaMsg;
+use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
 
 const PAXOS_PATH: &'static str = "paxos_replica";
 const RAFT_PATH: &'static str = "raft_replica";
@@ -602,6 +604,17 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
+        } else {
+            if let Some(paxos) = self.paxos_replica.as_ref() {
+                let cleanup_f = paxos.actor_ref()
+                    .ask(|promise| PaxosReplicaMsg::CleanupIteration(Ask::new(promise, ())));
+                cleanup_f.wait();
+            }
+            if let Some(raft) = self.raft_replica.as_ref() {
+                let cleanup_f = raft.actor_ref()
+                    .ask(|promise| RaftReplicaMsg::CleanupIteration(Ask::new(promise, ())));
+                cleanup_f.wait();
+            }
         }
     }
 }

@@ -80,7 +80,8 @@ pub struct PaxosReplica<S, P> where
     cached_client: Option<ActorPath>,
     pending_stop_comps: usize,
     pending_kill_comps: usize,
-    batch_accept: bool
+    batch_accept: bool,
+    cleanup_latch: Option<Ask<(), ()>>
 }
 
 impl<S, P> PaxosReplica<S, P> where
@@ -113,7 +114,8 @@ impl<S, P> PaxosReplica<S, P> where
             cached_client: None,
             pending_stop_comps: 0,
             pending_kill_comps: 0,
-            batch_accept
+            batch_accept,
+            cleanup_latch: None
         }
     }
 
@@ -232,8 +234,8 @@ impl<S, P> PaxosReplica<S, P> where
 
     fn stop_all_replicas(&mut self) {
         self.pending_stop_comps = self.ble_comps.len() + self.paxos_comps.len();
-        if self.pending_stop_comps == 0 {
-            self.kill_all_replicas();
+        if self.pending_stop_comps == 0 && self.client_stopped {
+            self.send_stop_ack();
         } else {
             for ble in &self.ble_comps {
                 ble.actor_ref().tell(BLEStop(self.pid));
@@ -245,11 +247,13 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn kill_all_replicas(&mut self) {
+        assert!(self.stopped, "Tried to kill replicas but not stopped");
+        assert_eq!(self.pending_stop_comps, 0, "Tried to kill replicas but all replicas not stopped");
         self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
         debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
-        if self.pending_kill_comps == 0 && self.client_stopped {
-            debug!(self.ctx.log(), "Stopped all child components");
-            self.send_stop_ack();
+        if self.pending_kill_comps == 0 && self.client_stopped && self.stopped {
+            // info!(self.ctx.log(), "Cleaned up all child components");
+            self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
         } else {
             let system = self.ctx.system();
             for ble in self.ble_comps.drain(..) {
@@ -458,7 +462,7 @@ impl<S, P> PaxosReplica<S, P> where
             let tag = st.tag;
             let from_idx = st.from_idx;
             let to_idx = st.to_idx;
-            info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
+            // info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
             // query someone we know have reached final seq
             let num_active = self.active_peers.0.len();
             if num_active > 0 {
@@ -487,7 +491,8 @@ pub enum PaxosReplicaMsg<S> where S: SequenceTraits{
     Reconfig(FinalMsg<S>),
     RegResp(RegistrationResponse),
     StopResp,
-    KillResp
+    KillResp,
+    CleanupIteration(Ask<(), ()>)
 }
 
 #[derive(Debug)]
@@ -524,25 +529,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
     type Message = PaxosReplicaMsg<S>;
 
     fn receive_local(&mut self, msg: Self::Message) -> () {
-        if self.stopped {
-            match msg {
-                PaxosReplicaMsg::StopResp => {
-                    self.pending_stop_comps -= 1;
-                    if self.pending_stop_comps == 0 {
-                        std::thread::sleep(Duration::from_millis(100)); // delay a bit so communicator hopefully doesn't get killed before sending stop to peers
-                        self.kill_all_replicas();
-                    }
-                },
-                PaxosReplicaMsg::KillResp => {
-                    self.pending_kill_comps -= 1;
-                    if self.pending_kill_comps == 0 {
-                        self.send_stop_ack();
-                    }
-                },
-                _ => {}
-            }
-            return;
-        }
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config.0 == config_id {
@@ -593,7 +579,27 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     ap.tell_serialised(resp, self).expect("Should serialise");
                 }
             },
-            _ => {}
+            PaxosReplicaMsg::StopResp => {
+                assert!(self.stopped, "Got StopResp when not stopped");
+                self.pending_stop_comps -= 1;
+                if self.pending_stop_comps == 0 && self.client_stopped {
+                    self.send_stop_ack();
+                }
+            },
+            PaxosReplicaMsg::KillResp => {
+                assert!(self.stopped, "Got KillResp when not stopped");
+                self.pending_kill_comps -= 1;
+                // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
+                if self.pending_kill_comps == 0  && self.client_stopped {
+                    // info!(self.ctx.log(), "Cleaned up all child components");
+                    self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
+                }
+            },
+            PaxosReplicaMsg::CleanupIteration(a) => {
+                assert!(self.stopped, "Got KillResp when not stopped");
+                self.cleanup_latch = Some(a);
+                self.kill_all_replicas();
+            },
         }
     }
 
@@ -633,6 +639,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                 self.start_replica();
                             },
                             PartitioningActorMsg::Stop => {
+                                self.stopped = true;
                                 self.partitioning_actor = Some(sender);
                                 self.stop_all_replicas();
                                 let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
@@ -646,7 +653,6 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                 self.active_peers.0.clear();
                                 self.active_peers.1.clear();
                                 self.complete_sequences.clear();
-                                self.stopped = true;
                             },
                             _ => unimplemented!()
                         }
@@ -720,7 +726,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         if let NetStopMsg::Client = client_stop {
                             // info!(self.ctx.log(), "Got client stop");
                             self.client_stopped = true;
-                            if self.stopped && self.pending_kill_comps == 0 && self.communicator_comps.is_empty() {
+                            if self.stopped && self.pending_stop_comps == 0 {
                                 self.send_stop_ack();
                             }
                         }
@@ -1595,11 +1601,11 @@ mod ballot_leader_election {
             let mut ballots = Vec::with_capacity(self.peers.len());
             std::mem::swap(&mut self.ballots, &mut ballots);
             let (top_ballot, top_pid) = ballots.into_iter().max().unwrap();
-            if top_ballot < self.max_ballot {
+            if top_ballot < self.max_ballot {   // did not get HB from leader
                 self.current_ballot.n = self.max_ballot.n + 1;
                 self.leader = None;
             } else {
-                if self.leader != Some((top_ballot, top_pid)) {
+                if self.leader != Some((top_ballot, top_pid)) { // got a new leader with greater ballot
                     self.max_ballot = top_ballot;
                     self.leader = Some((top_ballot, top_pid));
                     self.ble_port.trigger(Leader::with(top_pid, top_ballot));

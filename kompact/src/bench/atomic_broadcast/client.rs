@@ -125,7 +125,7 @@ impl Client {
                 _ => None,
             };
             let leader = self.nodes.get(&self.current_leader).unwrap();
-            self.propose_normal(id.clone(), leader);
+            self.propose_normal(id, leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
