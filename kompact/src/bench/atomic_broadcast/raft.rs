@@ -24,7 +24,8 @@ pub enum RaftReplicaMsg {
     ForwardReconfig(u64, (Vec<u64>, Vec<u64>)),
     RegResp(RegistrationResponse),
     StopResp,
-    KillResp
+    KillResp,
+    CleanupIteration(Ask<(), ()>)
 }
 
 impl From<RegistrationResponse> for RaftReplicaMsg {
@@ -57,7 +58,8 @@ pub struct RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     pending_stop_comps: usize,
     pending_kill_comps: usize,
     reconfig_policy: ReconfigurationPolicy,
-    batch: bool
+    batch: bool,
+    cleanup_latch: Option<Ask<(), ()>>
 }
 
 impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
@@ -79,7 +81,8 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             pending_stop_comps: 0,
             pending_kill_comps: 0,
             reconfig_policy,
-            batch
+            batch,
+            cleanup_latch: None
         }
     }
 
@@ -153,6 +156,14 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         self.communicator = Some(communicator);
     }
 
+    fn send_stop_ack(&self) {
+        self.partitioning_actor
+            .as_ref()
+            .expect("No cached partitioning actor")
+            .tell_serialised(PartitioningActorMsg::StopAck, self)
+            .expect("Should serialise StopAck");
+    }
+
     fn start_components(&self) {
         let raft = self.raft_comp.as_ref().expect("No raft comp to start!");
         let communicator = self.communicator.as_ref().expect("No communicator to start!");
@@ -166,13 +177,15 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             raft.actor_ref().tell(RaftCompMsg::Stop);
             self.pending_stop_comps += 1;
         }
-        if self.pending_stop_comps == 0 {
-            self.kill_components();
+        if self.pending_stop_comps == 0 && self.client_stopped {
+            self.send_stop_ack()
         }
     }
 
     fn kill_components(&mut self) {
         // info!(self.ctx.log(), "Killing components");
+        assert!(self.stopped, "Kill components but not stopped");
+        assert_eq!(self.pending_stop_comps, 0, "Kill components but not all components stopped");
         let system = self.ctx.system();
         if let Some(raft) = self.raft_comp.take() {
             self.pending_kill_comps += 1;
@@ -183,11 +196,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             system.kill(communicator);
         }
         if self.pending_kill_comps == 0 && self.client_stopped {
-            self.partitioning_actor
-                .as_ref()
-                .expect("No cached partitioning actor")
-                .tell_serialised(PartitioningActorMsg::StopAck, self)
-                .expect("Failed to serialise StopAck");
+            self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply cleanup");
         }
     }
 }
@@ -205,7 +214,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
         match msg {
             RaftReplicaMsg::Leader(notify_client, pid) => {
                 debug!(self.ctx.log(), "Node {} became leader", pid);
-                if notify_client && pid == self.pid {
+                if notify_client {
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
@@ -240,21 +249,21 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
             RaftReplicaMsg::StopResp => {
                 self.pending_stop_comps -= 1;
                 // info!(self.ctx.log(), "Got stop response. Remaining: {}", self.pending_stop_comps);
-                if self.pending_stop_comps == 0 {
-                    std::thread::sleep(Duration::from_millis(100)); // delay a bit so communicator hopefully doesn't get killed before sending stop to peers
-                    self.kill_components();
+                if self.pending_stop_comps == 0 && self.stopped && self.client_stopped {
+                    self.send_stop_ack()
                 }
             }
             RaftReplicaMsg::KillResp => {
                 self.pending_kill_comps -= 1;
-                // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_stop_comps);
-                if self.pending_kill_comps == 0 && self.stopped && self.client_stopped{
-                    self.partitioning_actor
-                        .as_ref()
-                        .expect("No cached partitioning actor")
-                        .tell_serialised(PartitioningActorMsg::StopAck, self)
-                        .expect("Should serialise StopAck");
+                // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
+                if self.pending_kill_comps == 0 && self.stopped && self.client_stopped {
+                    // info!(self.ctx.log(), "Cleaned up all child components");
+                    self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
+            },
+            RaftReplicaMsg::CleanupIteration(a) => {
+                self.cleanup_latch = Some(a);
+                self.kill_components();
             }
         }
     }
@@ -299,8 +308,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                                 self.start_components();
                             },
                             PartitioningActorMsg::Stop => {
-                                self.stop_components();
                                 self.stopped = true;
+                                self.stop_components();
                             },
                             _ => {},
                         }
@@ -309,12 +318,8 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                         if let NetStopMsg::Client = client_stop {
                             // info!(self.ctx.log(), "Got client stop");
                             self.client_stopped = true;
-                            if self.stopped && self.pending_kill_comps == 0 && self.pending_stop_comps == 0 {
-                                self.partitioning_actor
-                                    .as_ref()
-                                    .expect("No cached partitioning actor")
-                                    .tell_serialised(PartitioningActorMsg::StopAck, self)
-                                    .expect("Should serialise StopAck");
+                            if self.stopped && self.pending_stop_comps == 0 {
+                                self.send_stop_ack()
                             }
                         }
                     },
@@ -382,6 +387,7 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     num_peers: usize,
     stopped: bool,
     stopped_peers: HashSet<u64>,
+    hb_proposals: Vec<Proposal>,
 }
 
 impl<S> Provide<ControlPort> for RaftComp<S> where
@@ -483,6 +489,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             stopped: false,
             stopped_peers: HashSet::new(),
             num_peers,
+            hb_proposals: vec![]
         }
     }
 
@@ -508,26 +515,42 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn tick(&mut self) {
         self.raw_raft.tick();
         let leader = self.raw_raft.raft.leader_id;
-        if leader != 0 && leader != self.current_leader && !self.removed_nodes.contains(&leader){
-            // info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
-            self.current_leader = leader;
-            let notify_client = if self.state == State::Election {
-                self.state = State::Running;
-                true
-            } else {
-                false
-            };
-            self.supervisor.tell(RaftReplicaMsg::Leader(notify_client, leader));
-
+        if leader != 0 {
+            if !self.hb_proposals.is_empty() {
+                let proposals = std::mem::take(&mut self.hb_proposals);
+                for proposal in proposals {
+                    self.propose(proposal);
+                }
+            }
+            if leader != self.current_leader && !self.removed_nodes.contains(&leader) {
+                // info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
+                self.current_leader = leader;
+                let notify_client = if self.state == State::Election {
+                    self.state = State::Running;
+                    true
+                } else {
+                    false
+                };
+                self.supervisor.tell(RaftReplicaMsg::Leader(notify_client, leader));
+            }
         }
     }
 
     fn step(&mut self, msg: TikvRaftMsg) {
         let _ = self.raw_raft.step(msg);
+        if self.raw_raft.raft.leader_id != 0 && !self.hb_proposals.is_empty() {
+            let proposals = std::mem::take(&mut self.hb_proposals);
+            for proposal in proposals {
+                self.propose(proposal);
+            }
+        }
     }
 
     fn propose(&mut self, proposal: Proposal) {
-        let data = proposal.data;
+        if self.raw_raft.raft.leader_id == 0 {
+            self.hb_proposals.push(proposal);
+            return;
+        }
         match proposal.reconfig {
             Some(mut reconfig) => {
                 if let ReconfigurationState::None = self.reconfig_state {
@@ -586,6 +609,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                 }
             }
             None => {   // i.e normal operation
+                let data = proposal.data;
                 let _ = self.raw_raft.propose(vec![], data);
             }
         }
@@ -663,24 +687,25 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                         },
                         ConfChangeType::FinalizeMembershipChange => {
                             let prev_conf = self.raw_raft.raft.prs().configuration().voters().clone();
+                            let leader = self.raw_raft.raft.leader_id;
+                            if leader != 0 {
+                                self.current_leader = leader;
+                            }
                             self.raw_raft
                                 .raft
                                 .finalize_membership_change(&cc)
                                 .expect("Failed to finalize reconfiguration");
 
-                            self.current_leader = self.raw_raft.raft.leader_id;
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
                             let mut removed_nodes: Vec<u64> = prev_conf.difference(current_conf.voters()).cloned().collect();
-                            // info!(self.ctx.log(), "Removed nodes are {:?}", removed_nodes);
+                            // info!(self.ctx.log(), "Removed nodes are {:?}, current_leader: {}", removed_nodes, self.current_leader);
                             if removed_nodes.contains(&self.raw_raft.raft.id) {
-                                debug!(self.ctx.log(), "Reconfiguration OK, I was removed");
                                 self.stop_timers();
                                 self.reconfig_state = ReconfigurationState::Removed;
                             } else {
-                                debug!(self.ctx.log(), "Reconfiguration OK");
                                 self.reconfig_state = ReconfigurationState::Finished;
                             }
-                            if removed_nodes.contains(&self.current_leader) || self.current_leader == 0 {    // leader was removed
+                            if removed_nodes.contains(&self.current_leader) {    // leader was removed
                                 self.state = State::Election;    // reset leader so it can notify client when new leader emerges
                                 if self.reconfig_state != ReconfigurationState::Removed {  // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
