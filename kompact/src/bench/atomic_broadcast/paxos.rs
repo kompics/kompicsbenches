@@ -236,6 +236,9 @@ impl<S, P> PaxosReplica<S, P> where
         self.pending_stop_comps = self.ble_comps.len() + self.paxos_comps.len();
         if self.pending_stop_comps == 0 && self.client_stopped {
             self.send_stop_ack();
+            if self.cleanup_latch.is_some() {
+                self.kill_all_replicas();
+            }
         } else {
             for ble in &self.ble_comps {
                 ble.actor_ref().tell(BLEStop(self.pid));
@@ -252,7 +255,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
         debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
         if self.pending_kill_comps == 0 && self.client_stopped && self.stopped {
-            // info!(self.ctx.log(), "Cleaned up all child components");
+            info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
             self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
         } else {
             let system = self.ctx.system();
@@ -288,6 +291,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn send_stop_ack(&self) {
+        info!(self.ctx.log(), "Sending StopAck");
         self.partitioning_actor
             .as_ref()
             .unwrap()
@@ -581,24 +585,30 @@ impl<S, P> Actor for PaxosReplica<S, P> where
             },
             PaxosReplicaMsg::StopResp => {
                 assert!(self.stopped, "Got StopResp when not stopped");
+                assert!(self.pending_stop_comps > 0, "Got unexpected StopResp when no pending stop comps");
                 self.pending_stop_comps -= 1;
                 if self.pending_stop_comps == 0 && self.client_stopped {
                     self.send_stop_ack();
+                    if self.cleanup_latch.is_some() {
+                        self.kill_all_replicas();
+                    }
                 }
             },
             PaxosReplicaMsg::KillResp => {
                 assert!(self.stopped, "Got KillResp when not stopped");
+                assert!(self.pending_kill_comps > 0, "Got unexpected KillResp when no pending kill comps");
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
                 if self.pending_kill_comps == 0  && self.client_stopped {
-                    // info!(self.ctx.log(), "Cleaned up all child components");
+                    info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
             },
             PaxosReplicaMsg::CleanupIteration(a) => {
-                assert!(self.stopped, "Got KillResp when not stopped");
                 self.cleanup_latch = Some(a);
-                self.kill_all_replicas();
+                if self.stopped && self.pending_stop_comps == 0 {
+                    self.kill_all_replicas();
+                }
             },
         }
     }
@@ -729,6 +739,9 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             self.client_stopped = true;
                             if self.stopped && self.pending_stop_comps == 0 {
                                 self.send_stop_ack();
+                                if self.cleanup_latch.is_some() {
+                                    self.kill_all_replicas();
+                                }
                             }
                         }
                     },
