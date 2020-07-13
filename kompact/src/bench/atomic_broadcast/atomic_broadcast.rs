@@ -478,6 +478,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
+            self.experiment_str = None;
+            self.num_timed_out.clear();
             self.num_written_latency = 0;
             self.iteration_id = 0;
             system

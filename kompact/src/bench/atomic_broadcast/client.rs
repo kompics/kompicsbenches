@@ -128,7 +128,7 @@ impl Client {
             };
             let leader = self.nodes.get(&self.current_leader).unwrap();
             self.propose_normal(id, leader);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
         }
@@ -136,14 +136,15 @@ impl Client {
         self.latest_proposal_id = to;
     }
 
-    fn retry_proposal(&mut self, id: u64) {
+    fn proposal_timeout(&mut self, id: u64) {
         trace!(self.ctx.log(), "Retry proposal {}?", id);
         if self.responses.contains_key(&id) { return; }
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
+                self.state = ExperimentState::Running;
             }
-            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = self.pending_proposals.get_mut(&id)
                 .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
             proposal_meta.set_timer(timer);
@@ -151,8 +152,8 @@ impl Client {
             self.pending_proposals.remove(&id);
             self.responses.insert(id, None);
             self.num_timed_out += 1;
+            self.send_concurrent_proposals();
         }
-        self.state = ExperimentState::Running;
     }
 
     fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
@@ -160,7 +161,7 @@ impl Client {
         for (id, meta) in pending_proposals {
             self.propose_normal(*id, &leader);
             let i = id.clone();
-            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(i));
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
             let old_timer = std::mem::replace(&mut meta.timer, timer);
             self.cancel_timer(old_timer);
         }
@@ -246,6 +247,7 @@ impl Actor for Client {
                                 }
                             },
                             ExperimentState::ReconfigurationElection => {
+                                //info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
                                 if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_after_reconfig(&mut pending_proposals);
@@ -274,7 +276,7 @@ impl Actor for Client {
                                     self.responses.insert(id, latency);
                                     let received_count = self.responses.len() as u64;
                                     if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses");
+                                        info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
                                     } else {
@@ -282,7 +284,7 @@ impl Actor for Client {
                                             if let Some(leader) = self.nodes.get(&self.current_leader) {
                                                 self.propose_reconfiguration(&leader);
                                             }
-                                            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(RECONFIG_ID));
+                                            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
                                             let proposal_meta = ProposalMetaData::with(None, timer);
                                             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
                                         }
@@ -310,7 +312,6 @@ impl Actor for Client {
                                             self.send_concurrent_proposals();
                                         }
                                     }
-                                    // info!(self.ctx.log(), "Reconfiguration succeeded: {:?}", new_config);
                                     self.current_config = new_config;
                                 }
                             }
