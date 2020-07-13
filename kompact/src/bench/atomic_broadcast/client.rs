@@ -136,6 +136,23 @@ impl Client {
         self.latest_proposal_id = to;
     }
 
+    fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
+        self.responses.insert(id, latency_res);
+        let received_count = self.responses.len() as u64;
+        if received_count == self.num_proposals && self.reconfig.is_none() {
+            info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
+            self.state = ExperimentState::Finished;
+            self.finished_latch.decrement().expect("Failed to countdown finished latch");
+        } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
+            if let Some(leader) = self.nodes.get(&self.current_leader) {
+                self.propose_reconfiguration(&leader);
+            }
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
+            let proposal_meta = ProposalMetaData::with(None, timer);
+            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
+        }
+    }
+
     fn proposal_timeout(&mut self, id: u64) {
         trace!(self.ctx.log(), "Retry proposal {}?", id);
         if self.responses.contains_key(&id) { return; }
@@ -149,10 +166,19 @@ impl Client {
                 .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
             proposal_meta.set_timer(timer);
         } else {
-            self.pending_proposals.remove(&id);
-            self.responses.insert(id, None);
             self.num_timed_out += 1;
-            self.send_concurrent_proposals();
+            let proposal_meta = self.pending_proposals.remove(&id).expect("Timed out on proposal not in pending proposals");
+            let latency = match self.num_concurrent_proposals {
+                1 => {
+                    let start_time = proposal_meta.start_time.expect("No start time found!");
+                    Some(start_time.elapsed().expect("Failed to get elapsed duration"))
+                },
+                _ => None,
+            };
+            self.handle_normal_response(id, latency);
+            if self.state != ExperimentState::ReconfigurationElection {
+                self.send_concurrent_proposals();
+            }
         }
     }
 
@@ -273,25 +299,12 @@ impl Actor for Client {
                                         _ => None,
                                     };
                                     self.cancel_timer(proposal_meta.timer);
-                                    self.responses.insert(id, latency);
-                                    let received_count = self.responses.len() as u64;
-                                    if received_count == self.num_proposals && self.reconfig.is_none() {
-                                        info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                    } else {
-                                        if received_count == self.num_proposals/2 && self.reconfig.is_some(){
-                                            if let Some(leader) = self.nodes.get(&self.current_leader) {
-                                                self.propose_reconfiguration(&leader);
-                                            }
-                                            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
-                                            let proposal_meta = ProposalMetaData::with(None, timer);
-                                            self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
-                                        }
-                                        if self.state != ExperimentState::ReconfigurationElection && self.current_config.contains(&pr.latest_leader) {
-                                            self.current_leader = pr.latest_leader;
-                                            self.send_concurrent_proposals();
-                                        }
+                                    if self.current_config.contains(&pr.latest_leader) {
+                                        self.current_leader = pr.latest_leader;
+                                    }
+                                    self.handle_normal_response(id, latency);
+                                    if self.state != ExperimentState::ReconfigurationElection {
+                                        self.send_concurrent_proposals();
                                     }
                                 }
                             }
