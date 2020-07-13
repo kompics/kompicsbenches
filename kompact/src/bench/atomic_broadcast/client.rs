@@ -223,6 +223,7 @@ impl Actor for Client {
                 trace!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
+                        if !self.current_config.contains(&pid) { return; }
                         self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {

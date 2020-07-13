@@ -1,7 +1,7 @@
 extern crate raft as tikv_raft;
 
 use kompact::prelude::*;
-use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
+use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry, Error as RaftError};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, marker::Send, clone::Clone};
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
@@ -157,6 +157,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn send_stop_ack(&self) {
+        info!(self.ctx.log(), "Sending StopAck");
         self.partitioning_actor
             .as_ref()
             .expect("No cached partitioning actor")
@@ -178,7 +179,10 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             self.pending_stop_comps += 1;
         }
         if self.pending_stop_comps == 0 && self.client_stopped {
-            self.send_stop_ack()
+            self.send_stop_ack();
+            if self.cleanup_latch.is_some() {
+                self.kill_components();
+            }
         }
     }
 
@@ -196,6 +200,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             system.kill(communicator);
         }
         if self.pending_kill_comps == 0 && self.client_stopped {
+            info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
             self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply cleanup");
         }
     }
@@ -247,23 +252,32 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 }
             },
             RaftReplicaMsg::StopResp => {
+                assert!(self.stopped, "Got unexpected StopResp when not stopped");
+                assert!(self.pending_stop_comps > 0, "Got unexpected StopResp when no pending stop comps");
                 self.pending_stop_comps -= 1;
                 // info!(self.ctx.log(), "Got stop response. Remaining: {}", self.pending_stop_comps);
                 if self.pending_stop_comps == 0 && self.stopped && self.client_stopped {
-                    self.send_stop_ack()
+                    self.send_stop_ack();
+                    if self.cleanup_latch.is_some() {
+                        self.kill_components();
+                    }
                 }
-            }
+            },
             RaftReplicaMsg::KillResp => {
+                assert!(self.stopped, "Got unexpected KillResp when not stopped");
+                assert!(self.pending_kill_comps > 0, "Got unexpected KillResp when no pending kill comps");
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
                 if self.pending_kill_comps == 0 && self.stopped && self.client_stopped {
-                    // info!(self.ctx.log(), "Cleaned up all child components");
+                    info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
             },
             RaftReplicaMsg::CleanupIteration(a) => {
                 self.cleanup_latch = Some(a);
-                self.kill_components();
+                if self.stopped && self.pending_stop_comps == 0 {
+                    self.kill_components();
+                }
             }
         }
     }
@@ -319,7 +333,10 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                             // info!(self.ctx.log(), "Got client stop");
                             self.client_stopped = true;
                             if self.stopped && self.pending_stop_comps == 0 {
-                                self.send_stop_ack()
+                                self.send_stop_ack();
+                                if self.cleanup_latch.is_some() {
+                                    self.kill_components();
+                                }
                             }
                         }
                     },
@@ -515,14 +532,14 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn tick(&mut self) {
         self.raw_raft.tick();
         let leader = self.raw_raft.raft.leader_id;
-        if leader != 0 {
+        if leader != 0 && !self.removed_nodes.contains(&leader) {
             if !self.hb_proposals.is_empty() {
                 let proposals = std::mem::take(&mut self.hb_proposals);
                 for proposal in proposals {
                     self.propose(proposal);
                 }
             }
-            if leader != self.current_leader && !self.removed_nodes.contains(&leader) {
+            if leader != self.current_leader {
                 // info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
                 self.current_leader = leader;
                 let notify_client = if self.state == State::Election {
@@ -538,12 +555,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
     fn step(&mut self, msg: TikvRaftMsg) {
         let _ = self.raw_raft.step(msg);
-        if self.raw_raft.raft.leader_id != 0 && !self.hb_proposals.is_empty() {
-            let proposals = std::mem::take(&mut self.hb_proposals);
-            for proposal in proposals {
-                self.propose(proposal);
-            }
-        }
     }
 
     fn propose(&mut self, proposal: Proposal) {
@@ -610,7 +621,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
             }
             None => {   // i.e normal operation
                 let data = proposal.data;
-                let _ = self.raw_raft.propose(vec![], data);
+                self.raw_raft
+                    .propose(vec![], data)
+                    .expect(&format!("Failed to propose. leader: {}, lead_transferee: {:?}", self.raw_raft.raft.leader_id, self.raw_raft.raft.lead_transferee));
             }
         }
     }
