@@ -1,7 +1,7 @@
 extern crate raft as tikv_raft;
 
 use kompact::prelude::*;
-use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry, Error as RaftError};
+use tikv_raft::{prelude::*, StateRole, prelude::Message as TikvRaftMsg, prelude::Entry};
 use protobuf::{Message as PbMessage};
 use std::{time::Duration, marker::Send, clone::Clone};
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
@@ -268,7 +268,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 assert!(self.pending_kill_comps > 0, "Got unexpected KillResp when no pending kill comps");
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
-                if self.pending_kill_comps == 0 && self.stopped && self.client_stopped {
+                if self.pending_kill_comps == 0 && self.client_stopped {
                     info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }

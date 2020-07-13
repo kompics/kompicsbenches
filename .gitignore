@@ -4,6 +4,7 @@
 /plots/
 /remote_logs/
 /latency_results/
+/meta_results/
 
 bin/
 

@@ -18,7 +18,7 @@ enum ExperimentState {
 pub enum LocalClientMessage {
     Run,
     Stop,
-    WriteLatencyFile(Ask<(), Vec<(u64, Duration)>>)
+    GetMetaResults(Ask<(), (u64, Vec<(u64, Duration)>)>)    // (num_timed_out, latency)
 }
 
 enum Response {
@@ -56,7 +56,8 @@ pub struct Client {
     current_leader: u64,
     state: ExperimentState,
     retry_after_reconfig: bool,
-    current_config: Vec<u64>
+    current_config: Vec<u64>,
+    num_timed_out: u64,
 }
 
 impl Client {
@@ -86,7 +87,8 @@ impl Client {
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             retry_after_reconfig,
-            current_config: initial_config
+            current_config: initial_config,
+            num_timed_out: 0
         }
     }
 
@@ -136,18 +138,21 @@ impl Client {
 
     fn retry_proposal(&mut self, id: u64) {
         trace!(self.ctx.log(), "Retry proposal {}?", id);
-        if self.responses.contains_key(&id) { panic!("Failed to cancel timer?"); }
-        if let Some(leader) = self.nodes.get(&self.current_leader) {
-            match id {
-                RECONFIG_ID => self.propose_reconfiguration(leader),
-                _ => self.propose_normal(id, leader)
+        if self.responses.contains_key(&id) { return; }
+        if id == RECONFIG_ID {
+            if let Some(leader) = self.nodes.get(&self.current_leader) {
+                self.propose_reconfiguration(leader);
             }
-            self.state = ExperimentState::Running;
+            let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
+            let proposal_meta = self.pending_proposals.get_mut(&id)
+                .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
+            proposal_meta.set_timer(timer);
+        } else {
+            self.pending_proposals.remove(&id);
+            self.responses.insert(id, None);
+            self.num_timed_out += 1;
         }
-        let timer = self.schedule_once(self.timeout, move |c, _| c.retry_proposal(id));
-        let proposal_meta = self.pending_proposals.get_mut(&id)
-            .expect(&format!("Could not find pending proposal id {}, latest_proposal_id: {}", id, self.latest_proposal_id));
-        proposal_meta.set_timer(timer);
+        self.state = ExperimentState::Running;
     }
 
     fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
@@ -206,12 +211,17 @@ impl Actor for Client {
             LocalClientMessage::Stop => {
                 self.send_stop();
             },
-            LocalClientMessage::WriteLatencyFile(ask) => {
-                let l = std::mem::take(&mut self.responses);
-                let mut v: Vec<_> = l.into_iter().collect();
-                v.sort();
-                let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
-                ask.reply(latencies).expect("Failed to reply write latency file!");
+            LocalClientMessage::GetMetaResults(ask) => {
+                let meta_results = if self.num_concurrent_proposals > 1 {
+                    (self.num_timed_out, vec![])
+                } else {
+                    let l = std::mem::take(&mut self.responses);
+                    let mut v: Vec<_> = l.into_iter().collect();
+                    v.sort();
+                    let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
+                    (self.num_timed_out, latencies)
+                };
+                ask.reply(meta_results).expect("Failed to reply write latency file!");
             }
         }
     }

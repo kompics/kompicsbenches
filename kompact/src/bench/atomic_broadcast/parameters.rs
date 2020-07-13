@@ -1,7 +1,7 @@
 pub const ELECTION_TIMEOUT: u64 = 1000;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
 pub const MAX_INFLIGHT: usize = 1000000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
-pub const LATENCY_DIR: &str = "../latency_results";
+pub const META_RESULTS_DIR: &str = "../meta_results/meta1"; // change for each benchmark
 
 pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 1;

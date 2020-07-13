@@ -254,7 +254,7 @@ impl<S, P> PaxosReplica<S, P> where
         assert_eq!(self.pending_stop_comps, 0, "Tried to kill replicas but all replicas not stopped");
         self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
         debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
-        if self.pending_kill_comps == 0 && self.client_stopped && self.stopped {
+        if self.pending_kill_comps == 0 && self.client_stopped {
             info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
             self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
         } else {
