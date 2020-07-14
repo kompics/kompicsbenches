@@ -140,9 +140,9 @@ impl Client {
         self.responses.insert(id, latency_res);
         let received_count = self.responses.len() as u64;
         if received_count == self.num_proposals && self.reconfig.is_none() {
-            info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
+            info!(self.ctx.log(), "Got all responses. {} proposals timed out.", self.num_timed_out);
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
@@ -261,20 +261,20 @@ impl Actor for Client {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         if !self.current_config.contains(&pid) { return; }
-                        self.current_leader = pid;
                         match self.state {
                             ExperimentState::LeaderElection => {
-                                info!(self.ctx.log(), "Got first leader: {}. Decrementing election latch", pid);
+                                self.current_leader = pid;
                                 match self.leader_election_latch.decrement() {
-                                    Ok(_) => {},
+                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}", pid),
                                     Err(e) => if e != CountdownError::AlreadySet {
                                         panic!("Failed to decrement election latch: {:?}", e);
                                     }
                                 }
                             },
                             ExperimentState::ReconfigurationElection => {
+                                self.current_leader = pid;
                                 //info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
-                                if self.current_leader > 0 && self.retry_after_reconfig && !self.pending_proposals.is_empty() {
+                                if self.retry_after_reconfig && !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_after_reconfig(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
@@ -312,20 +312,20 @@ impl Actor for Client {
                                 if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
                                     self.cancel_timer(proposal_meta.timer);
                                     if self.responses.len() as u64 == self.num_proposals {
-                                        info!(self.ctx.log(), "Got reconfig at last");
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                        info!(self.ctx.log(), "Got reconfig at last");
                                     } else {
                                         self.reconfig = None;
+                                        self.current_config = new_config;
                                         self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}", self.current_leader);
+                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, current_config: {:?}", self.current_leader, self.current_config);
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
                                             self.send_concurrent_proposals();
                                         }
                                     }
-                                    self.current_config = new_config;
                                 }
                             }
                         }

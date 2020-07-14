@@ -524,7 +524,8 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn try_campaign_leader(&mut self) { // start campaign to become leader if none has been elected yet
-        if self.current_leader == 0 {
+        let leader = self.raw_raft.raft.leader_id;
+        if (leader == 0 || self.removed_nodes.contains(&leader)) && self.state == State::Election {
             self.raw_raft.campaign().expect("Failed to start campaign to become leader");
         }
     }
