@@ -55,7 +55,6 @@ pub struct Client {
     timeout: Duration,
     current_leader: u64,
     state: ExperimentState,
-    retry_after_reconfig: bool,
     current_config: Vec<u64>,
     num_timed_out: u64,
 }
@@ -70,7 +69,6 @@ impl Client {
         timeout: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
-        retry_after_reconfig: bool,
     ) -> Client {
         Client {
             ctx: ComponentContext::new(),
@@ -86,7 +84,6 @@ impl Client {
             timeout: Duration::from_millis(timeout),
             current_leader: 0,
             state: ExperimentState::LeaderElection,
-            retry_after_reconfig,
             current_config: initial_config,
             num_timed_out: 0
         }
@@ -154,7 +151,7 @@ impl Client {
     }
 
     fn proposal_timeout(&mut self, id: u64) {
-        trace!(self.ctx.log(), "Retry proposal {}?", id);
+        // info!(self.ctx.log(), "Timed out proposal {}", id);
         if self.responses.contains_key(&id) { return; }
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -184,9 +181,10 @@ impl Client {
 
     fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+        // info!(self.ctx.log(), "Retrying {} proposals after reconfig to leader {}", pending_proposals.len(), self.current_leader);
         for (id, meta) in pending_proposals {
-            self.propose_normal(*id, &leader);
-            let i = id.clone();
+            let i = *id;
+            self.propose_normal(i, &leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
             let old_timer = std::mem::replace(&mut meta.timer, timer);
             self.cancel_timer(old_timer);
@@ -273,8 +271,8 @@ impl Actor for Client {
                             },
                             ExperimentState::ReconfigurationElection => {
                                 self.current_leader = pid;
-                                //info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
-                                if self.retry_after_reconfig && !self.pending_proposals.is_empty() {
+                                // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
+                                if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_after_reconfig(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
