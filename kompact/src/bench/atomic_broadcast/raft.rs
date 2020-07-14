@@ -526,7 +526,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn try_campaign_leader(&mut self) { // start campaign to become leader if none has been elected yet
         let leader = self.raw_raft.raft.leader_id;
         if (leader == 0 || self.removed_nodes.contains(&leader)) && self.state == State::Election {
-            self.raw_raft.campaign().expect("Failed to start campaign to become leader");
+            let _ = self.raw_raft.campaign();
         }
     }
 
@@ -697,7 +697,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 .begin_membership_change(&cc)
                                 .expect("Failed to begin reconfiguration");
 
-                            assert!(self.raw_raft.raft.is_in_membership_change());  // TODO remove?
+                            assert!(self.raw_raft.raft.is_in_membership_change());
                         },
                         ConfChangeType::FinalizeMembershipChange => {
                             let prev_conf = self.raw_raft.raft.prs().configuration().voters().clone();
@@ -723,7 +723,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 self.state = State::Election;    // reset leader so it can notify client when new leader emerges
                                 if self.reconfig_state != ReconfigurationState::Removed {  // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
-                                    let rnd = rng.gen_range(1, RANDOM_DELTA);
+                                    let rnd = rng.gen_range(INITIAL_ELECTION_TIMEOUT, 2 * INITIAL_ELECTION_TIMEOUT);
                                     self.schedule_once(
                                         Duration::from_millis(rnd),
                                         move |c, _| c.try_campaign_leader()
