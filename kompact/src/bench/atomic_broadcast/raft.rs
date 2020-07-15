@@ -88,10 +88,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
 
     fn create_rawraft_config(&self) -> Config {
         // convert from ms to logical clock ticks
-        let mut rand = rand::thread_rng();
-        let election_timeout = ELECTION_TIMEOUT/TICK_PERIOD;
-        let random_delta = RANDOM_DELTA/TICK_PERIOD;
-        let election_tick = rand.gen_range(election_timeout, election_timeout + random_delta) as usize;
+        let election_tick = (ELECTION_TIMEOUT/TICK_PERIOD) as usize;
         let heartbeat_tick = (LEADER_HEARTBEAT_PERIOD/TICK_PERIOD) as usize;
         // info!(self.ctx.log(), "RawRaft config: election_tick={}, heartbeat_tick={}", election_tick, heartbeat_tick);
         let max_size_per_msg = if self.batch { MAX_BATCH_SIZE } else { 0 };
@@ -104,7 +101,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             batch_append: self.batch,
             ..Default::default()
         };
-        assert_eq!(c.validate().is_ok(), true);
+        assert!(c.validate().is_ok(), "Invalid RawRaft config");
         c
     }
 
@@ -723,9 +720,12 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                 self.state = State::Election;    // reset leader so it can notify client when new leader emerges
                                 if self.reconfig_state != ReconfigurationState::Removed {  // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
-                                    let rnd = rng.gen_range(INITIAL_ELECTION_TIMEOUT, 2 * INITIAL_ELECTION_TIMEOUT);
+                                    // randomize with ticks to ensure at least one tick difference in timeout
+                                    let intial_timeout_ticks = (ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR)/TICK_PERIOD;
+                                    let rnd = rng.gen_range(intial_timeout_ticks, 2 * intial_timeout_ticks);
+                                    let timeout = rnd * TICK_PERIOD;
                                     self.schedule_once(
-                                        Duration::from_millis(rnd),
+                                        Duration::from_millis(timeout),
                                         move |c, _| c.try_campaign_leader()
                                     );
                                 }
