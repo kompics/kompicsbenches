@@ -434,12 +434,13 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 create_dir_all(META_RESULTS_DIR).unwrap_or_else(|_| panic!("Failed to create given directory: {}", summary_file_path));
                 let mut summary_file = OpenOptions::new().create(true).append(true).open(summary_file_path).expect("Failed to open meta summary file");
                 let len = self.num_timed_out.len();
+                let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0 ).count();
                 self.num_timed_out.sort();
                 let min = self.num_timed_out.first().unwrap();
                 let max = self.num_timed_out.last().unwrap();
                 let avg = sum/(self.iteration_id as u64);
                 let median = self.num_timed_out[len / 2];
-                let summary_str = format!("sum: {}, avg: {}, med: {}, min: {}, max: {}, num_runs: {}", sum, avg, median, min, max, len);
+                let summary_str = format!("{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}", timed_out_len, len, sum, avg, median, min, max);
                 writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap()).expect("Failed to write meta summary file");
                 writeln!(summary_file, "{}", summary_str).expect(&format!("Failed to write meta summary file: {}", summary_str));
                 summary_file.flush().expect("Failed to flush meta file");

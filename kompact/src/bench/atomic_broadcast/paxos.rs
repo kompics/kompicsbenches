@@ -81,6 +81,7 @@ pub struct PaxosReplica<S, P> where
     pending_stop_comps: usize,
     pending_kill_comps: usize,
     batch_accept: bool,
+    hb_proposals: Vec<NetMessage>,
     cleanup_latch: Option<Ask<(), ()>>
 }
 
@@ -115,6 +116,7 @@ impl<S, P> PaxosReplica<S, P> where
             pending_stop_comps: 0,
             pending_kill_comps: 0,
             batch_accept,
+            hb_proposals: vec![],
             cleanup_latch: None
         }
     }
@@ -287,6 +289,13 @@ impl<S, P> PaxosReplica<S, P> where
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
             ap.tell_serialised(resp, self).expect("Should serialise");
+        }
+    }
+
+    fn deserialise_and_propose(&self, m: NetMessage) {
+        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>().expect("Should be AtomicBroadcastMsg!") {
+            let active_paxos = &self.paxos_comps.get(self.active_config.1).expect("Could not get PaxosComp actor ref despite being leader");
+            active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
         }
     }
 
@@ -536,12 +545,24 @@ impl<S, P> Actor for PaxosReplica<S, P> where
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config.0 == config_id {
-                    if self.leader_in_active_config == 0 && pid == self.pid {
-                        self.cached_client
-                            .as_ref()
-                            .expect("No cached client!")
-                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
-                            .expect("Should serialise FirstLeader");
+                    let hb_proposals = std::mem::take(&mut self.hb_proposals);
+                    if pid == self.pid {    // we became leader, propose hb proposals
+                        for p in hb_proposals {
+                            self.deserialise_and_propose(p);
+                        }
+                        if self.leader_in_active_config == 0 {  // notify client if no leader before
+                            self.cached_client
+                                .as_ref()
+                                .expect("No cached client!")
+                                .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                                .expect("Should serialise FirstLeader");
+                        }
+                    } else if !hb_proposals.is_empty(){
+                        let idx = pid as usize - 1;
+                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        for p in hb_proposals {
+                            leader.forward_with_original_sender(p, self);
+                        }
                     }
                     self.leader_in_active_config = pid;
                 }
@@ -617,23 +638,15 @@ impl<S, P> Actor for PaxosReplica<S, P> where
         match m.data.ser_id {
             ATOMICBCAST_ID => {
                 if !self.stopped {
-                    if self.leader_in_active_config == self.pid {
-                        if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>().expect("Should be AtomicBroadcastMsg!") {
-                            if p.reconfig.is_some() && self.active_config.0 > 1 {   // TODO make proposal enum and check reconfig id
-                                warn!(self.ctx.log(), "Duplicate reconfig proposal? Active config: {}", self.active_config.0);
-                                return;
-                            }
-                            else {
-                                let active_paxos = &self.paxos_comps.get(self.active_config.1).expect("Could not get PaxosComp actor ref despite being leader");
-                                active_paxos.actor_ref().tell(PaxosCompMsg::Propose(p));
-                            }
-                        }
-                    } else if self.leader_in_active_config > 0 {
-                        let idx = self.leader_in_active_config as usize - 1;
-                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
-                        leader.forward_with_original_sender(m, self);
+                    match self.leader_in_active_config {
+                        my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
+                        other_pid if other_pid > 0 => {
+                            let idx = self.leader_in_active_config as usize - 1;
+                            let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                            leader.forward_with_original_sender(m, self);
+                        },
+                        _ => self.hb_proposals.push(m), // no leader: hold back
                     }
-                    // else no leader... just drop
                 }
             },
             _ => {
