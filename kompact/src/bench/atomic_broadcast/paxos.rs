@@ -559,7 +559,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     } else if !hb_proposals.is_empty(){
                         let idx = pid as usize - 1;
-                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", pid));
                         for p in hb_proposals {
                             leader.forward_with_original_sender(p, self);
                         }
@@ -1646,12 +1646,18 @@ mod ballot_leader_election {
             } else {
                 self.ballots.clear();
             }
+            let waiting_first_leader = self.max_ballot == Ballot::with(0, self.pid) && self.leader.is_none();
+            let delay = if waiting_first_leader{    // use short timeout if still no first leader
+                ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
+            } else {
+                self.hb_delay
+            };
             self.round += 1;
             for peer in &self.peers {
                 let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                 peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
             }
-            self.start_timer(self.hb_delay);
+            self.start_timer(delay);
         }
 
         fn start_timer(&mut self, t: u64) {
@@ -1677,7 +1683,7 @@ mod ballot_leader_election {
                         let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                         peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
                     }
-                    self.start_timer(INITIAL_ELECTION_TIMEOUT);
+                    self.start_timer(ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR);
                 },
                 ControlEvent::Kill => {
                     self.stop_timer();
