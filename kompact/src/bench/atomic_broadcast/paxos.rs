@@ -1014,7 +1014,7 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     fn handle(&mut self, l: Leader) -> () {
-        info!(self.ctx.log(), "{}", format!("Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot));
+        // info!(self.ctx.log(), "{}", format!("Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot));
         self.paxos.handle_leader(l);
         if self.current_leader != l.pid && !self.paxos.stopped() {
             self.current_leader = l.pid;
