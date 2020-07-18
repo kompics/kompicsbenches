@@ -290,8 +290,9 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                     } else if self.current_leader > 0 {
                         let leader = self.peers.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
                         leader.forward_with_original_sender(m, self);
+                    } else {
+                        panic!("RaftReplica should always have leader after experiments start");
                     }
-                    // else no leader... just drop
                 }
             },
             _ => {
@@ -522,7 +523,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
     fn try_campaign_leader(&mut self) { // start campaign to become leader if none has been elected yet
         let leader = self.raw_raft.raft.leader_id;
-        if (leader == 0 || self.removed_nodes.contains(&leader)) && self.state == State::Election {
+        if leader == 0 && self.state == State::Election {
             let _ = self.raw_raft.campaign();
         }
     }
@@ -530,7 +531,7 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn tick(&mut self) {
         self.raw_raft.tick();
         let leader = self.raw_raft.raft.leader_id;
-        if leader != 0 && !self.removed_nodes.contains(&leader) {
+        if leader != 0 {
             if !self.hb_proposals.is_empty() {
                 let proposals = std::mem::take(&mut self.hb_proposals);
                 for proposal in proposals {
@@ -626,21 +627,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
     }
 
-    /*
-    fn propose_conf_change(&mut self, pid: u64, change_type: ConfChangeType, next_change: Option<ConfChangeType>) {
-        let mut conf_change = ConfChange::default();
-        conf_change.node_id = pid;
-        conf_change.set_change_type(change_type);
-        let context: Vec<u8> = match next_change {
-            None => vec![0],
-            Some(ConfChangeType::AddNode) => vec![1],
-            Some(ConfChangeType::RemoveNode) => vec![2],
-            _ => panic!("Unexpected next_change: {:?}", next_change),
-        };
-        conf_change.set_context(context);
-        self.raw_raft.propose_conf_change(vec![], conf_change).unwrap_or_else(|_| panic!("Failed to propose conf_change {:?}", change_type));
-    }*/
-
     fn on_ready(&mut self) {
         if !self.raw_raft.has_ready() {
             return;
@@ -697,26 +683,21 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             assert!(self.raw_raft.raft.is_in_membership_change());
                         },
                         ConfChangeType::FinalizeMembershipChange => {
-                            let prev_conf = self.raw_raft.raft.prs().configuration().voters().clone();
-                            let leader = self.raw_raft.raft.leader_id;
-                            if leader != 0 {
-                                self.current_leader = leader;
-                            }
                             self.raw_raft
                                 .raft
                                 .finalize_membership_change(&cc)
                                 .expect("Failed to finalize reconfiguration");
 
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
-                            let mut removed_nodes: Vec<u64> = prev_conf.difference(current_conf.voters()).cloned().collect();
-                            // info!(self.ctx.log(), "Removed nodes are {:?}, current_leader: {}", removed_nodes, self.current_leader);
-                            if removed_nodes.contains(&self.raw_raft.raft.id) {
+                            let current_voters = current_conf.voters();
+                            if !current_voters.contains(&self.raw_raft.raft.id) {
                                 self.stop_timers();
                                 self.reconfig_state = ReconfigurationState::Removed;
                             } else {
                                 self.reconfig_state = ReconfigurationState::Finished;
                             }
-                            if removed_nodes.contains(&self.current_leader) {    // leader was removed
+                            let leader = self.raw_raft.raft.leader_id;
+                            if leader == 0 {    // leader was removed
                                 self.state = State::Election;    // reset leader so it can notify client when new leader emerges
                                 if self.reconfig_state != ReconfigurationState::Removed {  // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
@@ -730,8 +711,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                                     );
                                 }
                             }
-                            self.removed_nodes.append(&mut removed_nodes);
-                            let current_voters = current_conf.voters();
                             let conf_len = current_voters.len();
                             let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * conf_len);
                             data.put_u64(RECONFIG_ID);
@@ -742,55 +721,9 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
 
-                            let latest_leader = if self.removed_nodes.contains(&self.current_leader) {
-                                0
-                            } else {
-                                self.current_leader
-                            };
-                            let pr = ProposalResp::with(data, latest_leader);
+                            let pr = ProposalResp::with(data, leader);
                             self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                         },
-                        /*
-                        ConfChangeType::AddNode => {
-                            debug!(self.ctx.log(), "AddNode {} OK", cc.node_id);
-                            self.raw_raft.raft.add_node(cc.node_id).unwrap();
-                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                            store.set_conf_state(cs, None);
-                            next_conf_change = Self::get_next_change(cc.get_context());
-                            if next_conf_change.is_none() {
-                                // info!(self.ctx.log(), "Reconfiguration finished!");
-                                self.reconfig_state = ReconfigurationState::Finished;
-                                let mut data: Vec<u8> = Vec::with_capacity(8);
-                                data.put_u64(RECONFIG_ID);
-                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                            }
-                        },
-                        ConfChangeType::RemoveNode => {
-                            // info!(self.ctx.log(), "RemoveNode {} OK", cc.node_id);
-                            self.raw_raft.raft.remove_node(cc.node_id).unwrap();
-                            let cs = ConfState::from(self.raw_raft.raft.prs().configuration().clone());
-                            store.set_conf_state(cs, None);
-                            self.removed_nodes.insert(cc.node_id);
-                            if self.raw_raft.raft.leader_id == cc.node_id { // leader was removed
-                                self.current_leader = 0;    // reset leader so it can notify client when new leader emerges
-                                self.supervisor.tell(RaftReplicaMsg::Leader(0));
-                            }
-                            next_conf_change = Self::get_next_change(cc.get_context());
-                            if next_conf_change.is_none() {
-                                // info!(self.ctx.log(), "Reconfiguration finished!");
-                                self.reconfig_state = ReconfigurationState::Finished;
-                                let mut data: Vec<u8> = Vec::with_capacity(8);
-                                data.put_u64(RECONFIG_ID);
-                                let pr = ProposalResp::with(data, self.current_leader);  // use current_leader as removed node could be leader
-                                self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
-                            }
-                            if self.raw_raft.raft.id == cc.node_id {    // I was removed
-                                self.stop_timers();
-                                self.removed_nodes.insert(self.raw_raft.raft.id);
-                                self.reconfig_state = ReconfigurationState::Removed;
-                            }
-                        },*/
                         _ => unimplemented!(),
                     }
                 } else { // normal proposals
@@ -806,29 +739,6 @@ impl<S> RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
         }
         // Call `RawNode::advance` interface to update position flags in the raft.
         self.raw_raft.advance(ready);
-        /*
-        if self.raw_raft.raft.state == StateRole::Leader && next_conf_change.is_some(){
-            let next_change_type = next_conf_change.unwrap();
-            if let ConfChangeType::RemoveNode = next_change_type {
-                let pid = match &self.reconfig_policy {
-                    ReconfigurationPolicy::RemoveFollower => {
-                        let current_config = self.raw_raft.raft.prs().configuration().voters();
-                        let my_pid = self.raw_raft.raft.id;
-                        let newly_added = current_config.iter().max().unwrap();
-                        let follower_pid: &u64 = current_config.iter().filter(|pid| *pid != &my_pid && *pid != newly_added).collect::<Vec<&u64>>().first().expect("No followers found");
-                        *follower_pid
-                    },
-                    ReconfigurationPolicy::RemoveLeader => {
-                        self.raw_raft.raft.id
-                    },
-                    e => panic!("Got unexpected Raft transfer policy: {:?}", e)
-                };
-                self.propose_conf_change(pid, ConfChangeType::RemoveNode, None);
-            } else {
-                panic!("Expected RemoveNode as next change in this experiment");
-            }
-        }
-        */
     }
 }
 
