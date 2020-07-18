@@ -593,7 +593,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     }
                     nodes.append(&mut new_nodes);
-                    self.create_replica(r.config_id, nodes, false, true, self.leader_in_active_config == self.pid);
+                    self.create_replica(r.config_id, nodes, false, true, self.leader_in_active_config == self.pid && BLE_PRIO_START);
                 }
             },
             PaxosReplicaMsg::RegResp(rr) => {
@@ -1430,6 +1430,7 @@ pub mod raw_paxos{
                                                 let Message{msg, ..} = self.outgoing.get_mut(*outgoing_dec_idx).unwrap();
                                                 match msg {
                                                     PaxosMsg::Decide(d) => {
+                                                        println!("Cached decide. old: {}, new: {}", d.ld, self.lc);
                                                         d.ld = self.lc;
                                                     },
                                                     _ => panic!("Cached message in outgoing was not Decide"),
