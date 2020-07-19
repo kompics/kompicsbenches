@@ -764,12 +764,14 @@ impl ProposalResp {
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
-    FirstLeader(u64)
+    FirstLeader(u64),
+    PendingReconfiguration,
 }
 
 const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
 const FIRSTLEADER_ID: u8 = 3;
+const PENDINGRECONFIG_ID: u8 = 4;
 
 impl Serialisable for AtomicBroadcastMsg {
     fn ser_id(&self) -> u64 {
@@ -816,6 +818,9 @@ impl Serialisable for AtomicBroadcastMsg {
             AtomicBroadcastMsg::FirstLeader(pid) => {
                 buf.put_u8(FIRSTLEADER_ID);
                 buf.put_u64(*pid);
+            },
+            AtomicBroadcastMsg::PendingReconfiguration => {
+                buf.put_u8(PENDINGRECONFIG_ID);
             }
         }
         Ok(())
@@ -869,7 +874,8 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
             FIRSTLEADER_ID => {
                 let pid = buf.get_u64();
                 Ok(AtomicBroadcastMsg::FirstLeader(pid))
-            }
+            },
+            PENDINGRECONFIG_ID => Ok(AtomicBroadcastMsg::PendingReconfiguration),
             _ => {
                 Err(SerError::InvalidType(
                     "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),
