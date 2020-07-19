@@ -257,7 +257,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.pending_kill_comps = self.ble_comps.len() + self.paxos_comps.len() + self.communicator_comps.len();
         debug!(self.ctx.log(), "Killing {} child components...", self.pending_kill_comps);
         if self.pending_kill_comps == 0 && self.client_stopped {
-            info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
+            // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
             self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
         } else {
             let system = self.ctx.system();
@@ -300,7 +300,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn send_stop_ack(&self) {
-        info!(self.ctx.log(), "Sending StopAck");
+        // info!(self.ctx.log(), "Sending StopAck");
         self.partitioning_actor
             .as_ref()
             .unwrap()
@@ -621,7 +621,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
                 if self.pending_kill_comps == 0  && self.client_stopped {
-                    info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
+                    // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
             },
@@ -886,6 +886,10 @@ impl<S, P> PaxosComp<S, P> where
     }
 
     fn get_decided(&mut self) {
+        if self.current_leader != self.paxos.leader {
+            self.current_leader = self.paxos.leader;
+            self.supervisor.tell(PaxosReplicaMsg::Leader(self.config_id, self.current_leader));
+        }
         let decided_entries = self.paxos.get_decided_entries();
         let stopsign = match decided_entries.last() {
             Some(Entry::StopSign(ss)) => Some(ss.clone()),
@@ -1056,7 +1060,7 @@ pub mod raw_paxos{
         majority: usize,
         peers: Vec<u64>,    // excluding self pid
         state: (Role, Phase),
-        leader: u64,
+        pub leader: u64,
         n_leader: Ballot,
         promises_meta: Vec<Option<(Ballot, usize)>>,
         las: Vec<u64>,
@@ -1408,15 +1412,14 @@ pub mod raw_paxos{
                 let msg = Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync));
                 self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
                 // inform what got decided already
-                let idx = if self.lc > 0 {
+                let ld = if self.lc > 0 {
                     self.lc
                 } else {
-                    self.cached_la
+                    self.storage.get_decided_len()
                 };
-                if idx > prom.ld {
-                    let d = Decide::with(idx, self.n_leader);
-                    let msg = Message::with(self.pid, from, PaxosMsg::Decide(d));
-                    self.communication_port.trigger(CommunicatorMsg::RawPaxosMsg(msg));
+                if ld > prom.ld {
+                    let d = Decide::with(ld, self.n_leader);
+                    self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
                 }
             }
         }
@@ -1718,29 +1721,32 @@ mod ballot_leader_election {
         supervisor: Recipient<StopKillResponse>,
         stopped: bool,
         stopped_peers: HashSet<u64>,
+        has_had_leader: bool,
     }
 
     impl BallotLeaderComp {
         pub fn with(peers: Vec<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<StopKillResponse>, prio_start: bool) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             let initial_round = if prio_start { 1 } else { 0 };
+            let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
                 ble_port: ProvidedPort::new(),
                 pid,
                 majority: n/2 + 1, // +1 because peers is exclusive ourselves
                 peers,
-                round: 0,
+                round: initial_round,
                 ballots: Vec::with_capacity(n),
-                current_ballot: Ballot::with(initial_round, pid),
+                current_ballot: initial_ballot.clone(),
                 leader: None,
-                max_ballot: Ballot::with(initial_round, pid),
+                max_ballot: initial_ballot,
                 hb_delay,
                 delta,
                 timer: None,
                 supervisor,
                 stopped: false,
-                stopped_peers: HashSet::with_capacity(n)
+                stopped_peers: HashSet::with_capacity(n),
+                has_had_leader: false
             }
         }
 
@@ -1753,6 +1759,7 @@ mod ballot_leader_election {
                 self.leader = None;
             } else {
                 if self.leader != Some((top_ballot, top_pid)) { // got a new leader with greater ballot
+                    self.has_had_leader = true;
                     self.max_ballot = top_ballot;
                     self.leader = Some((top_ballot, top_pid));
                     self.ble_port.trigger(Leader::with(top_pid, top_ballot));
@@ -1767,8 +1774,7 @@ mod ballot_leader_election {
             } else {
                 self.ballots.clear();
             }
-            let waiting_first_leader = self.max_ballot == Ballot::with(0, self.pid) && self.leader.is_none();
-            let delay = if waiting_first_leader{    // use short timeout if still no first leader
+            let delay = if !self.has_had_leader{    // use short timeout if still no first leader
                 ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
             } else {
                 self.hb_delay

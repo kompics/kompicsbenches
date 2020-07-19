@@ -212,7 +212,6 @@ impl AtomicBroadcastMaster {
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
         let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
-        let retry_after_reconfig = self.algorithm.as_ref().unwrap().contains("paxos");
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
                 initial_config,
@@ -223,7 +222,6 @@ impl AtomicBroadcastMaster {
                 PROPOSAL_TIMEOUT,
                 leader_election_latch,
                 finished_latch,
-                retry_after_reconfig
             )
         });
         unique_reg_f.wait_expect(
@@ -386,8 +384,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         }
     }
 
-    fn cleanup_iteration(&mut self, last_iteration: bool, _exec_time_millis: f64) -> () {
-        println!("Cleaning up Atomic Broadcast (master) side");
+    fn cleanup_iteration(&mut self, last_iteration: bool, exec_time_millis: f64) -> () {
+        println!("Cleaning up Atomic Broadcast (master). Exec_time: {}", exec_time_millis);
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
         client.actor_ref().tell(LocalClientMessage::Stop);
