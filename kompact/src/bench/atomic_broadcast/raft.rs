@@ -154,7 +154,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 
     fn send_stop_ack(&self) {
-        info!(self.ctx.log(), "Sending StopAck");
+        // info!(self.ctx.log(), "Sending StopAck");
         self.partitioning_actor
             .as_ref()
             .expect("No cached partitioning actor")
@@ -197,7 +197,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             system.kill(communicator);
         }
         if self.pending_kill_comps == 0 && self.client_stopped {
-            info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
+            // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
             self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply cleanup");
         }
     }
@@ -266,7 +266,7 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
                 if self.pending_kill_comps == 0 && self.client_stopped {
-                    info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
+                    // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
             },

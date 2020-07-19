@@ -57,7 +57,6 @@ pub struct Client {
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
-    retry_after_reconfig: bool,
 }
 
 impl Client {
@@ -70,7 +69,6 @@ impl Client {
         timeout: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
-        retry_after_reconfig: bool
     ) -> Client {
         Client {
             ctx: ComponentContext::new(),
@@ -88,7 +86,6 @@ impl Client {
             state: ExperimentState::LeaderElection,
             current_config: initial_config,
             num_timed_out: 0,
-            retry_after_reconfig
         }
     }
 
@@ -275,7 +272,7 @@ impl Actor for Client {
                             ExperimentState::ReconfigurationElection => {
                                 self.current_leader = pid;
                                 // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
-                                if !self.pending_proposals.is_empty() && self.retry_after_reconfig {
+                                if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_pending_proposals(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
@@ -333,7 +330,9 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::PendingReconfiguration => {
                         // info!(self.ctx.log(), "Got PendingReconfiguration");
-                        self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
+                        if self.reconfig.is_some() {
+                            self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
+                        }
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }
