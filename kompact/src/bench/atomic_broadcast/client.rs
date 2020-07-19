@@ -57,6 +57,7 @@ pub struct Client {
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
+    retry_after_reconfig: bool,
 }
 
 impl Client {
@@ -69,6 +70,7 @@ impl Client {
         timeout: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
+        retry_after_reconfig: bool
     ) -> Client {
         Client {
             ctx: ComponentContext::new(),
@@ -85,7 +87,8 @@ impl Client {
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             current_config: initial_config,
-            num_timed_out: 0
+            num_timed_out: 0,
+            retry_after_reconfig
         }
     }
 
@@ -151,8 +154,8 @@ impl Client {
     }
 
     fn proposal_timeout(&mut self, id: u64) {
-        // info!(self.ctx.log(), "Timed out proposal {}", id);
         if self.responses.contains_key(&id) { return; }
+        // info!(self.ctx.log(), "Timed out proposal {}", id);
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
@@ -179,9 +182,9 @@ impl Client {
         }
     }
 
-    fn retry_after_reconfig(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
+    fn retry_pending_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-        // info!(self.ctx.log(), "Retrying {} proposals after reconfig to leader {}", pending_proposals.len(), self.current_leader);
+        // info!(self.ctx.log(), "Retrying {} proposals after reconfig", pending_proposals.len());
         for (id, meta) in pending_proposals {
             let i = *id;
             self.propose_normal(i, &leader);
@@ -272,9 +275,9 @@ impl Actor for Client {
                             ExperimentState::ReconfigurationElection => {
                                 self.current_leader = pid;
                                 // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
-                                if !self.pending_proposals.is_empty() {
+                                if !self.pending_proposals.is_empty() && self.retry_after_reconfig {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
-                                    self.retry_after_reconfig(&mut pending_proposals);
+                                    self.retry_pending_proposals(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
                                 }
                                 self.send_concurrent_proposals();
@@ -327,6 +330,10 @@ impl Actor for Client {
                                 }
                             }
                         }
+                    },
+                    AtomicBroadcastMsg::PendingReconfiguration => {
+                        // info!(self.ctx.log(), "Got PendingReconfiguration");
+                        self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }

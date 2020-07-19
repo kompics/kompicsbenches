@@ -819,6 +819,7 @@ struct PaxosComp<S, P> where
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
+    pending_reconfig: bool,
     stopped: bool,
     stopped_peers: HashSet<u64>
 }
@@ -851,6 +852,7 @@ impl<S, P> PaxosComp<S, P> where
             pid,
             current_leader: 0,
             timers: None,
+            pending_reconfig: false,
             stopped: false,
         }
     }
@@ -918,13 +920,13 @@ impl<S, P> PaxosComp<S, P> where
         }
     }
 
-    fn propose(&mut self, p: Proposal) {
+    fn propose(&mut self, p: Proposal) -> bool {
         match p.reconfig {
             Some((reconfig, _)) => {
-                self.paxos.propose_reconfiguration(reconfig);
+                self.paxos.propose_reconfiguration(reconfig)
             },
             None => {
-                self.paxos.propose_normal(p.data);
+                self.paxos.propose_normal(p.data)
             }
         }
     }
@@ -939,7 +941,11 @@ impl<S, P> Actor for PaxosComp<S, P> where
     fn receive_local(&mut self, msg: PaxosCompMsg) -> () {
         match msg {
             PaxosCompMsg::Propose(p) => {
-                self.propose(p);
+                let succeeded = self.propose(p);
+                if !succeeded && !self.pending_reconfig {
+                    self.pending_reconfig = true;
+                    self.communication_port.trigger(CommunicatorMsg::PendingReconfiguration);
+                }
             },
             PaxosCompMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
                 let (succeeded, entries) = self.paxos.get_chosen_entries(seq_req.from_idx, seq_req.to_idx);
@@ -1149,36 +1155,44 @@ pub mod raw_paxos{
 
         pub fn stopped(&self) -> bool { self.storage.stopped() }
 
-        pub fn propose_normal(&mut self, data: Vec<u8>) {
-            if self.stopped(){ return; }
-            let normal_entry = Entry::Normal(data);
-            match self.state {
-                (Role::Leader, Phase::Prepare) => {
-                    self.proposals.push(normal_entry);
-                },
-                (Role::Leader, Phase::Accept) => {
-                    self.send_accept(normal_entry);
-                },
-                _ => {
-                    self.forward_proposals(normal_entry);
+        pub fn propose_normal(&mut self, data: Vec<u8>) -> bool {
+            if self.stopped(){
+                false
+            } else {
+                let normal_entry = Entry::Normal(data);
+                match self.state {
+                    (Role::Leader, Phase::Prepare) => {
+                        self.proposals.push(normal_entry);
+                    },
+                    (Role::Leader, Phase::Accept) => {
+                        self.send_accept(normal_entry);
+                    },
+                    _ => {
+                        self.forward_proposals(normal_entry);
+                    }
                 }
+                true
             }
         }
 
-        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) {
-            if self.stopped(){ return; }
-            let ss = StopSign::with(self.config_id + 1, nodes);
-            let entry = Entry::StopSign(ss);
-            match self.state {
-                (Role::Leader, Phase::Prepare) => {
-                    self.proposals.push(entry);
-                },
-                (Role::Leader, Phase::Accept) => {
-                    self.send_accept(entry);
-                },
-                _ => {
-                    self.forward_proposals(entry)
+        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) -> bool {
+            if self.stopped(){
+                false
+            } else {
+                let ss = StopSign::with(self.config_id + 1, nodes);
+                let entry = Entry::StopSign(ss);
+                match self.state {
+                    (Role::Leader, Phase::Prepare) => {
+                        self.proposals.push(entry);
+                    },
+                    (Role::Leader, Phase::Accept) => {
+                        self.send_accept(entry);
+                    },
+                    _ => {
+                        self.forward_proposals(entry)
+                    }
                 }
+                true
             }
         }
 
@@ -1416,11 +1430,10 @@ pub mod raw_paxos{
                                                 let pid = idx as u64 + 1;
                                                 self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d)));
                                             },
-                                            _ => {  // accept is BEFORE cached decide
+                                            _ => {  // accept is BEFORE cached decide or no accept/acceptsync before
                                                 let Message{msg, ..} = self.outgoing.get_mut(*outgoing_dec_idx).unwrap();
                                                 match msg {
                                                     PaxosMsg::Decide(d) => {
-                                                        println!("Cached decide. old: {}, new: {}", d.ld, self.lc);
                                                         d.ld = self.lc;
                                                     },
                                                     _ => panic!("Cached message in outgoing was not Decide"),

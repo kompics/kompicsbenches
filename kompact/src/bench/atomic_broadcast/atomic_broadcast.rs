@@ -212,6 +212,7 @@ impl AtomicBroadcastMaster {
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
         let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
+        let retry_after_reconfig = self.algorithm.as_ref().unwrap().contains("paxos");
         let (client_comp, unique_reg_f) = system.create_and_register( || {
             Client::with(
                 initial_config,
@@ -222,6 +223,7 @@ impl AtomicBroadcastMaster {
                 PROPOSAL_TIMEOUT,
                 leader_election_latch,
                 finished_latch,
+                retry_after_reconfig
             )
         });
         unique_reg_f.wait_expect(

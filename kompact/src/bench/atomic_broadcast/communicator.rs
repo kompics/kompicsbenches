@@ -20,6 +20,7 @@ pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
     ProposalResponse(ProposalResp),
+    PendingReconfiguration,
     SendStop(u64)
 }
 
@@ -76,6 +77,9 @@ impl Provide<CommunicationPort> for Communicator {
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
                 self.client.tell_serialised(am, self).expect("Should serialise ProposalResp");
             },
+            CommunicatorMsg::PendingReconfiguration => {
+                self.client.tell_serialised(AtomicBroadcastMsg::PendingReconfiguration, self).expect("Should serialise PendingReconfiguration");
+            }
             CommunicatorMsg::SendStop(my_pid) => {
                 trace!(self.ctx.log(), "Sending stop");
                 for ap in self.peers.values() {
