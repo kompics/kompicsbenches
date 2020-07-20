@@ -283,15 +283,13 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
         match m.data.ser_id {
             ATOMICBCAST_ID => {
                 if !self.stopped {
-                    if self.current_leader == self.pid {
+                    if self.current_leader == self.pid || self.current_leader == 0 {    // if no leader, let raftcomp hold back
                         if let AtomicBroadcastMsg::Proposal(p) = m.try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>().expect("Should be AtomicBroadcastMsg!") {
                             self.raft_comp.as_ref().expect("No active RaftComp").actor_ref().tell(RaftCompMsg::Propose(p));
                         }
                     } else if self.current_leader > 0 {
                         let leader = self.peers.get(&self.current_leader).expect(&format!("Could not get leader's actorpath. Pid: {}", self.current_leader));
                         leader.forward_with_original_sender(m, self);
-                    } else {
-                        panic!("RaftReplica should always have leader after experiments start");
                     }
                 }
             },

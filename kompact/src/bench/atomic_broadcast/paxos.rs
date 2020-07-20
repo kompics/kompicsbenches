@@ -274,6 +274,7 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn new_iteration(&mut self, init: Init) {
+        self.hb_proposals.clear();
         self.stopped = false;
         self.client_stopped = false;
         self.nodes = init.nodes;
