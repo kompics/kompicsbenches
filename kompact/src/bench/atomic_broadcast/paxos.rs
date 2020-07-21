@@ -81,7 +81,6 @@ pub struct PaxosReplica<S, P> where
     pending_stop_comps: usize,
     pending_kill_comps: usize,
     batch_accept: bool,
-    hb_proposals: Vec<NetMessage>,
     cleanup_latch: Option<Ask<(), ()>>
 }
 
@@ -116,7 +115,6 @@ impl<S, P> PaxosReplica<S, P> where
             pending_stop_comps: 0,
             pending_kill_comps: 0,
             batch_accept,
-            hb_proposals: vec![],
             cleanup_latch: None
         }
     }
@@ -274,7 +272,6 @@ impl<S, P> PaxosReplica<S, P> where
     }
 
     fn new_iteration(&mut self, init: Init) {
-        self.hb_proposals.clear();
         self.stopped = false;
         self.client_stopped = false;
         self.nodes = init.nodes;
@@ -546,24 +543,12 @@ impl<S, P> Actor for PaxosReplica<S, P> where
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config.0 == config_id {
-                    let hb_proposals = std::mem::take(&mut self.hb_proposals);
-                    if pid == self.pid {    // we became leader, propose hb proposals
-                        for p in hb_proposals {
-                            self.deserialise_and_propose(p);
-                        }
-                        if self.leader_in_active_config == 0 {  // notify client if no leader before
-                            self.cached_client
-                                .as_ref()
-                                .expect("No cached client!")
-                                .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
-                                .expect("Should serialise FirstLeader");
-                        }
-                    } else if !hb_proposals.is_empty(){
-                        let idx = pid as usize - 1;
-                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", pid));
-                        for p in hb_proposals {
-                            leader.forward_with_original_sender(p, self);
-                        }
+                    if self.leader_in_active_config == 0 && pid == self.pid {  // notify client if no leader before
+                        self.cached_client
+                            .as_ref()
+                            .expect("No cached client!")
+                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                            .expect("Should serialise FirstLeader");
                     }
                     self.leader_in_active_config = pid;
                 }
@@ -647,7 +632,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
                             leader.forward_with_original_sender(m, self);
                         },
-                        _ => self.hb_proposals.push(m), // no leader: hold back
+                        _ => {},
                     }
                 }
             },
