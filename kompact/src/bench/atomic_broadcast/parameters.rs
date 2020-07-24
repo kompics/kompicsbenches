@@ -8,7 +8,7 @@ pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 1;
     pub const TRANSFER_TIMEOUT: u64 = 300;
     pub const BLE_DELTA: u64 = 20;
-    pub const BATCH_DECIDE: bool = false;
+    pub const BATCH_DECIDE: bool = true;
     pub const BLE_PRIO_START: bool = true;
 }
 
