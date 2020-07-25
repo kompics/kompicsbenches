@@ -304,8 +304,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(4L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(2L.k);
+  private val atomicBroadcastTestProposals = List(10L.mio);
+  private val atomicBroadcastTestConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
   private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(20L.mio);
@@ -316,7 +316,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val raft = List("raft-batch");
   private val raft_reconfig = List("joint-consensus-remove-follower", "joint-consensus-remove-leader");
 
-  private val paxos_reconfig = List("pull", "eager");
+  private val paxos_reconfig = List("pull");
 
   private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
     .cross(
@@ -409,8 +409,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val latencySpace = ParameterSpacePB
     .cross(
       List("paxos", "raft-batch"),
-      List(3, 5),
-      List(100L.k),
+      List(3),
+      List(10L.k),
       List(1L),
       List("off"),
       List("none"),
