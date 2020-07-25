@@ -1,6 +1,6 @@
 pub const ELECTION_TIMEOUT: u64 = 10000;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
-pub const MAX_INFLIGHT: usize = 1000000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
+pub const MAX_INFLIGHT: usize = 10000000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
 pub const INITIAL_ELECTION_FACTOR: u64 = 10;   // shorter first election: ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
 pub const META_RESULTS_DIR: &str = "../meta_results/meta-distributed-aws"; // change for each benchmark
 
