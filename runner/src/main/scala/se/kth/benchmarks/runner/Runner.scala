@@ -15,7 +15,7 @@ object Runner {
 
   type Stub = BenchmarkRunnerGrpc.BenchmarkRunnerStub;
 
-  val WAIT: Duration = 500.milliseconds;
+  val WAIT: Duration = 3000.milliseconds;
   val MAX_RETRIES: Int = 130;
 }
 
