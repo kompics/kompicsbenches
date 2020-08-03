@@ -152,7 +152,7 @@ object AtomicBroadcast {
             plotParams = (params: (String, Long, Long)) =>
               List(s"reconfiguration = ${params._1}, num_nodes = ${params._2}, num_proposals = ${params._3}"),
             plotTitle = "Execution Time",
-            xAxisLabel = "number of proposals",
+            xAxisLabel = "number of concurrent proposals",
             xAxisTitle = "Reconfiguration, Number of Concurrent Proposals",
             xAxisId = "reconfig-number-of-concurrent-proposals",
             yAxisLabel = "execution time (ms)",
