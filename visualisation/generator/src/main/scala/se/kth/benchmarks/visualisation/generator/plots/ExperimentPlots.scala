@@ -144,7 +144,7 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
                                                        ): PlotGroup.Along = {
     val plots: List[PlotGroup] = sliced.toList.map {
       case (params, impls) => {
-        val paramSeries = data.paramSeries(mainAxis);
+        val paramSeries = data.paramSeries(mainAxis).filter(x => impls.values.exists(i => i.params.contains(x)))  // keep only x param if a datapoint uses it
         val groupedSeries = impls.mapValues(_.map2D(identity, paramSeries));
 //        val groupedErrorSeries = impls.mapValues(_.mapCI95Bars(identity, paramSeries));
         val groupedErrorSeries = impls.mapValues(_.map2DErrorBars(identity, paramSeries));
