@@ -146,7 +146,8 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
       case (params, impls) => {
         val paramSeries = data.paramSeries(mainAxis);
         val groupedSeries = impls.mapValues(_.map2D(identity, paramSeries));
-        val groupedErrorSeries = impls.mapValues(_.mapCI95Bars(identity, paramSeries));
+//        val groupedErrorSeries = impls.mapValues(_.mapCI95Bars(identity, paramSeries));
+        val groupedErrorSeries = impls.mapValues(_.map2DErrorBars(identity, paramSeries));
         var merged = new ListBuffer[(K, DataSeries, ErrorBarSeries)]();
         for (key <- groupedSeries.keys) {
           val m = (key, groupedSeries(key), groupedErrorSeries(key));
