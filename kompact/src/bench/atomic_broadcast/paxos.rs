@@ -1324,7 +1324,7 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len, from);
-                if promise_meta > &self.max_promise_meta && prom.ld >= self.acc_sync_ld {
+                if promise_meta > &self.max_promise_meta {
                     self.max_promise_meta = promise_meta.clone();
                     self.max_promise_sfx = prom.sfx;
                 }
@@ -1338,6 +1338,7 @@ pub mod raw_paxos{
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
+                    let max_sfx_is_empty = self.max_promise_sfx.is_empty();
                     if max_pid != self.pid {    // sync self with max pid's sequence
                         let my_promise = &self.promises_meta[self.pid as usize - 1].unwrap();
                         if my_promise != &(max_promise_n, max_sfx_len) {
@@ -1365,7 +1366,12 @@ pub mod raw_paxos{
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if promise_meta == &(max_promise_n, max_sfx_len) && ld >= max_ld {
+                        if promise_meta == &(max_promise_n, max_sfx_len) && max_sfx_is_empty && ld >= self.acc_sync_ld {
+                            let sfx = max_promise_acc_sync.entries.clone();
+                            let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, false);
+                            let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
+                            self.outgoing.push(msg);
+                        } else if promise_meta == &(max_promise_n, max_sfx_len) && !max_sfx_is_empty {
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
                             self.outgoing.push(msg);
                         } else {
@@ -1397,8 +1403,13 @@ pub mod raw_paxos{
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len);
                 let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
-                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) && prom.ld >= self.acc_sync_ld {
-                    (false, prom.ld + sfx_len as u64)
+                let max_sfx_is_empty = max_sfx_len == 0;
+                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) {
+                    match max_sfx_is_empty {
+                        false => (false, prom.ld + sfx_len as u64),
+                        true if prom.ld >= self.acc_sync_ld => (false, prom.ld + sfx_len as u64),
+                        _ => (true, prom.ld),
+                    }
                 } else {
                     (true, prom.ld)
                 };
