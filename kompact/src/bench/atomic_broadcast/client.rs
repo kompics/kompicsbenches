@@ -151,7 +151,7 @@ impl Client {
     }
 
     fn proposal_timeout(&mut self, id: u64) {
-        if self.responses.contains_key(&id) { return; }
+        if self.responses.contains_key(&id) || self.state == ExperimentState::ReconfigurationElection { return; }
         // info!(self.ctx.log(), "Timed out proposal {}", id);
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {

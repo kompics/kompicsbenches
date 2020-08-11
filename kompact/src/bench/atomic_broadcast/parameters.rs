@@ -10,6 +10,7 @@ pub mod paxos {
     pub const BLE_DELTA: u64 = 100;
     pub const BATCH_DECIDE: bool = true;
     pub const BLE_PRIO_START: bool = true;
+    pub const MAX_ACCSYNC: bool = true;
 }
 
 pub mod raft {
