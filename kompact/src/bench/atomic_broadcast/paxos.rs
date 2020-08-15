@@ -543,12 +543,24 @@ impl<S, P> Actor for PaxosReplica<S, P> where
         match msg {
             PaxosReplicaMsg::Leader(config_id, pid) => {
                 if self.active_config.0 == config_id {
-                    if self.leader_in_active_config == 0 && pid == self.pid {  // notify client if no leader before
-                        self.cached_client
-                            .as_ref()
-                            .expect("No cached client!")
-                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
-                            .expect("Should serialise FirstLeader");
+                    if self.leader_in_active_config == 0 {
+                        let hb_proposals = std::mem::take(&mut self.hb_proposals);
+                        if pid == self.pid {  // notify client if no leader before
+                            self.cached_client
+                                .as_ref()
+                                .expect("No cached client!")
+                                .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                                .expect("Should serialise FirstLeader");
+                            for net_msg in hb_proposals {
+                                self.deserialise_and_propose(net_msg);
+                            }
+                        } else if pid != self.pid && !hb_proposals.is_empty() {
+                            let idx = pid as usize - 1;
+                            let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                            for m in hb_proposals {
+                                leader.forward_with_original_sender(m, self);
+                            }
+                        }
                     }
                     self.leader_in_active_config = pid;
                 }
@@ -606,7 +618,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 assert!(self.pending_kill_comps > 0, "Got unexpected KillResp when no pending kill comps");
                 self.pending_kill_comps -= 1;
                 // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
-                if self.pending_kill_comps == 0  && self.client_stopped {
+                if self.pending_kill_comps == 0 && self.client_stopped {
                     // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
                     self.cleanup_latch.take().expect("No cleanup latch").reply(()).expect("Failed to reply clean up latch");
                 }
@@ -1241,6 +1253,12 @@ pub mod raw_paxos{
             } else {
                 self.state.0 = Role::Follower;
                 self.leader = n.pid;
+                let proposals = mem::take(&mut self.proposals);
+                if !proposals.is_empty() {
+                    for p in proposals {
+                        self.forward_proposals(p);
+                    }
+                }
             }
         }
 
@@ -1250,6 +1268,8 @@ pub mod raw_paxos{
                 let msg = Message::with(self.pid, self.leader, pf);
                 // println!("Forwarding to node {}", self.leader);
                 self.outgoing.push(msg);
+            } else {
+                self.proposals.push(entry);
             }
         }
 
@@ -1274,41 +1294,39 @@ pub mod raw_paxos{
         }
 
         fn send_accept(&mut self, entry: Entry) {
-            if !self.stopped() {
-                let promised_idx = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx);
-                for idx in promised_idx {
-                    if self.batch_accept {
-                        match self.batch_accept_meta.get_mut(idx) {
-                            Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
-                                let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
-                                match msg {
-                                    PaxosMsg::Accept(a) => {
-                                        a.entries.push(entry.clone());
-                                    },
-                                    PaxosMsg::AcceptSync(acc) => {
-                                        acc.entries.push(entry.clone());
-                                    },
-                                    _ => panic!("Not Accept or AcceptSync when batching"),
-                                }
-                            },
-                            _ => {
-                                let acc = Accept::with(self.n_leader, vec![entry.clone()]);
-                                let cache_idx = self.outgoing.len();
-                                let pid = idx as u64 + 1;
-                                self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Accept(acc)));
-                                self.batch_accept_meta[idx] = Some((self.n_leader, cache_idx));
+            let promised_idx = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx);
+            for idx in promised_idx {
+                if self.batch_accept {
+                    match self.batch_accept_meta.get_mut(idx) {
+                        Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
+                            let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
+                            match msg {
+                                PaxosMsg::Accept(a) => {
+                                    a.entries.push(entry.clone());
+                                },
+                                PaxosMsg::AcceptSync(acc) => {
+                                    acc.entries.push(entry.clone());
+                                },
+                                _ => panic!("Not Accept or AcceptSync when batching"),
                             }
+                        },
+                        _ => {
+                            let acc = Accept::with(self.n_leader, vec![entry.clone()]);
+                            let cache_idx = self.outgoing.len();
+                            let pid = idx as u64 + 1;
+                            self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Accept(acc)));
+                            self.batch_accept_meta[idx] = Some((self.n_leader, cache_idx));
                         }
-                    } else {
-                        let pid = idx as u64 + 1;
-                        let acc = Accept::with(self.n_leader, vec![entry.clone()]);
-                        self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Accept(acc)));
                     }
+                } else {
+                    let pid = idx as u64 + 1;
+                    let acc = Accept::with(self.n_leader, vec![entry.clone()]);
+                    self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Accept(acc)));
                 }
-                self.storage.append_entry(entry);
-                self.cached_la += 1;
-                self.las[self.pid as usize - 1] = self.cached_la;
             }
+            self.storage.append_entry(entry);
+            self.cached_la += 1;
+            self.las[self.pid as usize - 1] = self.cached_la;
         }
 
         fn handle_promise_prepare(&mut self, prom: Promise, from: u64) {
