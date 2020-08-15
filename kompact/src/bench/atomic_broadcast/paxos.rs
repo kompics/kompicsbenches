@@ -81,7 +81,8 @@ pub struct PaxosReplica<S, P> where
     pending_stop_comps: usize,
     pending_kill_comps: usize,
     batch_accept: bool,
-    cleanup_latch: Option<Ask<(), ()>>
+    cleanup_latch: Option<Ask<(), ()>>,
+    hb_proposals: Vec<NetMessage>,
 }
 
 impl<S, P> PaxosReplica<S, P> where
@@ -115,7 +116,8 @@ impl<S, P> PaxosReplica<S, P> where
             pending_stop_comps: 0,
             pending_kill_comps: 0,
             batch_accept,
-            cleanup_latch: None
+            cleanup_latch: None,
+            hb_proposals: vec![]
         }
     }
 
@@ -643,7 +645,9 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                             let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
                             leader.forward_with_original_sender(m, self);
                         },
-                        _ => {},
+                        _ => {
+                            self.hb_proposals.push(m);
+                        },
                     }
                 }
             },
@@ -1040,7 +1044,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use crate::bench::atomic_broadcast::parameters::paxos::BATCH_DECIDE;
+    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_DECIDE, MAX_ACCSYNC};
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1089,6 +1093,7 @@ pub mod raw_paxos{
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
             let num_nodes = *max_pid as usize;
+            let cached_la = storage.get_sequence_len() as u64;
             Paxos {
                 storage,
                 pid,
@@ -1112,7 +1117,7 @@ pub mod raw_paxos{
                 batch_decide_meta: vec![None; num_nodes],
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
-                cached_la: 0,
+                cached_la,
             }
         }
 
@@ -1347,6 +1352,7 @@ pub mod raw_paxos{
                         Some(e) => e.is_stopsign(),
                         None => false
                     };
+                    let max_sfx_is_empty = self.max_promise_sfx.is_empty();
                     if max_pid != self.pid {    // sync self with max pid's sequence
                         let my_promise = &self.promises_meta[self.pid as usize - 1].unwrap();
                         if my_promise != &(max_promise_n, max_sfx_len) {
@@ -1374,7 +1380,14 @@ pub mod raw_paxos{
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if promise_meta == &(max_promise_n, max_sfx_len) {
+                        if promise_meta == &(max_promise_n, max_sfx_len) && max_sfx_is_empty && ld >= self.acc_sync_ld && MAX_ACCSYNC {
+                            // println!("No sync node {}", pid);
+                            let sfx = max_promise_acc_sync.entries.clone();
+                            let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, false);
+                            let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
+                            self.outgoing.push(msg);
+                        } else if promise_meta == &(max_promise_n, max_sfx_len) && !max_sfx_is_empty && MAX_ACCSYNC {
+                            // println!("No sync not empty sfx: node {}", pid);
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
                             self.outgoing.push(msg);
                         } else {
@@ -1389,7 +1402,17 @@ pub mod raw_paxos{
                     }
                     if max_pid != self.pid {
                         // send acceptsync to max_pid
-                        let msg = Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync));
+                        let idx = max_pid as usize - 1;
+                        let ld = self.lds[idx].expect("No promise from max_pid");
+                        let msg = if ((max_sfx_is_empty && ld >= self.acc_sync_ld) || !max_sfx_is_empty) && MAX_ACCSYNC {
+                            // println!("No sync EMPTY sfx MAX node {}, promise_meta: {:?}, max_promise: {:?}, ld: {}, acc_sync_ld: {}", max_pid, promise_meta, self.max_promise_meta, ld, self.acc_sync_ld);
+                            Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync))
+                        } else {
+                            // println!("SYNC MAX node {}, promise_meta: {:?}, max_promise: {:?}, ld: {}, acc_sync_ld: {}", max_pid, promise_meta, self.max_promise_meta, ld, self.acc_sync_ld);
+                            let sfx = self.storage.get_suffix(ld);
+                            let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, true);
+                            Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(acc_sync))
+                        };
                         self.outgoing.push(msg);
                         if self.batch_accept {
                             self.batch_accept_meta[max_pid as usize - 1] = Some((self.n_leader, self.outgoing.len() - 1));
@@ -1403,8 +1426,22 @@ pub mod raw_paxos{
             if prom.n == self.n_leader {
                 let idx = from as usize - 1;
                 self.lds[idx] = Some(prom.ld);
-                let sfx = self.storage.get_suffix(prom.ld);
-                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, true);
+                let sfx_len = prom.sfx.len();
+                let promise_meta = &(prom.n_accepted, sfx_len);
+                let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
+                let max_sfx_is_empty = max_sfx_len == 0;
+                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) && MAX_ACCSYNC {
+                    match max_sfx_is_empty {
+                        false => (false, prom.ld + sfx_len as u64),
+                        true if prom.ld >= self.acc_sync_ld => (false, prom.ld + sfx_len as u64),
+                        _ => (true, prom.ld),
+                    }
+                } else {
+                    (true, prom.ld)
+                };
+                let sfx = self.storage.get_suffix(sfx_start);
+                // println!("Handle promise from {} in Accept phase: {:?}, sfx len: {}", from, (sync, sfx_start), sfx.len());
+                let acc_sync = AcceptSync::with(self.n_leader, sfx, prom.ld, sync);
                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
                 // inform what got decided already
                 let ld = if self.lc > 0 {

@@ -282,7 +282,7 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
       if (params.length > localPosition) {
         val (actual, actualParams) = sorted.params(localPosition);
         if (actual == expected) {
-          series(i) = calc(actualParams, stats(localPosition));
+          series(i) = calc(actualParams, sorted.stats(localPosition));
         } else {
           series(i) = Double.NaN;
           localOffset += 1;
