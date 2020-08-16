@@ -80,7 +80,6 @@ pub struct PaxosReplica<S, P> where
     cached_client: Option<ActorPath>,
     pending_stop_comps: usize,
     pending_kill_comps: usize,
-    batch_accept: bool,
     cleanup_latch: Option<Ask<(), ()>>,
     hb_proposals: Vec<NetMessage>,
 }
@@ -89,7 +88,7 @@ impl<S, P> PaxosReplica<S, P> where
     S: SequenceTraits,
     P: PaxosStateTraits
 {
-    pub fn with(initial_config: Vec<u64>, policy: ReconfigurationPolicy, batch_accept: bool) -> PaxosReplica<S, P> {
+    pub fn with(initial_config: Vec<u64>, policy: ReconfigurationPolicy) -> PaxosReplica<S, P> {
         PaxosReplica {
             ctx: ComponentContext::new(),
             pid: 0,
@@ -115,13 +114,12 @@ impl<S, P> PaxosReplica<S, P> where
             cached_client: None,
             pending_stop_comps: 0,
             pending_kill_comps: 0,
-            batch_accept,
             cleanup_latch: None,
             hb_proposals: vec![]
         }
     }
 
-    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool, start: bool, ble_prio: bool) {
+    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool, start: bool, ble_prio: bool, quick_start: bool) {
         let num_peers = nodes.len() - 1;
         let mut communicator_peers = HashMap::with_capacity(num_peers);
         let mut ble_peers = Vec::with_capacity(num_peers);
@@ -159,7 +157,7 @@ impl<S, P> PaxosReplica<S, P> where
         let stopkill_recipient: Recipient<StopKillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
         let paxos_comp = system.create(|| {
-            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid, self.batch_accept)
+            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid)
         });
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
@@ -174,7 +172,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA, stopkill_recipient, ble_prio)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA, stopkill_recipient, ble_prio, quick_start)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -284,7 +282,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.cached_client = Some(client);
         if self.initial_config.contains(&self.pid){
             self.next_config_id = Some(1);
-            self.create_replica(1, self.initial_config.clone(), true, false, false);
+            self.create_replica(1, self.initial_config.clone(), true, false, false, true);
         } else {
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
@@ -593,7 +591,8 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     }
                     nodes.append(&mut new_nodes);
-                    self.create_replica(r.config_id, nodes, false, true, self.leader_in_active_config == self.pid && BLE_PRIO_START);
+                    let ble_prio = self.leader_in_active_config == self.pid && BLE_PRIO_START;
+                    self.create_replica(r.config_id, nodes, false, true, ble_prio, ble_prio);
                 }
             },
             PaxosReplicaMsg::RegResp(rr) => {
@@ -707,7 +706,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             // only SS in final sequence and no other prev sequences -> start directly
                                             let final_sequence = S::new_with_sequence(vec![]);
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                            self.create_replica(r.config_id, nodes, false, true, false);
+                                            self.create_replica(r.config_id, nodes, false, true, false, false);
                                         } else {
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
                                             match self.policy {
@@ -722,7 +721,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
                                             }
-                                            self.create_replica(r.config_id, nodes, false, false, false);
+                                            self.create_replica(r.config_id, nodes, false, false, false, false);
                                         }
                                     },
                                     Some(next_config_id) => {
@@ -836,13 +835,12 @@ impl<S, P> PaxosComp<S, P> where
         peers: Vec<u64>,
         config_id: u32,
         pid: u64,
-        batch_accept: bool
     ) -> PaxosComp<S, P>
     {
         let seq = S::new();
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
-        let paxos = Paxos::with(config_id, pid, peers.clone(), storage, batch_accept);
+        let paxos = Paxos::with(config_id, pid, peers.clone(), storage);
         PaxosComp {
             ctx: ComponentContext::new(),
             supervisor,
@@ -1045,7 +1043,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_DECIDE, MAX_ACCSYNC};
+    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_ACCEPT, BATCH_DECIDE, MAX_ACCSYNC};
 
     #[derive(ComponentDefinition)]
     pub struct Paxos<S, P> where
@@ -1073,7 +1071,6 @@ pub mod raw_paxos{
         acc_sync_ld: u64,
         max_promise_meta: (Ballot, usize, u64),  // ballot, sfx len, pid
         max_promise_sfx: Vec<Entry>,
-        batch_accept: bool,
         batch_accept_meta: Vec<Option<(Ballot, usize)>>,    //  ballot, index in outgoing
         batch_decide_meta: Vec<Option<(Ballot, usize)>>,
         outgoing: Vec<Message>,
@@ -1092,7 +1089,6 @@ pub mod raw_paxos{
             pid: u64,
             peers: Vec<u64>,
             storage: Storage<S, P>,
-            batch_accept: bool,
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes/2 + 1;
@@ -1123,7 +1119,6 @@ pub mod raw_paxos{
                 acc_sync_ld: 0,
                 max_promise_meta: (Ballot::with(0, 0), 0, 0),
                 max_promise_sfx: vec![],
-                batch_accept,
                 batch_accept_meta: vec![None; num_nodes],
                 batch_decide_meta: vec![None; num_nodes],
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
@@ -1135,7 +1130,7 @@ pub mod raw_paxos{
         pub fn get_outgoing_msgs(&mut self) -> Vec<Message> {
             let mut outgoing = Vec::with_capacity(MAX_INFLIGHT);
             std::mem::swap(&mut self.outgoing, &mut outgoing);
-            if self.batch_accept {
+            if BATCH_ACCEPT {
                 self.batch_accept_meta = vec![None; self.num_nodes];
                 self.batch_decide_meta = vec![None; self.num_nodes];
             }
@@ -1310,7 +1305,7 @@ pub mod raw_paxos{
         fn send_accept(&mut self, entry: Entry) {
             let promised_idx = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx);
             for idx in promised_idx {
-                if self.batch_accept {
+                if BATCH_ACCEPT {
                     match self.batch_accept_meta.get_mut(idx) {
                         Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
                             let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
@@ -1405,7 +1400,7 @@ pub mod raw_paxos{
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
                             self.outgoing.push(msg);
                         }
-                        if self.batch_accept {
+                        if BATCH_ACCEPT {
                             self.batch_accept_meta[idx]= Some((self.n_leader, self.outgoing.len() - 1));
                         }
                     }
@@ -1423,7 +1418,7 @@ pub mod raw_paxos{
                             Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(acc_sync))
                         };
                         self.outgoing.push(msg);
-                        if self.batch_accept {
+                        if BATCH_ACCEPT {
                             self.batch_accept_meta[max_pid as usize - 1] = Some((self.n_leader, self.outgoing.len() - 1));
                         }
                     }
@@ -1763,12 +1758,13 @@ mod ballot_leader_election {
         stopped: bool,
         stopped_peers: HashSet<u64>,
         has_had_leader: bool,
+        quick_start: bool
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: Vec<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<StopKillResponse>, prio_start: bool) -> BallotLeaderComp {
+        pub fn with(peers: Vec<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<StopKillResponse>, prio_start: bool, quick_start: bool) -> BallotLeaderComp {
             let n = &peers.len() + 1;
-            let initial_round = if prio_start { 1 } else { 0 };
+            let initial_round = if prio_start { PRIO_START_ROUND } else { 0 };
             let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1787,7 +1783,8 @@ mod ballot_leader_election {
                 supervisor,
                 stopped: false,
                 stopped_peers: HashSet::with_capacity(n),
-                has_had_leader: false
+                has_had_leader: !prio_start,
+                quick_start
             }
         }
 
@@ -1851,7 +1848,12 @@ mod ballot_leader_election {
                         let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                         peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
                     }
-                    self.start_timer(ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR);
+                    let delay = if self.quick_start{    // use short timeout if still no first leader
+                        ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
+                    } else {
+                        self.hb_delay
+                    };
+                    self.start_timer(delay);
                 },
                 ControlEvent::Kill => {
                     self.stop_timer();

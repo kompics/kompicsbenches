@@ -513,7 +513,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
         let named_path = match &c.algorithm {
             paxos if paxos == "paxos" || paxos == "paxos-batch" => {
-                let batch_accept = paxos == "paxos-batch";
                 let initial_config = get_initial_conf(c.last_node_id).0;
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
@@ -522,7 +521,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                 };
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
-                    PaxosReplica::with(initial_config, reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull), batch_accept)
+                    PaxosReplica::with(initial_config, reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull))
                 });
                 unique_reg_f.wait_expect(
                     REGISTER_TIMEOUT,
