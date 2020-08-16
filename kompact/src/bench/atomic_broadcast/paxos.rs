@@ -1334,8 +1334,10 @@ pub mod raw_paxos{
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len, from);
                 if promise_meta > &self.max_promise_meta {
-                    self.max_promise_meta = promise_meta.clone();
-                    self.max_promise_sfx = prom.sfx;
+                    if sfx_len > 0 || (sfx_len == 0 && prom.ld >= self.acc_sync_ld){
+                        self.max_promise_meta = promise_meta.clone();
+                        self.max_promise_sfx = prom.sfx;
+                    }
                 }
                 let idx = from as usize - 1;
                 self.promises_meta[idx] = Some((prom.n_accepted, sfx_len));
@@ -1375,16 +1377,18 @@ pub mod raw_paxos{
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if promise_meta == &(max_promise_n, max_sfx_len) && max_sfx_is_empty && ld >= self.acc_sync_ld && MAX_ACCSYNC {
-                            // println!("No sync node {}", pid);
-                            let sfx = max_promise_acc_sync.entries.clone();
-                            let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, false);
-                            let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
-                            self.outgoing.push(msg);
-                        } else if promise_meta == &(max_promise_n, max_sfx_len) && !max_sfx_is_empty && MAX_ACCSYNC {
-                            // println!("No sync not empty sfx: node {}", pid);
-                            let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
-                            self.outgoing.push(msg);
+                        if MAX_ACCSYNC {
+                            if promise_meta == &(max_promise_n, max_sfx_len) {
+                                if !max_sfx_is_empty || (max_sfx_is_empty && ld >= self.acc_sync_ld) {
+                                    let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
+                                    self.outgoing.push(msg);
+                                }
+                            } else {
+                                let sfx = self.storage.get_suffix(ld);
+                                let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, true);
+                                let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
+                                self.outgoing.push(msg);
+                            }
                         } else {
                             let sfx = self.storage.get_suffix(ld);
                             let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, true);
@@ -1399,7 +1403,7 @@ pub mod raw_paxos{
                         // send acceptsync to max_pid
                         let idx = max_pid as usize - 1;
                         let ld = self.lds[idx].expect("No promise from max_pid");
-                        let msg = if ((max_sfx_is_empty && ld >= self.acc_sync_ld) || !max_sfx_is_empty) && MAX_ACCSYNC {
+                        let msg = if MAX_ACCSYNC {
                             // println!("No sync EMPTY sfx MAX node {}, promise_meta: {:?}, max_promise: {:?}, ld: {}, acc_sync_ld: {}", max_pid, promise_meta, self.max_promise_meta, ld, self.acc_sync_ld);
                             Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync))
                         } else {
@@ -1424,11 +1428,10 @@ pub mod raw_paxos{
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len);
                 let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
-                let max_sfx_is_empty = max_sfx_len == 0;
                 let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) && MAX_ACCSYNC {
-                    match max_sfx_is_empty {
-                        false => (false, prom.ld + sfx_len as u64),
-                        true if prom.ld >= self.acc_sync_ld => (false, prom.ld + sfx_len as u64),
+                    match max_sfx_len == 0 {
+                        false => (false, self.acc_sync_ld + sfx_len as u64),
+                        true if prom.ld >= self.acc_sync_ld => (false, self.acc_sync_ld + sfx_len as u64),
                         _ => (true, prom.ld),
                     }
                 } else {
