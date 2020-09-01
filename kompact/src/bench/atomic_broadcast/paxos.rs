@@ -1042,7 +1042,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_ACCEPT, BATCH_DECIDE, MAX_ACCSYNC};
+    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_ACCEPT, BATCH_DECIDE, MAX_ACCSYNC, BATCH_ACCEPTED};
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1067,6 +1067,7 @@ pub mod raw_paxos{
         max_promise_sfx: Vec<Entry>,
         batch_accept_meta: Vec<Option<(Ballot, usize)>>,    //  ballot, index in outgoing
         batch_decide_meta: Vec<Option<(Ballot, usize)>>,
+        batch_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
         cached_la: u64,
@@ -1110,6 +1111,7 @@ pub mod raw_paxos{
                 max_promise_sfx: vec![],
                 batch_accept_meta: vec![None; num_nodes],
                 batch_decide_meta: vec![None; num_nodes],
+                batch_accepted_meta: None,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
                 cached_la,
@@ -1121,7 +1123,12 @@ pub mod raw_paxos{
             std::mem::swap(&mut self.outgoing, &mut outgoing);
             if BATCH_ACCEPT {
                 self.batch_accept_meta = vec![None; self.num_nodes];
+            }
+            if BATCH_DECIDE {
                 self.batch_decide_meta = vec![None; self.num_nodes];
+            }
+            if BATCH_ACCEPTED {
+                self.batch_accepted_meta = None;
             }
             outgoing
         }
@@ -1371,8 +1378,8 @@ pub mod raw_paxos{
                     self.las[self.pid as usize - 1] = self.cached_la;
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
-                    let max_idx = max_pid as usize - 1;
-                    let promised = self.lds.iter().enumerate().filter(|(idx, ld)| idx != &max_idx && ld.is_some());
+                    let my_idx = self.pid as usize - 1;
+                    let promised = self.lds.iter().enumerate().filter(|(idx, ld)| idx != &my_idx && ld.is_some());
                     for (idx, l) in promised {
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
@@ -1397,24 +1404,6 @@ pub mod raw_paxos{
                         }
                         if BATCH_ACCEPT {
                             self.batch_accept_meta[idx]= Some((self.n_leader, self.outgoing.len() - 1));
-                        }
-                    }
-                    if max_pid != self.pid {
-                        // send acceptsync to max_pid
-                        let idx = max_pid as usize - 1;
-                        let ld = self.lds[idx].expect("No promise from max_pid");
-                        let msg = if MAX_ACCSYNC {
-                            // println!("No sync EMPTY sfx MAX node {}, promise_meta: {:?}, max_promise: {:?}, ld: {}, acc_sync_ld: {}", max_pid, promise_meta, self.max_promise_meta, ld, self.acc_sync_ld);
-                            Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(max_promise_acc_sync))
-                        } else {
-                            // println!("SYNC MAX node {}, promise_meta: {:?}, max_promise: {:?}, ld: {}, acc_sync_ld: {}", max_pid, promise_meta, self.max_promise_meta, ld, self.acc_sync_ld);
-                            let sfx = self.storage.get_suffix(ld);
-                            let acc_sync = AcceptSync::with(self.n_leader, sfx, ld, true);
-                            Message::with(self.pid, max_pid, PaxosMsg::AcceptSync(acc_sync))
-                        };
-                        self.outgoing.push(msg);
-                        if BATCH_ACCEPT {
-                            self.batch_accept_meta[max_pid as usize - 1] = Some((self.n_leader, self.outgoing.len() - 1));
                         }
                     }
                 }
@@ -1538,6 +1527,10 @@ pub mod raw_paxos{
                     }
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, self.cached_la);
+                    if BATCH_ACCEPTED {
+                        let cached_idx = self.outgoing.len();
+                        self.batch_accepted_meta = Some((acc_sync.n, cached_idx));
+                    }
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
             }
@@ -1549,8 +1542,28 @@ pub mod raw_paxos{
                     let mut entries = acc.entries;
                     self.cached_la += entries.len() as u64;
                     self.storage.append_sequence(&mut entries);
-                    let accepted = Accepted::with(acc.n, self.cached_la);
-                    self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
+                    if BATCH_ACCEPTED {
+                        match self.batch_accepted_meta {
+                            Some((ballot, outgoing_idx)) if ballot == acc.n => {
+                                let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
+                                match msg {
+                                    PaxosMsg::Accepted(a) => {
+                                        a.la = self.cached_la;
+                                    },
+                                    _ => panic!("Cached idx is not an Accepted message!")
+                                }
+                            },
+                            _ => {
+                                let accepted = Accepted::with(acc.n, self.cached_la);
+                                let cached_idx = self.outgoing.len();
+                                self.batch_accepted_meta = Some((acc.n, cached_idx));
+                                self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
+                            }
+                        }
+                    } else {
+                        let accepted = Accepted::with(acc.n, self.cached_la);
+                        self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
+                    }
                 }
             }
         }
