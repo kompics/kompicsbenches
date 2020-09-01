@@ -10,6 +10,7 @@ pub mod paxos {
     pub const BLE_DELTA: u64 = 100;
     pub const BATCH_ACCEPT: bool = true;
     pub const BATCH_DECIDE: bool = true;
+    pub const BATCH_ACCEPTED: bool = true;
     pub const MAX_ACCSYNC: bool = false;
     pub const BLE_PRIO_START: bool = true;
     pub const PRIO_START_ROUND: u64 = 10;
