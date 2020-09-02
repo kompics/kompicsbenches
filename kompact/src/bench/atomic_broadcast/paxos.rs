@@ -1447,9 +1447,17 @@ pub mod raw_paxos{
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las[from as usize - 1] = accepted.la;
                 if accepted.la > self.lc {
-                    let chosen = self.las.iter().filter(|la| *la >= &accepted.la).count() >= self.majority;
-                    if chosen {
-                        self.lc = accepted.la;
+                    let mut chosen_idx = accepted.la;
+                    while chosen_idx > self.lc {
+                        let chosen = self.las.iter().filter(|la| *la >= &chosen_idx).count() >= self.majority;
+                        if chosen {
+                            break;
+                        }
+                        chosen_idx -= 1;
+                    }
+                    if chosen_idx > self.lc {
+                        self.lc = chosen_idx;
+                        let d = Decide::with(self.lc, self.n_leader);
                         if BATCH_DECIDE {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());
                             for (idx, _) in promised_idx {
@@ -1458,9 +1466,8 @@ pub mod raw_paxos{
                                         match self.batch_accept_meta[idx] {
                                             Some((_, outgoing_acc_idx)) if &outgoing_acc_idx > outgoing_dec_idx => {  // accept is AFTER cached decide idx
                                                 *outgoing_dec_idx = self.outgoing.len();
-                                                let d = Decide::with(self.lc, self.n_leader);
                                                 let pid = idx as u64 + 1;
-                                                self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d)));
+                                                self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d.clone())));
                                             },
                                             _ => {  // accept is BEFORE cached decide or no accept/acceptsync before
                                                 let Message{msg, ..} = self.outgoing.get_mut(*outgoing_dec_idx).unwrap();
@@ -1476,20 +1483,17 @@ pub mod raw_paxos{
                                     _ => {
                                         let cache_dec_idx = self.outgoing.len();
                                         self.batch_decide_meta[idx] = Some((self.n_leader, cache_dec_idx));
-                                        let d = Decide::with(self.lc, self.n_leader);
                                         let pid = idx as u64 + 1;
-                                        self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d)));
+                                        self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d.clone())));
                                     }
                                 }
                             }
                         } else {
-                            let d = Decide::with(self.lc, self.n_leader);
                             let promised_pids = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some()).map( |(idx, _)| idx as u64 + 1);
                             for pid in promised_pids {
                                 self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d.clone())));
                             }
                         }
-                        let d = Decide::with(self.lc, self.n_leader);
                         self.handle_decide(d);
                     }
                 }
