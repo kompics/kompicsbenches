@@ -1,8 +1,7 @@
 # uncomment for use on WSL  
-"""
 import matplotlib
 matplotlib.use('Agg')
-"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -31,11 +30,15 @@ for filename in data_files :
         count += 1
         #print(line)
         x.append(count)
-        y.append(float(line))
+        y.append(float(line)/1000)
         if count == n:
             break
     all_plots.append((x, y))
-    legends.append(filename)
+    if "paxos" in filename:
+    	legends.append("paxos")
+    else:
+    	legends.append("raft")
+    #legends.append(filename)
     
 print("Plotting",len(all_plots),"series")    
 for (x, y) in all_plots:
@@ -43,7 +46,7 @@ for (x, y) in all_plots:
         
 plt.title('Latency')
 plt.xlabel('Proposal id')
-plt.ylabel('Latency (micro s)')
+plt.ylabel('Latency (ms)')
 plt.yscale('linear')
 plt.legend(legends, loc='upper right')
 plt.savefig(args.t + 'latency.png', dpi = 600)

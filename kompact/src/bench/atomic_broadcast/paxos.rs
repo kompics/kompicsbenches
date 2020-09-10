@@ -1447,14 +1447,9 @@ pub mod raw_paxos{
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las[from as usize - 1] = accepted.la;
                 if accepted.la > self.lc {
-                    let mut chosen_idx = accepted.la;
-                    while chosen_idx > self.lc {
-                        let chosen = self.las.iter().filter(|la| *la >= &chosen_idx).count() >= self.majority;
-                        if chosen {
-                            break;
-                        }
-                        chosen_idx -= 1;
-                    }
+                    let mut sorted_las = self.las.clone();
+                    sorted_las.sort();
+                    let chosen_idx = sorted_las[self.majority - 1];
                     if chosen_idx > self.lc {
                         self.lc = chosen_idx;
                         let d = Decide::with(self.lc, self.n_leader);
