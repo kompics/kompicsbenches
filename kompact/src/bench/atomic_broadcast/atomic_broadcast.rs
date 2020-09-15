@@ -340,7 +340,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_nodes = Some(c.number_of_nodes);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
-        if c.concurrent_proposals == 1 {
+        if c.concurrent_proposals == 1 || self.reconfiguration.is_some(){
             self.latency_hist = Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
         }
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
@@ -394,16 +394,17 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .ask( |promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(num_timed_out);
-        if let Some(1) = self.concurrent_proposals  {
+        if self.concurrent_proposals == Some(1) || self.reconfiguration.is_some()  {
             let dir = format!("{}/latency/", META_RESULTS_DIR);
             create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
-            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}_{}_{}.data", &dir, self.algorithm.as_ref().unwrap(), self.num_nodes.as_ref().unwrap(), self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+            let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}.data", &dir, self.experiment_str.as_ref().unwrap())).expect("Failed to open latency file");
             let histo = self.latency_hist.as_mut().unwrap();
             for (_, l) in latencies {
                 let latency = l.as_micros() as u64;
                 writeln!(file, "{}", latency).expect("Failed to write raw latency");
                 histo.record(latency).expect("Failed to record histogram");
             }
+            writeln!(file, "").expect("Failed to write raw latency");   // separate each run with empty line. TODO handle in plotting
         }
 
         if let Some(partitioning_actor) = self.partitioning_actor.take() {
@@ -445,10 +446,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 writeln!(summary_file, "{}", summary_str).expect(&format!("Failed to write meta summary file: {}", summary_str));
                 summary_file.flush().expect("Failed to flush meta file");
             }
-            if let Some(1) = self.concurrent_proposals {
+            if self.concurrent_proposals == Some(1) || self.reconfiguration.is_some() {
                 let dir = format!("{}/latency/", META_RESULTS_DIR);
                 create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
-                let mut file = OpenOptions::new().create(true).append(true).open(format!("{}summary_{}_{}_{}.out", &dir, self.algorithm.as_ref().unwrap(), self.num_nodes.as_ref().unwrap(),  self.num_proposals.as_ref().unwrap())).expect("Failed to open latency file");
+                let mut file = OpenOptions::new().create(true).append(true).open(format!("{}summary_{}.out", &dir, self.experiment_str.as_ref().unwrap())).expect("Failed to open latency file");
                 let hist = std::mem::take(&mut self.latency_hist).unwrap();
                 let quantiles = [0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999];
                 for q in &quantiles {
@@ -465,7 +466,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 writeln!(file, "Total elements: {}", hist.len()).expect("Failed to write histogram summary");
                 file.flush().expect("Failed to flush histogram file");
                 // flush raw file
-                let raw_file_path = format!("{}/latency/raw_{}_{}_{}.data", META_RESULTS_DIR, self.algorithm.as_ref().unwrap(), self.num_nodes.as_ref().unwrap(), self.num_proposals.as_ref().unwrap());
+                let raw_file_path = format!("{}raw_{}.data", dir, self.experiment_str.as_ref().unwrap());
                 let mut raw_file =  OpenOptions::new().create(true).append(true).open(raw_file_path).expect("Failed to open raw latency file");
                 raw_file.flush().expect("Failed to flush raw latency file");
             }

@@ -10,6 +10,7 @@ use synchronoise::event::CountdownError;
 enum ExperimentState {
     LeaderElection,
     Running,
+    ProposedReconfiguration,
     ReconfigurationElection,
     Finished
 }
@@ -57,6 +58,7 @@ pub struct Client {
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
+    leader_changes: Vec<u64>,
 }
 
 impl Client {
@@ -86,6 +88,7 @@ impl Client {
             state: ExperimentState::LeaderElection,
             current_config: initial_config,
             num_timed_out: 0,
+            leader_changes: vec![],
         }
     }
 
@@ -119,8 +122,9 @@ impl Client {
             i
         };
         for id in from ..= to {
-            let current_time = match self.num_concurrent_proposals {
-                1 => Some(SystemTime::now()),
+            let cache_start_time = self.num_concurrent_proposals == 1 || self.state == ExperimentState::ProposedReconfiguration;
+            let current_time = match cache_start_time {
+                true => Some(SystemTime::now()),
                 _ => None,
             };
             let leader = self.nodes.get(&self.current_leader).unwrap();
@@ -129,7 +133,6 @@ impl Client {
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
         }
-        self.state = ExperimentState::Running;
         self.latest_proposal_id = to;
     }
 
@@ -139,10 +142,11 @@ impl Client {
         if received_count == self.num_proposals && self.reconfig.is_none() {
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
-            info!(self.ctx.log(), "Got all responses. {} proposals timed out. Last leader was: {}", self.num_timed_out, self.current_leader);
+            info!(self.ctx.log(), "Got all responses. {} proposals timed out. Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
+                self.state = ExperimentState::ProposedReconfiguration;
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
             let proposal_meta = ProposalMetaData::with(None, timer);
@@ -156,7 +160,7 @@ impl Client {
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
-                self.state = ExperimentState::Running;
+                self.state = ExperimentState::ProposedReconfiguration;
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = self.pending_proposals.get_mut(&id)
@@ -165,11 +169,8 @@ impl Client {
         } else {
             self.num_timed_out += 1;
             let proposal_meta = self.pending_proposals.remove(&id).expect("Timed out on proposal not in pending proposals");
-            let latency = match self.num_concurrent_proposals {
-                1 => {
-                    let start_time = proposal_meta.start_time.expect("No start time found!");
-                    Some(start_time.elapsed().expect("Failed to get elapsed duration"))
-                },
+            let latency = match proposal_meta.start_time {
+                Some(start_time) => Some(start_time.elapsed().expect("Failed to get elapsed duration")),
                 _ => None,
             };
             self.handle_normal_response(id, latency);
@@ -235,15 +236,11 @@ impl Actor for Client {
                 self.send_stop();
             },
             LocalClientMessage::GetMetaResults(ask) => {
-                let meta_results = if self.num_concurrent_proposals > 1 {
-                    (self.num_timed_out, vec![])
-                } else {
-                    let l = std::mem::take(&mut self.responses);
-                    let mut v: Vec<_> = l.into_iter().collect();
-                    v.sort();
-                    let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
-                    (self.num_timed_out, latencies)
-                };
+                let l = std::mem::take(&mut self.responses);
+                let mut v: Vec<_> = l.into_iter().filter(|(id, latency)| latency.is_some()).collect();
+                v.sort();
+                let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
+                let meta_results = (self.num_timed_out, latencies);
                 ask.reply(meta_results).expect("Failed to reply write latency file!");
             }
         }
@@ -268,8 +265,12 @@ impl Actor for Client {
                                 }
                             },
                             ExperimentState::ReconfigurationElection => {
-                                self.current_leader = pid;
+                                if self.current_leader != pid {
+                                    self.current_leader = pid;
+                                    self.leader_changes.push(pid);
+                                }
                                 // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
+                                self.state = ExperimentState::Running;
                                 if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
                                     self.retry_pending_proposals(&mut pending_proposals);
@@ -287,16 +288,14 @@ impl Actor for Client {
                         match response {
                             Response::Normal(id) => {
                                 if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                                    let latency = match self.num_concurrent_proposals {
-                                        1 => {
-                                            let start_time = proposal_meta.start_time.expect("No start time found!");
-                                            Some(start_time.elapsed().expect("Failed to get elapsed duration"))
-                                        },
+                                    let latency = match proposal_meta.start_time {
+                                        Some(start_time) => Some(start_time.elapsed().expect("Failed to get elapsed duration")),
                                         _ => None,
                                     };
                                     self.cancel_timer(proposal_meta.timer);
-                                    if self.current_config.contains(&pr.latest_leader) {
+                                    if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
                                         self.current_leader = pr.latest_leader;
+                                        self.leader_changes.push(pr.latest_leader);
                                     }
                                     self.handle_normal_response(id, latency);
                                     if self.state != ExperimentState::ReconfigurationElection {
@@ -310,16 +309,21 @@ impl Actor for Client {
                                     if self.responses.len() as u64 == self.num_proposals {
                                         self.state = ExperimentState::Finished;
                                         self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                        info!(self.ctx.log(), "Got reconfig at last");
+                                        info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
                                     } else {
                                         self.reconfig = None;
                                         self.current_config = new_config;
+                                        let leader_changed = self.current_leader != pr.latest_leader;
                                         self.current_leader = pr.latest_leader;
                                         // info!(self.ctx.log(), "Reconfig OK, leader: {}, current_config: {:?}", self.current_leader, self.current_config);
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
+                                            self.state = ExperimentState::Running;
                                             self.send_concurrent_proposals();
+                                            if leader_changed {
+                                                self.leader_changes.push(pr.latest_leader);
+                                            }
                                         }
                                     }
                                 }

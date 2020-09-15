@@ -966,7 +966,7 @@ impl<S, P> Actor for PaxosComp<S, P> where
                 self.stop_timers();
                 self.stopped = true;
                 if self.stopped_peers.len() == self.peers.len() {
-                    // info!(self.ctx.log(), "Got stopped from all Paxos peers, suiciding...");
+                    // info!(self.ctx.log(), "Got stopped from all Paxos peers");
                     self.supervisor.tell(PaxosReplicaMsg::StopResp);
                 }
             }
@@ -1011,7 +1011,7 @@ impl<S, P> Require<CommunicationPort> for PaxosComp<S, P> where
                 assert!(self.stopped_peers.insert(pid), "Got duplicate stop from peer {}", pid);
                 // info!(self.ctx.log(), "Got stopped from Paxos peer {}", pid);
                 if self.stopped && self.stopped_peers.len() == self.peers.len() {
-                    // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                    // info!(self.ctx.log(), "Got stopped from all peers");
                     self.supervisor.tell(PaxosReplicaMsg::StopResp);
                 }
             },
@@ -1610,6 +1610,7 @@ pub mod raw_paxos{
             }
         }
 
+        /*** algorithm specific functions ***/
         fn drop_after_stopsign(entries: &mut Vec<Entry>) {   // drop all entries ordered after stopsign (if any)
             let ss_idx = entries.iter().position(|e| e.is_stopsign());
             if let Some(idx) = ss_idx {
@@ -1895,7 +1896,7 @@ mod ballot_leader_election {
             }
             self.stopped = true;
             if self.stopped_peers.len() == self.peers.len() {
-                // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                // info!(self.ctx.log(), "Got stopped from all peers");
                 self.supervisor.tell(StopKillResponse::StopResp);
             }
         }
@@ -1926,9 +1927,9 @@ mod ballot_leader_election {
                 stop: NetStopMsg [StopMsgDeser] => {
                     if let NetStopMsg::Peer(pid) = stop {
                         assert!(self.stopped_peers.insert(pid), "Got duplicate stop from peer {}", pid);
-                        // info!(self.ctx.log(), "Got stopped from BLE peer {}", stop.0);
+                        // info!(self.ctx.log(), "Got stopped from BLE peer {}", pid);
                         if self.stopped && self.stopped_peers.len() == self.peers.len() {
-                            // info!(self.ctx.log(), "Got stopped from all peers, suiciding...");
+                            // info!(self.ctx.log(), "Got stopped from all peers");
                             self.supervisor.tell(StopKillResponse::StopResp);
                         }
                     }
