@@ -59,6 +59,8 @@ pub struct Client {
     current_config: Vec<u64>,
     num_timed_out: u64,
     leader_changes: Vec<u64>,
+    #[cfg(feature = "track_timeouts")]
+    timeouts: Vec<u64>
 }
 
 impl Client {
@@ -89,6 +91,8 @@ impl Client {
             current_config: initial_config,
             num_timed_out: 0,
             leader_changes: vec![],
+            #[cfg(feature = "track_timeouts")]
+            timeouts: vec![]
         }
     }
 
@@ -143,6 +147,13 @@ impl Client {
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
             info!(self.ctx.log(), "Got all responses. {} proposals timed out. Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+            #[cfg(feature = "track_timeouts")] {
+                let min = self.timeouts.iter().min();
+                let max = self.timeouts.iter().max();
+                if min.is_some() || max.is_some() {
+                    info!(self.ctx.log(), "Timed out: Min: {:?}, Max: {:?}", min, max);
+                }
+            }
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
@@ -176,6 +187,8 @@ impl Client {
             self.handle_normal_response(id, latency);
             self.send_concurrent_proposals();
         }
+        #[cfg(feature = "track_timeouts")]
+        self.timeouts.push(id);
     }
 
     fn retry_pending_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
