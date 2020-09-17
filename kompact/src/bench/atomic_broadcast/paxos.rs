@@ -1075,7 +1075,6 @@ pub mod raw_paxos{
         latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
-        cached_la: u64,
     }
 
     impl<S, P> Paxos<S, P> where
@@ -1096,7 +1095,6 @@ pub mod raw_paxos{
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
             let num_nodes = *max_pid as usize;
-            let cached_la = storage.get_sequence_len() as u64;
             Paxos {
                 ctx: ComponentContext::new(),
                 supervisor,
@@ -1124,7 +1122,6 @@ pub mod raw_paxos{
                 latest_accepted_meta: None,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
-                cached_la,
             }
         }
 
@@ -1340,8 +1337,7 @@ pub mod raw_paxos{
                 }
             }
             self.storage.append_entry(entry);
-            self.cached_la += 1;
-            self.las[self.pid as usize - 1] = self.cached_la;
+            self.las[self.pid as usize - 1] = self.storage.get_sequence_len();
         }
 
         fn handle_promise_prepare(&mut self, prom: Promise, from: u64) {
@@ -1382,8 +1378,7 @@ pub mod raw_paxos{
                     let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), max_ld, false);
                     // append new proposals in my sequence
                     self.storage.append_sequence(&mut new_entries);
-                    self.cached_la = self.storage.get_sequence_len();
-                    self.las[self.pid as usize - 1] = self.cached_la;
+                    self.las[self.pid as usize - 1] = self.storage.get_sequence_len();
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
                     let my_idx = self.pid as usize - 1;
@@ -1528,13 +1523,11 @@ pub mod raw_paxos{
                     let mut entries = acc_sync.entries;
                     if acc_sync.sync {
                         self.storage.append_on_prefix(acc_sync.ld, &mut entries);
-                        self.cached_la = self.storage.get_sequence_len();
                     } else {
                         self.storage.append_sequence(&mut entries);
-                        self.cached_la += entries.len() as u64;
                     }
                     self.state = (Role::Follower, Phase::Accept);
-                    let accepted = Accepted::with(acc_sync.n, self.cached_la);
+                    let accepted = Accepted::with(acc_sync.n, self.storage.get_sequence_len());
                     if cfg!(feature = "latest_accepted") {
                         let cached_idx = self.outgoing.len();
                         self.latest_accepted_meta = Some((acc_sync.n, cached_idx));
@@ -1548,7 +1541,6 @@ pub mod raw_paxos{
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
                     let mut entries = acc.entries;
-                    self.cached_la += entries.len() as u64;
                     self.storage.append_sequence(&mut entries);
                     if cfg!(feature = "latest_accepted") {
                         match self.latest_accepted_meta {
@@ -1556,20 +1548,20 @@ pub mod raw_paxos{
                                 let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
                                 match msg {
                                     PaxosMsg::Accepted(a) => {
-                                        a.la = self.cached_la;
+                                        a.la = self.storage.get_sequence_len();
                                     },
                                     _ => panic!("Cached idx is not an Accepted message!")
                                 }
                             },
                             _ => {
-                                let accepted = Accepted::with(acc.n, self.cached_la);
+                                let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                                 let cached_idx = self.outgoing.len();
                                 self.latest_accepted_meta = Some((acc.n, cached_idx));
                                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                             }
                         }
                     } else {
-                        let accepted = Accepted::with(acc.n, self.cached_la);
+                        let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
                         self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                     }
                 }

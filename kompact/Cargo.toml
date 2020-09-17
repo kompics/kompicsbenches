@@ -42,5 +42,7 @@ latest_accepted = []
 max_accsync = []
 headstart_ble = []
 
+track_timeouts = [] # client keep tracks of which proposals timed out
+
 #default = []
 default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync", "headstart_ble"]
