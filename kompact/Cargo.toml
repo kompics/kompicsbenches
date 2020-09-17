@@ -34,3 +34,13 @@ hdrhistogram            = "6.0"
 
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
+
+batch_accept = []
+latest_decide = []
+latest_accepted = []
+
+max_accsync = []
+headstart_ble = []
+
+#default = []
+default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync", "headstart_ble"]

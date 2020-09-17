@@ -237,7 +237,7 @@ impl Actor for Client {
             },
             LocalClientMessage::GetMetaResults(ask) => {
                 let l = std::mem::take(&mut self.responses);
-                let mut v: Vec<_> = l.into_iter().filter(|(id, latency)| latency.is_some()).collect();
+                let mut v: Vec<_> = l.into_iter().filter(|(_, latency)| latency.is_some()).collect();
                 v.sort();
                 let latencies: Vec<(u64, Duration)> = v.into_iter().map(|(id, latency)| (id, latency.unwrap()) ).collect();
                 let meta_results = (self.num_timed_out, latencies);

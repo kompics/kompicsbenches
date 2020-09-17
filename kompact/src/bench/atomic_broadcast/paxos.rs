@@ -591,7 +591,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                         }
                     }
                     nodes.append(&mut new_nodes);
-                    let ble_prio = self.leader_in_active_config == self.pid && BLE_PRIO_START;
+                    let ble_prio = self.leader_in_active_config == self.pid && cfg!(feature = "headstart_ble");
                     self.create_replica(r.config_id, nodes, false, true, ble_prio, ble_prio);
                 }
             },
@@ -1043,7 +1043,6 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use crate::bench::atomic_broadcast::parameters::paxos::{BATCH_ACCEPT, BATCH_DECIDE, MAX_ACCSYNC, BATCH_ACCEPTED};
 
     #[derive(ComponentDefinition)]
     pub struct Paxos<S, P> where
@@ -1072,8 +1071,8 @@ pub mod raw_paxos{
         max_promise_meta: (Ballot, usize, u64),  // ballot, sfx len, pid
         max_promise_sfx: Vec<Entry>,
         batch_accept_meta: Vec<Option<(Ballot, usize)>>,    //  ballot, index in outgoing
-        batch_decide_meta: Vec<Option<(Ballot, usize)>>,
-        batch_accepted_meta: Option<(Ballot, usize)>,
+        latest_decide_meta: Vec<Option<(Ballot, usize)>>,
+        latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
         cached_la: u64,
@@ -1121,8 +1120,8 @@ pub mod raw_paxos{
                 max_promise_meta: (Ballot::with(0, 0), 0, 0),
                 max_promise_sfx: vec![],
                 batch_accept_meta: vec![None; num_nodes],
-                batch_decide_meta: vec![None; num_nodes],
-                batch_accepted_meta: None,
+                latest_decide_meta: vec![None; num_nodes],
+                latest_accepted_meta: None,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
                 cached_la,
@@ -1132,14 +1131,14 @@ pub mod raw_paxos{
         pub fn get_outgoing_msgs(&mut self) -> Vec<Message> {
             let mut outgoing = Vec::with_capacity(MAX_INFLIGHT);
             std::mem::swap(&mut self.outgoing, &mut outgoing);
-            if BATCH_ACCEPT {
+            if cfg!(feature = "batch_accept") {
                 self.batch_accept_meta = vec![None; self.num_nodes];
             }
-            if BATCH_DECIDE {
-                self.batch_decide_meta = vec![None; self.num_nodes];
+            if cfg!(feature = "latest_decide") {
+                self.latest_decide_meta = vec![None; self.num_nodes];
             }
-            if BATCH_ACCEPTED {
-                self.batch_accepted_meta = None;
+            if cfg!(feature = "latest_accepted") {
+                self.latest_accepted_meta = None;
             }
             outgoing
         }
@@ -1312,7 +1311,7 @@ pub mod raw_paxos{
         fn send_accept(&mut self, entry: Entry) {
             let promised_idx = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx);
             for idx in promised_idx {
-                if BATCH_ACCEPT {
+                if cfg!(feature = "batch_accept") {
                     match self.batch_accept_meta.get_mut(idx) {
                         Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
                             let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
@@ -1393,7 +1392,7 @@ pub mod raw_paxos{
                         let pid = idx as u64 + 1;
                         let ld = l.unwrap();
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
-                        if MAX_ACCSYNC {
+                        if cfg!(feature = "max_accsync") {
                             if promise_meta == &(max_promise_n, max_sfx_len) {
                                 if !max_sfx_is_empty || (max_sfx_is_empty && ld >= self.acc_sync_ld) {
                                     let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
@@ -1411,7 +1410,7 @@ pub mod raw_paxos{
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
                             self.outgoing.push(msg);
                         }
-                        if BATCH_ACCEPT {
+                        if cfg!(feature = "batch_accept") {
                             self.batch_accept_meta[idx]= Some((self.n_leader, self.outgoing.len() - 1));
                         }
                     }
@@ -1426,7 +1425,7 @@ pub mod raw_paxos{
                 let sfx_len = prom.sfx.len();
                 let promise_meta = &(prom.n_accepted, sfx_len);
                 let (max_ballot, max_sfx_len, _) = self.max_promise_meta;
-                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) && MAX_ACCSYNC {
+                let (sync, sfx_start) = if promise_meta == &(max_ballot, max_sfx_len) && cfg!(feature = "max_accsync") {
                     match max_sfx_len == 0 {
                         false => (false, self.acc_sync_ld + sfx_len as u64),
                         true if prom.ld >= self.acc_sync_ld => (false, self.acc_sync_ld + sfx_len as u64),
@@ -1462,10 +1461,10 @@ pub mod raw_paxos{
                     if chosen_idx > self.lc {
                         self.lc = chosen_idx;
                         let d = Decide::with(self.lc, self.n_leader);
-                        if BATCH_DECIDE {
+                        if cfg!(feature = "latest_decide") {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());
                             for (idx, _) in promised_idx {
-                                match self.batch_decide_meta.get_mut(idx) {
+                                match self.latest_decide_meta.get_mut(idx) {
                                     Some(Some((ballot, outgoing_dec_idx))) if ballot == &self.n_leader => {
                                         match self.batch_accept_meta[idx] {
                                             Some((_, outgoing_acc_idx)) if &outgoing_acc_idx > outgoing_dec_idx => {  // accept is AFTER cached decide idx
@@ -1486,7 +1485,7 @@ pub mod raw_paxos{
                                     },
                                     _ => {
                                         let cache_dec_idx = self.outgoing.len();
-                                        self.batch_decide_meta[idx] = Some((self.n_leader, cache_dec_idx));
+                                        self.latest_decide_meta[idx] = Some((self.n_leader, cache_dec_idx));
                                         let pid = idx as u64 + 1;
                                         self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::Decide(d.clone())));
                                     }
@@ -1536,9 +1535,9 @@ pub mod raw_paxos{
                     }
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, self.cached_la);
-                    if BATCH_ACCEPTED {
+                    if cfg!(feature = "latest_accepted") {
                         let cached_idx = self.outgoing.len();
-                        self.batch_accepted_meta = Some((acc_sync.n, cached_idx));
+                        self.latest_accepted_meta = Some((acc_sync.n, cached_idx));
                     }
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                 }
@@ -1551,8 +1550,8 @@ pub mod raw_paxos{
                     let mut entries = acc.entries;
                     self.cached_la += entries.len() as u64;
                     self.storage.append_sequence(&mut entries);
-                    if BATCH_ACCEPTED {
-                        match self.batch_accepted_meta {
+                    if cfg!(feature = "latest_accepted") {
+                        match self.latest_accepted_meta {
                             Some((ballot, outgoing_idx)) if ballot == acc.n => {
                                 let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
                                 match msg {
@@ -1565,7 +1564,7 @@ pub mod raw_paxos{
                             _ => {
                                 let accepted = Accepted::with(acc.n, self.cached_la);
                                 let cached_idx = self.outgoing.len();
-                                self.batch_accepted_meta = Some((acc.n, cached_idx));
+                                self.latest_accepted_meta = Some((acc.n, cached_idx));
                                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                             }
                         }
@@ -1757,7 +1756,7 @@ mod ballot_leader_election {
 
     #[derive(ComponentDefinition)]
     pub struct BallotLeaderComp {   // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
-        ctx: ComponentContext<Self>,
+    ctx: ComponentContext<Self>,
         ble_port: ProvidedPort<BallotLeaderElection, Self>,
         pid: u64,
         peers: Vec<ActorPath>,
