@@ -96,14 +96,15 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct Accept {
+    pub struct AcceptDecide {
         pub n: Ballot,
+        pub ld: u64,
         pub entries: Vec<Entry>,
     }
 
-    impl Accept {
-        pub fn with(n: Ballot, entries: Vec<Entry>) -> Accept {
-            Accept{ n, entries }
+    impl AcceptDecide {
+        pub fn with(n: Ballot, ld: u64, entries: Vec<Entry>) -> AcceptDecide {
+            AcceptDecide { n, ld, entries }
         }
     }
 
@@ -136,7 +137,7 @@ pub mod paxos {
         Prepare(Prepare),
         Promise(Promise),
         AcceptSync(AcceptSync),
-        Accept(Accept),
+        AcceptDecide(AcceptDecide),
         Accepted(Accepted),
         Decide(Decide),
         ProposalForward(Entry)
@@ -158,7 +159,7 @@ pub mod paxos {
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
     const ACCEPTSYNC_ID: u8 = 3;
-    const ACCEPT_ID: u8 = 4;
+    const ACCEPTDECIDE_ID: u8 = 4;
     const ACCEPTED_ID: u8 = 5;
     const DECIDE_ID: u8 = 6;
     const PROPOSALFORWARD_ID: u8 = 7;
@@ -247,15 +248,6 @@ pub mod paxos {
 
         fn size_hint(&self) -> Option<usize> {
             Some(500)
-            /*match &self.msg {
-                PaxosMsg::Prepare(_) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8),
-                PaxosMsg::Promise(p) => Some(PAXOS_MSG_OVERHEAD + 2 * BALLOT_OVERHEAD + 8 + 4 + p.sfx.len() * ENTRY_OVERHEAD),
-                PaxosMsg::AcceptSync(acc_sync) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 4 + acc_sync.sfx.len() * ENTRY_OVERHEAD + 8),
-                PaxosMsg::Accept(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 4 + ENTRY_OVERHEAD),
-                PaxosMsg::Accepted(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 8),
-                PaxosMsg::Decide(_) => Some(PAXOS_MSG_OVERHEAD + BALLOT_OVERHEAD + 8),
-                PaxosMsg::ProposalForward(pf) => Some(PAXOS_MSG_OVERHEAD + 4 + pf.len() * ENTRY_OVERHEAD),
-            }*/
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -283,8 +275,9 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&acc_sync.n, buf);
                     PaxosSer::serialise_entries(&acc_sync.entries, buf);
                 },
-                PaxosMsg::Accept(a) => {
-                    buf.put_u8(ACCEPT_ID);
+                PaxosMsg::AcceptDecide(a) => {
+                    buf.put_u8(ACCEPTDECIDE_ID);
+                    buf.put_u64(a.ld);
                     PaxosSer::serialise_ballot(&a.n, buf);
                     PaxosSer::serialise_entries(&a.entries, buf);
                 },
@@ -347,11 +340,12 @@ pub mod paxos {
                     let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
                     Ok(msg)
                 },
-                ACCEPT_ID => {
+                ACCEPTDECIDE_ID => {
+                    let ld = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let entries = Self::deserialise_entries(buf);
-                    let a = Accept::with(n, entries);
-                    let msg = Message::with(from, to, PaxosMsg::Accept(a));
+                    let a = AcceptDecide::with(n, ld, entries);
+                    let msg = Message::with(from, to, PaxosMsg::AcceptDecide(a));
                     Ok(msg)
                 },
                 ACCEPTED_ID => {
