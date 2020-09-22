@@ -1,21 +1,17 @@
 use kompact::prelude::*;
+use crate::serialiser_ids::ATOMICBCAST_ID;
 use super::storage::paxos::*;
-use std::fmt::{Debug};
-use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
-use raw_paxos::{Entry, Paxos};
-use std::sync::Arc;
-use std::time::Duration;
 use super::messages::{*, StopMsg as NetStopMsg};
 use super::messages::paxos::ballot_leader_election::Leader;
 use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
-// use crate::bench::atomic_broadcast::messages::{Proposal, ProposalResp, AtomicBroadcastMsg, AtomicBroadcastDeser, RECONFIG_ID};
-use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
-use uuid::Uuid;
-use kompact::prelude::Buf;
-use rand::Rng;
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
-use super::parameters::{*, paxos::*};
-use crate::serialiser_ids::ATOMICBCAST_ID;
+use super::parameters::{*, paxos::*};use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
+use std::fmt::{Debug};
+use std::{sync::Arc, time::Duration};
+use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
+use raw_paxos::{Entry, Paxos};
+use uuid::Uuid;
+use rand::Rng;
 use hashbrown::{HashMap, HashSet};
 
 const BLE: &str = "ble";
@@ -156,8 +152,9 @@ impl<S, P> PaxosReplica<S, P> where
         let system = self.ctx.system();
         let stopkill_recipient: Recipient<StopKillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
+        let log = self.ctx.log().new(o!("raw_paxos" => self.pid));
         let paxos_comp = system.create(|| {
-            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid)
+            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid, log)
         });
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
@@ -834,12 +831,13 @@ impl<S, P> PaxosComp<S, P> where
         peers: Vec<u64>,
         config_id: u32,
         pid: u64,
+        raw_paxos_log: Logger<Arc<Fuse<Async>>>
     ) -> PaxosComp<S, P>
     {
         let seq = S::new();
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
-        let paxos = Paxos::with(config_id, pid, peers.clone(), storage);
+        let paxos = Paxos::with(config_id, pid, peers.clone(), storage, raw_paxos_log);
         PaxosComp {
             ctx: ComponentContext::new(),
             supervisor,
@@ -1042,6 +1040,7 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
+    use kompact::prelude::{Logger, Fuse, Async};
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1069,6 +1068,7 @@ pub mod raw_paxos{
         latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
+        log: Logger<Arc<Fuse<Async>>>
     }
 
     impl<S, P> Paxos<S, P> where
@@ -1081,6 +1081,7 @@ pub mod raw_paxos{
             pid: u64,
             peers: Vec<u64>,
             storage: Storage<S, P>,
+            log: Logger<Arc<Fuse<Async>>>
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes/2 + 1;
@@ -1111,6 +1112,7 @@ pub mod raw_paxos{
                 latest_accepted_meta: None,
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
+                log
             }
         }
 
@@ -1243,7 +1245,7 @@ pub mod raw_paxos{
                 self.max_promise_meta = (na, sfx_len, self.pid);
                 self.promises_meta[self.pid as usize - 1] = Some((na, sfx_len));
                 self.max_promise_sfx = sfx;
-                /* insert my longest decided sequnce */
+                /* insert my longest decided sequence */
                 self.acc_sync_ld = ld;
                 /* initialise longest chosen sequence and update state */
                 self.lc = 0;
@@ -1327,8 +1329,8 @@ pub mod raw_paxos{
                     self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::AcceptDecide(acc)));
                 }
             }
-            self.storage.append_entry(entry);
-            self.las[self.pid as usize - 1] = self.storage.get_sequence_len();
+            let la = self.storage.append_entry(entry);
+            self.las[self.pid as usize - 1] = la;
         }
 
         fn handle_promise_prepare(&mut self, prom: Promise, from: u64) {
@@ -1368,8 +1370,8 @@ pub mod raw_paxos{
                     let max_ld = self.lds[max_pid as usize - 1].unwrap_or(self.acc_sync_ld);    // unwrap_or: if we are max_pid then unwrap will be none
                     let max_promise_acc_sync = AcceptSync::with(self.n_leader, new_entries.clone(), max_ld, false);
                     // append new proposals in my sequence
-                    self.storage.append_sequence(&mut new_entries);
-                    self.las[self.pid as usize - 1] = self.storage.get_sequence_len();
+                    let la = self.storage.append_sequence(&mut new_entries);
+                    self.las[self.pid as usize - 1] = la;
                     self.state = (Role::Leader, Phase::Accept);
                     // send accept_sync to followers
                     let my_idx = self.pid as usize - 1;
@@ -1441,11 +1443,9 @@ pub mod raw_paxos{
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las[from as usize - 1] = accepted.la;
                 if accepted.la > self.lc {
-                    let mut sorted_las = self.las.clone();
-                    sorted_las.sort();
-                    let chosen_idx = sorted_las[self.majority - 1];
-                    if chosen_idx > self.lc {
-                        self.lc = chosen_idx;
+                    let chosen = self.las.iter().filter(|la| *la >= &accepted.la).count() >= self.majority;
+                    if chosen {
+                        self.lc = accepted.la;
                         let d = Decide::with(self.lc, self.n_leader);
                         if cfg!(feature = "latest_decide") {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());
@@ -1520,13 +1520,13 @@ pub mod raw_paxos{
                 if self.storage.get_promise() == acc_sync.n {
                     self.storage.set_accepted_ballot(acc_sync.n.clone());
                     let mut entries = acc_sync.entries;
-                    if acc_sync.sync {
-                        self.storage.append_on_prefix(acc_sync.ld, &mut entries);
+                    let la = if acc_sync.sync {
+                        self.storage.append_on_prefix(acc_sync.ld, &mut entries)
                     } else {
-                        self.storage.append_sequence(&mut entries);
-                    }
+                        self.storage.append_sequence(&mut entries)
+                    };
                     self.state = (Role::Follower, Phase::Accept);
-                    let accepted = Accepted::with(acc_sync.n, self.storage.get_sequence_len());
+                    let accepted = Accepted::with(acc_sync.n, la);
                     if cfg!(feature = "latest_accepted") {
                         let cached_idx = self.outgoing.len();
                         self.latest_accepted_meta = Some((acc_sync.n, cached_idx));
@@ -1540,27 +1540,27 @@ pub mod raw_paxos{
             if self.state == (Role::Follower, Phase::Accept) {
                 if self.storage.get_promise() == acc.n {
                     let mut entries = acc.entries;
-                    self.storage.append_sequence(&mut entries);
+                    let la = self.storage.append_sequence(&mut entries);
                     if cfg!(feature = "latest_accepted") {
                         match self.latest_accepted_meta {
                             Some((ballot, outgoing_idx)) if ballot == acc.n => {
                                 let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
                                 match msg {
                                     PaxosMsg::Accepted(a) => {
-                                        a.la = self.storage.get_sequence_len();
+                                        a.la = la;
                                     },
                                     _ => panic!("Cached idx is not an Accepted message!")
                                 }
                             },
                             _ => {
-                                let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
+                                let accepted = Accepted::with(acc.n, la);
                                 let cached_idx = self.outgoing.len();
                                 self.latest_accepted_meta = Some((acc.n, cached_idx));
                                 self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                             }
                         }
                     } else {
-                        let accepted = Accepted::with(acc.n, self.storage.get_sequence_len());
+                        let accepted = Accepted::with(acc.n, la);
                         self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
                     }
                     // handle decide
