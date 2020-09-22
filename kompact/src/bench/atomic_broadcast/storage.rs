@@ -628,10 +628,11 @@ pub mod paxos {
             Storage { sequence, paxos_state }
         }
 
-        pub fn append_entry(&mut self, entry: Entry) {
+        pub fn append_entry(&mut self, entry: Entry) -> u64 {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_entry(entry);
+                    s.get_sequence_len()
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -640,11 +641,11 @@ pub mod paxos {
             }
         }
 
-        pub fn append_sequence(&mut self, sequence: &mut Vec<Entry>) {
-            if sequence.is_empty() { return; }
+        pub fn append_sequence(&mut self, sequence: &mut Vec<Entry>) -> u64 {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_sequence(sequence);
+                    s.get_sequence_len()
                 },
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
@@ -653,14 +654,17 @@ pub mod paxos {
             }
         }
 
-        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>){
+        pub fn append_on_prefix(&mut self, from_idx: u64, seq: &mut Vec<Entry>) -> u64 {
             match &mut self.sequence {
                 PaxosSequence::Active(s) => {
                     s.append_on_prefix(from_idx, seq);
+                    s.get_sequence_len()
                 },
                 PaxosSequence::Stopped(s) => {
                     if &s.get_suffix(from_idx) != seq {
                         panic!("Sequence should not be modified after reconfiguration");
+                    } else {
+                        s.get_sequence_len()
                     }
                 },
                 _ => panic!("Got unexpected intermediate PaxosSequence::None")
