@@ -3,7 +3,7 @@ use crate::serialiser_ids::ATOMICBCAST_ID;
 use super::storage::paxos::*;
 use super::messages::{*, StopMsg as NetStopMsg};
 use super::messages::paxos::ballot_leader_election::Leader;
-use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, Reconfig, ReconfigurationMsg};
+use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, SequenceSegment, Reconfig, ReconfigurationMsg};
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use std::fmt::{Debug};
@@ -303,7 +303,7 @@ impl<S, P> PaxosReplica<S, P> where
             .expect("Should serialise");
     }
 
-    fn pull_sequence(&mut self, config_id: u32, seq_len: u64) {
+    fn pull_sequence(&mut self, config_id: u32, seq_len: u64, skip_tag: Option<usize>) {
         let num_ready_peers = self.active_peers.0.len();
         let num_unready_peers = self.active_peers.1.len();
         let num_continued_nodes = num_ready_peers + num_unready_peers;
@@ -312,6 +312,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
         let offset = seq_len/num_continued_nodes as u64;
         // get segment from unready nodes (probably have early segments of final sequence)
+        let skip = skip_tag.unwrap_or(0);
         for (i, pid) in self.active_peers.1.iter().enumerate() {
             let from_idx = i as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len{
@@ -320,8 +321,10 @@ impl<S, P> PaxosReplica<S, P> where
                 from_idx + offset
             };
             let tag = i + 1;
-            debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
-            self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+            if tag != skip {
+                debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
+                self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+            }
         }
         // get segment from ready nodes (definitely has final sequence)
         for (i, pid) in self.active_peers.0.iter().enumerate() {
@@ -332,8 +335,10 @@ impl<S, P> PaxosReplica<S, P> where
                 from_idx + offset
             };
             let tag = num_unready_peers + i + 1;
-            debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
-            self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+            if tag != skip {
+                debug!(self.ctx.log(), "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}", pid, config_id, tag, from_idx, to_idx-1);
+                self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+            }
         }
         let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| c.retry_request_sequence(config_id, seq_len, num_continued_nodes as u64));
         self.retry_transfer_timers.insert(config_id, timer);
@@ -381,27 +386,37 @@ impl<S, P> PaxosReplica<S, P> where
     fn append_transferred_segment(&mut self, st: SequenceTransfer) {
         let (rem_transfers, sequence) = self.pending_seq_transfers.get_mut(st.config_id as usize - 1).expect("Should have initialised pending sequence");
         let tag = st.tag;
-        let offset = st.from_idx as usize;
-        for (i, entry) in st.entries.into_iter().enumerate() {
+        let segment = st.segment;
+        let offset = segment.from_idx as usize;
+        for (i, entry) in segment.entries.into_iter().enumerate() {
             sequence[offset + i] = entry;
         }
         // PaxosSer::deserialise_entries_into(&mut st.entries.as_slice(), sequence, offset);
         rem_transfers.retain(|t| t != &tag);
     }
 
-    fn create_eager_sequence_transfer(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceTransfer {
-        let index = continued_nodes.iter().position(|pid| pid == &self.pid).expect("Could not find my pid in continued_nodes");
-        let tag = index as u32 + 1;
+    fn get_continued_idx(&self, continued_nodes: &Vec<u64>) -> usize {
+        continued_nodes.iter().position(|pid| pid == &self.pid).expect("Could not find my pid in continued_nodes")
+    }
+
+    fn create_segment(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceSegment {
+        let index = self.get_continued_idx(continued_nodes);
         let n_continued = continued_nodes.len();
         let final_seq = self.prev_sequences.get(&config_id).expect("Should have final sequence");
         let seq_len = final_seq.get_sequence_len();
         let offset = seq_len/n_continued as u64;
         let from_idx = index as u64 * offset;
         let to_idx = from_idx + offset;
-        // info!(self.ctx.log(), "Creating eager sequence transfer. Tag: {}, idx: {}-{}, continued_nodes: {:?}", tag, from_idx, to_idx, continued_nodes);
         let entries = final_seq.get_entries(from_idx, to_idx).to_vec();
+        SequenceSegment::with(from_idx, to_idx, entries)
+    }
+
+    fn create_eager_sequence_transfer(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceTransfer {
+        let index = self.get_continued_idx(continued_nodes);
+        let tag = index as u32 + 1;
+        let segment = self.create_segment(continued_nodes, config_id);
         let prev_seq_metadata = self.get_sequence_metadata(config_id-1);
-        let st = SequenceTransfer::with(config_id, tag, true, from_idx, to_idx, entries, prev_seq_metadata);
+        let st = SequenceTransfer::with(config_id, tag, true, prev_seq_metadata, segment);
         st
     }
 
@@ -425,7 +440,8 @@ impl<S, P> PaxosReplica<S, P> where
             }
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id-1);
-        let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, sr.from_idx, sr.to_idx, entries, prev_seq_metadata);
+        let segment = SequenceSegment::with(sr.from_idx, sr.to_idx, entries);
+        let st = SequenceTransfer::with(sr.config_id, sr.tag, succeeded, prev_seq_metadata, segment);
         // info!(self.ctx.log(), "Replying seq transfer: tag: {}, idx: {}-{}", st.tag, st.from_idx, st.to_idx);
         requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
     }
@@ -441,14 +457,13 @@ impl<S, P> PaxosReplica<S, P> where
             let idx = prev_config_id as usize - 1;
             if let Some((rem_segments, _)) = self.pending_seq_transfers.get(idx) {
                 if rem_segments.is_empty() {
-                    self.pull_sequence(prev_config_id, prev_seq_len);
+                    self.pull_sequence(prev_config_id, prev_seq_len, None);
                 }
             }
         }
-        let succeeded = st.succeeded;
-        let config_id = st.config_id;
-        if succeeded {
-            let idx = config_id as usize - 1;
+        if st.succeeded {
+            let idx = st.config_id as usize - 1;
+            let config_id = st.config_id;
             self.append_transferred_segment(st);
             let got_all_segments = self.pending_seq_transfers[idx].0.is_empty();
             if got_all_segments {
@@ -468,8 +483,8 @@ impl<S, P> PaxosReplica<S, P> where
         } else {    // failed sequence transfer i.e. not reached final seq yet
             let config_id = st.config_id;
             let tag = st.tag;
-            let from_idx = st.from_idx;
-            let to_idx = st.to_idx;
+            let from_idx = st.segment.from_idx;
+            let to_idx = st.segment.to_idx;
             // info!(self.ctx.log(), "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx);
             // query someone we know have reached final seq
             let num_active = self.active_peers.0.len();
@@ -568,13 +583,16 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 debug!(self.ctx.log(), "RECONFIG: Next config_id: {}, prev_config: {}, len: {}", r.config_id, prev_config_id, final_seq_len);
                 let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
                 self.prev_sequences.insert(prev_config_id, r.final_sequence);
-                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid));
+                let segment = if self.leader_in_active_config == self.pid {
+                    Some(self.create_segment(&r.nodes.continued_nodes, r.config_id - 1))
+                } else {
+                    None
+                };
+                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid, segment));
                 for pid in &r.nodes.new_nodes {
-                    if pid != &self.pid {
-                        let idx = *pid as usize - 1;
-                        let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
-                        actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
-                    }
+                    let idx = *pid as usize - 1;
+                    let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
+                    actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
                 }
                 let mut nodes = r.nodes.continued_nodes;
                 let mut new_nodes = r.nodes.new_nodes;
@@ -687,7 +705,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                 }
                                 match self.next_config_id {
                                     None => {
-                                        debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
+                                        // info!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
                                         for pid in &r.nodes.continued_nodes {
                                             if pid == &r.from {
                                                 self.active_peers.0.push(*pid);
@@ -698,6 +716,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                         let num_expected_transfers = r.nodes.continued_nodes.len();
                                         let mut nodes = r.nodes.continued_nodes;
                                         let mut new_nodes = r.nodes.new_nodes;
+                                        let from = r.from;
                                         nodes.append(&mut new_nodes);
                                         if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                             // only SS in final sequence and no other prev sequences -> start directly
@@ -706,8 +725,19 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                             self.create_replica(r.config_id, nodes, false, true, false, false);
                                         } else {
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
+                                            let skip_tag = if r.segment.is_some() {
+                                                // check which tag this segment corresponds to
+                                                let index = self.active_peers.0.iter().position(|x| x == &from).unwrap();
+                                                let num_unready_peers = self.active_peers.1.len();
+                                                let tag = num_unready_peers + index + 1;
+                                                Some(tag)
+                                            } else {
+                                                None
+                                            };
                                             match self.policy {
-                                                ReconfigurationPolicy::Pull => self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len),
+                                                ReconfigurationPolicy::Pull => {
+                                                    self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_tag);
+                                                },
                                                 ReconfigurationPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
                                                     let seq_len = r.seq_metadata.len;
@@ -719,6 +749,10 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                 },
                                             }
                                             self.create_replica(r.config_id, nodes, false, false, false, false);
+                                            if let Some(tag) = skip_tag {
+                                                let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
+                                                self.handle_sequence_transfer(st);
+                                            }
                                         }
                                     },
                                     Some(next_config_id) => {
@@ -952,7 +986,8 @@ impl<S, P> Actor for PaxosComp<S, P> where
             },
             PaxosCompMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
                 let (succeeded, entries) = self.paxos.get_chosen_entries(seq_req.from_idx, seq_req.to_idx);
-                let st = SequenceTransfer::with(seq_req.config_id, seq_req.tag, succeeded, seq_req.from_idx, seq_req.to_idx, entries, prev_seq_metadata);
+                let segment = SequenceSegment::with(seq_req.from_idx, seq_req.to_idx, entries);
+                let st = SequenceTransfer::with(seq_req.config_id, seq_req.tag, succeeded, prev_seq_metadata, segment);
                 requestor.tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self).expect("Should serialise!");
             },
             PaxosCompMsg::GetAllEntries(a) => { // for testing only

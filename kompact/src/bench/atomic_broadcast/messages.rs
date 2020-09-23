@@ -378,6 +378,19 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
+    pub struct SequenceSegment {
+        pub from_idx: u64,
+        pub to_idx: u64,
+        pub entries: Vec<Entry>,
+    }
+
+    impl SequenceSegment {
+        pub fn with(from_idx: u64, to_idx: u64, entries: Vec<Entry>) -> SequenceSegment {
+            SequenceSegment{ from_idx, to_idx, entries }
+        }
+    }
+
+    #[derive(Clone, Debug)]
     pub struct SequenceMetaData {
         pub config_id: u32,
         pub len: u64
@@ -394,10 +407,8 @@ pub mod paxos {
         pub config_id: u32,
         pub tag: u32,
         pub succeeded: bool,
-        pub from_idx: u64,
-        pub to_idx: u64,
-        pub entries: Vec<Entry>,
-        pub metadata: SequenceMetaData
+        pub metadata: SequenceMetaData,
+        pub segment: SequenceSegment
     }
 
     impl SequenceTransfer {
@@ -405,12 +416,10 @@ pub mod paxos {
             config_id: u32,
             tag: u32,
             succeeded: bool,
-            from_idx: u64,
-            to_idx: u64,
-            entries: Vec<Entry>,
-            metadata: SequenceMetaData
+            metadata: SequenceMetaData,
+            segment: SequenceSegment,
         ) -> SequenceTransfer {
-            SequenceTransfer { config_id, tag, succeeded, from_idx, to_idx, entries, metadata }
+            SequenceTransfer { config_id, tag, succeeded, metadata, segment }
         }
     }
 
@@ -453,12 +462,13 @@ pub mod paxos {
         pub config_id: u32,
         pub nodes: Reconfig,
         pub seq_metadata: SequenceMetaData,
-        pub from: u64
+        pub from: u64,
+        pub segment: Option<SequenceSegment>
     }
 
     impl ReconfigInit {
-        pub fn with(config_id: u32, nodes: Reconfig, seq_metadata: SequenceMetaData, from: u64) -> ReconfigInit {
-            ReconfigInit{ config_id, nodes, seq_metadata, from }
+        pub fn with(config_id: u32, nodes: Reconfig, seq_metadata: SequenceMetaData, from: u64, segment: Option<SequenceSegment>) -> ReconfigInit {
+            ReconfigInit{ config_id, nodes, seq_metadata, from, segment }
         }
     }
 
@@ -493,6 +503,17 @@ pub mod paxos {
                     r.nodes.continued_nodes.iter().for_each(|pid| buf.put_u64(*pid));
                     buf.put_u32(r.nodes.new_nodes.len() as u32);
                     r.nodes.new_nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                    match &r.segment {
+                        Some(segment) => {
+                            buf.put_u8(1);
+                            buf.put_u64(segment.from_idx);
+                            buf.put_u64(segment.to_idx);
+                            PaxosSer::serialise_entries(segment.entries.as_slice(), buf);
+                        },
+                        _ => {
+                            buf.put_u8(0);
+                        }
+                    }
                 },
                 ReconfigurationMsg::SequenceRequest(sr) => {
                     buf.put_u8(SEQ_REQ_ID);
@@ -508,11 +529,11 @@ pub mod paxos {
                     buf.put_u32(st.tag);
                     let succeeded: u8 = if st.succeeded { 1 } else { 0 };
                     buf.put_u8(succeeded);
-                    buf.put_u64(st.from_idx);
-                    buf.put_u64(st.to_idx);
+                    buf.put_u64(st.segment.from_idx);
+                    buf.put_u64(st.segment.to_idx);
                     buf.put_u32(st.metadata.config_id);
                     buf.put_u64(st.metadata.len);
-                    PaxosSer::serialise_entries(st.entries.as_slice(), buf);
+                    PaxosSer::serialise_entries(st.segment.entries.as_slice(), buf);
                 }
             }
             Ok(())
@@ -544,7 +565,19 @@ pub mod paxos {
                     }
                     let seq_metadata = SequenceMetaData::with(seq_metadata_config_id, seq_metadata_len);
                     let nodes = Reconfig::with(continued_nodes, new_nodes);
-                    let r = ReconfigInit::with(config_id, nodes, seq_metadata, from);
+                    let segment = match buf.get_u8() {
+                        1 => {
+                            let from_idx = buf.get_u64();
+                            let to_idx = buf.get_u64();
+                            let entries = PaxosSer::deserialise_entries(buf);
+                            Some(SequenceSegment::with(from_idx, to_idx, entries))
+                        },
+                        0 => {
+                            None
+                        },
+                        _ => panic!("Expected 0 or 1 for option of segment!")
+                    };
+                    let r = ReconfigInit::with(config_id, nodes, seq_metadata, from, segment);
                     Ok(ReconfigurationMsg::Init(r))
                 },
                 SEQ_REQ_ID => {
@@ -566,7 +599,8 @@ pub mod paxos {
                     let metadata_seq_len = buf.get_u64();
                     let entries = PaxosSer::deserialise_entries(buf);
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
-                    let st = SequenceTransfer::with(config_id, tag, succeeded, from_idx, to_idx, entries, metadata);
+                    let segment = SequenceSegment::with(from_idx, to_idx, entries);
+                    let st = SequenceTransfer::with(config_id, tag, succeeded, metadata, segment);
                     Ok(ReconfigurationMsg::SequenceTransfer(st))
                 }
                 _ => {
@@ -575,8 +609,6 @@ pub mod paxos {
                     ))
                 }
             }
-
-
         }
     }
 
