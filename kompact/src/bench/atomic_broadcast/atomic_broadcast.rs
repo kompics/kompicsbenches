@@ -64,7 +64,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn str_to_client_conf(s: String) -> Result<Self::ClientConf, BenchmarkError> {
-        let split: Vec<_> = s.split(",").collect();
+        let split: Vec<_> = s.split(',').collect();
         if split.len() != 3 {
             Err(BenchmarkError::InvalidMessage(format!(
                 "String '{}' does not represent a client conf! Split length should be 3",
@@ -242,7 +242,7 @@ impl AtomicBroadcastMaster {
         );
         let client_path = ActorPath::Named(NamedPath::with_system(
             system.system_path(),
-            vec![format!("client{}", &self.iteration_id).into()],
+            vec![format!("client{}", &self.iteration_id)],
         ));
         (client_comp, client_path)
     }
@@ -289,7 +289,7 @@ impl AtomicBroadcastMaster {
                     },
                     s if s == "single" || s == "majority" => {
                         let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
-                        if reconfig_policy != "remove-leader" && reconfig_policy != "remove-follower" && reconfig_policy != "joint-consensus-remove-leader" && reconfig_policy != "joint-consensus-remove-follower" {
+                        if reconfig_policy != "replace-leader" && reconfig_policy != "replace-follower" {
                             return Err(BenchmarkError::InvalidTest(
                                 format!("Unimplemented Raft transfer policy: {}", &c.reconfig_policy)
                             ));
@@ -340,7 +340,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_nodes = Some(c.number_of_nodes);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
-        if c.concurrent_proposals == 1 || self.reconfiguration.is_some(){
+        if c.concurrent_proposals == 1 || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency")) {
             self.latency_hist = Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
         }
         let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
@@ -394,7 +394,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .ask( |promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(num_timed_out);
-        if self.concurrent_proposals == Some(1) || self.reconfiguration.is_some()  {
+        if self.concurrent_proposals == Some(1) || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency")) {
             let dir = format!("{}/latency/", META_RESULTS_DIR);
             create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
             let mut file = OpenOptions::new().create(true).append(true).open(format!("{}raw_{}.data", &dir, self.experiment_str.as_ref().unwrap())).expect("Failed to open latency file");
@@ -446,7 +446,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 writeln!(summary_file, "{}", summary_str).expect(&format!("Failed to write meta summary file: {}", summary_str));
                 summary_file.flush().expect("Failed to flush meta file");
             }
-            if self.concurrent_proposals == Some(1) || self.reconfiguration.is_some() {
+            if self.concurrent_proposals == Some(1) || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency")) {
                 let dir = format!("{}/latency/", META_RESULTS_DIR);
                 create_dir_all(&dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
                 let mut file = OpenOptions::new().create(true).append(true).open(format!("{}summary_{}.out", &dir, self.experiment_str.as_ref().unwrap())).expect("Failed to open latency file");
@@ -553,10 +553,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let conf_state = get_initial_conf(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
-                    "joint-consensus-remove-leader" => Some(RaftReconfigurationPolicy::JointConsensusRemoveLeader),
-                    "joint-consensus-remove-follower" => Some(RaftReconfigurationPolicy::JointConsensusRemoveFollower),
-                    "remove-leader" => Some(RaftReconfigurationPolicy::RemoveLeader),
-                    "remove-follower" => Some(RaftReconfigurationPolicy::RemoveFollower),
+                    "replace-leader" => Some(RaftReconfigurationPolicy::ReplaceLeader),
+                    "replace-follower" => Some(RaftReconfigurationPolicy::ReplaceFollower),
                     unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
                 };
 //                let storage = MemStorage::new_with_conf_state(conf_state);
@@ -566,7 +564,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
                     RaftReplica::<Storage>::with(
                         conf_state.0,
-                        reconfig_policy.unwrap_or(RaftReconfigurationPolicy::RemoveFollower),
+                        reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
                         batch
                     )
                 });

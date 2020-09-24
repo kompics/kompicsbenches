@@ -43,6 +43,7 @@ max_accsync = []
 headstart_ble = []
 
 track_timeouts = [] # client keep tracks of which proposals timed out
+track_reconfig_latency = [] # measure latency for proposals during reconfig
 
 #default = []
 default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync", "headstart_ble"]

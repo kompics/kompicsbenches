@@ -314,7 +314,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val paxos = List("paxos-batch");
 
   private val raft = List("raft-batch");
-  private val raft_reconfig = List("joint-consensus-remove-follower", "joint-consensus-remove-leader");
+  private val raft_reconfig = List("replace-follower", "replace-leader");
 
   private val paxos_reconfig = List("pull");
 
