@@ -1009,7 +1009,7 @@ impl Serialiser<TestMessage> for TestMessageSer {
                 let seq_len = sr.sequence.len() as u32;
                 buf.put_u32(seq_len);
                 for i in &sr.sequence {
-                    buf.put_u64(i.clone());
+                    buf.put_u64(*i);
                 }
                 Ok(())
             }

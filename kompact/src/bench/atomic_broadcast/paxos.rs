@@ -395,11 +395,11 @@ impl<S, P> PaxosReplica<S, P> where
         rem_transfers.retain(|t| t != &tag);
     }
 
-    fn get_continued_idx(&self, continued_nodes: &Vec<u64>) -> usize {
+    fn get_continued_idx(&self, continued_nodes: &[u64]) -> usize {
         continued_nodes.iter().position(|pid| pid == &self.pid).expect("Could not find my pid in continued_nodes")
     }
 
-    fn create_segment(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceSegment {
+    fn create_segment(&self, continued_nodes: &[u64], config_id: u32) -> SequenceSegment {
         let index = self.get_continued_idx(continued_nodes);
         let n_continued = continued_nodes.len();
         let final_seq = self.prev_sequences.get(&config_id).expect("Should have final sequence");
@@ -411,7 +411,7 @@ impl<S, P> PaxosReplica<S, P> where
         SequenceSegment::with(from_idx, to_idx, entries)
     }
 
-    fn create_eager_sequence_transfer(&self, continued_nodes: &Vec<u64>, config_id: u32) -> SequenceTransfer {
+    fn create_eager_sequence_transfer(&self, continued_nodes: &[u64], config_id: u32) -> SequenceTransfer {
         let index = self.get_continued_idx(continued_nodes);
         let tag = index as u32 + 1;
         let segment = self.create_segment(continued_nodes, config_id);
@@ -1374,7 +1374,7 @@ pub mod raw_paxos{
                 let promise_meta = &(prom.n_accepted, sfx_len, from);
                 if promise_meta > &self.max_promise_meta {
                     if sfx_len > 0 || (sfx_len == 0 && prom.ld >= self.acc_sync_ld){
-                        self.max_promise_meta = promise_meta.clone();
+                        self.max_promise_meta = *promise_meta;
                         self.max_promise_sfx = prom.sfx;
                     }
                 }
@@ -1417,7 +1417,7 @@ pub mod raw_paxos{
                         let promise_meta = &self.promises_meta[idx].expect(&format!("No promise from {}. Max pid: {}", pid, max_pid));
                         if cfg!(feature = "max_accsync") {
                             if promise_meta == &(max_promise_n, max_sfx_len) {
-                                if !max_sfx_is_empty || (max_sfx_is_empty && ld >= self.acc_sync_ld) {
+                                if !max_sfx_is_empty || ld >= self.acc_sync_ld {
                                     let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(max_promise_acc_sync.clone()));
                                     self.outgoing.push(msg);
                                 }
@@ -1537,7 +1537,7 @@ pub mod raw_paxos{
         fn handle_prepare(&mut self, prep: Prepare, from: u64) {
             if self.storage.get_promise() < prep.n {
                 self.leader = from;
-                self.storage.set_promise(prep.n.clone());
+                self.storage.set_promise(prep.n);
                 self.state = (Role::Follower, Phase:: Prepare);
                 let na = self.storage.get_accepted_ballot();
                 let sfx = if na >= prep.n_accepted {
@@ -1553,7 +1553,7 @@ pub mod raw_paxos{
         fn handle_accept_sync(&mut self, acc_sync: AcceptSync, from: u64) {
             if self.state == (Role::Follower, Phase::Prepare) {
                 if self.storage.get_promise() == acc_sync.n {
-                    self.storage.set_accepted_ballot(acc_sync.n.clone());
+                    self.storage.set_accepted_ballot(acc_sync.n);
                     let mut entries = acc_sync.entries;
                     let la = if acc_sync.sync {
                         self.storage.append_on_prefix(acc_sync.ld, &mut entries)
@@ -1722,7 +1722,7 @@ mod ballot_leader_election {
                 peers,
                 round: initial_round,
                 ballots: Vec::with_capacity(n),
-                current_ballot: initial_ballot.clone(),
+                current_ballot: initial_ballot,
                 leader: None,
                 max_ballot: initial_ballot,
                 hb_delay,

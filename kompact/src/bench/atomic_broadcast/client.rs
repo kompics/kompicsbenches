@@ -157,7 +157,9 @@ impl Client {
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
-                self.state = ExperimentState::ProposedReconfiguration;
+                #[cfg(feature = "track_reconfig_latency")] {
+                    self.state = ExperimentState::ProposedReconfiguration;
+                }
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
             let proposal_meta = ProposalMetaData::with(None, timer);
@@ -171,7 +173,9 @@ impl Client {
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
-                self.state = ExperimentState::ProposedReconfiguration;
+                #[cfg(feature = "track_reconfig_latency")] {
+                    self.state = ExperimentState::ProposedReconfiguration;
+                }
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = self.pending_proposals.get_mut(&id)

@@ -464,7 +464,7 @@ pub mod actor_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = 0 + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -472,7 +472,7 @@ pub mod actor_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = 0 + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
@@ -952,10 +952,10 @@ pub mod mixed_atomicregister {
                     /*** Add self path to vector of nodes ***/
                     let self_path = ActorPath::Named(NamedPath::with_system(
                         system.system_path(),
-                        vec![format!("atomicreg_comp{}", &self.init_id).into()],
+                        vec![format!("atomicreg_comp{}", &self.init_id)],
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
-                    nodes.push(self_path.clone());
+                    nodes.push(self_path);
                     for i in 0..(self.partition_size.unwrap() - 1) as usize {
                         nodes.push(d[i].clone());
                     }
@@ -1357,7 +1357,7 @@ pub mod mixed_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = 0 + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -1365,7 +1365,7 @@ pub mod mixed_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = 0 + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
