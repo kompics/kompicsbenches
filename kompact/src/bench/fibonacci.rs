@@ -131,7 +131,7 @@ struct FibonacciActor {
 impl FibonacciActor {
     fn with(report_to: ResultTarget) -> FibonacciActor {
         FibonacciActor {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             report_to,
             result: 0u64,
             num_responses: 0u8,
@@ -151,12 +151,12 @@ impl FibonacciActor {
     }
 }
 
-ignore_control!(FibonacciActor);
+ignore_lifecycle!(FibonacciActor);
 
 impl Actor for FibonacciActor {
     type Message = FibonacciMsg;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
             FibonacciMsg::Request { n } => {
                 debug!(self.ctx.log(), "Got Request n={}", n);
@@ -188,9 +188,10 @@ impl Actor for FibonacciActor {
                 }
             }
         }
+        Handled::Ok
     }
 
-    fn receive_network(&mut self, _msg: NetMessage) -> () {
+    fn receive_network(&mut self, _msg: NetMessage) -> Handled {
         unimplemented!();
     }
 }

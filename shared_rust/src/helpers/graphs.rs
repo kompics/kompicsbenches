@@ -272,9 +272,7 @@ impl<T> Block<T> {
         (i, j)
     }
 
-    pub fn block_id(&self) -> usize {
-        self.block_id
-    }
+    pub fn block_id(&self) -> usize { self.block_id }
 }
 
 impl<T: Clone + 'static> Block<T> {

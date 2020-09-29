@@ -201,8 +201,7 @@ impl DistributedBenchmarkMaster for StreamingWindowsMaster {
         _m: &DeploymentMetaData,
     ) -> Result<Self::ClientConf, BenchmarkError> {
         let params = Params::from_req(&c)?;
-        let system = crate::kompact_system_provider::global()
-            .new_remote_system("streamingwindows");
+        let system = crate::kompact_system_provider::global().new_remote_system("streamingwindows");
 
         let mut sources: Vec<ActorPath> = Vec::new();
         for pid in 0..params.number_of_partitions {
@@ -329,8 +328,7 @@ impl DistributedBenchmarkClient for StreamingWindowsClient {
     fn setup(&mut self, mut c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up windowers.");
 
-        let system = crate::kompact_system_provider::global()
-            .new_remote_system("streamingwindows");
+        let system = crate::kompact_system_provider::global().new_remote_system("streamingwindows");
 
         let window_size = c.window_size;
         let batch_size = c.batch_size;
@@ -486,7 +484,7 @@ impl Windower {
         let window_size_ms = window_size.as_millis() as u64; // see above for cast explanation
         let ready_mark = batch_size / 2;
         Windower {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             window_size_ms,
             batch_size,
             amplification,
@@ -567,13 +565,13 @@ impl Windower {
     }
 }
 
-ignore_control!(Windower);
+ignore_lifecycle!(Windower);
 
 impl NetworkActor for Windower {
     type Message = WindowerMsg;
     type Deserialiser = WindowerMsg;
 
-    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> () {
+    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> Handled {
         match msg {
             WindowerMsg::Start if !self.running => {
                 debug!(self.ctx.log(), "Got Start");
@@ -620,6 +618,7 @@ impl NetworkActor for Windower {
             }
             _ => unimplemented!("Unexpected message {:?} when running={}", msg, self.running),
         }
+        Handled::Ok
     }
 }
 
@@ -695,7 +694,7 @@ impl StreamSource {
     pub fn with(partition_id: u32) -> StreamSource {
         let random = SmallRng::seed_from_u64(partition_id as u64);
         StreamSource {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             partition_id,
             random,
             downstream: None,
@@ -726,12 +725,12 @@ impl StreamSource {
         }
     }
 }
-ignore_control!(StreamSource);
+ignore_lifecycle!(StreamSource);
 impl NetworkActor for StreamSource {
     type Message = SourceMsg;
     type Deserialiser = SourceMsg;
 
-    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> () {
+    fn receive(&mut self, sender: Option<ActorPath>, msg: Self::Message) -> Handled {
         match msg {
             SourceMsg::Ready { batch_size } if !self.flushing => {
                 debug!(self.ctx().log(), "Got Ready!");
@@ -771,6 +770,7 @@ impl NetworkActor for StreamSource {
                 self.flushing
             ),
         }
+        Handled::Ok
     }
 }
 
@@ -857,7 +857,7 @@ impl StreamSink {
         upstream: ActorPath,
     ) -> StreamSink {
         StreamSink {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             latch,
             number_of_windows,
             upstream,
@@ -865,12 +865,12 @@ impl StreamSink {
         }
     }
 }
-ignore_control!(StreamSink);
+ignore_lifecycle!(StreamSink);
 impl NetworkActor for StreamSink {
     type Message = SinkMsg;
     type Deserialiser = SinkMsg;
 
-    fn receive(&mut self, _sender: Option<ActorPath>, msg: Self::Message) {
+    fn receive(&mut self, _sender: Option<ActorPath>, msg: Self::Message) -> Handled {
         match msg {
             SinkMsg::Run => {
                 debug!(self.ctx().log(), "Got Run");
@@ -895,5 +895,6 @@ impl NetworkActor for StreamSink {
                 }
             }
         }
+        Handled::Ok
     }
 }
