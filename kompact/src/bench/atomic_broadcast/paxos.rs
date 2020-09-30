@@ -1393,8 +1393,8 @@ pub mod raw_paxos{
             let promised_idx = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx);
             for idx in promised_idx {
                 if cfg!(feature = "batch_accept") {
-                    match self.batch_accept_meta.get_mut(idx) {
-                        Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
+                    match self.batch_accept_meta.get_mut(idx).unwrap() {
+                        Some((ballot, outgoing_idx)) if ballot == &self.n_leader => {
                             let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
                             match msg {
                                 PaxosMsg::AcceptDecide(a) => {
@@ -1412,6 +1412,9 @@ pub mod raw_paxos{
                             let pid = idx as u64 + 1;
                             self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::AcceptDecide(acc)));
                             self.batch_accept_meta[idx] = Some((self.n_leader, cache_idx));
+                            #[cfg(feature = "latest_decide")] {
+                                self.latest_decide_meta[idx] = Some((self.n_leader, cache_idx));
+                            }
                         }
                     }
                 } else {
@@ -1489,7 +1492,7 @@ pub mod raw_paxos{
                             let msg = Message::with(self.pid, pid, PaxosMsg::AcceptSync(acc_sync));
                             self.outgoing.push(msg);
                         }
-                        if cfg!(feature = "batch_accept") {
+                        #[cfg(feature = "batch_accept")] {
                             self.batch_accept_meta[idx]= Some((self.n_leader, self.outgoing.len() - 1));
                         }
                     }
@@ -1526,6 +1529,11 @@ pub mod raw_paxos{
                 if ld > prom.ld {
                     let d = Decide::with(ld, self.n_leader);
                     self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Decide(d)));
+                    #[cfg(feature = "latest_decide")] {
+                        let idx = from as usize - 1;
+                        let cached_idx = self.outgoing.len() - 1;
+                        self.latest_decide_meta[idx] = Some((self.n_leader, cached_idx));
+                    }
                 }
             }
         }
@@ -1533,7 +1541,29 @@ pub mod raw_paxos{
         fn handle_acceptsync_req(&mut self, from: u64) {
             let entries = self.storage.get_sequence();
             let acc_sync = AcceptSync::with(self.n_leader, entries, 0, true);
-            self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
+            let pm = PaxosMsg::AcceptSync(acc_sync);
+            if cfg!(feature = "batch_accept") {
+                let idx = from as usize - 1;
+                /*** replace any cached msg with the AcceptSync (as receiver will discard the original msg anyway) ***/
+                let cache_idx = if let Some((_, cached_accept_idx)) = self.batch_accept_meta.get_mut(idx).unwrap() {
+                    let Message{msg, ..} = self.outgoing.get_mut(*cached_accept_idx).unwrap();
+                    *msg = pm;
+                    *cached_accept_idx
+                } else if let Some((_, cached_decide_idx)) = self.latest_decide_meta.get_mut(idx).unwrap() {
+                    let Message{msg, ..} = self.outgoing.get_mut(*cached_decide_idx).unwrap();
+                    *msg = pm;
+                    *cached_decide_idx
+                } else {
+                    self.outgoing.push(Message::with(self.pid, from, pm));
+                    self.outgoing.len() - 1
+                };
+                self.batch_accept_meta[idx] = Some((self.n_leader, cache_idx));
+                #[cfg(feature = "latest_decide")] {
+                    self.latest_decide_meta[idx] = None;
+                }
+            } else {
+                self.outgoing.push(Message::with(self.pid, from, pm));
+            }
         }
 
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
@@ -1547,31 +1577,12 @@ pub mod raw_paxos{
                         if cfg!(feature = "latest_decide") {
                             let promised_idx = self.lds.iter().enumerate().filter(|(_, ld)| ld.is_some());
                             for (idx, _) in promised_idx {
-                                #[cfg(feature = "batch_accept")] {
-                                    match self.batch_accept_meta.get_mut(idx) {
-                                        Some(Some((ballot, outgoing_idx))) if ballot == &self.n_leader => {
-                                            let Message{msg, ..} = self.outgoing.get_mut(*outgoing_idx).unwrap();
-                                            match msg {
-                                                PaxosMsg::AcceptDecide(a) => {
-                                                    a.ld = self.lc;
-                                                },
-                                                PaxosMsg::AcceptSync(acc) => {
-                                                    acc.ld = self.lc;
-                                                },
-                                                _ => panic!("Not AcceptDecide or AcceptSync when sending latest decide"),
-                                            }
-                                            continue;
-                                        },
-                                        _ => {}
-                                    }
-                                }
-                                match self.latest_decide_meta.get_mut(idx) {
-                                    Some(Some((ballot, outgoing_dec_idx))) if ballot == &self.n_leader => {
+                                match self.latest_decide_meta.get_mut(idx).unwrap() {
+                                    Some((ballot, outgoing_dec_idx)) if ballot == &self.n_leader => {
                                         let Message{msg, ..} = self.outgoing.get_mut(*outgoing_dec_idx).unwrap();
                                         match msg {
-                                            PaxosMsg::Decide(d) => {
-                                                d.ld = self.lc;
-                                            },
+                                            PaxosMsg::AcceptDecide(a) => a.ld = self.lc,
+                                            PaxosMsg::Decide(d) => d.ld = self.lc,
                                             _ => panic!("Cached message in outgoing was not Decide"),
                                         }
                                     },
@@ -1624,7 +1635,7 @@ pub mod raw_paxos{
                     };
                     self.state = (Role::Follower, Phase::Accept);
                     let accepted = Accepted::with(acc_sync.n, la);
-                    if cfg!(feature = "latest_accepted") {
+                    #[cfg(feature = "latest_accepted")] {
                         let cached_idx = self.outgoing.len();
                         self.latest_accepted_meta = Some((acc_sync.n, cached_idx));
                     }
@@ -1652,10 +1663,6 @@ pub mod raw_paxos{
                         self.accept_entries(acc.n, &mut entries);
                         // handle decide
                         if acc.ld > self.storage.get_decided_len() {
-                            let seq_len = self.storage.get_sequence_len();
-                            if acc.ld > seq_len {
-                                panic!("{}", format!("Decide ld > seq len: ld={}, seq_len={}", acc.ld, seq_len));
-                            }
                             self.storage.set_decided_len(acc.ld);
                         }
                     }
@@ -1677,10 +1684,6 @@ pub mod raw_paxos{
                     },
                     Phase::AcceptSyncReq => {},
                     _ => {
-                        let seq_len = self.storage.get_sequence_len();
-                        if dec.ld > seq_len {
-                            panic!("{}", format!("Decide ld > seq len: ld={}, seq_len={}, state: {:?}", dec.ld, seq_len, self.state));
-                        }
                         self.storage.set_decided_len(dec.ld);
                         /*if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
                             info!(self.log, "Decided StopSign: ld={}, las: {:?}", dec.ld, self.las);
