@@ -59,7 +59,11 @@ impl KompactSystemProvider {
         self.new_remote_system_with_threads(name, self.get_num_workers())
     }
 
-    pub fn new_remote_system_with_threads<I: Into<String>>(&self, name: I, threads: usize) -> KompactSystem {
+    pub fn new_remote_system_with_threads<I: Into<String>>(
+        &self,
+        name: I,
+        threads: usize,
+    ) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
         let mut conf = KompactConfig::default();

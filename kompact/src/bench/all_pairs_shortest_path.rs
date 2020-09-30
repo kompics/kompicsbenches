@@ -167,7 +167,7 @@ pub mod actor_apsp {
     impl ManagerActor {
         fn with(block_size: usize) -> ManagerActor {
             ManagerActor {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 block_size,
                 block_workers: Vec::new(),
                 latch: None,
@@ -233,12 +233,12 @@ pub mod actor_apsp {
         }
     }
 
-    ignore_control!(ManagerActor);
+    ignore_lifecycle!(ManagerActor);
 
     impl Actor for ManagerActor {
         type Message = ManagerMsg;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             match msg {
                 ManagerMsg::ComputeFW { graph, latch } => {
                     debug!(self.ctx.log(), "Got ComputeFW!");
@@ -300,9 +300,10 @@ pub mod actor_apsp {
                     }
                 }
             }
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             unimplemented!();
         }
     }
@@ -328,7 +329,7 @@ pub mod actor_apsp {
             manager: ActorRefStrong<ManagerMsg>,
         ) -> BlockActor {
             BlockActor {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 num_nodes,
                 manager,
                 ready: false,
@@ -372,12 +373,12 @@ pub mod actor_apsp {
         }
     }
 
-    ignore_control!(BlockActor);
+    ignore_lifecycle!(BlockActor);
 
     impl Actor for BlockActor {
         type Message = BlockMsg;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             match msg {
                 BlockMsg::Neighbours(nodes) => {
                     debug!(
@@ -419,7 +420,7 @@ pub mod actor_apsp {
                                     });
                                     self.ctx.suicide();
                                     self.done = true;
-                                    return; // don't run the whole loop again
+                                    return Handled::Ok; // don't run the whole loop again
                                 }
                             }
                         } else if other_k == self.k.incremented() {
@@ -430,9 +431,10 @@ pub mod actor_apsp {
                     }
                 }
             }
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             unimplemented!();
         }
     }
@@ -603,7 +605,7 @@ pub mod component_apsp {
     #[derive(ComponentDefinition, Actor)]
     struct ManagerActor {
         ctx: ComponentContext<Self>,
-        manager_port: ProvidedPort<ManagerPort, Self>,
+        manager_port: ProvidedPort<ManagerPort>,
         block_size: usize,
         block_workers: Vec<Weak<Component<BlockActor>>>,
         latch: Option<Arc<CountdownEvent>>,
@@ -616,8 +618,8 @@ pub mod component_apsp {
     impl ManagerActor {
         fn with(block_size: usize) -> ManagerActor {
             ManagerActor {
-                ctx: ComponentContext::new(),
-                manager_port: ProvidedPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                manager_port: ProvidedPort::uninitialised(),
                 block_size,
                 block_workers: Vec::new(),
                 latch: None,
@@ -682,10 +684,10 @@ pub mod component_apsp {
         }
     }
 
-    ignore_control!(ManagerActor);
+    ignore_lifecycle!(ManagerActor);
 
     impl Provide<ManagerPort> for ManagerActor {
-        fn handle(&mut self, event: ManagerMsg) -> () {
+        fn handle(&mut self, event: ManagerMsg) -> Handled {
             match event {
                 ManagerMsg::ComputeFW { graph, latch } => {
                     debug!(self.ctx.log(), "Got ComputeFW!");
@@ -747,15 +749,16 @@ pub mod component_apsp {
                     }
                 }
             }
+            Handled::Ok
         }
     }
 
     #[derive(ComponentDefinition, Actor)]
     struct BlockActor {
         ctx: ComponentContext<Self>,
-        manager_port: RequiredPort<ManagerPort, Self>,
-        block_port_prov: ProvidedPort<BlockPort, Self>,
-        block_port_req: RequiredPort<BlockPort, Self>,
+        manager_port: RequiredPort<ManagerPort>,
+        block_port_prov: ProvidedPort<BlockPort>,
+        block_port_req: RequiredPort<BlockPort>,
         num_nodes: usize,
         num_neighbours: usize,
         k: Phase,
@@ -772,10 +775,10 @@ pub mod component_apsp {
             num_neighbours: usize,
         ) -> BlockActor {
             BlockActor {
-                ctx: ComponentContext::new(),
-                manager_port: RequiredPort::new(),
-                block_port_prov: ProvidedPort::new(),
-                block_port_req: RequiredPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                manager_port: RequiredPort::uninitialised(),
+                block_port_prov: ProvidedPort::uninitialised(),
+                block_port_req: RequiredPort::uninitialised(),
                 num_nodes,
                 num_neighbours,
                 k: Phase::default(),
@@ -814,34 +817,32 @@ pub mod component_apsp {
         }
     }
 
-    impl Provide<ControlPort> for BlockActor {
-        fn handle(&mut self, event: ControlEvent) -> () {
-            match event {
-                ControlEvent::Start => {
-                    debug!(
-                        self.ctx.log(),
-                        "Got Start at block_id={}.",
-                        self.current_data.block_id()
-                    );
-                    self.notify_neighbours();
-                }
-                _ => (), // ignore
-            }
+    impl ComponentLifecycle for BlockActor {
+        fn on_start(&mut self) -> Handled {
+            debug!(
+                self.ctx.log(),
+                "Got Start at block_id={}.",
+                self.current_data.block_id()
+            );
+            self.notify_neighbours();
+            Handled::Ok
         }
     }
 
     impl Require<ManagerPort> for BlockActor {
-        fn handle(&mut self, _event: Never) -> () {
+        fn handle(&mut self, _event: Never) -> Handled {
             // ignore
+            Handled::Ok
         }
     }
     impl Provide<BlockPort> for BlockActor {
-        fn handle(&mut self, _event: Never) -> () {
+        fn handle(&mut self, _event: Never) -> Handled {
             // ignore
+            Handled::Ok
         }
     }
     impl Require<BlockPort> for BlockActor {
-        fn handle(&mut self, event: PhaseResult) -> () {
+        fn handle(&mut self, event: PhaseResult) -> Handled {
             let PhaseResult { k: other_k, data } = event;
             if !self.done {
                 if other_k == self.k {
@@ -865,7 +866,7 @@ pub mod component_apsp {
                             });
                             self.ctx.suicide();
                             self.done = true;
-                            return; // don't run the whole loop again
+                            return Handled::Ok;
                         }
                     }
                 } else if other_k == self.k.incremented() {
@@ -874,6 +875,7 @@ pub mod component_apsp {
                     unimplemented!("Got k={}, but I'm in phase k={}", other_k, self.k);
                 }
             }
+            Handled::Ok
         }
     }
 }

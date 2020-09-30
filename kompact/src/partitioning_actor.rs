@@ -1,8 +1,8 @@
 use super::*;
+use benchmark_suite_shared::test_utils::{KVOperation, KVTimestamp};
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use benchmark_suite_shared::test_utils::{KVTimestamp, KVOperation};
 
 #[derive(ComponentDefinition)]
 pub struct PartitioningActor {
@@ -29,7 +29,7 @@ impl PartitioningActor {
         test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     ) -> PartitioningActor {
         PartitioningActor {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             prepare_latch,
             finished_latch,
             init_id,
@@ -44,40 +44,37 @@ impl PartitioningActor {
     }
 }
 
-impl Provide<ControlPort> for PartitioningActor {
-    fn handle(&mut self, event: ControlEvent) -> () {
-        match event {
-            ControlEvent::Start => {
-                let min_key: u64 = 0;
-                let max_key = self.num_keys - 1;
-                info!(self.ctx.log(), "Sending init to nodes");
-                for (r, node) in (&self.nodes).iter().enumerate() {
-                    let rank = r as u32;
-                    let init = Init {
-                        rank,
-                        init_id: self.init_id,
-                        nodes: self.nodes.clone(),
-                        min_key,
-                        max_key,
-                    };
-                    node.tell((init, PARTITIONING_ACTOR_SER), self);
-                }
-            }
-            _ => {} // ignore
+impl ComponentLifecycle for PartitioningActor {
+    fn on_start(&mut self) -> Handled {
+        let min_key: u64 = 0;
+        let max_key = self.num_keys - 1;
+        info!(self.ctx.log(), "Sending init to nodes");
+        for (r, node) in (&self.nodes).iter().enumerate() {
+            let rank = r as u32;
+            let init = Init {
+                rank,
+                init_id: self.init_id,
+                nodes: self.nodes.clone(),
+                min_key,
+                max_key,
+            };
+            node.tell((init, PARTITIONING_ACTOR_SER), self);
         }
+        Handled::Ok
     }
 }
 
 impl Actor for PartitioningActor {
     type Message = Run;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
         for node in &self.nodes {
             node.tell((Run, PARTITIONING_ACTOR_SER), self);
         }
+        Handled::Ok
     }
 
-    fn receive_network(&mut self, msg: NetMessage) -> () {
+    fn receive_network(&mut self, msg: NetMessage) -> Handled {
         match_deser! {msg; {
             _init_ack: InitAck [PartitioningActorSer] => {
                 self.init_ack_count += 1;
@@ -114,6 +111,7 @@ impl Actor for PartitioningActor {
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }}
+        Handled::Ok
     }
 }
 
@@ -148,7 +146,6 @@ const READ_INV: i8 = 6;
 const READ_RESP: i8 = 7;
 const WRITE_INV: i8 = 8;
 const WRITE_RESP: i8 = 9;
-
 
 impl Serialiser<Init> for PartitioningActorSer {
     fn ser_id(&self) -> SerId {
@@ -299,22 +296,22 @@ impl Serialiser<TestDone> for PartitioningActorSer {
         let timestamps = &td.0;
         buf.put_i8(TESTDONE_ID);
         buf.put_u32(timestamps.len() as u32);
-        for ts in timestamps{
+        for ts in timestamps {
             buf.put_u64(ts.key);
             match ts.operation {
                 KVOperation::ReadInvokation => buf.put_i8(READ_INV),
                 KVOperation::ReadResponse => {
                     buf.put_i8(READ_RESP);
                     buf.put_u32(ts.value.unwrap());
-                },
+                }
                 KVOperation::WriteInvokation => {
                     buf.put_i8(WRITE_INV);
                     buf.put_u32(ts.value.unwrap());
-                },
+                }
                 KVOperation::WriteResponse => {
                     buf.put_i8(WRITE_RESP);
                     buf.put_u32(ts.value.unwrap());
-                },
+                }
             }
             buf.put_i64(ts.time);
             buf.put_u32(ts.sender);
@@ -343,10 +340,16 @@ impl Deserialiser<TestDone> for PartitioningActorSer {
                     };
                     let time = buf.get_i64();
                     let sender = buf.get_u32();
-                    let ts = KVTimestamp{key, operation, value, time, sender};
+                    let ts = KVTimestamp {
+                        key,
+                        operation,
+                        value,
+                        time,
+                        sender,
+                    };
                     timestamps.push(ts);
                 }
-                let test_done = TestDone{ 0: timestamps };
+                let test_done = TestDone { 0: timestamps };
                 Ok(test_done)
             }
             _ => Err(SerError::InvalidType(
@@ -355,5 +358,3 @@ impl Deserialiser<TestDone> for PartitioningActorSer {
         }
     }
 }
-
-
