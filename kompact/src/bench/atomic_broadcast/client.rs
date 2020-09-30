@@ -110,6 +110,10 @@ impl Client {
         data.put_u64(RECONFIG_ID);
         let p = Proposal::reconfiguration(data, reconfig.clone());
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise reconfig Proposal");
+        #[cfg(feature = "track_timeouts")] {
+            info!(self.ctx.log(), "Proposed reconfiguration. latest_proposal_id: {}, timed_out: {}, pending proposals: {}, min: {:?}, max: {:?}",
+                self.latest_proposal_id, self.num_timed_out, self.pending_proposals.len(), self.pending_proposals.keys().min(), self.pending_proposals.keys().max());
+        }
     }
 
     fn send_concurrent_proposals(&mut self) {
@@ -192,12 +196,14 @@ impl Client {
             self.send_concurrent_proposals();
         }
         #[cfg(feature = "track_timeouts")]
-        self.timeouts.push(id);
+            self.timeouts.push(id);
     }
 
     fn retry_pending_normal_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-        // info!(self.ctx.log(), "Retrying {} proposals after reconfig", pending_proposals.len());
+        #[cfg(feature = "track_timeouts")] {
+            info!(self.ctx.log(), "Retrying {} proposals after reconfig. Min: {:?}, Max: {:?}", pending_proposals.len(), pending_proposals.keys().min(), pending_proposals.keys().max());
+        }
         for (id, meta) in pending_proposals.iter_mut().filter(|(id, _)| *id > &0u64) {
             let i = *id;
             self.propose_normal(i, &leader);
@@ -336,6 +342,11 @@ impl Actor for Client {
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
+                                            if self.state == ExperimentState::ReconfigurationElection && !self.pending_proposals.is_empty() {
+                                                let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
+                                                self.retry_pending_normal_proposals(&mut pending_proposals);
+                                                self.pending_proposals = pending_proposals;
+                                            }
                                             self.state = ExperimentState::Running;
                                             self.send_concurrent_proposals();
                                             if leader_changed {
@@ -348,7 +359,7 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::PendingReconfiguration => {
-                        // info!(self.ctx.log(), "Got PendingReconfiguration");
+                        // info!(self.ctx.log(), "Got PendingReconfiguration. Pending proposals: {}, min: {:?}, max: {:?}", self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
                         if self.reconfig.is_some() {
                             self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
                         }
