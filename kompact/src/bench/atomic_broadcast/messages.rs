@@ -96,6 +96,18 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
+    pub struct FirstAccept {
+        pub n: Ballot,
+        pub entry: Entry,
+    }
+
+    impl FirstAccept {
+        pub fn with(n: Ballot, entry: Entry) -> FirstAccept {
+            FirstAccept{ n, entry }
+        }
+    }
+
+    #[derive(Clone, Debug)]
     pub struct AcceptDecide {
         pub n: Ballot,
         pub ld: u64,
@@ -136,7 +148,9 @@ pub mod paxos {
     pub enum PaxosMsg {
         Prepare(Prepare),
         Promise(Promise),
+        AcceptSyncReq,
         AcceptSync(AcceptSync),
+        FirstAccept(FirstAccept),
         AcceptDecide(AcceptDecide),
         Accepted(Accepted),
         Decide(Decide),
@@ -163,6 +177,8 @@ pub mod paxos {
     const ACCEPTED_ID: u8 = 5;
     const DECIDE_ID: u8 = 6;
     const PROPOSALFORWARD_ID: u8 = 7;
+    const ACCEPTSYNCREQ_ID: u8 = 8;
+    const FIRSTACCEPT_ID: u8 = 9;
 
     const NORMAL_ENTRY_ID: u8 = 1;
     const SS_ENTRY_ID: u8 = 2;
@@ -182,16 +198,24 @@ pub mod paxos {
 
         fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
             match e {
-                Entry::Normal(data) => {
+                Entry::Normal(d) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
+                    let data = d.as_slice();
                     buf.put_u32(data.len() as u32);
-                    buf.put_slice(data.as_slice());
+                    buf.put_slice(data);
                 }
                 Entry::StopSign(ss) => {
                     buf.put_u8(SS_ENTRY_ID);
                     buf.put_u32(ss.config_id);
                     buf.put_u32(ss.nodes.len() as u32);
                     ss.nodes.iter().for_each(|pid| buf.put_u64(*pid));
+                    match ss.skip_prepare_n {
+                        Some(n) => {
+                            buf.put_u8(1);
+                            Self::serialise_ballot(&n, buf);
+                        },
+                        _ => buf.put_u8(0),
+                    }
                 }
             }
         }
@@ -224,7 +248,11 @@ pub mod paxos {
                     for _ in 0..nodes_len {
                         nodes.push(buf.get_u64());
                     }
-                    let ss = StopSign::with(config_id, nodes);
+                    let skip_prepare_n = match buf.get_u8() {
+                        1 => Some(Self::deserialise_ballot(buf)),
+                        _ => None,
+                    };
+                    let ss = StopSign::with(config_id, nodes, skip_prepare_n);
                     Entry::StopSign(ss)
                 },
                 error_id => panic!(format!("Got unexpected id in deserialise_entry: {}", error_id)),
@@ -267,6 +295,9 @@ pub mod paxos {
                     buf.put_u64(p.ld);
                     PaxosSer::serialise_entries(&p.sfx, buf);
                 },
+                PaxosMsg::AcceptSyncReq => {
+                    buf.put_u8(ACCEPTSYNCREQ_ID);
+                },
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
                     buf.put_u64(acc_sync.ld);
@@ -274,6 +305,11 @@ pub mod paxos {
                     buf.put_u8(sync);
                     PaxosSer::serialise_ballot(&acc_sync.n, buf);
                     PaxosSer::serialise_entries(&acc_sync.entries, buf);
+                },
+                PaxosMsg::FirstAccept(f) => {
+                    buf.put_u8(FIRSTACCEPT_ID);
+                    PaxosSer::serialise_ballot(&f.n, buf);
+                    PaxosSer::serialise_entry(&f.entry, buf);
                 },
                 PaxosMsg::AcceptDecide(a) => {
                     buf.put_u8(ACCEPTDECIDE_ID);
@@ -366,6 +402,18 @@ pub mod paxos {
                     let entry = Self::deserialise_entry(buf);
                     let pf = PaxosMsg::ProposalForward(entry);
                     let msg = Message::with(from, to, pf);
+                    Ok(msg)
+                },
+                ACCEPTSYNCREQ_ID => {
+                    let accsync_req = PaxosMsg::AcceptSyncReq;
+                    let msg = Message::with(from, to, accsync_req);
+                    Ok(msg)
+                },
+                FIRSTACCEPT_ID => {
+                    let n = Self::deserialise_ballot(buf);
+                    let entry = Self::deserialise_entry(buf);
+                    let f = FirstAccept::with(n, entry);
+                    let msg = Message::with(from, to, PaxosMsg::FirstAccept(f));
                     Ok(msg)
                 },
                 _ => {
@@ -463,12 +511,13 @@ pub mod paxos {
         pub nodes: Reconfig,
         pub seq_metadata: SequenceMetaData,
         pub from: u64,
-        pub segment: Option<SequenceSegment>
+        pub segment: Option<SequenceSegment>,
+        pub skip_prepare_n: Option<Ballot>
     }
 
     impl ReconfigInit {
-        pub fn with(config_id: u32, nodes: Reconfig, seq_metadata: SequenceMetaData, from: u64, segment: Option<SequenceSegment>) -> ReconfigInit {
-            ReconfigInit{ config_id, nodes, seq_metadata, from, segment }
+        pub fn with(config_id: u32, nodes: Reconfig, seq_metadata: SequenceMetaData, from: u64, segment: Option<SequenceSegment>, skip_prepare_n: Option<Ballot>) -> ReconfigInit {
+            ReconfigInit{ config_id, nodes, seq_metadata, from, segment, skip_prepare_n }
         }
     }
 
@@ -510,9 +559,14 @@ pub mod paxos {
                             buf.put_u64(segment.to_idx);
                             PaxosSer::serialise_entries(segment.entries.as_slice(), buf);
                         },
-                        _ => {
-                            buf.put_u8(0);
-                        }
+                        None => buf.put_u8(0),
+                    }
+                    match &r.skip_prepare_n {
+                        Some(n) => {
+                            buf.put_u8(1);
+                            PaxosSer::serialise_ballot(n, buf);
+                        },
+                        None => buf.put_u8(0),
                     }
                 },
                 ReconfigurationMsg::SequenceRequest(sr) => {
@@ -563,8 +617,6 @@ pub mod paxos {
                     for _ in 0..new_nodes_len {
                         new_nodes.push(buf.get_u64());
                     }
-                    let seq_metadata = SequenceMetaData::with(seq_metadata_config_id, seq_metadata_len);
-                    let nodes = Reconfig::with(continued_nodes, new_nodes);
                     let segment = match buf.get_u8() {
                         1 => {
                             let from_idx = buf.get_u64();
@@ -572,12 +624,15 @@ pub mod paxos {
                             let entries = PaxosSer::deserialise_entries(buf);
                             Some(SequenceSegment::with(from_idx, to_idx, entries))
                         },
-                        0 => {
-                            None
-                        },
-                        _ => panic!("Expected 0 or 1 for option of segment!")
+                        _ => None,
                     };
-                    let r = ReconfigInit::with(config_id, nodes, seq_metadata, from, segment);
+                    let skip_prepare_n = match buf.get_u8() {
+                        1 => Some(PaxosSer::deserialise_ballot(buf)),
+                        _ => None,
+                    };
+                    let seq_metadata = SequenceMetaData::with(seq_metadata_config_id, seq_metadata_len);
+                    let nodes = Reconfig::with(continued_nodes, new_nodes);
+                    let r = ReconfigInit::with(config_id, nodes, seq_metadata, from, segment, skip_prepare_n);
                     Ok(ReconfigurationMsg::Init(r))
                 },
                 SEQ_REQ_ID => {
@@ -812,9 +867,10 @@ impl Serialisable for AtomicBroadcastMsg {
         match self {
             AtomicBroadcastMsg::Proposal(p) => {
                 buf.put_u8(PROPOSAL_ID);
-                let data_len = p.data.len() as u32;
+                let data = p.data.as_slice();
+                let data_len = data.len() as u32;
                 buf.put_u32(data_len);
-                buf.put_slice(p.data.as_slice());
+                buf.put_slice(data);
                 match &p.reconfig {
                     Some((voters, followers)) => {
                         let voters_len: u32 = voters.len() as u32;
@@ -829,17 +885,18 @@ impl Serialisable for AtomicBroadcastMsg {
                         }
                     },
                     None => {
-                        buf.put_u32(0);
-                        buf.put_u32(0);
+                        buf.put_u32(0); // 0 voters len
+                        buf.put_u32(0); // 0 followers len
                     }
                 }
             },
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
-                let data_len = pr.data.len() as u32;
-                buf.put_u32(data_len);
-                buf.put_slice(pr.data.as_slice());
                 buf.put_u64(pr.latest_leader);
+                let data = pr.data.as_slice();
+                let data_len = data.len() as u32;
+                buf.put_u32(data_len);
+                buf.put_slice(data);
             },
             AtomicBroadcastMsg::FirstLeader(pid) => {
                 buf.put_u8(FIRSTLEADER_ID);
@@ -887,14 +944,16 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
             },
             PROPOSALRESP_ID => {
+                let latest_leader = buf.get_u64();
                 let data_len = buf.get_u32() as usize;
+                // println!("latest_leader: {}, data_len: {}, buf remaining: {}", latest_leader, data_len, buf.remaining());
                 let mut data = vec![0; data_len];
                 buf.copy_to_slice(&mut data);
-                let last_leader = buf.get_u64();
                 let pr = ProposalResp {
                     data,
-                    latest_leader: last_leader,
+                    latest_leader,
                 };
+                // print!(" deser ok");
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             },
             FIRSTLEADER_ID => {

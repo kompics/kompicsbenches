@@ -195,10 +195,10 @@ impl Client {
         self.timeouts.push(id);
     }
 
-    fn retry_pending_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
+    fn retry_pending_normal_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         // info!(self.ctx.log(), "Retrying {} proposals after reconfig", pending_proposals.len());
-        for (id, meta) in pending_proposals {
+        for (id, meta) in pending_proposals.iter_mut().filter(|(id, _)| *id > &0u64) {
             let i = *id;
             self.propose_normal(i, &leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
@@ -267,7 +267,7 @@ impl Actor for Client {
         let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
-                trace!(self.ctx.log(), "Handling {:?}", am);
+                // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         if !self.current_config.contains(&pid) { return; }
@@ -290,7 +290,7 @@ impl Actor for Client {
                                 self.state = ExperimentState::Running;
                                 if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
-                                    self.retry_pending_proposals(&mut pending_proposals);
+                                    self.retry_pending_normal_proposals(&mut pending_proposals);
                                     self.pending_proposals = pending_proposals;
                                 }
                                 self.send_concurrent_proposals();
