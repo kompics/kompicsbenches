@@ -2,10 +2,11 @@ use kompact::prelude::*;
 use crate::serialiser_ids::ATOMICBCAST_ID;
 use super::storage::paxos::*;
 use super::messages::{*, StopMsg as NetStopMsg};
-use super::messages::paxos::ballot_leader_election::Leader;
+use super::messages::paxos::ballot_leader_election::{Ballot, Leader};
 use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, SequenceRequest, SequenceMetaData, SequenceSegment, Reconfig, ReconfigurationMsg};
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
-use super::parameters::{*, paxos::*};use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
+use super::parameters::{*, paxos::*};
+use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
 use std::fmt::{Debug};
 use std::{sync::Arc, time::Duration};
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
@@ -25,11 +26,12 @@ pub struct FinalMsg<S> where S: SequenceTraits {
     pub config_id: u32,
     pub nodes: Reconfig,
     pub final_sequence: Arc<S>,
+    pub skip_prepare_n: Option<Ballot>
 }
 
 impl<S> FinalMsg<S> where S: SequenceTraits {
-    pub fn with(config_id: u32, nodes: Reconfig, final_sequence: Arc<S>) -> FinalMsg<S> {
-        FinalMsg { config_id, nodes, final_sequence }
+    pub fn with(config_id: u32, nodes: Reconfig, final_sequence: Arc<S>, skip_prepare_n: Option<Ballot>) -> FinalMsg<S> {
+        FinalMsg { config_id, nodes, final_sequence, skip_prepare_n }
     }
 }
 
@@ -115,7 +117,7 @@ impl<S, P> PaxosReplica<S, P> where
         }
     }
 
-    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool, start: bool, ble_prio: bool, quick_start: bool) {
+    fn create_replica(&mut self, config_id: u32, nodes: Vec<u64>, register_alias_with_response: bool, start: bool, ble_prio: bool, quick_start: bool, skip_prepare_n: Option<Ballot>) {
         let num_peers = nodes.len() - 1;
         let mut communicator_peers = HashMap::with_capacity(num_peers);
         let mut ble_peers = Vec::with_capacity(num_peers);
@@ -154,7 +156,7 @@ impl<S, P> PaxosReplica<S, P> where
         /*** create and register Paxos ***/
         let log = self.ctx.log().new(o!("raw_paxos" => self.pid));
         let paxos_comp = system.create(|| {
-            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid, log)
+            PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid, log, skip_prepare_n)
         });
         system.register_without_response(&paxos_comp);
         /*** create and register Communicator ***/
@@ -169,7 +171,7 @@ impl<S, P> PaxosReplica<S, P> where
         system.register_without_response(&communicator);
         /*** create and register BLE ***/
         let ble_comp = system.create( || {
-            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA, stopkill_recipient, ble_prio, quick_start)
+            BallotLeaderComp::with(ble_peers, self.pid, ELECTION_TIMEOUT, BLE_DELTA, stopkill_recipient, ble_prio, quick_start, skip_prepare_n)
         });
         system.register_without_response(&ble_comp);
         let communicator_alias = format!("{}{},{}-{}", COMMUNICATOR, self.pid, config_id, self.iteration_id);
@@ -279,7 +281,7 @@ impl<S, P> PaxosReplica<S, P> where
         self.cached_client = Some(client);
         if self.initial_config.contains(&self.pid){
             self.next_config_id = Some(1);
-            self.create_replica(1, self.initial_config.clone(), true, false, false, true);
+            self.create_replica(1, self.initial_config.clone(), true, false, false, true, None);
         } else {
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self.partitioning_actor.take().expect("PartitioningActor not found!");
@@ -588,7 +590,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 } else {
                     None
                 };
-                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid, segment));
+                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(r.config_id, r.nodes.clone(), seq_metadata, self.pid, segment, r.skip_prepare_n));
                 for pid in &r.nodes.new_nodes {
                     let idx = *pid as usize - 1;
                     let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
@@ -607,7 +609,28 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     }
                     nodes.append(&mut new_nodes);
                     let ble_prio = self.leader_in_active_config == self.pid && cfg!(feature = "headstart_ble");
-                    self.create_replica(r.config_id, nodes, false, true, ble_prio, ble_prio);
+                    let quick_start = r.skip_prepare_n.is_none();
+                    self.create_replica(r.config_id, nodes, false, true, ble_prio, quick_start, r.skip_prepare_n);
+                }
+                if let Some(n) = r.skip_prepare_n {
+                    let hb_proposals = std::mem::take(&mut self.hb_proposals);
+                    if n.pid == self.pid {  // notify client if no leader before
+                        self.cached_client
+                            .as_ref()
+                            .expect("No cached client!")
+                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(n.pid), self)
+                            .expect("Should serialise FirstLeader");
+                        for net_msg in hb_proposals {
+                            self.deserialise_and_propose(net_msg);
+                        }
+                    } else if n.pid != self.pid && !hb_proposals.is_empty() {
+                        let idx = n.pid as usize - 1;
+                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
+                        for m in hb_proposals {
+                            leader.forward_with_original_sender(m, self);
+                        }
+                    }
+                    self.leader_in_active_config = n.pid;
                 }
             },
             PaxosReplicaMsg::RegResp(rr) => {
@@ -717,11 +740,12 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                         let mut new_nodes = r.nodes.new_nodes;
                                         let from = r.from;
                                         nodes.append(&mut new_nodes);
+                                        let quick_start = r.skip_prepare_n.is_none();
                                         if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                             // only SS in final sequence and no other prev sequences -> start directly
                                             let final_sequence = S::new_with_sequence(vec![]);
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                            self.create_replica(r.config_id, nodes, false, true, false, false);
+                                            self.create_replica(r.config_id, nodes, false, true, false, quick_start, r.skip_prepare_n);
                                         } else {
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
                                             let skip_tag = if r.segment.is_some() {
@@ -747,7 +771,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
                                             }
-                                            self.create_replica(r.config_id, nodes, false, false, false, false);
+                                            self.create_replica(r.config_id, nodes, false, false, false, quick_start, r.skip_prepare_n);
                                             if let Some(tag) = skip_tag {
                                                 let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
                                                 self.handle_sequence_transfer(st);
@@ -865,13 +889,14 @@ impl<S, P> PaxosComp<S, P> where
         peers: Vec<u64>,
         config_id: u32,
         pid: u64,
-        raw_paxos_log: Logger<Arc<Fuse<Async>>>
+        raw_paxos_log: Logger<Arc<Fuse<Async>>>,
+        skipped_prepare: Option<Ballot>
     ) -> PaxosComp<S, P>
     {
         let seq = S::new();
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
-        let paxos = Paxos::with(config_id, pid, peers.clone(), storage, raw_paxos_log);
+        let paxos = Paxos::with(config_id, pid, peers.clone(), storage, raw_paxos_log, skipped_prepare);
         PaxosComp {
             ctx: ComponentContext::new(),
             supervisor,
@@ -948,11 +973,14 @@ impl<S, P> PaxosComp<S, P> where
             );
             debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
             let nodes = Reconfig::with(continued_nodes, new_nodes);
-            let r = FinalMsg::with(ss.config_id, nodes, final_seq);
-            self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
-            let leader = 0; // we don't know who will become leader in new config
+            let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_n);
+            let leader = match ss.skip_prepare_n {
+                Some(n) => n.pid,
+                _ => 0,
+            };
             let pr = ProposalResp::with(data, leader);
             self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
+            self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
         }
     }
 
@@ -1057,7 +1085,7 @@ impl<S, P> Require<BallotLeaderElection> for PaxosComp<S, P> where
     P: PaxosStateTraits
 {
     fn handle(&mut self, l: Leader) -> () {
-        // info!(self.ctx.log(), "{}", format!("Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot));
+        // info!(self.ctx.log(), "Node {} became leader in config {}. Ballot: {:?}",  l.pid, self.config_id, l.ballot);
         self.paxos.handle_leader(l);
         if self.current_leader != l.pid && !self.paxos.stopped() {
             self.current_leader = l.pid;
@@ -1076,6 +1104,7 @@ pub mod raw_paxos{
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
     use kompact::prelude::{Logger, Fuse, Async};
+    use crate::bench::atomic_broadcast::parameters::paxos::PRIO_START_ROUND;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1116,26 +1145,48 @@ pub mod raw_paxos{
             pid: u64,
             peers: Vec<u64>,
             storage: Storage<S, P>,
-            log: Logger<Arc<Fuse<Async>>>
+            log: Logger<Arc<Fuse<Async>>>,
+            skipped_prepare: Option<Ballot>,
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes/2 + 1;
-            let n_leader = Ballot::with(0, 0);
             let max_peer_pid = peers.iter().max().unwrap();
             let max_pid = std::cmp::max(max_peer_pid, &pid);
             let num_nodes = *max_pid as usize;
-            Paxos {
+            let (state, lds) = match skipped_prepare {
+                Some(n) => {
+                    let (role, lds) = if n.pid == pid {
+                        let mut v = vec![None; num_nodes];
+                        for peer in &peers {
+                            let idx = *peer as usize - 1;
+                            v[idx] = Some(0);
+                        }
+                        (Role::Leader, v)
+                    } else {
+                        (Role::Follower, vec![None; num_nodes])
+                    };
+                    let state = (role, Phase::FirstAccept);
+                    (state, lds)
+                },
+                _ => {
+                    let state = (Role::Follower, Phase::None);
+                    let lds = vec![None; num_nodes];
+                    (state, lds)
+                }
+            };
+            let n_leader = skipped_prepare.unwrap_or(Ballot::with(0, 0));
+            let mut paxos = Paxos {
                 storage,
                 pid,
                 config_id,
                 majority,
                 peers,
-                state: (Role::Follower, Phase::None),
-                leader: 0,
+                state,
+                leader: n_leader.pid,
                 n_leader,
                 promises_meta: vec![None; num_nodes],
                 las: vec![0; num_nodes],
-                lds: vec![None; num_nodes],
+                lds,
                 proposals: Vec::with_capacity(MAX_INFLIGHT),
                 lc: 0,
                 prev_ld: 0,
@@ -1148,7 +1199,9 @@ pub mod raw_paxos{
                 outgoing: Vec::with_capacity(MAX_INFLIGHT),
                 num_nodes,
                 log
-            }
+            };
+            paxos.storage.set_promise(n_leader);
+            paxos
         }
 
         pub fn get_outgoing_msgs(&mut self) -> Vec<Message> {
@@ -1187,7 +1240,9 @@ pub mod raw_paxos{
                         _ => {}
                     }
                 },
+                PaxosMsg::AcceptSyncReq => self.handle_acceptsync_req(m.from),
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
+                PaxosMsg::FirstAccept(f) => self.handle_firstaccept(f, m.from),
                 PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc, m.from),
                 PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
                 PaxosMsg::Decide(d) => self.handle_decide(d),
@@ -1201,17 +1256,12 @@ pub mod raw_paxos{
             if self.stopped(){
                 false
             } else {
-                let normal_entry = Entry::Normal(data);
+                let entry = Entry::Normal(data);
                 match self.state {
-                    (Role::Leader, Phase::Prepare) => {
-                        self.proposals.push(normal_entry);
-                    },
-                    (Role::Leader, Phase::Accept) => {
-                        self.send_accept(normal_entry);
-                    },
-                    _ => {
-                        self.forward_proposals(normal_entry);
-                    }
+                    (Role::Leader, Phase::Prepare) => self.proposals.push(entry),
+                    (Role::Leader, Phase::Accept) => self.send_accept(entry),
+                    (Role::Leader, Phase::FirstAccept) => self.send_first_accept(entry),
+                    _ => self.forward_proposals(entry),
                 }
                 true
             }
@@ -1221,18 +1271,21 @@ pub mod raw_paxos{
             if self.stopped(){
                 false
             } else {
-                let ss = StopSign::with(self.config_id + 1, nodes);
+                let continued_nodes: Vec<&u64> = nodes.iter().filter(
+                    |&pid| pid == &self.pid || self.peers.contains(pid)
+                ).collect();
+                let skip_prepare_n = if continued_nodes.len() > 0 {
+                    Some(Ballot::with(PRIO_START_ROUND, self.pid))
+                } else {
+                    None
+                };
+                let ss = StopSign::with(self.config_id + 1, nodes, skip_prepare_n);
                 let entry = Entry::StopSign(ss);
                 match self.state {
-                    (Role::Leader, Phase::Prepare) => {
-                        self.proposals.push(entry);
-                    },
-                    (Role::Leader, Phase::Accept) => {
-                        self.send_accept(entry);
-                    },
-                    _ => {
-                        self.forward_proposals(entry)
-                    }
+                    (Role::Leader, Phase::Prepare) => self.proposals.push(entry),
+                    (Role::Leader, Phase::Accept) => self.send_accept(entry),
+                    (Role::Leader, Phase::FirstAccept) => self.send_first_accept(entry),
+                    _ => self.forward_proposals(entry),
                 }
                 true
             }
@@ -1316,21 +1369,24 @@ pub mod raw_paxos{
         fn handle_forwarded_proposal(&mut self, entry: Entry) {
             if !self.stopped() {
                 match self.state {
-                    (Role::Leader, Phase::Prepare) => {
-                        // println!("Appending forwarded proposals: len: {}, la: {}", p.len(), self.storage.get_sequence_len());
-                        self.proposals.push(entry)
-                    },
-                    (Role::Leader, Phase::Accept) => {
-                        // println!("Sending accept forwarded proposals: len: {}, la: {}", proposals.len(), self.storage.get_sequence_len());
-                        self.send_accept(entry);
-
-                    },
-                    _ => {
-                        // println!("Not leader when receiving forwarded proposal... leader: {}", self.leader);
-                        self.forward_proposals(entry);
-                    },
+                    (Role::Leader, Phase::Prepare) => self.proposals.push(entry),
+                    (Role::Leader, Phase::Accept) => self.send_accept(entry),
+                    (Role::Leader, Phase::FirstAccept) => self.send_first_accept(entry),
+                    _ => self.forward_proposals(entry),
                 }
             }
+        }
+
+        fn send_first_accept(&mut self, entry: Entry) {
+            // info!(self.log, "Sending first accept");
+            let promised_pids = self.lds.iter().enumerate().filter(|(_, x)| x.is_some()).map(|(idx, _)| idx as u64 + 1);
+            for pid in promised_pids {
+                let f = FirstAccept::with(self.n_leader, entry.clone());
+                self.outgoing.push(Message::with(self.pid, pid, PaxosMsg::FirstAccept(f)));
+            }
+            let la = self.storage.append_entry(entry);
+            self.las[self.pid as usize - 1] = la;
+            self.state.1 = Phase::Accept;
         }
 
         fn send_accept(&mut self, entry: Entry) {
@@ -1474,6 +1530,12 @@ pub mod raw_paxos{
             }
         }
 
+        fn handle_acceptsync_req(&mut self, from: u64) {
+            let entries = self.storage.get_sequence();
+            let acc_sync = AcceptSync::with(self.n_leader, entries, 0, true);
+            self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSync(acc_sync)));
+        }
+
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las[from as usize - 1] = accepted.la;
@@ -1551,7 +1613,7 @@ pub mod raw_paxos{
         }
 
         fn handle_accept_sync(&mut self, acc_sync: AcceptSync, from: u64) {
-            if self.state == (Role::Follower, Phase::Prepare) {
+            if self.state == (Role::Follower, Phase::Prepare) || self.state == (Role::Follower, Phase::AcceptSyncReq){
                 if self.storage.get_promise() == acc_sync.n {
                     self.storage.set_accepted_ballot(acc_sync.n);
                     let mut entries = acc_sync.entries;
@@ -1571,44 +1633,60 @@ pub mod raw_paxos{
             }
         }
 
-        fn handle_acceptdecide(&mut self, acc: AcceptDecide, from: u64) {
-            if self.state == (Role::Follower, Phase::Accept) {
-                if self.storage.get_promise() == acc.n {
-                    let mut entries = acc.entries;
-                    let la = self.storage.append_sequence(&mut entries);
-                    if cfg!(feature = "latest_accepted") {
-                        match self.latest_accepted_meta {
-                            Some((ballot, outgoing_idx)) if ballot == acc.n => {
-                                let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
-                                match msg {
-                                    PaxosMsg::Accepted(a) => {
-                                        a.la = la;
-                                    },
-                                    _ => panic!("Cached idx is not an Accepted message!")
-                                }
-                            },
-                            _ => {
-                                let accepted = Accepted::with(acc.n, la);
-                                let cached_idx = self.outgoing.len();
-                                self.latest_accepted_meta = Some((acc.n, cached_idx));
-                                self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
-                            }
-                        }
-                    } else {
-                        let accepted = Accepted::with(acc.n, la);
-                        self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Accepted(accepted)));
-                    }
-                    // handle decide
-                    if acc.ld > self.storage.get_decided_len() {
-                        self.storage.set_decided_len(acc.ld);
-                    }
+        fn handle_firstaccept(&mut self, f: FirstAccept, from: u64) {
+            if self.state == (Role::Follower, Phase::FirstAccept) {
+                if self.storage.get_promise() == f.n {
+                    let mut entries = vec![f.entry];
+                    self.storage.set_accepted_ballot(f.n);
+                    self.accept_entries(f.n, &mut entries);
+                    self.state.1 = Phase::Accept;
                 }
+            }
+        }
+
+        fn handle_acceptdecide(&mut self, acc: AcceptDecide, from: u64) {
+            match self.state {
+                (Role::Follower, Phase::Accept) => {
+                    if self.storage.get_promise() == acc.n {
+                        let mut entries = acc.entries;
+                        self.accept_entries(acc.n, &mut entries);
+                        // handle decide
+                        if acc.ld > self.storage.get_decided_len() {
+                            let seq_len = self.storage.get_sequence_len();
+                            if acc.ld > seq_len {
+                                panic!("{}", format!("Decide ld > seq len: ld={}, seq_len={}", acc.ld, seq_len));
+                            }
+                            self.storage.set_decided_len(acc.ld);
+                        }
+                    }
+                },
+                (Role::Follower, Phase::FirstAccept) => {
+                    self.state.1 = Phase::AcceptSyncReq;
+                    self.outgoing.push(Message::with(self.pid, from, PaxosMsg::AcceptSyncReq));
+                },
+                _ => {}
             }
         }
 
         fn handle_decide(&mut self, dec: Decide) {
             if self.storage.get_promise() == dec.n {
-                self.storage.set_decided_len(dec.ld);
+                match self.state.1 {
+                    Phase::FirstAccept => {
+                        self.state.1 = Phase::AcceptSyncReq;
+                        self.outgoing.push(Message::with(self.pid, self.leader, PaxosMsg::AcceptSyncReq));
+                    },
+                    Phase::AcceptSyncReq => {},
+                    _ => {
+                        let seq_len = self.storage.get_sequence_len();
+                        if dec.ld > seq_len {
+                            panic!("{}", format!("Decide ld > seq len: ld={}, seq_len={}, state: {:?}", dec.ld, seq_len, self.state));
+                        }
+                        self.storage.set_decided_len(dec.ld);
+                        /*if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
+                            info!(self.log, "Decided StopSign: ld={}, las: {:?}", dec.ld, self.las);
+                        }*/
+                    },
+                }
             }
         }
 
@@ -1623,11 +1701,37 @@ pub mod raw_paxos{
         pub fn get_sequence(&self) -> Vec<Entry> {
             self.storage.get_sequence()
         }
+
+        fn accept_entries(&mut self, n:Ballot, entries: &mut Vec<Entry>) {
+            let la = self.storage.append_sequence(entries);
+            if cfg!(feature = "latest_accepted") {
+                match self.latest_accepted_meta {
+                    Some((ballot, outgoing_idx)) if ballot == n => {
+                        let Message{msg, ..} = self.outgoing.get_mut(outgoing_idx).unwrap();
+                        match msg {
+                            PaxosMsg::Accepted(a) => a.la = la,
+                            _ => panic!("Cached idx is not an Accepted message!")
+                        }
+                    },
+                    _ => {
+                        let accepted = Accepted::with(n, la);
+                        let cached_idx = self.outgoing.len();
+                        self.latest_accepted_meta = Some((n, cached_idx));
+                        self.outgoing.push(Message::with(self.pid, self.leader, PaxosMsg::Accepted(accepted)));
+                    }
+                }
+            } else {
+                let accepted = Accepted::with(n, la);
+                self.outgoing.push(Message::with(self.pid, self.leader, PaxosMsg::Accepted(accepted)));
+            }
+        }
     }
 
     #[derive(PartialEq, Debug)]
     enum Phase {
         Prepare,
+        AcceptSyncReq,
+        FirstAccept,
         Accept,
         None
     }
@@ -1642,11 +1746,12 @@ pub mod raw_paxos{
     pub struct StopSign {
         pub config_id: u32,
         pub nodes: Vec<u64>,
+        pub skip_prepare_n: Option<Ballot>
     }
 
     impl StopSign {
-        pub fn with(config_id: u32, nodes: Vec<u64>) -> StopSign {
-            StopSign{ config_id, nodes }
+        pub fn with(config_id: u32, nodes: Vec<u64>, skip_prepare_n: Option<Ballot>) -> StopSign {
+            StopSign{ config_id, nodes, skip_prepare_n }
         }
     }
 
@@ -1710,7 +1815,16 @@ mod ballot_leader_election {
     }
 
     impl BallotLeaderComp {
-        pub fn with(peers: Vec<ActorPath>, pid: u64, hb_delay: u64, delta: u64, supervisor: Recipient<StopKillResponse>, prio_start: bool, quick_start: bool) -> BallotLeaderComp {
+        pub fn with(
+            peers: Vec<ActorPath>,
+            pid: u64,
+            hb_delay: u64,
+            delta: u64,
+            supervisor: Recipient<StopKillResponse>,
+            prio_start: bool,
+            quick_start: bool,
+            initial_max_ballot: Option<Ballot>
+        ) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             let initial_round = if prio_start { PRIO_START_ROUND } else { 0 };
             let initial_ballot = Ballot::with(initial_round, pid);
@@ -1724,7 +1838,7 @@ mod ballot_leader_election {
                 ballots: Vec::with_capacity(n),
                 current_ballot: initial_ballot,
                 leader: None,
-                max_ballot: initial_ballot,
+                max_ballot: initial_max_ballot.unwrap_or(initial_ballot),
                 hb_delay,
                 delta,
                 timer: None,
