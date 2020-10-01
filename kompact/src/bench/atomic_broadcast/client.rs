@@ -60,7 +60,9 @@ pub struct Client {
     num_timed_out: u64,
     leader_changes: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
-    timeouts: Vec<u64>
+    timeouts: Vec<u64>,
+    #[cfg(feature = "track_timeouts")]
+    late_responses: Vec<u64>
 }
 
 impl Client {
@@ -92,7 +94,9 @@ impl Client {
             num_timed_out: 0,
             leader_changes: vec![],
             #[cfg(feature = "track_timeouts")]
-            timeouts: vec![]
+            timeouts: vec![],
+            #[cfg(feature = "track_timeouts")]
+            late_responses: vec![]
         }
     }
 
@@ -324,6 +328,9 @@ impl Actor for Client {
                                     if self.state != ExperimentState::ReconfigurationElection {
                                         self.send_concurrent_proposals();
                                     }
+                                }
+                                #[cfg(feature = "track_timeouts")] {
+                                    if self.timeouts.contains(&id) { self.late_responses.push(id); }
                                 }
                             }
                             Response::Reconfiguration(new_config) => {

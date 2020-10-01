@@ -154,7 +154,7 @@ pub mod paxos {
         AcceptDecide(AcceptDecide),
         Accepted(Accepted),
         Decide(Decide),
-        ProposalForward(Entry)
+        ProposalForward(Vec<Entry>)
     }
 
     #[derive(Clone, Debug)]
@@ -327,9 +327,9 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&d.n, buf);
                     buf.put_u64(d.ld);
                 },
-                PaxosMsg::ProposalForward(entry) => {
+                PaxosMsg::ProposalForward(entries) => {
                     buf.put_u8(PROPOSALFORWARD_ID);
-                    PaxosSer::serialise_entry(entry, buf);
+                    PaxosSer::serialise_entries(entries, buf);
                 }
             }
             Ok(())
@@ -399,8 +399,8 @@ pub mod paxos {
                     Ok(msg)
                 },
                 PROPOSALFORWARD_ID => {
-                    let entry = Self::deserialise_entry(buf);
-                    let pf = PaxosMsg::ProposalForward(entry);
+                    let entries = Self::deserialise_entries(buf);
+                    let pf = PaxosMsg::ProposalForward(entries);
                     let msg = Message::with(from, to, pf);
                     Ok(msg)
                 },
