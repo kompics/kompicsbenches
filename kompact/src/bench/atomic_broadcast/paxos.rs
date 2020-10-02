@@ -1355,7 +1355,7 @@ pub mod raw_paxos{
         }
 
         fn forward_proposals(&mut self, mut entries: Vec<Entry>) {
-            if self.leader > 0 {
+            if self.leader > 0 && self.leader != self.pid {
                 let pf = PaxosMsg::ProposalForward(entries);
                 let msg = Message::with(self.pid, self.leader, pf);
                 // println!("Forwarding to node {}", self.leader);
@@ -1728,9 +1728,9 @@ pub mod raw_paxos{
                     Phase::AcceptSyncReq => {},
                     _ => {
                         self.storage.set_decided_len(dec.ld);
-                        if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
+                        /*if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
                             info!(self.log, "Decided StopSign: ld={}, las: {:?}", dec.ld, self.las);
-                        }
+                        }*/
                     },
                 }
             }
@@ -1856,8 +1856,7 @@ mod ballot_leader_election {
         supervisor: Recipient<StopKillResponse>,
         stopped: bool,
         stopped_peers: HashSet<u64>,
-        has_had_leader: bool,
-        quick_start: bool
+        quick_timeout: bool
     }
 
     impl BallotLeaderComp {
@@ -1868,11 +1867,18 @@ mod ballot_leader_election {
             delta: u64,
             supervisor: Recipient<StopKillResponse>,
             prio_start: bool,
-            quick_start: bool,
+            quick_timeout: bool,
             initial_max_ballot: Option<Ballot>
         ) -> BallotLeaderComp {
             let n = &peers.len() + 1;
-            let initial_round = if prio_start { PRIO_START_ROUND } else { 0 };
+            let initial_round = if prio_start {
+                PRIO_START_ROUND
+            } else {
+                match initial_max_ballot {
+                    Some(ballot) if ballot.pid == pid => ballot.n,
+                    _ => 0,
+                }
+            };
             let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {
                 ctx: ComponentContext::new(),
@@ -1891,8 +1897,7 @@ mod ballot_leader_election {
                 supervisor,
                 stopped: false,
                 stopped_peers: HashSet::with_capacity(n),
-                has_had_leader: !prio_start,
-                quick_start
+                quick_timeout
             }
         }
 
@@ -1905,7 +1910,7 @@ mod ballot_leader_election {
                 self.leader = None;
             } else {
                 if self.leader != Some((top_ballot, top_pid)) { // got a new leader with greater ballot
-                    self.has_had_leader = true;
+                    self.quick_timeout = false;
                     self.max_ballot = top_ballot;
                     self.leader = Some((top_ballot, top_pid));
                     self.ble_port.trigger(Leader::with(top_pid, top_ballot));
@@ -1920,7 +1925,7 @@ mod ballot_leader_election {
             } else {
                 self.ballots.clear();
             }
-            let delay = if !self.has_had_leader{    // use short timeout if still no first leader
+            let delay = if self.quick_timeout {    // use short timeout if still no first leader
                 ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
             } else {
                 self.hb_delay
@@ -1952,11 +1957,12 @@ mod ballot_leader_election {
         fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
             match event {
                 ControlEvent::Start => {
+                    // info!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, round: {}, max_ballot: {:?}", self.current_ballot, self.quick_timeout, self.round, self.max_ballot);
                     for peer in &self.peers {
                         let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                         peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");
                     }
-                    let delay = if self.quick_start{    // use short timeout if still no first leader
+                    let delay = if self.quick_timeout {    // use short timeout if still no first leader
                         ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
                     } else {
                         self.hb_delay
