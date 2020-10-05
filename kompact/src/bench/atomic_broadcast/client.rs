@@ -320,7 +320,7 @@ impl Actor for Client {
                                         _ => None,
                                     };
                                     self.cancel_timer(proposal_meta.timer);
-                                    if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
+                                    if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.state != ExperimentState::ReconfigurationElection {
                                         self.current_leader = pr.latest_leader;
                                         self.leader_changes.push(pr.latest_leader);
                                     }
