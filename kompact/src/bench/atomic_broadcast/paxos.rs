@@ -580,6 +580,22 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                 }
             },
             PaxosReplicaMsg::Reconfig(r) => {
+                /*** ReconfigResponse to client ***/
+                let new_config_len = r.nodes.len();
+                let mut data: Vec<u8> = Vec::with_capacity( 8 + 4 + 8 * new_config_len);
+                data.put_u64(RECONFIG_ID);
+                data.put_u32(new_config_len as u32);
+                let config = r.nodes.continued_nodes.iter().chain(r.nodes.new_nodes.iter());
+                for pid in config {
+                    data.put_u64(*pid);
+                }
+                let pr = ProposalResp::with(data, 0);   // let new leader notify client itself when it's ready
+                self.cached_client
+                    .as_ref()
+                    .expect("No cached client!")
+                    .tell_serialised(AtomicBroadcastMsg::ProposalResp(pr), self)
+                    .expect("Should serialise ReconfigResponse");
+                /*** handle final sequence and notify new nodes ***/
                 let prev_config_id = self.active_config.0;
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
                 debug!(self.ctx.log(), "RECONFIG: Next config_id: {}, prev_config: {}, len: {}", r.config_id, prev_config_id, final_seq_len);
@@ -596,6 +612,7 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     let actorpath = self.nodes.get(idx).expect(&format!("No actorpath found for new node {}", pid));
                     actorpath.tell_serialised(r_init.clone(), self).expect("Should serialise!");
                 }
+                /*** Start new replica if continued ***/
                 let mut nodes = r.nodes.continued_nodes;
                 let mut new_nodes = r.nodes.new_nodes;
                 if nodes.contains(&self.pid) {
@@ -612,25 +629,9 @@ impl<S, P> Actor for PaxosReplica<S, P> where
                     let quick_start = r.skip_prepare_n.is_none();
                     self.create_replica(r.config_id, nodes, false, true, ble_prio, quick_start, r.skip_prepare_n);
                 }
-                if let Some(n) = r.skip_prepare_n {
-                    let hb_proposals = std::mem::take(&mut self.hb_proposals);
-                    if n.pid == self.pid {  // notify client if no leader before
-                        self.cached_client
-                            .as_ref()
-                            .expect("No cached client!")
-                            .tell_serialised(AtomicBroadcastMsg::FirstLeader(n.pid), self)
-                            .expect("Should serialise FirstLeader");
-                        for net_msg in hb_proposals {
-                            self.deserialise_and_propose(net_msg);
-                        }
-                    } else if n.pid != self.pid && !hb_proposals.is_empty() {
-                        let idx = n.pid as usize - 1;
-                        let leader = self.nodes.get(idx).unwrap_or_else(|| panic!("Could not get leader's actorpath. Pid: {}", self.leader_in_active_config));
-                        for m in hb_proposals {
-                            leader.forward_with_original_sender(m, self);
-                        }
-                    }
-                    self.leader_in_active_config = n.pid;
+                match r.skip_prepare_n {
+                    Some(n) if n.pid == self.pid => self.ctx.actor_ref().tell(PaxosReplicaMsg::Leader(r.config_id, n.pid)),
+                    _ => {}
                 }
             },
             PaxosReplicaMsg::RegResp(rr) => {
@@ -952,9 +953,9 @@ impl<S, P> PaxosComp<S, P> where
             _ => None
         };
         if self.current_leader == self.pid {
-            for decided in decided_entries.to_vec() {
+            for decided in decided_entries {
                 if let Entry::Normal(data) = decided {
-                    let pr = ProposalResp::with(data, self.current_leader);
+                    let pr = ProposalResp::with(data.clone(), self.current_leader);
                     self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }
@@ -974,12 +975,6 @@ impl<S, P> PaxosComp<S, P> where
             debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
             let nodes = Reconfig::with(continued_nodes, new_nodes);
             let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_n);
-            let leader = match ss.skip_prepare_n {
-                Some(n) => n.pid,
-                _ => 0,
-            };
-            let pr = ProposalResp::with(data, leader);
-            self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
             self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
         }
     }

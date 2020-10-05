@@ -496,6 +496,10 @@ pub mod paxos {
         pub fn with(continued_nodes: Vec<u64>, new_nodes: Vec<u64>) -> Reconfig {
             Reconfig { continued_nodes, new_nodes }
         }
+
+        pub fn len(&self) -> usize {
+            self.continued_nodes.len() + self.new_nodes.len()
+        }
     }
 
     #[derive(Clone, Debug)]
