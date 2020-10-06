@@ -154,13 +154,17 @@ impl Client {
         if received_count == self.num_proposals && self.reconfig.is_none() {
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
-            info!(self.ctx.log(), "Got all responses. {} proposals timed out. Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
-            #[cfg(feature = "track_timeouts")] {
-                let min = self.timeouts.iter().min();
-                let max = self.timeouts.iter().max();
-                if min.is_some() || max.is_some() {
-                    info!(self.ctx.log(), "Timed out: Min: {:?}, Max: {:?}", min, max);
+            if !self.num_timed_out > 0 {
+                info!(self.ctx.log(), "Got all responses. Timeouts: {}, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+                #[cfg(feature = "track_timeouts")] {
+                    let min = self.timeouts.iter().min();
+                    let max = self.timeouts.iter().max();
+                    let late_min = self.late_responses.iter().min();
+                    let late_max = self.late_responses.iter().max();
+                    info!(self.ctx.log(), "Timed out: Min: {:?}, Max: {:?}. Late responses: {}, min: {:?}, max: {:?}", min, max, self.late_responses.len(), late_min, late_max);
                 }
+            } else {
+                info!(self.ctx.log(), "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}", self.leader_changes.len(), self.leader_changes, self.current_leader);
             }
         } else if received_count == self.num_proposals/2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -198,15 +202,16 @@ impl Client {
             };
             self.handle_normal_response(id, latency);
             self.send_concurrent_proposals();
+            #[cfg(feature = "track_timeouts")] {
+                self.timeouts.push(id);
+            }
         }
-        #[cfg(feature = "track_timeouts")]
-            self.timeouts.push(id);
     }
 
     fn retry_pending_normal_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         #[cfg(feature = "track_timeouts")] {
-            info!(self.ctx.log(), "Retrying {} proposals after reconfig. Min: {:?}, Max: {:?}", pending_proposals.len(), pending_proposals.keys().min(), pending_proposals.keys().max());
+            info!(self.ctx.log(), "Retrying {} proposals after reconfig to node {}. Min: {:?}, Max: {:?}", pending_proposals.len(), self.current_leader, pending_proposals.keys().min(), pending_proposals.keys().max());
         }
         for (id, meta) in pending_proposals.iter_mut().filter(|(id, _)| *id > &0u64) {
             let i = *id;
@@ -293,10 +298,10 @@ impl Actor for Client {
                             },
                             ExperimentState::ReconfigurationElection => {
                                 if self.current_leader != pid {
+                                    // info!(self.ctx.log(), "Got leader in ReconfigElection: {}. old: {}", pid, self.current_leader);
                                     self.current_leader = pid;
                                     self.leader_changes.push(pid);
                                 }
-                                // info!(self.ctx.log(), "Got leader in ReconfigElection: {}", pid);
                                 self.state = ExperimentState::Running;
                                 if !self.pending_proposals.is_empty() {
                                     let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
@@ -321,6 +326,7 @@ impl Actor for Client {
                                     };
                                     self.cancel_timer(proposal_meta.timer);
                                     if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.state != ExperimentState::ReconfigurationElection {
+                                        // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                         self.current_leader = pr.latest_leader;
                                         self.leader_changes.push(pr.latest_leader);
                                     }
@@ -330,7 +336,12 @@ impl Actor for Client {
                                     }
                                 }
                                 #[cfg(feature = "track_timeouts")] {
-                                    if self.timeouts.contains(&id) { self.late_responses.push(id); }
+                                    if self.timeouts.contains(&id) {
+                                        /*if self.late_responses.is_empty() {
+                                            info!(self.ctx.log(), "Got first late response: {}", id);
+                                        }*/
+                                        self.late_responses.push(id);
+                                    }
                                 }
                             }
                             Response::Reconfiguration(new_config) => {
@@ -344,8 +355,8 @@ impl Actor for Client {
                                         self.reconfig = None;
                                         self.current_config = new_config;
                                         let leader_changed = self.current_leader != pr.latest_leader;
+                                        info!(self.ctx.log(), "Reconfig OK, leader: {}, old: {}, current_config: {:?}", pr.latest_leader, self.current_leader, self.current_config);
                                         self.current_leader = pr.latest_leader;
-                                        // info!(self.ctx.log(), "Reconfig OK, leader: {}, current_config: {:?}", self.current_leader, self.current_config);
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
