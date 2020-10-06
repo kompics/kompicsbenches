@@ -1177,6 +1177,7 @@ pub mod raw_paxos{
                 }
             };
             let n_leader = skipped_prepare.unwrap_or(Ballot::with(0, 0));
+            // info!(log, "Start raw paxos pid: {}, state: {:?}, n_leader: {:?}", pid, state, n_leader);
             let mut paxos = Paxos {
                 storage,
                 pid,
@@ -1945,13 +1946,9 @@ mod ballot_leader_election {
             initial_max_ballot: Option<Ballot>
         ) -> BallotLeaderComp {
             let n = &peers.len() + 1;
-            let initial_round = if prio_start {
-                PRIO_START_ROUND
-            } else {
-                match initial_max_ballot {
-                    Some(ballot) if ballot.pid == pid => ballot.n,
-                    _ => 0,
-                }
+            let initial_round = match initial_max_ballot {
+                Some(ballot) if ballot.pid == pid => ballot.n,
+                _ => if prio_start { PRIO_START_ROUND } else { 0 },
             };
             let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {
