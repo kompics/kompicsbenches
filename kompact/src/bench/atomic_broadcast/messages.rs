@@ -850,7 +850,7 @@ pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
     ProposalResp(ProposalResp),
     FirstLeader(u64),
-    PendingReconfiguration,
+    PendingReconfiguration(Vec<u8>),
 }
 
 const PROPOSAL_ID: u8 = 1;
@@ -906,8 +906,11 @@ impl Serialisable for AtomicBroadcastMsg {
                 buf.put_u8(FIRSTLEADER_ID);
                 buf.put_u64(*pid);
             },
-            AtomicBroadcastMsg::PendingReconfiguration => {
+            AtomicBroadcastMsg::PendingReconfiguration(data) => {
                 buf.put_u8(PENDINGRECONFIG_ID);
+                let d = data.as_slice();
+                buf.put_u32(d.len() as u32);
+                buf.put_slice(d);
             }
         }
         Ok(())
@@ -964,7 +967,13 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 let pid = buf.get_u64();
                 Ok(AtomicBroadcastMsg::FirstLeader(pid))
             },
-            PENDINGRECONFIG_ID => Ok(AtomicBroadcastMsg::PendingReconfiguration),
+            PENDINGRECONFIG_ID => {
+                let data_len = buf.get_u32() as usize;
+                // println!("latest_leader: {}, data_len: {}, buf remaining: {}", latest_leader, data_len, buf.remaining());
+                let mut data = vec![0; data_len];
+                buf.copy_to_slice(&mut data);
+                Ok(AtomicBroadcastMsg::PendingReconfiguration(data))
+            },
             _ => {
                 Err(SerError::InvalidType(
                     "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),

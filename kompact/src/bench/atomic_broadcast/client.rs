@@ -59,6 +59,7 @@ pub struct Client {
     current_config: Vec<u64>,
     num_timed_out: u64,
     leader_changes: Vec<u64>,
+    retry_proposal: Option<u64>,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -93,6 +94,7 @@ impl Client {
             current_config: initial_config,
             num_timed_out: 0,
             leader_changes: vec![],
+            retry_proposal: None,
             #[cfg(feature = "track_timeouts")]
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
@@ -154,8 +156,8 @@ impl Client {
         if received_count == self.num_proposals && self.reconfig.is_none() {
             self.state = ExperimentState::Finished;
             self.finished_latch.decrement().expect("Failed to countdown finished latch");
-            if !self.num_timed_out > 0 {
-                info!(self.ctx.log(), "Got all responses. Timeouts: {}, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+            if self.num_timed_out > 0 {
+                info!(self.ctx.log(), "Got all responses with {} timeouts, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
                 #[cfg(feature = "track_timeouts")] {
                     let min = self.timeouts.iter().min();
                     let max = self.timeouts.iter().max();
@@ -210,10 +212,15 @@ impl Client {
 
     fn retry_pending_normal_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+        let retry = self.retry_proposal.unwrap_or(1);   // only normal proposals
         #[cfg(feature = "track_timeouts")] {
-            info!(self.ctx.log(), "Retrying {} proposals after reconfig to node {}. Min: {:?}, Max: {:?}", pending_proposals.len(), self.current_leader, pending_proposals.keys().min(), pending_proposals.keys().max());
+            let min = self.pending_proposals.keys().min();
+            let max = self.pending_proposals.keys().max();
+            let count = self.pending_proposals.len();
+            info!(self.ctx.log(), "Retrying proposals after reconfig to node {}. Pending: {}, retry: {}, Min: {:?}, Max: {:?}", self.current_leader, count, retry, min, max);
         }
-        for (id, meta) in pending_proposals.iter_mut().filter(|(id, _)| *id > &0u64) {
+        let retry_proposals = pending_proposals.iter_mut().filter(|(id, _)| *id >= &retry);
+        for (id, meta) in retry_proposals{
             let i = *id;
             self.propose_normal(i, &leader);
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
@@ -376,9 +383,11 @@ impl Actor for Client {
                             }
                         }
                     },
-                    AtomicBroadcastMsg::PendingReconfiguration => {
-                        // info!(self.ctx.log(), "Got PendingReconfiguration. Pending proposals: {}, min: {:?}, max: {:?}", self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
+                    AtomicBroadcastMsg::PendingReconfiguration(data) => {
                         if self.reconfig.is_some() {
+                            let dropped_proposal = data.as_slice().get_u64();
+                            info!(self.ctx.log(), "Got PendingReconfiguration: {}. Pending proposals: {}, min: {:?}, max: {:?}", dropped_proposal, self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
+                            self.retry_proposal = Some(dropped_proposal);
                             self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
                         }
                     }
