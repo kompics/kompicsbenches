@@ -14,6 +14,7 @@ use raw_paxos::{Entry, Paxos};
 use uuid::Uuid;
 use rand::Rng;
 use hashbrown::{HashMap, HashSet};
+use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -942,51 +943,52 @@ impl<S, P> PaxosComp<S, P> where
         }
     }
 
+    fn handle_stopsign(&mut self, ss: &StopSign) {
+        let final_seq = self.paxos.stop_and_get_sequence();
+        let new_config_len = ss.nodes.len();
+        let mut data: Vec<u8> = Vec::with_capacity( 8 + 4 + 8 * new_config_len);
+        data.put_u64(RECONFIG_ID);
+        data.put_u32(new_config_len as u32);
+        for pid in &ss.nodes {
+            data.put_u64(*pid);
+        }
+        let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
+            |&pid| pid == &self.pid || self.peers.contains(pid)
+        );
+        debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
+        let nodes = Reconfig::with(continued_nodes, new_nodes);
+        let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_n);
+        self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
+    }
+
     fn get_decided(&mut self) {
         if self.current_leader != self.paxos.leader {
             self.current_leader = self.paxos.leader;
             self.supervisor.tell(PaxosReplicaMsg::Leader(self.config_id, self.current_leader));
         }
-        let decided_entries = self.paxos.get_decided_entries();
-        let stopsign = match decided_entries.last() {
-            Some(Entry::StopSign(ss)) => Some(ss.clone()),
-            _ => None
-        };
-        if self.current_leader == self.pid {
+        if self.current_leader == self.pid {    // leader: check reconfiguration and send responses to client
+            let decided_entries = self.paxos.get_decided_entries().to_vec();
+            let last = decided_entries.last();
+            if let Some(Entry::StopSign(ss)) = last {
+                self.handle_stopsign(&ss);
+            }
             for decided in decided_entries {
                 if let Entry::Normal(data) = decided {
-                    let pr = ProposalResp::with(data.clone(), self.current_leader);
+                    let pr = ProposalResp::with(data, self.current_leader);
                     self.communication_port.trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
             }
-        }
-        if let Some(ss) = stopsign {
-            let final_seq = self.paxos.stop_and_get_sequence();
-            let new_config_len = ss.nodes.len();
-            let mut data: Vec<u8> = Vec::with_capacity( 8 + 4 + 8 * new_config_len);
-            data.put_u64(RECONFIG_ID);
-            data.put_u32(new_config_len as u32);
-            for pid in &ss.nodes {
-                data.put_u64(*pid);
+        } else {    // follower: just handle a possible reconfiguration
+            if let Some(Entry::StopSign(ss)) = self.paxos.get_decided_entries().last().cloned() {
+                self.handle_stopsign(&ss);
             }
-            let (continued_nodes, new_nodes) = ss.nodes.iter().partition(
-                |&pid| pid == &self.pid || self.peers.contains(pid)
-            );
-            debug!(self.ctx.log(), "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes);
-            let nodes = Reconfig::with(continued_nodes, new_nodes);
-            let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_n);
-            self.supervisor.tell(PaxosReplicaMsg::Reconfig(r));
         }
     }
 
-    fn propose(&mut self, p: Proposal) -> bool {
+    fn propose(&mut self, p: Proposal) -> Result<(), Vec<u8>> {
         match p.reconfig {
-            Some((reconfig, _)) => {
-                self.paxos.propose_reconfiguration(reconfig)
-            },
-            None => {
-                self.paxos.propose_normal(p.data)
-            }
+            Some((reconfig, _)) => self.paxos.propose_reconfiguration(reconfig),
+            None =>self.paxos.propose_normal(p.data),
         }
     }
 }
@@ -1000,10 +1002,11 @@ impl<S, P> Actor for PaxosComp<S, P> where
     fn receive_local(&mut self, msg: PaxosCompMsg) -> () {
         match msg {
             PaxosCompMsg::Propose(p) => {
-                let succeeded = self.propose(p);
-                if !succeeded && !self.pending_reconfig {
-                    self.pending_reconfig = true;
-                    self.communication_port.trigger(CommunicatorMsg::PendingReconfiguration);
+                if !self.pending_reconfig {
+                    if let Err(data) = self.propose(p) {
+                        self.pending_reconfig = true;
+                        self.communication_port.trigger(CommunicatorMsg::PendingReconfiguration(data))
+                    }
                 }
             },
             PaxosCompMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
@@ -1098,8 +1101,9 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use kompact::prelude::{Logger, Fuse, Async};
+    use kompact::prelude::{Logger, Fuse, Async, BufMut};
     use crate::bench::atomic_broadcast::parameters::paxos::PRIO_START_ROUND;
+    use crate::serialiser_ids::RECONFIG_ID;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1248,9 +1252,9 @@ pub mod raw_paxos{
 
         pub fn stopped(&self) -> bool { self.storage.stopped() }
 
-        pub fn propose_normal(&mut self, data: Vec<u8>) -> bool {
+        pub fn propose_normal(&mut self, data: Vec<u8>) -> Result<(), Vec<u8>> {
             if self.stopped(){
-                false
+                Err(data)
             } else {
                 let entry = Entry::Normal(data);
                 match self.state {
@@ -1259,13 +1263,15 @@ pub mod raw_paxos{
                     (Role::Leader, Phase::FirstAccept) => self.send_first_accept(entry),
                     _ => self.forward_proposals(vec![entry]),
                 }
-                true
+                Ok(())
             }
         }
 
-        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) -> bool {
+        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) -> Result<(), Vec<u8>> {
             if self.stopped(){
-                false
+                let mut data: Vec<u8> = Vec::with_capacity(8);
+                data.put_u64(RECONFIG_ID);
+                Err(data)
             } else {
                 let continued_nodes: Vec<&u64> = nodes.iter().filter(
                     |&pid| pid == &self.pid || self.peers.contains(pid)
@@ -1289,7 +1295,7 @@ pub mod raw_paxos{
                     (Role::Leader, Phase::FirstAccept) => self.send_first_accept(entry),
                     _ => self.forward_proposals(vec![entry]),
                 }
-                true
+                Ok(())
             }
         }
 
