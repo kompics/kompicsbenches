@@ -270,8 +270,7 @@ pub mod raft {
             let des_entry_len = u64::from_be_bytes(entry_len.unwrap().try_into().unwrap());
             let r = stop..(stop + des_entry_len as usize);
             let entry = self.log.mem_map.get(r).unwrap_or_else(|| panic!("Failed to get serialised entry in range {}..{}", stop, stop + des_entry_len as usize));
-            let des_entry = parse_from_bytes::<Entry>(entry).expect("Protobuf failed to deserialise entry");
-            des_entry
+            parse_from_bytes::<Entry>(entry).expect("Protobuf failed to deserialise entry")
         }
 
         fn set_raft_metadata(&mut self, field: Range<usize>, value: u64) -> Result<(), Error> {
@@ -294,18 +293,18 @@ pub mod raft {
             match field {
                 DiskStorageCore::FIRST_INDEX => {
                     if self.raft_metadata.get(DiskStorageCore::FIRST_INDEX_IS_SET).unwrap()[0] == 0 {
-                        return None;
+                        None
                     } else {
                         let bytes = self.raft_metadata.get(field).unwrap();
-                        return Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")));
+                        Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")))
                     }
                 },
                 DiskStorageCore::LAST_INDEX => {
                     if self.raft_metadata.get(DiskStorageCore::LAST_INDEX_IS_SET).unwrap()[0] == 0 {
-                        return None;
+                        None
                     } else {
                         let bytes = self.raft_metadata.get(field).unwrap();
-                        return Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")));
+                        Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")))
                     }
                 },
                 _ => panic!("Got unexpected field in get_raft_metadata"),

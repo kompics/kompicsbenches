@@ -24,4 +24,3 @@ itertools       = "0.8.2"
 
 [build-dependencies]
 protoc-rust-grpc = "0.6.1"
-

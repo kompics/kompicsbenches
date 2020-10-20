@@ -1,4 +1,3 @@
-#![feature(array_map)]
 #![feature(unsized_locals)]
 #![feature(impl_trait_in_bindings)]
 pub mod benchmark;
@@ -129,7 +128,7 @@ pub mod test_utils {
         let master_addr: SocketAddr = "127.0.0.1:45679".parse().expect("master address");
         let client_ports: [u16; 4] = [45680, 45681, 45682, 45683];
         let client_addrs: [SocketAddr; 4] =
-            client_ports.map(|port| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port));
+            client_ports.map(|port| SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), *port));
 
         let mut implemented: Vec<String> = Vec::new();
         let mut not_implemented: Vec<String> = Vec::new();

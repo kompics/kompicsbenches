@@ -34,7 +34,7 @@ impl Port for CommunicationPort {
 #[derive(ComponentDefinition)]
 pub struct Communicator {
     ctx: ComponentContext<Communicator>,
-    atomic_broadcast_port: ProvidedPort<CommunicationPort, Communicator>,
+    atomic_broadcast_port: ProvidedPort<CommunicationPort>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
     client: ActorPath,    // cached client to send SequenceResp to
     supervisor: Recipient<KillResponse>
@@ -43,8 +43,8 @@ pub struct Communicator {
 impl Communicator {
     pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath, supervisor: Recipient<KillResponse>) -> Communicator {
         Communicator {
-            ctx: ComponentContext::new(),
-            atomic_broadcast_port: ProvidedPort::new(),
+            ctx: ComponentContext::uninitialised(),
+            atomic_broadcast_port: ProvidedPort::uninitialised(),
             peers,
             client,
             supervisor,
@@ -52,16 +52,15 @@ impl Communicator {
     }
 }
 
-impl Provide<ControlPort> for Communicator {
-    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
-        if let ControlEvent::Kill = event {
-            self.supervisor.tell(KillResponse);
-        }
+impl ComponentLifecycle for Communicator {
+    fn on_kill(&mut self) -> Handled {
+        self.supervisor.tell(KillResponse);
+        Handled::Ok
     }
 }
 
 impl Provide<CommunicationPort> for Communicator {
-    fn handle(&mut self, msg: CommunicatorMsg) {
+    fn handle(&mut self, msg: CommunicatorMsg) -> Handled {
         match msg {
             CommunicatorMsg::RawRaftMsg(rm) => {
                 let receiver = self.peers.get(&rm.get_to()).unwrap_or_else(|| panic!("Could not find actorpath for id={}. Known peers: {:?}. RaftMsg: {:?}", &rm.get_to(), self.peers.keys(), rm));
@@ -87,17 +86,19 @@ impl Provide<CommunicationPort> for Communicator {
                 }
             },
         }
+        Handled::Ok
     }
 }
 
 impl Actor for Communicator {
     type Message = ();
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
         // ignore
+        Handled::Ok
     }
 
-    fn receive_network(&mut self, m: NetMessage) -> () {
+    fn receive_network(&mut self, m: NetMessage) -> Handled {
         let NetMessage{data, ..} = m;
         match_deser! {data; {
             r: RawRaftMsg [RawRaftSer] => {
@@ -114,5 +115,6 @@ impl Actor for Communicator {
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }
         }
+        Handled::Ok
     }
 }
