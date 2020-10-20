@@ -1783,6 +1783,7 @@ struct Write {
     value: u32,
 }
 
+#[derive(Clone)]
 struct AtomicRegisterSer;
 //const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
 const READ_ID: i8 = 1;

@@ -15,6 +15,7 @@ use uuid::Uuid;
 use rand::Rng;
 use hashbrown::{HashMap, HashSet};
 use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
+use kompact::KompactLogger;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -153,7 +154,7 @@ impl<S, P> PaxosReplica<S, P> where
         let system = self.ctx.system();
         let stopkill_recipient: Recipient<StopKillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
-        let log = self.ctx.log().new(o!("raw_paxos" => self.pid));
+        let log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
         let (paxos_comp, _) = system.create_and_register(|| {
             PaxosComp::with(self.ctx.actor_ref(), peers, config_id, self.pid, log, skip_prepare_n)
         });
@@ -869,7 +870,7 @@ impl<S, P> PaxosComp<S, P> where
         peers: Vec<u64>,
         config_id: u32,
         pid: u64,
-        raw_paxos_log: Logger<Arc<Fuse<Async>>>,
+        raw_paxos_log: KompactLogger,
         skipped_prepare: Option<Ballot>
     ) -> PaxosComp<S, P>
     {
@@ -1078,9 +1079,10 @@ pub mod raw_paxos{
     use std::mem;
     use std::sync::Arc;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
-    use kompact::prelude::{Logger, Fuse, Async, BufMut};
+    use kompact::prelude::{BufMut};
     use crate::bench::atomic_broadcast::parameters::paxos::PRIO_START_ROUND;
     use crate::serialiser_ids::RECONFIG_ID;
+    use kompact::KompactLogger;
 
     pub struct Paxos<S, P> where
         S: SequenceTraits,
@@ -1108,7 +1110,7 @@ pub mod raw_paxos{
         latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
-        log: Logger<Arc<Fuse<Async>>>
+        log: KompactLogger
     }
 
     impl<S, P> Paxos<S, P> where
@@ -1121,7 +1123,7 @@ pub mod raw_paxos{
             pid: u64,
             peers: Vec<u64>,
             storage: Storage<S, P>,
-            log: Logger<Arc<Fuse<Async>>>,
+            log: KompactLogger,
             skipped_prepare: Option<Ballot>,
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
