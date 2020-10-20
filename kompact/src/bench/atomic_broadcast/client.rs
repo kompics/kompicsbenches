@@ -214,9 +214,9 @@ impl Client {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         let retry = self.retry_proposal.unwrap_or(1);   // only normal proposals
         #[cfg(feature = "track_timeouts")] {
-            let min = self.pending_proposals.keys().min();
-            let max = self.pending_proposals.keys().max();
-            let count = self.pending_proposals.len();
+            let min = pending_proposals.keys().min();
+            let max = pending_proposals.keys().max();
+            let count = pending_proposals.len();
             info!(self.ctx.log(), "Retrying proposals after reconfig to node {}. Pending: {}, retry: {}, Min: {:?}, Max: {:?}", self.current_leader, count, retry, min, max);
         }
         let retry_proposals = pending_proposals.iter_mut().filter(|(id, _)| *id >= &retry);
