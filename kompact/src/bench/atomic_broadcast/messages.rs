@@ -1053,6 +1053,7 @@ pub enum TestMessage {
     SequenceResp(SequenceResp)
 }
 
+#[derive(Clone)]
 pub struct TestMessageSer;
 
 const SEQREQ_ID: u8 = 0;
