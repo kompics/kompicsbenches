@@ -3,6 +3,7 @@ use super::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::prelude::*;
 use messages::{Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};
+use std::borrow::Borrow;
 use std::str::FromStr;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
@@ -80,7 +81,8 @@ impl DistributedBenchmarkMaster for PingPongMaster {
         _m: &DeploymentMetaData,
     ) -> Result<Self::ClientConf, BenchmarkError> {
         self.num = Some(c.number_of_messages);
-        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("netpingpong", 1);
+        let system = crate::kompact_system_provider::global()
+            .new_remote_system_with_threads("netpingpong", 1);
         self.system = Some(system);
         Ok(())
     }
@@ -175,7 +177,8 @@ impl DistributedBenchmarkClient for PingPongClient {
     fn setup(&mut self, _c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up ponger.");
 
-        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("netpingpong", 1);
+        let system = crate::kompact_system_provider::global()
+            .new_remote_system_with_threads("netpingpong", 1);
         let (ponger, unique_reg_f) = system.create_and_register(|| Ponger::new());
         let named_reg_f = system.register_by_alias(&ponger, "ponger");
         unique_reg_f.wait_expect(Duration::from_millis(1000), "Ponger failed to register!");
@@ -232,7 +235,7 @@ struct Pinger {
 impl Pinger {
     fn with(count: u64, latch: Arc<CountdownEvent>, ponger: ActorPath) -> Pinger {
         Pinger {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             latch,
             ponger,
             count_down: count,
@@ -240,21 +243,23 @@ impl Pinger {
     }
 }
 
-impl Provide<ControlPort> for Pinger {
-    fn handle(&mut self, _event: ControlEvent) -> () {
-        // ignore
-        self.ctx_mut().initialise_pool();
+impl ComponentLifecycle for Pinger {
+    fn on_start(&mut self) -> Handled {
+        self.ctx.borrow().init_buffers(None, None);
+        Handled::Ok
     }
 }
 
 impl Actor for Pinger {
     type Message = &'static Run;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
-        self.ponger.tell_serialised(STATIC_PING, self)
+    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
+        self.ponger
+            .tell_serialised(STATIC_PING, self)
             .expect("Should have serialised!");
+        Handled::Ok
     }
-    fn receive_network(&mut self, msg: NetMessage) -> () {
+    fn receive_network(&mut self, msg: NetMessage) -> Handled {
         match_deser! {msg; {
             _pong: StaticPong [StaticPong] => {
                 self.count_down -= 1;
@@ -266,6 +271,7 @@ impl Actor for Pinger {
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPong: {:?}", e),
         }}
+        Handled::Ok
     }
 }
 
@@ -277,25 +283,25 @@ struct Ponger {
 impl Ponger {
     fn new() -> Ponger {
         Ponger {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
         }
     }
 }
 
-impl Provide<ControlPort> for Ponger {
-    fn handle(&mut self, _event: ControlEvent) -> () {
-        // ignore
-        self.ctx_mut().initialise_pool();
+impl ComponentLifecycle for Ponger {
+    fn on_start(&mut self) -> Handled {
+        self.ctx.borrow().init_buffers(None, None);
+        Handled::Ok
     }
 }
 
 impl Actor for Ponger {
     type Message = Never;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> () {
+    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
         unreachable!("Can't instantiate Never!");
     }
-    fn receive_network(&mut self, msg: NetMessage) -> () {
+    fn receive_network(&mut self, msg: NetMessage) -> Handled {
         let sender = msg.sender.clone();
 
         match_deser! {msg; {
@@ -304,5 +310,6 @@ impl Actor for Ponger {
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
         }}
+        Handled::Ok
     }
 }

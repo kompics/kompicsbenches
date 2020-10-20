@@ -183,7 +183,7 @@ pub mod actor_chameneos {
             latch: Arc<CountdownEvent>,
         ) -> ChameneosMallActor {
             ChameneosMallActor {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 num_meetings,
                 num_chameneos,
                 latch,
@@ -195,12 +195,12 @@ pub mod actor_chameneos {
         }
     }
 
-    ignore_control!(ChameneosMallActor);
+    ignore_lifecycle!(ChameneosMallActor);
 
     impl Actor for ChameneosMallActor {
         type Message = MallMsg;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             match msg {
                 MallMsg::MeetingCount(count) => {
                     self.num_faded += 1usize;
@@ -226,9 +226,10 @@ pub mod actor_chameneos {
                     }
                 }
             }
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             unimplemented!();
         }
     }
@@ -243,7 +244,7 @@ pub mod actor_chameneos {
     impl ChameneoActor {
         fn with(mall: ActorRefStrong<MallMsg>, initial_colour: ChameneosColour) -> ChameneoActor {
             ChameneoActor {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 mall,
                 colour: initial_colour,
                 meetings: 0u64,
@@ -255,21 +256,17 @@ pub mod actor_chameneos {
         }
     }
 
-    impl Provide<ControlPort> for ChameneoActor {
-        fn handle(&mut self, msg: ControlEvent) {
-            match msg {
-                ControlEvent::Start => {
-                    self.mall.tell(MallMsg::meet(self.colour, self.self_ref()));
-                }
-                _ => (), // ignore
-            }
+    impl ComponentLifecycle for ChameneoActor {
+        fn on_start(&mut self) -> Handled {
+            self.mall.tell(MallMsg::meet(self.colour, self.self_ref()));
+            Handled::Ok
         }
     }
 
     impl Actor for ChameneoActor {
         type Message = ChameneoMsg;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             match msg {
                 ChameneoMsg::Meet {
                     colour: other_colour,
@@ -291,9 +288,10 @@ pub mod actor_chameneos {
                     self.ctx.suicide();
                 }
             }
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             unimplemented!();
         }
     }
@@ -468,7 +466,7 @@ pub mod mixed_chameneos {
     #[derive(ComponentDefinition, Actor)]
     struct ChameneosMallActor {
         ctx: ComponentContext<Self>,
-        mall_port: ProvidedPort<MallPort, Self>,
+        mall_port: ProvidedPort<MallPort>,
         num_meetings: u64,
         num_chameneos: usize,
         latch: Arc<CountdownEvent>,
@@ -486,8 +484,8 @@ pub mod mixed_chameneos {
             latch: Arc<CountdownEvent>,
         ) -> ChameneosMallActor {
             ChameneosMallActor {
-                ctx: ComponentContext::new(),
-                mall_port: ProvidedPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                mall_port: ProvidedPort::uninitialised(),
                 num_meetings,
                 num_chameneos,
                 latch,
@@ -500,10 +498,10 @@ pub mod mixed_chameneos {
         }
     }
 
-    ignore_control!(ChameneosMallActor);
+    ignore_lifecycle!(ChameneosMallActor);
 
     impl Provide<MallPort> for ChameneosMallActor {
-        fn handle(&mut self, msg: MallMsg) -> () {
+        fn handle(&mut self, msg: MallMsg) -> Handled {
             match msg {
                 MallMsg::MeetingCount(count) => {
                     self.num_faded += 1usize;
@@ -530,21 +528,22 @@ pub mod mixed_chameneos {
                     } // else just drop, since we already sent exit
                 }
             }
+            Handled::Ok
         }
     }
 
     #[derive(ComponentDefinition)]
     struct ChameneoActor {
         ctx: ComponentContext<Self>,
-        mall_port: RequiredPort<MallPort, Self>,
+        mall_port: RequiredPort<MallPort>,
         colour: ChameneosColour,
         meetings: u64,
     }
     impl ChameneoActor {
         fn with(initial_colour: ChameneosColour) -> ChameneoActor {
             ChameneoActor {
-                ctx: ComponentContext::new(),
-                mall_port: RequiredPort::new(),
+                ctx: ComponentContext::uninitialised(),
+                mall_port: RequiredPort::uninitialised(),
                 colour: initial_colour,
                 meetings: 0u64,
             }
@@ -555,30 +554,27 @@ pub mod mixed_chameneos {
         }
     }
 
-    impl Provide<ControlPort> for ChameneoActor {
-        fn handle(&mut self, msg: ControlEvent) {
-            match msg {
-                ControlEvent::Start => {
-                    self.mall_port
-                        .trigger(MallMsg::meet(self.colour, self.self_ref()));
-                }
-                _ => (), // ignore
-            }
+    impl ComponentLifecycle for ChameneoActor {
+        fn on_start(&mut self) -> Handled {
+            self.mall_port
+                .trigger(MallMsg::meet(self.colour, self.self_ref()));
+            Handled::Ok
         }
     }
 
     impl Require<MallPort> for ChameneoActor {
-        fn handle(&mut self, _msg: Exit) -> () {
+        fn handle(&mut self, _msg: Exit) -> Handled {
             self.colour = ChameneosColour::Faded;
             self.mall_port.trigger(MallMsg::count(self.meetings));
             self.ctx.suicide();
+            Handled::Ok
         }
     }
 
     impl Actor for ChameneoActor {
         type Message = ChameneoMsg;
 
-        fn receive_local(&mut self, msg: Self::Message) -> () {
+        fn receive_local(&mut self, msg: Self::Message) -> Handled {
             match msg {
                 ChameneoMsg::Meet {
                     colour: other_colour,
@@ -597,9 +593,10 @@ pub mod mixed_chameneos {
                         .trigger(MallMsg::meet(self.colour, self.self_ref()));
                 }
             }
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, _msg: NetMessage) -> () {
+        fn receive_network(&mut self, _msg: NetMessage) -> Handled {
             unimplemented!();
         }
     }

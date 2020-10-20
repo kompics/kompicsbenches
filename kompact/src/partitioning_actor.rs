@@ -1,8 +1,8 @@
 use super::*;
+use benchmark_suite_shared::test_utils::{KVOperation, KVTimestamp};
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
-use benchmark_suite_shared::test_utils::{KVTimestamp, KVOperation};
 
 #[derive(ComponentDefinition)]
 pub struct PartitioningActor {  // TODO generalize for different applications by using serialised data as Init msg
@@ -29,7 +29,7 @@ impl PartitioningActor {
         test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     ) -> PartitioningActor {
         PartitioningActor {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             prepare_latch,
             finished_latch,
             reply_stop: None,
@@ -45,16 +45,11 @@ impl PartitioningActor {
     }
 }
 
-impl Provide<ControlPort> for PartitioningActor {
-    fn handle(&mut self, _event: ControlEvent) -> () {
-        // ignore
-    }
-}
+ignore_lifecycle!(PartitioningActor);
 
 impl Actor for PartitioningActor {
     type Message = IterationControlMsg;
-
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
             IterationControlMsg::Prepare(init_data) => {
                 self.n = self.nodes.len() as u32;
@@ -84,9 +79,10 @@ impl Actor for PartitioningActor {
                 }
             }
         }
+        Handled::Ok
     }
 
-    fn receive_network(&mut self, msg: NetMessage) -> () {
+    fn receive_network(&mut self, msg: NetMessage) -> Handled {
         match_deser! {msg; {
             p: PartitioningActorMsg [PartitioningActorSer] => {
                 match p {
@@ -133,6 +129,7 @@ impl Actor for PartitioningActor {
             },
             !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
         }}
+        Handled::Ok
     }
 }
 
@@ -312,7 +309,13 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                     };
                     let time = buf.get_i64();
                     let sender = buf.get_u32();
-                    let ts = KVTimestamp{key, operation, value, time, sender};
+                    let ts = KVTimestamp {
+                        key,
+                        operation,
+                        value,
+                        time,
+                        sender,
+                    };
                     timestamps.push(ts);
                 }
                 Ok(PartitioningActorMsg::TestDone(timestamps))
