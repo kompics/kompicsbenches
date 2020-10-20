@@ -78,7 +78,7 @@ impl Client {
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
         Client {
-            ctx: ComponentContext::new(),
+            ctx: ComponentContext::uninitialised(),
             num_proposals,
             num_concurrent_proposals,
             nodes,
@@ -181,8 +181,8 @@ impl Client {
         }
     }
 
-    fn proposal_timeout(&mut self, id: u64) {
-        if self.responses.contains_key(&id) || self.state == ExperimentState::ReconfigurationElection { return; }
+    fn proposal_timeout(&mut self, id: u64) -> Handled {
+        if self.responses.contains_key(&id) || self.state == ExperimentState::ReconfigurationElection { return Handled::Ok; }
         // info!(self.ctx.log(), "Timed out proposal {}", id);
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -208,6 +208,7 @@ impl Client {
                 self.timeouts.push(id);
             }
         }
+        Handled::Ok
     }
 
     fn retry_pending_normal_proposals(&mut self, pending_proposals: &mut HashMap<u64, ProposalMetaData>) {
@@ -250,21 +251,20 @@ impl Client {
     }
 }
 
-impl Provide<ControlPort> for Client {
-    fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
-        if let ControlEvent::Kill = event {
-            let pending_proposals = std::mem::take(&mut self.pending_proposals);
-            for proposal_meta in pending_proposals {
-                self.cancel_timer(proposal_meta.1.timer);
-            }
+impl ComponentLifecycle for Client {
+    fn on_kill(&mut self) -> Handled {
+        let pending_proposals = std::mem::take(&mut self.pending_proposals);
+        for proposal_meta in pending_proposals {
+            self.cancel_timer(proposal_meta.1.timer);
         }
+        Handled::Ok
     }
 }
 
 impl Actor for Client {
     type Message = LocalClientMessage;
 
-    fn receive_local(&mut self, msg: Self::Message) -> () {
+    fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
             LocalClientMessage::Run => {
                 self.state = ExperimentState::Running;
@@ -283,16 +283,17 @@ impl Actor for Client {
                 ask.reply(meta_results).expect("Failed to reply write latency file!");
             }
         }
+        Handled::Ok
     }
 
-    fn receive_network(&mut self, m: NetMessage) -> () {
+    fn receive_network(&mut self, m: NetMessage) -> Handled {
         let NetMessage{sender: _, receiver: _, data} = m;
         match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
-                        if !self.current_config.contains(&pid) { return; }
+                        if !self.current_config.contains(&pid) { return Handled::Ok; }
                         match self.state {
                             ExperimentState::LeaderElection => {
                                 self.current_leader = pid;
@@ -321,7 +322,7 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return; }
+                        if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return Handled::Ok; }
                         let data = pr.data;
                         let response = Self::deserialise_response(&mut data.as_slice());
                         match response {
@@ -397,6 +398,7 @@ impl Actor for Client {
             !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
         }
         }
+        Handled::Ok
     }
 }
 
@@ -431,7 +433,7 @@ pub mod tests {
             let mut tr = HashMap::new();
             tr.insert(0, Vec::with_capacity(num_proposals as usize));
             TestClient {
-                ctx: ComponentContext::new(),
+                ctx: ComponentContext::uninitialised(),
                 num_proposals,
                 concurrent_proposals,
                 nodes,
@@ -486,18 +488,19 @@ pub mod tests {
     }
 
     impl Provide<ControlPort> for TestClient {
-        fn handle(&mut self, event: <ControlPort as Port>::Request) -> () {
+        fn handle(&mut self, event: <ControlPort as Port>::Request) -> Handled {
             match event {
                 ControlEvent::Start => info!(self.ctx.log(), "Started bcast client"),
                 _ => {}, //ignore
             }
+            Handled::Ok
         }
     }
 
     impl Actor for TestClient {
         type Message = Run;
 
-        fn receive_local(&mut self, _msg: Self::Message) -> () {
+        fn receive_local(&mut self, _msg: Self::Message) -> Handled {
             // info!(self.ctx.log(), "CLIENT ACTORPATH={:?}", self.ctx.actor_path());
             self.send_batch();
             self.schedule_periodic(
@@ -505,9 +508,10 @@ pub mod tests {
                 Duration::from_secs(30),
                 move |c, _| info!(c.ctx.log(), "Client: received: {}/{}", c.responses.len(), c.num_proposals)
             );
+            Handled::Ok
         }
 
-        fn receive_network(&mut self, msg: NetMessage) -> () {
+        fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let NetMessage{sender: _, receiver: _, data} = msg;
             match_deser!{data; {
             am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
@@ -568,6 +572,7 @@ pub mod tests {
                     },
                     e => error!(self.ctx.log(), "Client received unexpected msg {:?}", e),
                 }
+                Handled::Ok
             },
             tm: TestMessage [TestMessageSer] => {
                 match tm {

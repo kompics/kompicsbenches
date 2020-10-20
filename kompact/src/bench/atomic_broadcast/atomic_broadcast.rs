@@ -25,8 +25,8 @@ use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 use crate::bench::atomic_broadcast::paxos::PaxosReplicaMsg;
 use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
 
-const PAXOS_PATH: &'static str = "paxos_replica";
-const RAFT_PATH: &'static str = "raft_replica";
+const PAXOS_PATH: &str = "paxos_replica";
+const RAFT_PATH: &str = "raft_replica";
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -232,18 +232,10 @@ impl AtomicBroadcastMaster {
         client_comp_f
             .wait_timeout(REGISTER_TIMEOUT)
             .expect("ClientComp never started!");
-        let named_reg_f = system.register_by_alias(
+        let client_path = system.register_by_alias(
             &client_comp,
             format!("client{}", &self.iteration_id),
-        );
-        named_reg_f.wait_expect(
-            REGISTER_TIMEOUT,
-            "Failed to register alias for ClientComp"
-        );
-        let client_path = ActorPath::Named(NamedPath::with_system(
-            system.system_path(),
-            vec![format!("client{}", &self.iteration_id)],
-        ));
+        ).wait_expect(REGISTER_TIMEOUT, "Failed to register alias for ClientComp");
         (client_comp, client_path)
     }
 
@@ -528,11 +520,10 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     REGISTER_TIMEOUT,
                     "ReplicaComp failed to register!",
                 );
-                let named_reg_f = system.register_by_alias(
+                let self_path = system.register_by_alias(
                     &paxos_replica,
                     PAXOS_PATH,
-                );
-                named_reg_f.wait_expect(
+                ).wait_expect(
                     REGISTER_TIMEOUT,
                     "Failed to register alias for ReplicaComp"
                 );
@@ -540,11 +531,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 paxos_replica_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("ReplicaComp never started!");
-                let self_path = ActorPath::Named(NamedPath::with_system(
-                    system.system_path(),
-                    vec![PAXOS_PATH.into()],
-                ));
-
                 self.paxos_replica = Some(paxos_replica);
                 self_path
             }
@@ -572,11 +558,10 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     REGISTER_TIMEOUT,
                     "RaftComp failed to register!",
                 );
-                let named_reg_f = system.register_by_alias(
+                let self_path = system.register_by_alias(
                     &raft_replica,
                     RAFT_PATH,
-                );
-                named_reg_f.wait_expect(
+                ).wait_expect(
                     REGISTER_TIMEOUT,
                     "Communicator failed to register!",
                 );
@@ -584,10 +569,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 raft_replica_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("RaftComp never started!");
-                let self_path = ActorPath::Named(NamedPath::with_system(
-                    system.system_path(),
-                    vec![RAFT_PATH.into()],
-                ));
 
                 self.raft_replica = Some(raft_replica);
                 self_path

@@ -817,19 +817,17 @@ pub struct Proposal {
 
 impl Proposal {
     pub fn reconfiguration(data: Vec<u8>, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
-        let proposal = Proposal {
+        Proposal {
             data,
             reconfig: Some(reconfig),
-        };
-        proposal
+        }
     }
 
     pub fn normal(data: Vec<u8>) -> Proposal {
-        let proposal = Proposal {
+        Proposal {
             data,
             reconfig: None,
-        };
-        proposal
+        }
     }
 }
 
