@@ -107,7 +107,7 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("actor", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"))
+		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"), relp("kompact/src/configs"))
 	),
 	"KOMPACTCO" -> BenchmarkImpl(
 		symbol="KOMPACTCO",
@@ -115,7 +115,7 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("component", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"))
+		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"), relp("kompact/src/configs"))
 	),
 	"KOMPACTMIX" -> BenchmarkImpl(
 		symbol="KOMPACTMIX",
@@ -123,7 +123,7 @@ val implementations: Map[String, BenchmarkImpl] = Map(
 		local = (benchRunnerAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchRunnerAddr)),
 		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchRunnerAddr, benchMasterAddr, numClients)),
 		client = (benchMasterAddr, benchClientAddr) => Runner(relp("kompact"), relp("kompact/target/release/kompact_benchmarks"), Seq("mixed", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"))
+		mustCopy = List(relp("kompact/target/release/kompact_benchmarks"), relp("kompact/src/configs"))
 	),
 	"ACTIX" -> BenchmarkImpl(
 		symbol="ACTIX",
