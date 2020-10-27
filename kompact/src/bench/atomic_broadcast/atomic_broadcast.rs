@@ -24,6 +24,7 @@ use std::io::Write;
 use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
 use crate::bench::atomic_broadcast::paxos::PaxosReplicaMsg;
 use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
+use kompact::net::buffers::BufferConfig;
 
 const PAXOS_PATH: &str = "paxos_replica";
 const RAFT_PATH: &str = "raft_replica";
@@ -335,7 +336,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if c.concurrent_proposals == 1 || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency")) {
             self.latency_hist = Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
         }
-        let system = crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
+        let mut conf = KompactConfig::default();
+        conf.load_config_file("./src/configs/atomic_broadcast.conf");
+        let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        let system =
+            crate::kompact_system_provider::global().new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc);
         self.system = Some(system);
         let params = ClientParams::with(
             c.algorithm,
@@ -502,8 +507,11 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 
     fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up Atomic Broadcast (client)");
+        let mut conf = KompactConfig::default();
+        conf.load_config_file("./src/configs/atomic_broadcast.conf");
+        let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
         let system =
-            crate::kompact_system_provider::global().new_remote_system_with_threads("atomicbroadcast", 4);
+            crate::kompact_system_provider::global().new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc);
         let named_path = match &c.algorithm {
             paxos if paxos == "paxos" || paxos == "paxos-batch" => {
                 let initial_config = get_initial_conf(c.last_node_id).0;

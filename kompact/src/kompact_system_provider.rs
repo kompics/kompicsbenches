@@ -4,6 +4,7 @@ use kompact::executors::*;
 use kompact::prelude::*;
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use kompact::net::buffers::BufferConfig;
 
 // Would be nicer to be able to declare the default value const -.-
 static mut GLOBAL: KompactSystemProvider = KompactSystemProvider {
@@ -72,6 +73,24 @@ impl KompactSystemProvider {
         Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
+        let system = conf.build().expect("KompactSystem");
+        system
+    }
+
+    pub fn new_remote_system_with_threads_config<I: Into<String>>(
+        &self,
+        name: I,
+        threads: usize,
+        mut conf: KompactConfig,
+        buf_conf: BufferConfig,
+    ) -> KompactSystem {
+        let s = name.into();
+        let addr = SocketAddr::new(self.get_public_if(), 0);
+        conf.label(s);
+        conf.threads(threads);
+        Self::set_executor_for_threads(threads, &mut conf);
+        conf.throughput(50);
+        conf.system_components(DeadletterBox::new, NetworkConfig::with_buffer_config(addr, buf_conf).build());
         let system = conf.build().expect("KompactSystem");
         system
     }

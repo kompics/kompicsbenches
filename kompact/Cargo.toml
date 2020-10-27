@@ -5,8 +5,8 @@ authors = ["Lars Kroll <lkroll@kth.se>"]
 edition = "2018"
 
 [dependencies]
-kompact 				= { git = "https://github.com/kompics/kompact"}
-#kompact 				= { path = "../../kompact/core/" }
+#kompact 				= { git = "https://github.com/kompics/kompact"}
+kompact 				= { path = "../../kompact/core/" }
 #kompact 				= "0.8"
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
