@@ -8,7 +8,7 @@ use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*, StopMsg as NetStopMsg, StopMsgDeser};
 use super::storage::raft::*;
 use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg};
-use std::sync::Arc;
+use std::{sync::Arc, ops::DerefMut};
 use uuid::Uuid;
 use hashbrown::{HashMap, HashSet};
 use super::parameters::{*, raft::*};
@@ -96,7 +96,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         c
     }
 
-    fn create_components(&mut self) {
+    fn create_components(&mut self) -> Handled {
         let mut communicator_peers: HashMap<u64, ActorPath> = HashMap::with_capacity(self.peers.len());
         for (pid, ap) in &self.peers {
             match ap {
@@ -122,11 +122,11 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
         let conf_state: (Vec<u64>, Vec<u64>) = (self.initial_config.clone(), vec![]);
         let store = S::new_with_conf_state(Some(dir), conf_state);
         let raw_raft = RawNode::new(&self.create_rawraft_config(), store).expect("Failed to create tikv Raft");
-        let (raft_comp, _) = system.create_and_register( || {
+        let (raft_comp, raft_f) = system.create_and_register( || {
             RaftComp::with(raw_raft, self.actor_ref(), self.reconfig_policy.clone(), self.peers.len())
         });
         let kill_recipient: Recipient<KillResponse> = self.actor_ref().recipient();
-        let (communicator, _) = system.create_and_register(|| {
+        let (communicator, comm_f) = system.create_and_register(|| {
             Communicator::with(
                 communicator_peers,
                 self.cached_client.as_ref().expect("No cached client").clone(),
@@ -134,19 +134,21 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
             )
         });
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
-        let reg_f = system.register_by_alias(&communicator, communicator_alias);
+        let comm_alias_f = system.register_by_alias(&communicator, communicator_alias);
         biconnect_components::<CommunicationPort, _, _>(&communicator, &raft_comp)
             .expect("Could not connect components!");
         self.raft_comp = Some(raft_comp);
         self.communicator = Some(communicator);
-        let _ = Handled::block_on(self, move |mut _async_self| async move {
-            let _ = reg_f.wait_expect(Duration::from_millis(3000), "Timed out registering communicator");
-        });
-        self.partitioning_actor
-            .as_ref()
-            .expect("No partitioning actor found!")
-            .tell_serialised(PartitioningActorMsg::InitAck(self.iteration_id), self)
-            .expect("Should serialise InitAck")
+        Handled::block_on(self, move |mut async_self| async move {
+            raft_f.await.unwrap().expect("Timed out registering raft component");
+            comm_f.await.unwrap().expect("Timed out registering communicator");
+            comm_alias_f.await.unwrap().expect("Timed out registering communicator alias");
+            async_self.partitioning_actor
+                .take()
+                .expect("No partitioning actor found!")
+                .tell_serialised(PartitioningActorMsg::InitAck(async_self.iteration_id), async_self.deref_mut())
+                .expect("Should serialise InitAck");
+        })
     }
 
     fn send_stop_ack(&self) {
@@ -295,12 +297,14 @@ impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
                                 self.pending_kill_comps = 0;
                                 self.client_stopped = false;
                                 self.stopped = false;
-                                self.create_components();
+                                let handled = self.create_components();
+                                return handled;
                             },
                             PartitioningActorMsg::Run => {
                                 self.start_components();
                             },
                             PartitioningActorMsg::Stop => {
+                                self.partitioning_actor = Some(sender);
                                 self.stopped = true;
                                 self.stop_components();
                             },

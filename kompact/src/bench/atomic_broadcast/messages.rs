@@ -3,6 +3,7 @@ extern crate raft as tikv_raft;
 use kompact::prelude::*;
 use crate::serialiser_ids;
 use protobuf::{Message, parse_from_bytes};
+use crate::bench::atomic_broadcast::parameters::DATA_SIZE_HINT;
 
 pub mod raft {
     extern crate raft as tikv_raft;
@@ -21,7 +22,8 @@ pub mod raft {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(500)   // TODO
+            let num_entries = self.0.entries.len();
+            Some(60 + num_entries * DATA_SIZE_HINT)   // TODO
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -53,6 +55,7 @@ pub mod paxos {
     use kompact::prelude::{SerError, BufMut, Deserialiser, Buf, Serialisable, Any};
     use crate::serialiser_ids;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
+    use crate::bench::atomic_broadcast::parameters::DATA_SIZE_HINT;
 
     #[derive(Clone, Debug)]
     pub struct Prepare {
@@ -275,7 +278,18 @@ pub mod paxos {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            Some(500)
+            let overhead = 16;
+            let msg_size = match &self.msg {
+                PaxosMsg::Prepare(_) => 41,
+                PaxosMsg::Promise(p) => 41 + p.sfx.len() * DATA_SIZE_HINT,
+                PaxosMsg::AcceptSyncReq => 1,
+                PaxosMsg::AcceptSync(a) => 26 + a.entries.len() * DATA_SIZE_HINT,
+                PaxosMsg::FirstAccept(_) => 17 + DATA_SIZE_HINT,
+                PaxosMsg::AcceptDecide(a) => 25 + a.entries.len() * DATA_SIZE_HINT,
+                PaxosMsg::ProposalForward(pf) => 1 + pf.len() * DATA_SIZE_HINT,
+                _ => 25,
+            };
+            Some(overhead + msg_size)
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -740,7 +754,7 @@ pub mod paxos {
             }
 
             fn size_hint(&self) -> Option<usize> {
-                Some(50)
+                Some(55)
             }
 
             fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -862,7 +876,19 @@ impl Serialisable for AtomicBroadcastMsg {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        Some(50)
+        let msg_size = match &self {
+            AtomicBroadcastMsg::Proposal(p) => {
+                let reconfig_len = match p.reconfig.as_ref() {
+                    Some((v, f)) => v.len() + f.len(),
+                    _ => 0,
+                };
+                13 + DATA_SIZE_HINT + reconfig_len * 8
+            },
+            AtomicBroadcastMsg::ProposalResp(_) => 13 + DATA_SIZE_HINT,
+            AtomicBroadcastMsg::PendingReconfiguration(_) => 5 + DATA_SIZE_HINT,
+            AtomicBroadcastMsg::FirstLeader(_) => 9,
+        };
+        Some(msg_size)
     }
 
     fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
