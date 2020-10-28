@@ -8,7 +8,7 @@ use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use super::messages::{*, StopMsg as NetStopMsg, StopMsgDeser};
 use super::storage::raft::*;
 use crate::bench::atomic_broadcast::communicator::{Communicator, CommunicationPort, CommunicatorMsg, AtomicBroadcastCompMsg};
-use std::{sync::Arc, ops::DerefMut};
+use std::{sync::Arc, ops::DerefMut, borrow::Borrow};
 use uuid::Uuid;
 use hashbrown::{HashMap, HashSet};
 use super::parameters::{*, raft::*};
@@ -201,9 +201,7 @@ impl<S> RaftReplica<S>  where S: RaftStorage + Send + Clone + 'static {
     }
 }
 
-impl<S> ComponentLifecycle for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
-    // TODO use macro with type arguments?
-}
+impl<S> ComponentLifecycle for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {}
 
 impl<S> Actor for RaftReplica<S> where S: RaftStorage + Send + Clone + 'static {
     type Message = RaftReplicaMsg;
@@ -390,7 +388,8 @@ pub struct RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
 
 impl<S> ComponentLifecycle for RaftComp<S> where S: RaftStorage + Send + Clone + 'static {
     fn on_start(&mut self) -> Handled {
-        info!(self.ctx.log(), "Started RaftComp pid: {}", self.raw_raft.raft.id);
+        let bc = BufferConfig::default();
+        self.ctx.borrow().init_buffers(Some(bc), None);
         self.start_timers();
         Handled::Ok
     }
