@@ -3,6 +3,7 @@ use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
 pub mod all_pairs_shortest_path;
+pub mod atomic_broadcast;
 pub mod atomicregister;
 pub mod chameneos;
 pub mod fibonacci;
@@ -12,7 +13,6 @@ pub mod netpingpong;
 pub mod pingpong;
 pub mod streaming_windows;
 pub mod throughput_pingpong;
-pub mod atomic_broadcast;
 
 pub trait ReceiveRun {
     fn recipient(&self) -> kompact::prelude::Recipient<&'static messages::Run>;
@@ -73,7 +73,9 @@ impl BenchmarkFactory for ComponentFactory {
         Ok(all_pairs_shortest_path::component_apsp::AllPairsShortestPath {}.into())
     }
 
-    fn atomic_broadcast(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 }
@@ -141,7 +143,9 @@ impl BenchmarkFactory for ActorFactory {
         Ok(all_pairs_shortest_path::actor_apsp::AllPairsShortestPath {}.into())
     }
 
-    fn atomic_broadcast(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
 }
@@ -204,7 +208,9 @@ impl BenchmarkFactory for MixedFactory {
         Err(NotImplementedError::FutureWork)
     }
 
-    fn atomic_broadcast(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomic_broadcast::atomic_broadcast::AtomicBroadcast {}.into())
     }
 }

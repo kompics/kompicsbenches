@@ -5,7 +5,8 @@ use synchronoise::CountdownEvent;
 use benchmark_suite_shared::test_utils::{KVTimestamp, KVOperation};
 
 #[derive(ComponentDefinition)]
-pub struct PartitioningActor {  // TODO generalize for different applications by using serialised data as Init msg
+pub struct PartitioningActor {
+    // TODO generalize for different applications by using serialised data as Init msg
     ctx: ComponentContext<PartitioningActor>,
     prepare_latch: Arc<CountdownEvent>,
     finished_latch: Option<Arc<CountdownEvent>>,
@@ -64,17 +65,18 @@ impl Actor for PartitioningActor {
                         pid,
                         init_id: self.init_id,
                         nodes: self.nodes.clone(),
-                        init_data: init_data.clone()
+                        init_data: init_data.clone(),
                     };
-                    node.tell_serialised(PartitioningActorMsg::Init(init), self).expect("Should serialise");
+                    node.tell_serialised(PartitioningActorMsg::Init(init), self)
+                        .expect("Should serialise");
                 }
-            },
+            }
             IterationControlMsg::Run => {
                 for node in &self.nodes {
                     node.tell_serialised(PartitioningActorMsg::Run, self)
                         .expect("Should serialise");
                 }
-            },
+            }
             IterationControlMsg::Stop(stop_latch) => {
                 self.reply_stop = Some(stop_latch);
                 info!(self.ctx.log(), "Stopping iteration {}", self.init_id);
@@ -141,28 +143,28 @@ pub struct Init {
     pub pid: u32,
     pub init_id: u32,
     pub nodes: Vec<ActorPath>,
-    pub init_data: Option<Vec<u8>>
+    pub init_data: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct TestDone(pub Vec<KVTimestamp>);
 
 #[derive(Debug, Clone)]
-pub enum PartitioningActorMsg{
+pub enum PartitioningActorMsg {
     Init(Init),
     InitAck(u32),
     Run,
     Done,
     TestDone(Vec<KVTimestamp>),
     Stop,
-    StopAck
+    StopAck,
 }
 
 #[derive(Debug)]
 pub enum IterationControlMsg {
     Prepare(Option<Vec<u8>>),
     Run,
-    Stop(Ask<(), ()>)
+    Stop(Ask<(), ()>),
 }
 
 pub struct PartitioningActorSer;
@@ -179,7 +181,6 @@ const READ_INV: u8 = 8;
 const READ_RESP: u8 = 9;
 const WRITE_INV: u8 = 10;
 const WRITE_RESP: u8 = 11;
-
 
 impl Serialisable for PartitioningActorMsg {
     fn ser_id(&self) -> u64 {
@@ -210,44 +211,44 @@ impl Serialisable for PartitioningActorMsg {
                         for byte in data {
                             buf.put_u8(*byte);
                         }
-                    },
-                    None => buf.put_u64(0)
+                    }
+                    None => buf.put_u64(0),
                 }
                 buf.put_u32(i.nodes.len() as u32);
                 for node in i.nodes.iter() {
                     node.serialise(buf)?;
                 }
-            },
+            }
             PartitioningActorMsg::InitAck(id) => {
                 buf.put_u8(INITACK_ID);
                 buf.put_u32(*id);
-            },
+            }
             PartitioningActorMsg::Run => buf.put_u8(RUN_ID),
             PartitioningActorMsg::Done => buf.put_u8(DONE_ID),
             PartitioningActorMsg::TestDone(timestamps) => {
                 buf.put_u8(TESTDONE_ID);
                 buf.put_u32(timestamps.len() as u32);
-                for ts in timestamps{
+                for ts in timestamps {
                     buf.put_u64(ts.key);
                     match ts.operation {
                         KVOperation::ReadInvokation => buf.put_u8(READ_INV),
                         KVOperation::ReadResponse => {
                             buf.put_u8(READ_RESP);
                             buf.put_u32(ts.value.unwrap());
-                        },
+                        }
                         KVOperation::WriteInvokation => {
                             buf.put_u8(WRITE_INV);
                             buf.put_u32(ts.value.unwrap());
-                        },
+                        }
                         KVOperation::WriteResponse => {
                             buf.put_u8(WRITE_RESP);
                             buf.put_u32(ts.value.unwrap());
-                        },
+                        }
                     }
                     buf.put_i64(ts.time);
                     buf.put_u32(ts.sender);
                 }
-            },
+            }
             PartitioningActorMsg::Stop => buf.put_u8(STOP_ID),
             PartitioningActorMsg::StopAck => buf.put_u8(STOP_ACK_ID),
         }
@@ -291,11 +292,11 @@ impl Deserialiser<PartitioningActorMsg> for PartitioningActorSer {
                     init_data,
                 };
                 Ok(PartitioningActorMsg::Init(init))
-            },
+            }
             INITACK_ID => {
                 let init_id = buf.get_u32();
                 Ok(PartitioningActorMsg::InitAck(init_id))
-            },
+            }
             RUN_ID => Ok(PartitioningActorMsg::Run),
             DONE_ID => Ok(PartitioningActorMsg::Done),
             TESTDONE_ID => {

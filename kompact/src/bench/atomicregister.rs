@@ -386,7 +386,12 @@ pub mod actor_atomicregister {
     }
 
     impl AtomicRegisterActor {
-        fn with(num_keys: u64, read_workload: f32, write_workload: f32, testing: bool) -> AtomicRegisterActor {
+        fn with(
+            num_keys: u64,
+            read_workload: f32,
+            write_workload: f32,
+            testing: bool,
+        ) -> AtomicRegisterActor {
             AtomicRegisterActor {
                 ctx: ComponentContext::new(),
                 read_workload,
@@ -689,7 +694,7 @@ pub mod actor_atomicregister {
                         num_keys,
                         read_workload.clone(),
                         write_workload.clone(),
-                        true
+                        true,
                     )
                 });
                 let named_reg_f = system.register_by_alias(
@@ -724,13 +729,7 @@ pub mod actor_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = kpromise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(
-                    prepare_latch.clone(),
-                    None,
-                    1,
-                    nodes,
-                    Some(p),
-                )
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -987,7 +986,9 @@ pub mod mixed_atomicregister {
                     partitioning_actor_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never started!");
-                    partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+                    partitioning_actor
+                        .actor_ref()
+                        .tell(IterationControlMsg::Prepare(None));
 
                     self.init_id += 1;
                     self.finished_latch = Some(finished_latch);
@@ -1095,7 +1096,13 @@ pub mod mixed_atomicregister {
 
             /*** Setup atomic register ***/
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
-                AtomicRegisterComp::with(c.num_keys, c.read_workload, c.write_workload, bcast_comp.actor_ref(), false)
+                AtomicRegisterComp::with(
+                    c.num_keys,
+                    c.read_workload,
+                    c.write_workload,
+                    bcast_comp.actor_ref(),
+                    false,
+                )
             });
             let named_reg_f = system.register_by_alias(&atomic_register, "atomicreg_comp");
             unique_reg_f.wait_expect(
@@ -1425,7 +1432,10 @@ pub mod mixed_atomicregister {
         fn receive_local(&mut self, _msg: Self::Message) -> () {
             let master = self.master.as_ref().unwrap();
             let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
-            master.tell_serialised(init_ack, self).expect("Should serialise");
+            master
+                .tell_serialised(init_ack, self)
+                .expect("Should serialise");
+            Handled::Ok
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> () {
@@ -1637,13 +1647,7 @@ pub mod mixed_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = kpromise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(
-                    prepare_latch.clone(),
-                    None,
-                    1,
-                    nodes,
-                    Some(p),
-                )
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1654,7 +1658,9 @@ pub mod mixed_atomicregister {
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("PartitioningComp never started!");
-            partitioning_actor.actor_ref().tell(IterationControlMsg::Prepare(None));
+            partitioning_actor
+                .actor_ref()
+                .tell(IterationControlMsg::Prepare(None));
 
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
