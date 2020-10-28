@@ -154,7 +154,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     fn atomic_broadcast(
         &self,
         _o: grpc::RequestOptions,
-        _p: benchmarks::AtomicBroadcastRequest
+        _p: benchmarks::AtomicBroadcastRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
@@ -293,7 +293,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
     fn atomic_broadcast(
         &self,
         _o: grpc::RequestOptions,
-        _p: benchmarks::AtomicBroadcastRequest
+        _p: benchmarks::AtomicBroadcastRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
@@ -413,7 +413,7 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
     fn atomic_broadcast(
         &self,
         _o: grpc::RequestOptions,
-        _p: benchmarks::AtomicBroadcastRequest
+        _p: benchmarks::AtomicBroadcastRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

@@ -1,10 +1,10 @@
 //use super::*;
 
 use kompact::executors::*;
+use kompact::net::buffers::BufferConfig;
 use kompact::prelude::*;
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use kompact::net::buffers::BufferConfig;
 
 // Would be nicer to be able to declare the default value const -.-
 static mut GLOBAL: KompactSystemProvider = KompactSystemProvider {
@@ -83,7 +83,7 @@ impl KompactSystemProvider {
         threads: usize,
         mut conf: KompactConfig,
         buf_conf: BufferConfig,
-        tcp_no_delay: bool
+        tcp_no_delay: bool,
     ) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);

@@ -1,18 +1,25 @@
 pub mod raft {
     extern crate raft as tikv_raft;
 
-    use tikv_raft::{Error, StorageError, util::limit_size, storage::*, prelude::*};
     use memmap::MmapMut;
-    use std::{path::PathBuf, fs::OpenOptions, io::Write, ops::Range, convert::TryInto, fs::File, mem::size_of, fs::create_dir_all, io::SeekFrom};
-    use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-    use std::io::prelude::*;
+    use protobuf::{parse_from_bytes, Message as PbMessage};
     use std::fs::remove_dir_all;
-    use std::io::{ErrorKind::NotFound, Error as IOError};
-    use protobuf::{Message as PbMessage, parse_from_bytes};
+    use std::io::prelude::*;
+    use std::io::{Error as IOError, ErrorKind::NotFound};
+    use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+    use std::{
+        convert::TryInto, fs::create_dir_all, fs::File, fs::OpenOptions, io::SeekFrom, io::Write,
+        mem::size_of, ops::Range, path::PathBuf,
+    };
+    use tikv_raft::{prelude::*, storage::*, util::limit_size, Error, StorageError};
 
     pub trait RaftStorage: Storage {
         fn append_log(&mut self, entries: &[tikv_raft::eraftpb::Entry]) -> Result<(), Error>;
-        fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>);
+        fn set_conf_state(
+            &mut self,
+            cs: ConfState,
+            pending_membership_change: Option<(ConfState, u64)>,
+        );
         fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error>;
         fn new_with_conf_state(dir: Option<&str>, conf_state: (Vec<u64>, Vec<u64>)) -> Self;
         fn clear(&mut self) -> Result<(), IOError>;
@@ -23,7 +30,11 @@ pub mod raft {
             self.wl().append(entries)
         }
 
-        fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+        fn set_conf_state(
+            &mut self,
+            cs: ConfState,
+            pending_membership_change: Option<(ConfState, u64)>,
+        ) {
             self.wl().set_conf_state(cs, pending_membership_change);
         }
 
@@ -42,17 +53,20 @@ pub mod raft {
         }
     }
 
-    struct FileMmap{file: File, mem_map: MmapMut}
+    struct FileMmap {
+        file: File,
+        mem_map: MmapMut,
+    }
 
     impl FileMmap {
-        fn new(file: File, mem_map: MmapMut) -> FileMmap{
-            FileMmap{ file, mem_map}
+        fn new(file: File, mem_map: MmapMut) -> FileMmap {
+            FileMmap { file, mem_map }
         }
     }
 
     #[derive(Clone)]
     pub struct DiskStorage {
-        core: Arc<RwLock<DiskStorageCore>>
+        core: Arc<RwLock<DiskStorageCore>>,
     }
 
     impl DiskStorage {
@@ -71,13 +85,14 @@ pub mod raft {
         #[allow(dead_code)]
         pub fn new(dir: &str) -> DiskStorage {
             let core = Arc::new(RwLock::new(DiskStorageCore::new(dir)));
-            DiskStorage{ core }
+            DiskStorage { core }
         }
 
-        pub fn new_with_conf_state(dir: &str, conf_state: (Vec<u64>, Vec<u64>)) -> DiskStorage
-        {
-            let core = Arc::new(RwLock::new(DiskStorageCore::new_with_conf_state(dir, conf_state)));
-            DiskStorage{ core }
+        pub fn new_with_conf_state(dir: &str, conf_state: (Vec<u64>, Vec<u64>)) -> DiskStorage {
+            let core = Arc::new(RwLock::new(DiskStorageCore::new_with_conf_state(
+                dir, conf_state,
+            )));
+            DiskStorage { core }
         }
     }
 
@@ -86,7 +101,11 @@ pub mod raft {
             self.wl().append_log(entries)
         }
 
-        fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+        fn set_conf_state(
+            &mut self,
+            cs: ConfState,
+            pending_membership_change: Option<(ConfState, u64)>,
+        ) {
             self.wl().set_conf_state(cs, pending_membership_change);
         }
 
@@ -108,7 +127,12 @@ pub mod raft {
             self.rl().initial_state()
         }
 
-        fn entries(&self, low: u64, high: u64, max_size: impl Into<Option<u64>>) -> Result<Vec<Entry>, Error> {
+        fn entries(
+            &self,
+            low: u64,
+            high: u64,
+            max_size: impl Into<Option<u64>>,
+        ) -> Result<Vec<Entry>, Error> {
             self.wl().entries(low, high, max_size)
         }
 
@@ -136,7 +160,7 @@ pub mod raft {
         conf_state: ConfState,
         hard_state: MmapMut,
         log: FileMmap,
-        offset: FileMmap,   // file that maps from index to byte offset
+        offset: FileMmap,       // file that maps from index to byte offset
         raft_metadata: MmapMut, // memory map with metadata of raft index of first and last entry in log
         // TODO: Persist these as well?
         num_entries: u64,
@@ -148,59 +172,119 @@ pub mod raft {
         const VOTE_INDEX: Range<usize> = 8..16;
         const COMMIT_INDEX: Range<usize> = 16..24;
 
-        const FIRST_INDEX_IS_SET: Range<usize> = 0..1;    // 1 if first_index is set
+        const FIRST_INDEX_IS_SET: Range<usize> = 0..1; // 1 if first_index is set
         const FIRST_INDEX: Range<usize> = 1..9;
-        const LAST_INDEX_IS_SET: Range<usize> = 9..10;    // 1 if last_index is set
+        const LAST_INDEX_IS_SET: Range<usize> = 9..10; // 1 if last_index is set
         const LAST_INDEX: Range<usize> = 10..18;
 
         const FILE_SIZE: u64 = 20971520;
 
         fn new(dir: &str) -> DiskStorageCore {
-            create_dir_all(dir).unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
+            create_dir_all(dir)
+                .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
 
             let log_path = PathBuf::from(format!("{}/log", dir));
-            let log_file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&log_path).expect("Failed to create/open log file");
-            log_file.set_len(DiskStorageCore::FILE_SIZE).expect("Failed to set file length of log");  // LogCabin also uses 8MB files...
-            let log_mmap = unsafe { MmapMut::map_mut(&log_file).expect("Failed to create memory map for log") };
+            let log_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&log_path)
+                .expect("Failed to create/open log file");
+            log_file
+                .set_len(DiskStorageCore::FILE_SIZE)
+                .expect("Failed to set file length of log"); // LogCabin also uses 8MB files...
+            let log_mmap = unsafe {
+                MmapMut::map_mut(&log_file).expect("Failed to create memory map for log")
+            };
             let log = FileMmap::new(log_file, log_mmap);
 
             let hs_path = PathBuf::from(format!("{}/hard_state", dir));
-            let hs_file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&hs_path).expect("Failed to create/open hard_state file");
-            hs_file.set_len(3*size_of::<u64>() as u64).expect("Failed to set file length of hard_state");    // we only need 3 u64: term, vote and commit
-            let hard_state = unsafe { MmapMut::map_mut(&hs_file).expect("Failed to create memory map for hard_state") };
+            let hs_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&hs_path)
+                .expect("Failed to create/open hard_state file");
+            hs_file
+                .set_len(3 * size_of::<u64>() as u64)
+                .expect("Failed to set file length of hard_state"); // we only need 3 u64: term, vote and commit
+            let hard_state = unsafe {
+                MmapMut::map_mut(&hs_file).expect("Failed to create memory map for hard_state")
+            };
 
             let offset_path = PathBuf::from(format!("{}/offset", dir));
-            let offset_file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&offset_path).expect("Failed to create/open offset file");
-            offset_file.set_len(DiskStorageCore::FILE_SIZE).expect("Failed to set file length of offset");
-            let offset_mmap = unsafe { MmapMut::map_mut(&offset_file).expect("Failed to create memory map for offset") };
+            let offset_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&offset_path)
+                .expect("Failed to create/open offset file");
+            offset_file
+                .set_len(DiskStorageCore::FILE_SIZE)
+                .expect("Failed to set file length of offset");
+            let offset_mmap = unsafe {
+                MmapMut::map_mut(&offset_file).expect("Failed to create memory map for offset")
+            };
             let offset = FileMmap::new(offset_file, offset_mmap);
 
             let raft_metadata_path = PathBuf::from(format!("{}/raft_metadata", dir));
-            let raft_metadata_file = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(&raft_metadata_path).expect("Failed to create/open raft_metadata file");
-            raft_metadata_file.set_len((2*size_of::<u64>() + 2) as u64).expect("Failed to set file length of raft_file");    // we need 2 u64: first and last index and 2 bytes to check if they are set
-            let raft_metadata = unsafe { MmapMut::map_mut(&raft_metadata_file).expect("Failed to create memory map for raft_metadata") };
+            let raft_metadata_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&raft_metadata_path)
+                .expect("Failed to create/open raft_metadata file");
+            raft_metadata_file
+                .set_len((2 * size_of::<u64>() + 2) as u64)
+                .expect("Failed to set file length of raft_file"); // we need 2 u64: first and last index and 2 bytes to check if they are set
+            let raft_metadata = unsafe {
+                MmapMut::map_mut(&raft_metadata_file)
+                    .expect("Failed to create memory map for raft_metadata")
+            };
 
             let conf_state = ConfState::new();
             let snapshot_metadata: SnapshotMetadata = Default::default();
 
-            DiskStorageCore { dir: String::from(dir), conf_state, hard_state, log, offset, raft_metadata, num_entries: 0, snapshot_metadata, pending_conf_state: None, pending_conf_state_start_index: None }
+            DiskStorageCore {
+                dir: String::from(dir),
+                conf_state,
+                hard_state,
+                log,
+                offset,
+                raft_metadata,
+                num_entries: 0,
+                snapshot_metadata,
+                pending_conf_state: None,
+                pending_conf_state_start_index: None,
+            }
         }
 
         fn new_with_conf_state<T>(dir: &str, conf_state: T) -> DiskStorageCore
-            where
-                ConfState: From<T>
+        where
+            ConfState: From<T>,
         {
             let mut store = DiskStorageCore::new(dir);
             store.conf_state = ConfState::from(conf_state);
             store.snapshot_metadata.index = 1;
             store.snapshot_metadata.term = 1;
-            (&mut store.hard_state[DiskStorageCore::TERM_INDEX]).write(&1u64.to_be_bytes()).expect("Failed to write hard state term");
-            (&mut store.hard_state[DiskStorageCore::COMMIT_INDEX]).write(&1u64.to_be_bytes()).expect("Failed to write hard state commit");
+            (&mut store.hard_state[DiskStorageCore::TERM_INDEX])
+                .write(&1u64.to_be_bytes())
+                .expect("Failed to write hard state term");
+            (&mut store.hard_state[DiskStorageCore::COMMIT_INDEX])
+                .write(&1u64.to_be_bytes())
+                .expect("Failed to write hard state commit");
             store
         }
 
         fn read_hard_state_field(&self, field: Range<usize>) -> u64 {
-            let bytes = self.hard_state.get(field).expect("Failed to read bytes from hard_state");
+            let bytes = self
+                .hard_state
+                .get(field)
+                .expect("Failed to read bytes from hard_state");
             u64::from_be_bytes(bytes.try_into().expect("Failed to deserialise to u64"))
         }
 
@@ -215,7 +299,8 @@ pub mod raft {
             hs
         }
 
-        fn append_entries(&mut self, entries: &[Entry], from_log_index: u64) -> Result<(), Error> {    // appends all entries starting from a given log index
+        fn append_entries(&mut self, entries: &[Entry], from_log_index: u64) -> Result<(), Error> {
+            // appends all entries starting from a given log index
             let from = if from_log_index >= self.num_entries {
                 SeekFrom::Current(0)
             } else {
@@ -226,30 +311,41 @@ pub mod raft {
             let new_first_index = entries[0].index;
             let new_last_index = entries.last().unwrap().index;
             for (i, e) in entries.iter().enumerate() {
-                let current_offset = self.log.file.seek(SeekFrom::Current(0)).expect("Failed to get current seeked offset");    // byte offset in log file
-                let ser_entry = e.write_to_bytes().expect("Protobuf failed to serialise Entry");
+                let current_offset = self
+                    .log
+                    .file
+                    .seek(SeekFrom::Current(0))
+                    .expect("Failed to get current seeked offset"); // byte offset in log file
+                let ser_entry = e
+                    .write_to_bytes()
+                    .expect("Protobuf failed to serialise Entry");
                 let ser_entry_len = ser_entry.len() as u64;
                 let ser_len = ser_entry_len.to_be_bytes();
-                self.log.file.write(&ser_len)?;  // write len of serialised entry
-                match self.log.file.write(&ser_entry) { // write entry
+                self.log.file.write(&ser_len)?; // write len of serialised entry
+                match self.log.file.write(&ser_entry) {
+                    // write entry
                     Ok(_) => {
                         // write to offset file
                         let start = (from_log_index as usize + i) * size_of::<u64>();
                         let stop = start + size_of::<u64>();
-                        (&mut self.offset.mem_map[start..stop]).write(&current_offset.to_be_bytes()).expect("Failed to write to offset");
+                        (&mut self.offset.mem_map[start..stop])
+                            .write(&current_offset.to_be_bytes())
+                            .expect("Failed to write to offset");
                     }
-                    _ => panic!("Failed to write to log")
+                    _ => panic!("Failed to write to log"),
                 }
             }
             if from_log_index == 0 {
-                self.set_raft_metadata(DiskStorageCore::FIRST_INDEX, new_first_index).expect("Failed to set first index metadata");
+                self.set_raft_metadata(DiskStorageCore::FIRST_INDEX, new_first_index)
+                    .expect("Failed to set first index metadata");
             }
             let num_removed_entries = self.num_entries - from_log_index;
             self.num_entries = self.num_entries + num_added_entries - num_removed_entries;
-            self.set_raft_metadata(DiskStorageCore::LAST_INDEX, new_last_index).expect("Failed to set last index metadata");
+            self.set_raft_metadata(DiskStorageCore::LAST_INDEX, new_last_index)
+                .expect("Failed to set last index metadata");
             self.log.file.flush()?;
             self.offset.file.flush()?;
-//        println!("N: {}, last_index: {}", self.num_entries, new_last_index);
+            //        println!("N: {}, last_index: {}", self.num_entries, new_last_index);
             Ok(())
         }
 
@@ -269,7 +365,13 @@ pub mod raft {
             let entry_len = self.log.mem_map.get(start..stop);
             let des_entry_len = u64::from_be_bytes(entry_len.unwrap().try_into().unwrap());
             let r = stop..(stop + des_entry_len as usize);
-            let entry = self.log.mem_map.get(r).unwrap_or_else(|| panic!("Failed to get serialised entry in range {}..{}", stop, stop + des_entry_len as usize));
+            let entry = self.log.mem_map.get(r).unwrap_or_else(|| {
+                panic!(
+                    "Failed to get serialised entry in range {}..{}",
+                    stop,
+                    stop + des_entry_len as usize
+                )
+            });
             parse_from_bytes::<Entry>(entry).expect("Protobuf failed to deserialise entry")
         }
 
@@ -277,14 +379,20 @@ pub mod raft {
             assert!(field == DiskStorageCore::FIRST_INDEX || field == DiskStorageCore::LAST_INDEX);
             match field {
                 DiskStorageCore::FIRST_INDEX => {
-                    (&mut self.raft_metadata[DiskStorageCore::FIRST_INDEX_IS_SET]).write(&[1u8]).expect("Failed to set first_index bit");
-                },
+                    (&mut self.raft_metadata[DiskStorageCore::FIRST_INDEX_IS_SET])
+                        .write(&[1u8])
+                        .expect("Failed to set first_index bit");
+                }
                 DiskStorageCore::LAST_INDEX => {
-                    (&mut self.raft_metadata[DiskStorageCore::LAST_INDEX_IS_SET]).write(&[1u8]).expect("Failed to set last_index bit");
-                },
+                    (&mut self.raft_metadata[DiskStorageCore::LAST_INDEX_IS_SET])
+                        .write(&[1u8])
+                        .expect("Failed to set last_index bit");
+                }
                 _ => panic!("Unexpected field"),
             }
-            (&mut self.raft_metadata[field]).write(&value.to_be_bytes()).expect("Failed to write raft metadata");
+            (&mut self.raft_metadata[field])
+                .write(&value.to_be_bytes())
+                .expect("Failed to write raft metadata");
             self.raft_metadata.flush()?;
             Ok(())
         }
@@ -292,27 +400,43 @@ pub mod raft {
         fn get_raft_metadata(&self, field: Range<usize>) -> Option<u64> {
             match field {
                 DiskStorageCore::FIRST_INDEX => {
-                    if self.raft_metadata.get(DiskStorageCore::FIRST_INDEX_IS_SET).unwrap()[0] == 0 {
+                    if self
+                        .raft_metadata
+                        .get(DiskStorageCore::FIRST_INDEX_IS_SET)
+                        .unwrap()[0]
+                        == 0
+                    {
                         None
                     } else {
                         let bytes = self.raft_metadata.get(field).unwrap();
-                        Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")))
+                        Some(u64::from_be_bytes(
+                            bytes.try_into().expect("Could not deserialise to u64"),
+                        ))
                     }
-                },
+                }
                 DiskStorageCore::LAST_INDEX => {
-                    if self.raft_metadata.get(DiskStorageCore::LAST_INDEX_IS_SET).unwrap()[0] == 0 {
+                    if self
+                        .raft_metadata
+                        .get(DiskStorageCore::LAST_INDEX_IS_SET)
+                        .unwrap()[0]
+                        == 0
+                    {
                         None
                     } else {
                         let bytes = self.raft_metadata.get(field).unwrap();
-                        Some(u64::from_be_bytes(bytes.try_into().expect("Could not deserialise to u64")))
+                        Some(u64::from_be_bytes(
+                            bytes.try_into().expect("Could not deserialise to u64"),
+                        ))
                     }
-                },
+                }
                 _ => panic!("Got unexpected field in get_raft_metadata"),
             }
         }
 
         fn append_log(&mut self, entries: &[Entry]) -> Result<(), Error> {
-            if entries.is_empty() { return Ok(()); }
+            if entries.is_empty() {
+                return Ok(());
+            }
             let first_index = self.first_index().expect("Failed to get first index");
             if first_index > entries[0].index {
                 panic!(
@@ -325,15 +449,18 @@ pub mod raft {
             if last_index + 1 < entries[0].index {
                 panic!(
                     "raft logs should be continuous, last index: {}, new appended: {}",
-                    last_index,
-                    entries[0].index,
+                    last_index, entries[0].index,
                 );
             }
             let diff = entries[0].index - first_index;
             self.append_entries(entries, diff)
         }
 
-        fn set_conf_state(&mut self, cs: ConfState, pending_membership_change: Option<(ConfState, u64)>) {
+        fn set_conf_state(
+            &mut self,
+            cs: ConfState,
+            pending_membership_change: Option<(ConfState, u64)>,
+        ) {
             self.conf_state = cs;
             if let Some((cs, idx)) = pending_membership_change {
                 self.pending_conf_state = Some(cs);
@@ -368,7 +495,12 @@ pub mod raft {
             Ok(rs)
         }
 
-        fn entries(&self, low: u64, high: u64, max_size: impl Into<Option<u64>>) -> Result<Vec<Entry>, Error> {
+        fn entries(
+            &self,
+            low: u64,
+            high: u64,
+            max_size: impl Into<Option<u64>>,
+        ) -> Result<Vec<Entry>, Error> {
             let first_index = self.first_index()?;
             if low < first_index {
                 return Err(Error::Store(StorageError::Compacted));
@@ -403,7 +535,13 @@ pub mod raft {
             }
             let log_index = idx - offset;
             if log_index >= self.num_entries {
-                println!("{}", format!("log_index: {}, num_entries: {}, idx: {}, offset: {}", log_index, self.num_entries, idx, offset));
+                println!(
+                    "{}",
+                    format!(
+                        "log_index: {}, num_entries: {}, idx: {}, offset: {}",
+                        log_index, self.num_entries, idx, offset
+                    )
+                );
                 return Err(Error::Store(StorageError::Unavailable));
             }
             Ok(self.get_entry(log_index).term)
@@ -412,14 +550,14 @@ pub mod raft {
         fn first_index(&self) -> Result<u64, Error> {
             match self.get_raft_metadata(DiskStorageCore::FIRST_INDEX) {
                 Some(index) => Ok(index),
-                None => Ok(self.snapshot_metadata.index + 1)
+                None => Ok(self.snapshot_metadata.index + 1),
             }
         }
 
         fn last_index(&self) -> Result<u64, Error> {
             match self.get_raft_metadata(DiskStorageCore::LAST_INDEX) {
                 Some(index) => Ok(index),
-                None => Ok(self.snapshot_metadata.index)
+                None => Ok(self.snapshot_metadata.index),
             }
         }
 
@@ -454,7 +592,7 @@ pub mod raft {
                 (6, Err(Error::Store(StorageError::Unavailable))),
             ];
 
-            let mut store = DiskStorage::new_with_conf_state("term_test", (vec![1,2,3], vec![]));
+            let mut store = DiskStorage::new_with_conf_state("term_test", (vec![1, 2, 3], vec![]));
             store.append_log(&ents).expect("Failed to append logs");
 
             for (i, (idx, wterm)) in tests.drain(..).enumerate() {
@@ -467,7 +605,7 @@ pub mod raft {
         }
 
         #[test]
-        fn diskstorage_entries_test(){
+        fn diskstorage_entries_test() {
             let ents = vec![
                 new_entry(2, 2),
                 new_entry(3, 3),
@@ -481,17 +619,43 @@ pub mod raft {
                 (3, 4, max_u64, Ok(vec![new_entry(3, 3)])),
                 (4, 5, max_u64, Ok(vec![new_entry(4, 4)])),
                 (4, 6, max_u64, Ok(vec![new_entry(4, 4), new_entry(5, 5)])),
-                (4, 7, max_u64, Ok(vec![new_entry(4, 4), new_entry(5, 5), new_entry(6, 6)])),
+                (
+                    4,
+                    7,
+                    max_u64,
+                    Ok(vec![new_entry(4, 4), new_entry(5, 5), new_entry(6, 6)]),
+                ),
                 // even if maxsize is zero, the first entry should be returned
                 (4, 7, 0, Ok(vec![new_entry(4, 4)])),
                 // limit to 2
-                (4, 7, u64::from(size_of(&ents[1]) + size_of(&ents[2])), Ok(vec![new_entry(4, 4), new_entry(5, 5)])),
-                (4, 7, u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3]) / 2), Ok(vec![new_entry(4, 4), new_entry(5, 5)])),
-                (4, 7, u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3]) - 1), Ok(vec![new_entry(4, 4), new_entry(5, 5)])),
+                (
+                    4,
+                    7,
+                    u64::from(size_of(&ents[1]) + size_of(&ents[2])),
+                    Ok(vec![new_entry(4, 4), new_entry(5, 5)]),
+                ),
+                (
+                    4,
+                    7,
+                    u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3]) / 2),
+                    Ok(vec![new_entry(4, 4), new_entry(5, 5)]),
+                ),
+                (
+                    4,
+                    7,
+                    u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3]) - 1),
+                    Ok(vec![new_entry(4, 4), new_entry(5, 5)]),
+                ),
                 // all
-                (4, 7, u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3])), Ok(vec![new_entry(4, 4), new_entry(5, 5), new_entry(6, 6)])),
+                (
+                    4,
+                    7,
+                    u64::from(size_of(&ents[1]) + size_of(&ents[2]) + size_of(&ents[3])),
+                    Ok(vec![new_entry(4, 4), new_entry(5, 5), new_entry(6, 6)]),
+                ),
             ];
-            let mut storage = DiskStorage::new_with_conf_state("entries_test", (vec![1,2,3], vec![]));
+            let mut storage =
+                DiskStorage::new_with_conf_state("entries_test", (vec![1, 2, 3], vec![]));
             storage.append_log(&ents).expect("Failed to append logs");
             for (i, (lo, hi, maxsize, wentries)) in tests.drain(..).enumerate() {
                 let e = storage.entries(lo, hi, maxsize);
@@ -511,15 +675,19 @@ pub mod raft {
                 new_entry(5, 3),
                 new_entry(6, 3),
             ];
-            let mut storage = DiskStorage::new_with_conf_state("overwrite_entries_test", (vec![1,2,3], vec![]));
+            let mut storage =
+                DiskStorage::new_with_conf_state("overwrite_entries_test", (vec![1, 2, 3], vec![]));
             storage.append_log(&ents).expect("Failed to append logs");
-            let overwrite_ents = vec![
-                new_entry(3, 3),
-                new_entry(4, 4),
-                new_entry(5, 5),
+            let overwrite_ents = vec![new_entry(3, 3), new_entry(4, 4), new_entry(5, 5)];
+            storage
+                .append_log(&overwrite_ents)
+                .expect("Failed to append logs");
+            let tests = vec![
+                (3, Ok(3)),
+                (4, Ok(4)),
+                (5, Ok(5)),
+                (6, Err(Error::Store(StorageError::Unavailable))),
             ];
-            storage.append_log(&overwrite_ents).expect("Failed to append logs");
-            let tests = vec![(3, Ok(3)), (4, Ok(4)), (5, Ok(5)), (6, Err(Error::Store(StorageError::Unavailable)))];
             for (idx, exp) in tests {
                 let res = storage.term(idx as u64);
                 assert_eq!(res, exp);
@@ -536,16 +704,15 @@ pub mod raft {
                 new_entry(5, 5),
                 new_entry(6, 6),
             ];
-            let mut storage = DiskStorage::new_with_conf_state("metadata_test", (vec![1,2,3], vec![]));
+            let mut storage =
+                DiskStorage::new_with_conf_state("metadata_test", (vec![1, 2, 3], vec![]));
             storage.append_log(&ents).expect("Failed to append logs");
             assert_eq!(storage.first_index(), Ok(2));
             assert_eq!(storage.last_index(), Ok(6));
-            let overwrite_ents = vec![
-                new_entry(3, 3),
-                new_entry(4, 4),
-                new_entry(5, 5),
-            ];
-            storage.append_log(&overwrite_ents).expect("Failed to append logs");
+            let overwrite_ents = vec![new_entry(3, 3), new_entry(4, 4), new_entry(5, 5)];
+            storage
+                .append_log(&overwrite_ents)
+                .expect("Failed to append logs");
             assert_eq!(storage.first_index(), Ok(2));
             assert_eq!(storage.last_index(), Ok(5));
             remove_dir_all("metadata_test").expect("Failed to remove test storage files");
@@ -554,13 +721,13 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use std::fmt::Debug;
-    use super::super::messages::paxos::{ballot_leader_election::Ballot};
-    use super::super::paxos::{SequenceTraits, PaxosStateTraits, raw_paxos::Entry};
-    use std::sync::Arc;
-    use std::mem;
+    use super::super::messages::paxos::ballot_leader_election::Ballot;
+    use super::super::paxos::{raw_paxos::Entry, PaxosStateTraits, SequenceTraits};
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
     use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
+    use std::fmt::Debug;
+    use std::mem;
+    use std::sync::Arc;
 
     pub trait Sequence {
         fn new() -> Self;
@@ -604,27 +771,35 @@ pub mod paxos {
         fn get_promise(&self) -> Ballot;
     }
 
-    enum PaxosSequence<S> where S: Sequence {
+    enum PaxosSequence<S>
+    where
+        S: Sequence,
+    {
         Active(S),
         Stopped(Arc<S>),
-        None // ugly intermediate value to use with mem::replace
+        None, // ugly intermediate value to use with mem::replace
     }
 
-    pub struct Storage<S, P> where
+    pub struct Storage<S, P>
+    where
         S: Sequence,
-        P: PaxosState
+        P: PaxosState,
     {
         sequence: PaxosSequence<S>,
         paxos_state: P,
     }
 
-    impl<S, P> Storage<S, P> where
+    impl<S, P> Storage<S, P>
+    where
         S: Sequence,
-        P: PaxosState
+        P: PaxosState,
     {
         pub fn with(seq: S, paxos_state: P) -> Storage<S, P> {
             let sequence = PaxosSequence::Active(seq);
-            Storage { sequence, paxos_state }
+            Storage {
+                sequence,
+                paxos_state,
+            }
         }
 
         pub fn append_entry(&mut self, entry: Entry) -> u64 {
@@ -632,11 +807,11 @@ pub mod paxos {
                 PaxosSequence::Active(s) => {
                     s.append_entry(entry);
                     s.get_sequence_len()
-                },
+                }
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
-                },
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                }
+                _ => panic!("Got unexpected intermediate PaxosSequence::None"),
             }
         }
 
@@ -645,11 +820,11 @@ pub mod paxos {
                 PaxosSequence::Active(s) => {
                     s.append_sequence(sequence);
                     s.get_sequence_len()
-                },
+                }
                 PaxosSequence::Stopped(_) => {
                     panic!("Sequence should not be modified after reconfiguration");
-                },
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                }
+                _ => panic!("Got unexpected intermediate PaxosSequence::None"),
             }
         }
 
@@ -658,15 +833,15 @@ pub mod paxos {
                 PaxosSequence::Active(s) => {
                     s.append_on_prefix(from_idx, seq);
                     s.get_sequence_len()
-                },
+                }
                 PaxosSequence::Stopped(s) => {
                     if &s.get_suffix(from_idx) != seq {
                         panic!("Sequence should not be modified after reconfiguration");
                     } else {
                         s.get_sequence_len()
                     }
-                },
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                }
+                _ => panic!("Got unexpected intermediate PaxosSequence::None"),
             }
         }
 
@@ -676,13 +851,13 @@ pub mod paxos {
                 PaxosSequence::Active(s) => {
                     let mut sequence = seq;
                     s.append_on_prefix(from_idx, &mut sequence);
-                },
+                }
                 PaxosSequence::Stopped(_) => {
                     if !seq.is_empty() {
                         panic!("Sequence should not be modified after reconfiguration");
                     }
-                },
-                _ => panic!("Got unexpected intermediate PaxosSequence::None")
+                }
+                _ => panic!("Got unexpected intermediate PaxosSequence::None"),
             }
         }
 
@@ -749,7 +924,7 @@ pub mod paxos {
                     let arc_s = Arc::from(s);
                     self.sequence = PaxosSequence::Stopped(arc_s.clone());
                     arc_s
-                },
+                }
                 _ => panic!("Storage should already have been stopped!"),
             }
         }
@@ -765,18 +940,20 @@ pub mod paxos {
 
     #[derive(Debug)]
     pub struct MemorySequence {
-        sequence: Vec<Entry>
+        sequence: Vec<Entry>,
     }
 
     impl SequenceTraits for MemorySequence {}
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence{ sequence: Vec::with_capacity(MAX_INFLIGHT) }
+            MemorySequence {
+                sequence: Vec::with_capacity(MAX_INFLIGHT),
+            }
         }
 
         fn new_with_sequence(seq: Vec<Entry>) -> Self {
-            MemorySequence{ sequence: seq }
+            MemorySequence { sequence: seq }
         }
 
         fn append_entry(&mut self, entry: Entry) {
@@ -795,7 +972,12 @@ pub mod paxos {
         fn get_entries(&self, from: u64, to: u64) -> &[Entry] {
             match self.sequence.get(from as usize..to as usize) {
                 Some(ents) => ents,
-                None => panic!("get_entries out of bounds. From: {}, To: {}, len: {}", from, to, self.sequence.len())
+                None => panic!(
+                    "get_entries out of bounds. From: {}, To: {}, len: {}",
+                    from,
+                    to,
+                    self.sequence.len()
+                ),
             }
         }
 
@@ -805,7 +987,7 @@ pub mod paxos {
                     let mut bytes = Vec::with_capacity(((to - from) * 8) as usize);
                     PaxosSer::serialise_entries(ents, &mut bytes);
                     Some(bytes)
-                },
+                }
                 _ => None,
             }
         }
@@ -813,7 +995,7 @@ pub mod paxos {
         fn get_suffix(&self, from: u64) -> Vec<Entry> {
             match self.sequence.get(from as usize..) {
                 Some(s) => s.to_vec(),
-                None => vec![]
+                None => vec![],
             }
         }
 
@@ -824,7 +1006,7 @@ pub mod paxos {
                     let mut bytes: Vec<u8> = Vec::with_capacity(len * 40);
                     PaxosSer::serialise_entries(s, &mut bytes);
                     Some(bytes)
-                },
+                }
                 None => None,
             }
         }
@@ -838,9 +1020,9 @@ pub mod paxos {
         }
 
         fn stopped(&self) -> bool {
-             match self.sequence.last() {
-                 Some(entry) => entry.is_stopsign(),
-                 None => false
+            match self.sequence.last() {
+                Some(entry) => entry.is_stopsign(),
+                None => false,
             }
         }
     }
@@ -857,7 +1039,11 @@ pub mod paxos {
     impl PaxosState for MemoryState {
         fn new() -> Self {
             let ballot = Ballot::with(0, 0);
-            MemoryState{ n_prom: ballot, acc_round: ballot, ld: 0 }
+            MemoryState {
+                n_prom: ballot,
+                acc_round: ballot,
+                ld: 0,
+            }
         }
 
         fn set_promise(&mut self, nprom: Ballot) {

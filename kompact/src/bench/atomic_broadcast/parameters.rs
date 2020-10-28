@@ -1,9 +1,9 @@
 pub const ELECTION_TIMEOUT: u64 = 5000;
 pub const OUTGOING_MSGS_PERIOD: u64 = 1;
-pub const MAX_INFLIGHT: usize = 10000000;   // capacity of number of messages in parallel. Set to max batch size in experiment test space
-pub const INITIAL_ELECTION_FACTOR: u64 = 10;   // shorter first election: ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
+pub const MAX_INFLIGHT: usize = 10000000; // capacity of number of messages in parallel. Set to max batch size in experiment test space
+pub const INITIAL_ELECTION_FACTOR: u64 = 10; // shorter first election: ELECTION_TIMEOUT/INITIAL_ELECTION_FACTOR
 pub const META_RESULTS_DIR: &str = "../meta_results/meta-arcon1-reconfiguration"; // change for each benchmark
-pub const DATA_SIZE_HINT: usize = 8;  // u64 proposals
+pub const DATA_SIZE_HINT: usize = 8; // u64 proposals
 
 pub mod paxos {
     pub const GET_DECIDED_PERIOD: u64 = 1;
@@ -13,7 +13,7 @@ pub mod paxos {
 }
 
 pub mod raft {
-    pub const TICK_PERIOD: u64 = 100;   // one tick = +1 in logical clock
+    pub const TICK_PERIOD: u64 = 100; // one tick = +1 in logical clock
     pub const LEADER_HEARTBEAT_PERIOD: u64 = 1000;
     pub const MAX_BATCH_SIZE: u64 = u64::max_value();
 }

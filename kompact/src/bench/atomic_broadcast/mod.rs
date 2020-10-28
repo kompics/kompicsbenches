@@ -1,8 +1,8 @@
 pub mod atomic_broadcast;
-mod raft;
-mod paxos;
 mod client;
-mod messages;
-mod storage;
 mod communicator;
+mod messages;
 mod parameters;
+mod paxos;
+mod raft;
+mod storage;
