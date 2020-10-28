@@ -7,7 +7,7 @@ use super::messages::paxos::{ReconfigInit, ReconfigSer, SequenceTransfer, Sequen
 use super::communicator::{CommunicationPort, AtomicBroadcastCompMsg, CommunicatorMsg, Communicator};
 use super::parameters::{*, paxos::*};
 use crate::partitioning_actor::{PartitioningActorSer, PartitioningActorMsg, Init};
-use std::{sync::Arc, time::Duration, ops::DerefMut, fmt::Debug};
+use std::{sync::Arc, time::Duration, ops::DerefMut, fmt::Debug, borrow::Borrow};
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
 use raw_paxos::{Entry, Paxos};
 use uuid::Uuid;
@@ -535,9 +535,7 @@ impl<S> From<KillResponse> for PaxosReplicaMsg<S> where S: SequenceTraits{
     }
 }
 
-impl<S, P> ComponentLifecycle for PaxosReplica<S, P> where S: SequenceTraits, P: PaxosStateTraits {
-
-}
+impl<S, P> ComponentLifecycle for PaxosReplica<S, P> where S: SequenceTraits, P: PaxosStateTraits {}
 
 impl<S, P> Actor for PaxosReplica<S, P> where
     S: SequenceTraits,
@@ -1031,6 +1029,8 @@ impl<S, P> Actor for PaxosComp<S, P> where
 
 impl<S, P> ComponentLifecycle for PaxosComp<S, P> where S: SequenceTraits, P: PaxosStateTraits {
     fn on_start(&mut self) -> Handled {
+        let bc = BufferConfig::default();
+        self.ctx.borrow().init_buffers(Some(bc), None);
         self.start_timers();
         Handled::Ok
     }
@@ -1936,6 +1936,8 @@ mod ballot_leader_election {
     impl ComponentLifecycle for BallotLeaderComp {
         fn on_start(&mut self) -> Handled {
             // info!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, round: {}, max_ballot: {:?}", self.current_ballot, self.quick_timeout, self.round, self.max_ballot);
+            let bc = BufferConfig::default();
+            self.ctx.borrow().init_buffers(Some(bc), None);
             for peer in &self.peers {
                 let hb_request = HeartbeatRequest::with(self.round, self.max_ballot);
                 peer.tell_serialised(HeartbeatMsg::Request(hb_request),self).expect("HBRequest should serialise!");

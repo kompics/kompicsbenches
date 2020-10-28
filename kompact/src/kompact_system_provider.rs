@@ -83,6 +83,7 @@ impl KompactSystemProvider {
         threads: usize,
         mut conf: KompactConfig,
         buf_conf: BufferConfig,
+        tcp_no_delay: bool
     ) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
@@ -90,7 +91,9 @@ impl KompactSystemProvider {
         conf.threads(threads);
         Self::set_executor_for_threads(threads, &mut conf);
         conf.throughput(50);
-        conf.system_components(DeadletterBox::new, NetworkConfig::with_buffer_config(addr, buf_conf).build());
+        let mut nc = NetworkConfig::with_buffer_config(addr, buf_conf);
+        nc.set_tcp_nodelay(tcp_no_delay);
+        conf.system_components(DeadletterBox::new, nc.build());
         let system = conf.build().expect("KompactSystem");
         system
     }
