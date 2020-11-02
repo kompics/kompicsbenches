@@ -164,6 +164,7 @@ pub struct AtomicBroadcastMaster {
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
     experiment_str: Option<String>,
+    master_client_path: Option<ActorPath>
 }
 
 impl AtomicBroadcastMaster {
@@ -184,6 +185,7 @@ impl AtomicBroadcastMaster {
             latency_hist: None,
             num_timed_out: vec![],
             experiment_str: None,
+            master_client_path: None,
         }
     }
 
@@ -256,7 +258,7 @@ impl AtomicBroadcastMaster {
         &mut self,
         nodes_id: HashMap<u64, ActorPath>,
         leader_election_promise: KPromise<u64>,
-    ) -> ActorPath {
+    ) {
         let n = self.concurrent_proposals.unwrap();
         let num_proposals = self.num_proposals.unwrap();
         let proposals_per_client = num_proposals / n;
@@ -288,7 +290,7 @@ impl AtomicBroadcastMaster {
             .system
             .as_ref()
             .unwrap()
-            .register_by_alias(&master_client, format!("client{}", &self.iteration_id));
+            .register_by_alias(&master_client, "master_client");
 
         FutureCollection::expect_completion(
             reg_futures,
@@ -303,7 +305,7 @@ impl AtomicBroadcastMaster {
         let master_client_path = master_client_path_f
             .wait_expect(REGISTER_TIMEOUT, "Failed to register alias for ClientComp");
         self.client_comps.push(master_client);
-        master_client_path
+        self.master_client_path = Some(master_client_path);
     }
 
     fn validate_experiment_params(
@@ -447,16 +449,25 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             panic!("No KompactSystem found!")
         }
         let num_clients = self.concurrent_proposals.unwrap() as usize;
-        let finished_latch = Arc::new(CountdownEvent::new(num_clients));
-        self.finished_latch = Some(finished_latch);
-        self.iteration_id += 1;
-        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-        for (id, actorpath) in d.iter().enumerate() {
-            nodes_id.insert(id as u64 + 1, actorpath.clone());
-        }
         let (p, f) = promise::<u64>();
-        let master_client_path = self.create_clients(nodes_id, p);
-        let partitioning_actor = self.initialise_iteration(d, master_client_path);
+        let finished_latch = Arc::new(CountdownEvent::new(num_clients));
+        self.finished_latch = Some(finished_latch.clone());
+        if self.iteration_id == 0 {
+            let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
+            for (id, actorpath) in d.iter().enumerate() {
+                nodes_id.insert(id as u64 + 1, actorpath.clone());
+            }
+            self.create_clients(nodes_id, p);
+        } else {
+            let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
+            let (master_client, rest) = self.client_comps.split_last().expect("No clients");
+            for client in rest {
+                client.actor_ref().tell(LocalClientMessage::NewIteration((finished_latch.clone(), None, initial_config.clone())));
+            }
+            master_client.actor_ref().tell(LocalClientMessage::NewIteration((finished_latch.clone(), Some(p), initial_config)));
+        }
+        self.iteration_id += 1;
+        let partitioning_actor = self.initialise_iteration(d, self.master_client_path.as_ref().expect("No master client actorpath").clone());
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);
@@ -473,7 +484,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         for client in &self.client_comps {
             client.actor_ref().tell(LocalClientMessage::Run(leader));
         }
-        let finished_latch = self.finished_latch.take().unwrap();
+        let finished_latch = self.finished_latch.as_ref().unwrap();
         finished_latch.wait();
     }
 
@@ -485,10 +496,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = self.system.take().unwrap();
         let master_client = self.client_comps.last().expect("No master client");
         master_client.actor_ref().tell(LocalClientMessage::Stop);
-        let client_comps = std::mem::take(&mut self.client_comps);
-        let total_timeouts = client_comps.iter().fold(0, {
+        let total_timeouts = self.client_comps.iter().fold(0, {
             |total_timeouts, client| {
-                let (num_timed_out, latencies) = client
+                let (num_timed_out, _latencies) = client
                     .actor_ref()
                     .ask(|promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
                     .wait();
@@ -527,14 +537,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
             stop_f.wait();
             // stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
-
-            for client in client_comps {
-                let kill_client_f = system.kill_notify(client);
-                kill_client_f
-                    .wait_timeout(REGISTER_TIMEOUT)
-                    .expect("Client never died");
-            }
-
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
                 .wait_timeout(REGISTER_TIMEOUT)
@@ -543,6 +545,15 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
         if last_iteration {
             println!("Cleaning up last iteration");
+            let client_comps = std::mem::take(&mut self.client_comps);
+            for client in client_comps {
+                let kill_client_f = system.kill_notify(client);
+                kill_client_f
+                    .wait_timeout(REGISTER_TIMEOUT)
+                    .expect("Client never died");
+            }
+            self.first_leader = None;
+
             let sum: u64 = self.num_timed_out.iter().sum();
             if sum > 0 {
                 let summary_file_path = format!("{}/summary.out", META_RESULTS_DIR);
@@ -633,6 +644,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.num_timed_out.clear();
             self.num_written_latency = 0;
             self.iteration_id = 0;
+            self.master_client_path = None;
+            self.finished_latch = None;
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");

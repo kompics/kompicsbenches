@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
 use synchronoise::CountdownEvent;
+use std::fmt::{Debug, Formatter};
 
 #[derive(PartialEq)]
 enum ExperimentState {
@@ -17,11 +18,17 @@ enum ExperimentState {
     Finished,
 }
 
-#[derive(Debug)]
 pub enum LocalClientMessage {
+    NewIteration((Arc<CountdownEvent>, Option<KPromise<u64>>, Vec<u64>)),
     Run(u64),
     Stop,
     GetMetaResults(Ask<(), (u64, Vec<(u64, Duration)>)>), // (num_timed_out, latency)
+}
+
+impl Debug for LocalClientMessage {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
+        unimplemented!()    // can't derive Debug for CountdownEvent :(
+    }
 }
 
 enum Response {
@@ -194,14 +201,6 @@ impl Client {
                         late_max
                     );
                 }
-            } else {
-                /*info!(
-                    self.ctx.log(),
-                    "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}",
-                    self.leader_changes.len(),
-                    self.leader_changes,
-                    self.current_leader
-                );*/
             }
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -244,7 +243,7 @@ impl Client {
             let proposal_meta = self
                 .pending_proposals
                 .remove(&id)
-                .expect("Timed out on proposal not in pending proposals");
+                .expect("Timed out proposal not in pending proposals");
             let latency = match proposal_meta.start_time {
                 Some(start_time) => Some(
                     start_time
@@ -323,6 +322,27 @@ impl Actor for Client {
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
+            LocalClientMessage::NewIteration((finished_latch, leader_election_promise, initial_config)) => {
+                let pending_proposals = std::mem::take(&mut self.pending_proposals);
+                for (_, proposal_meta) in pending_proposals {
+                    self.cancel_timer(proposal_meta.timer);
+                }
+                self.latest_proposal_id = 0;
+                self.responses.clear();
+                self.current_leader = 0;
+                self.state = ExperimentState::LeaderElection;
+                self.num_timed_out = 0;
+                self.leader_changes.clear();
+                self.retry_proposal = None;
+                #[cfg(feature = "track_timeouts")] {
+                    self.timeouts.clear();
+                    self.late_responses.clear();
+                }
+
+                self.finished_latch = finished_latch;
+                self.leader_election_promise = leader_election_promise;
+                self.current_config = initial_config;
+            }
             LocalClientMessage::Run(leader) => {
                 self.state = ExperimentState::Running;
                 self.current_leader = leader;
