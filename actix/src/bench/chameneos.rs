@@ -64,19 +64,14 @@ impl BenchmarkInstance for ChameneosI {
                 if let Some(num_meetings) = self.num_meetings {
                     let latch = Arc::new(CountdownEvent::new(1));
                     let mall_latch = latch.clone();
-                    let mall = system
-                        .start(move || {
-                            ChameneosMallActor::with(num_meetings, num_chameneos, mall_latch)
-                        })
-                        .expect("ChameneosMallActor never started!");
+                    let mall = ChameneosMallActor::with(num_meetings, num_chameneos, mall_latch).start();
                     self.latch = Some(latch);
 
                     for i in 0usize..num_chameneos {
                         let initial_colour = ChameneosColour::for_id(i);
                         let mall_ref = mall.clone();
-                        let chameneo = system
-                            .start(move || ChameneoActor::with(mall_ref, initial_colour))
-                            .expect("ChameneoActor never started!");
+                        let chameneo = ChameneoActor::with(mall_ref, initial_colour)
+                            .start();
                         self.chameneos.push(chameneo);
                     }
 
@@ -105,7 +100,7 @@ impl BenchmarkInstance for ChameneosI {
         // self.chameneos.clear(); // they stop themselves and got drained when run
 
         if let Some(mall) = self.mall.take() {
-            system.stop(mall).expect("Mall never died!");
+            system.stop(mall);
         }
 
         if last_iteration {
@@ -119,6 +114,7 @@ impl BenchmarkInstance for ChameneosI {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 enum MallMsg {
     MeetingCount(u64),
     Meet {
@@ -136,6 +132,7 @@ impl MallMsg {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 enum ChameneoMsg {
     Start,
     Meet {

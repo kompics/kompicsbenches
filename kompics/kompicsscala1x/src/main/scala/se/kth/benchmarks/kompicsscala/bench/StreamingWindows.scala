@@ -101,7 +101,7 @@ object StreamingWindows extends DistributedBenchmark {
       WindowerConfig(numberOfPartitions, windowSize, batchSize, windowSizeAmplification, netAddr)
     }
     override def prepareIteration(d: List[ClientData]): Unit = {
-      logger.trace("Preparing iteration");
+      logger.info("Preparing iteration");
 
       val client = d.head;
       val windowerAddr = client.addr;
@@ -130,14 +130,19 @@ object StreamingWindows extends DistributedBenchmark {
           case (_, source) =>
             this.system.runOnComponent(source) { component =>
               val cd = component.getComponent().asInstanceOf[StreamSource];
+              logger.trace("Resetting source");
               cd.reset()
             }
         };
+        logger.trace("Flushing remaining messages on the channels");
+        // Await.ready(Future.sequence(resetFutures), FLUSH_TIMEOUT);
+        for (f <- resetFutures) {
+          Await.result(Await.result(f, FLUSH_TIMEOUT), FLUSH_TIMEOUT)
+        }
+
         val stopFutures = this.sinks.map { case (_, sink) => this.system.killNotify(sink) };
         Await.ready(Future.sequence(stopFutures), RESOLVE_TIMEOUT);
         this.sinks = Nil;
-        logger.trace("Flushing remaining messages on the channels");
-        Await.ready(Future.sequence(resetFutures), FLUSH_TIMEOUT);
         logger.trace("Remaining messages are flushed out.");
       }
       if (lastIteration) {
@@ -394,7 +399,7 @@ object StreamingWindows extends DistributedBenchmark {
     loopbck uponEvent {
       case Reset(replyTo) =>
         handle {
-          log.debug("Got Reset");
+          log.debug(s"Got Reset replyOnFlushed = ${replyTo.isCompleted}");
           this.flushing = true;
           this.replyOnFlushed = Some(replyTo);
           sendDownstream(Flush(this.partitionId));

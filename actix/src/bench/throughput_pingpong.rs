@@ -8,9 +8,11 @@ use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
 #[derive(Message)]
+#[rtype(result = "()")]
 pub struct Start;
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct StaticPing(Recipient<StaticPong>);
 // impl fmt::Debug for StaticPing {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -19,9 +21,11 @@ struct StaticPing(Recipient<StaticPong>);
 // }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct StaticPong;
 
 #[derive(Message)]
+#[rtype(result = "()")]
 pub struct Ping {
     pub index: u64,
     pub src: Recipient<Pong>,
@@ -39,6 +43,7 @@ impl Ping {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 pub struct Pong {
     pub index: u64,
 }
@@ -90,13 +95,15 @@ where
             EitherComponents::StaticOnly(mut components) => {
                 components
                     .drain(..)
-                    .for_each(|c| system.stop(c).expect("Could not stop"));
+                    .for_each(|c| system.stop(c)
+                        .expect("Stop Static Component"));
                 Ok(())
             }
             EitherComponents::NonStatic(mut components) => {
                 components
                     .drain(..)
-                    .for_each(|c| system.stop(c).expect("Could not stop"));
+                    .for_each(|c| system.stop(c)
+                        .expect("Stop NonStatic Component"));
                 Ok(())
             }
             EitherComponents::Empty => Err("EMPTY!".to_string()),
@@ -124,19 +131,19 @@ where
     S: 'static + Actor<Context = Context<S>> + Handler<PoisonPill> + Handler<Start>,
     D: 'static + Actor<Context = Context<D>> + Handler<PoisonPill> + Handler<Start>,
 {
-    pub fn start_all(&mut self) -> Result<(), String> {
+    pub async fn start_all(&mut self) -> Result<(), String> {
         match self {
             EitherComponents::StaticOnly(ref mut components) => {
                 let futures: Vec<_> = components.iter().map(|c| c.send(Start)).collect();
                 for f in futures {
-                    f.wait().map_err(|_| "Component never started!")?;
+                    f.await;
                 }
                 Ok(())
             }
             EitherComponents::NonStatic(ref mut components) => {
                 let futures: Vec<_> = components.iter().map(|c| c.send(Start)).collect();
                 for f in futures {
-                    f.wait().map_err(|_| "Component never started!")?;
+                    f.await;
                 }
                 Ok(())
             }
@@ -251,8 +258,8 @@ impl BenchmarkInstance for PingPongI {
 
     fn run_iteration(&mut self) -> () {
         let latch = self.latch.take().unwrap();
-        self.pingers
-            .start_all()
+        futures::executor::block_on(self.pingers
+            .start_all())
             .expect("Couldn't start all pingers");
         latch.wait();
     }

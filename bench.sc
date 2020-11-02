@@ -12,14 +12,14 @@ import java.io.{PrintWriter, OutputStream, File, FileWriter}
 import java.nio.file.Files
 import $file.build, build.{relps, relp, binp, format}
 import $file.benchmarks, benchmarks._
-import $ivy.`com.decodified::scala-ssh:0.9.0`, com.decodified.scalassh.{SSH, HostConfigProvider, PublicKeyLogin}
+import $ivy.`com.decodified::scala-ssh:0.10.0`, com.decodified.scalassh.{SSH, HostConfigProvider, PublicKeyLogin}
 //import $ivy.`ch.qos.logback:logback-classic:1.1.7`
 
 val runnerAddr = "127.0.0.1:45678";
 //val masterAddr = "192.168.0.106:45679";
 val masterAddr = "127.0.0.1:45679";
 
-def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks: Seq[String]): BenchmarkRunner = {
+def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchmarks_string: String): BenchmarkRunner = {
 	var params: Seq[Shellable] = Seq(
 		"-jar",
 		"target/scala-2.12/Benchmark Suite Runner-assembly-0.3.0-SNAPSHOT.jar",
@@ -29,8 +29,8 @@ def getExperimentRunner(prefix: String, results: Path, testing: Boolean, benchma
 	if (testing) {
 		params ++= Seq[Shellable]("--testing");
 	}
-	if (!benchmarks.isEmpty) {
-		params ++= Seq[Shellable]("--benchmarks", benchmarks.mkString(","));
+	if (!benchmarks_string.isEmpty) {
+		params ++= Seq[Shellable]("--benchmarks", benchmarks_string);
 	}
 	BenchmarkRunner(
 		bench = BenchmarkInfo(
@@ -78,7 +78,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: String = "", benchmarks: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
 	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
@@ -120,7 +120,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 
 @arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir()): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: String = "", benchmarks: String = "", remoteDir: os.Path = tmp.dir()): Unit = {
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
 	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
@@ -185,7 +185,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 
 @arg(doc ="Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def local(testing: Boolean = false, impls: String = "", benchmarks: String = ""): Unit = {
 	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
 	val runId = s"run-${totalStart}";
@@ -228,7 +228,8 @@ def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: 
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
 }
 
-private def runnersForImpl[T](impls: Seq[String], mapper: BenchmarkImpl => T): List[T] = {
+private def runnersForImpl[T](impl_string: String, mapper: BenchmarkImpl => T): List[T] = {
+	val impls: Array[String] = impl_string.split(",")
 	val runners: List[T] = if (impls.isEmpty) {
 		implementations.values.map(mapper).toList;
 	} else {

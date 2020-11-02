@@ -1,7 +1,6 @@
 package se.kth.benchmarks.akka.typed_bench
 
 import java.util.concurrent.CountDownLatch
-
 import akka.actor.typed.{ActorRef, ActorRefResolver, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 import akka.actor.typed.scaladsl.AskPattern._
@@ -12,18 +11,14 @@ import scalapb.GeneratedMessage
 import se.kth.benchmarks.{DeploymentMetaData, DistributedBenchmark}
 import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.ClientSystemSupervisor.StartPongers
-import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor.{
-  OperationSucceeded,
-  RunIteration,
-  StartPingers,
-  StopPingers,
-  SystemMessage
-}
+import se.kth.benchmarks.akka.typed_bench.NetThroughputPingPong.SystemSupervisor.{OperationSucceeded, RunIteration, StartPingers, StopPingers, SystemMessage}
 
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future}
 import scala.util.{Failure, Success, Try}
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.language.postfixOps
 
 object NetThroughputPingPong extends DistributedBenchmark {
   case class ActorReference(actorPath: String)
@@ -168,7 +163,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     def apply(): Behavior[StartPongers] = Behaviors.setup(context => new ClientSystemSupervisor(context))
   }
 
-  class ClientSystemSupervisor(context: ActorContext[StartPongers]) extends AbstractBehavior[StartPongers] {
+  class ClientSystemSupervisor(context: ActorContext[StartPongers]) extends AbstractBehavior[StartPongers](context) {
     val resolver = ActorRefResolver(context.system)
 
     private def getPongerPaths[T](refs: List[ActorRef[T]]): List[String] = {
@@ -203,7 +198,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     def apply(): Behavior[SystemMessage] = Behaviors.setup(context => new SystemSupervisor(context))
   }
 
-  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
+  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage](context) {
     val resolver = ActorRefResolver(context.system);
     var pingers: List[ActorRef[MsgForPinger]] = null;
     var static_pingers: List[ActorRef[MsgForStaticPinger]] = null;
@@ -268,7 +263,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
                count: Long,
                pipeline: Long,
                pongerPath: String)
-      extends AbstractBehavior[MsgForPinger] {
+      extends AbstractBehavior[MsgForPinger](context) {
     val resolver = ActorRefResolver(context.system)
     val selfRef = ActorReference(resolver.toSerializationFormat(context.self))
     val ponger: ActorRef[Ping] = resolver.resolveActorRef(pongerPath)
@@ -306,7 +301,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     def apply(): Behavior[Ping] = Behaviors.setup(context => new Ponger(context))
   }
 
-  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping] {
+  class Ponger(context: ActorContext[Ping]) extends AbstractBehavior[Ping](context) {
     val resolver = ActorRefResolver(context.system)
 
     private def getPingerRef(a: ActorReference): ActorRef[MsgForPinger] = {
@@ -334,7 +329,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
                      count: Long,
                      pipeline: Long,
                      pongerPath: String)
-      extends AbstractBehavior[MsgForStaticPinger] {
+      extends AbstractBehavior[MsgForStaticPinger](context) {
     val resolver = ActorRefResolver(context.system);
     val selfRef = ActorReference(resolver.toSerializationFormat(context.self));
     val ponger: ActorRef[StaticPing] = resolver.resolveActorRef(pongerPath);
@@ -372,7 +367,7 @@ object NetThroughputPingPong extends DistributedBenchmark {
     def apply(): Behavior[StaticPing] = Behaviors.setup(context => new StaticPonger(context))
   }
 
-  class StaticPonger(context: ActorContext[StaticPing]) extends AbstractBehavior[StaticPing] {
+  class StaticPonger(context: ActorContext[StaticPing]) extends AbstractBehavior[StaticPing](context) {
     val resolver = ActorRefResolver(context.system)
 
     private def getPingerRef(a: ActorReference): ActorRef[MsgForStaticPinger] = {

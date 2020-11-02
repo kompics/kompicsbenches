@@ -298,7 +298,7 @@ impl StaticPinger {
         latch: Arc<CountdownEvent>,
         ponger: ActorRef<StaticPing>,
     ) -> BoxActorProd<StaticPinger> {
-        Props::new(move || StaticPinger::with(count, pipeline, latch.clone(), ponger.clone()))
+        Props::new_from(move || StaticPinger::with(count, pipeline, latch.clone(), ponger.clone()))
     }
 }
 
@@ -350,7 +350,7 @@ impl StaticPonger {
         StaticPonger
     }
     fn props() -> BoxActorProd<StaticPonger> {
-        Props::new(StaticPonger::new)
+        Props::new_from(StaticPonger::new)
     }
 }
 impl Actor for StaticPonger {
@@ -395,7 +395,7 @@ impl Pinger {
         latch: Arc<CountdownEvent>,
         ponger: ActorRef<Ping>,
     ) -> BoxActorProd<Pinger> {
-        Props::new(move || Pinger::with(count, pipeline, latch.clone(), ponger.clone()))
+        Props::new_from(move || Pinger::with(count, pipeline, latch.clone(), ponger.clone()))
     }
 }
 
@@ -449,7 +449,7 @@ impl Ponger {
         Ponger
     }
     fn props() -> BoxActorProd<Ponger> {
-        Props::new(Ponger::new)
+        Props::new_from(Ponger::new)
     }
 }
 impl Actor for Ponger {

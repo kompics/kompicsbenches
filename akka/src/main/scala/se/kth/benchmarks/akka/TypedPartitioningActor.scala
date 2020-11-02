@@ -5,7 +5,7 @@ import java.util.concurrent.CountDownLatch
 import akka.actor.typed.{ActorRef, ActorRefResolver, Behavior, Signal}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 import TypedPartitioningActor._
-import akka.actor.TypedActor.PreStart
+// import akka.actor.TypedActor.PreStart
 import akka.serialization.Serializer
 import akka.util.ByteString
 import se.kth.benchmarks.akka.typed_bench.AtomicRegister.{AtomicRegisterMessage, ClientRef, Init, Run => ATOMICREG_RUN}
@@ -45,7 +45,7 @@ class TypedPartitioningActor(context: ActorContext[PartitioningMessage],
                              num_keys: Long,
                              partition_size: Int,
                              test_promise: Option[Promise[List[KVTimestamp]]] @unchecked)
-    extends AbstractBehavior[PartitioningMessage] {
+    extends AbstractBehavior[PartitioningMessage](context) {
 
 //  val logger = context.log
 

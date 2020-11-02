@@ -383,6 +383,7 @@ pub trait BenchmarkFactory: Send + Sync {
     fn atomic_broadcast(
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
+    fn sized_throughput(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError>;
 }
 
 impl Clone for Box<dyn BenchmarkFactory> {
@@ -665,6 +666,12 @@ pub(crate) mod tests {
         }
 
         fn atomic_broadcast(
+            &self,
+        ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+            Ok(Test3B {}.into())
+        }
+
+        fn sized_throughput(
             &self,
         ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
             Ok(Test3B {}.into())

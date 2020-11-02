@@ -116,7 +116,13 @@ object ActorSystemProvider extends StrictLogging {
       loggers = ["akka.event.slf4j.Slf4jLogger"]
       loglevel = "WARNING"
       logging-filter = "akka.event.slf4j.Slf4jLoggingFilter"
-
+      remote {
+        artery {
+          advanced {
+            outbound-message-queue-size = 80000
+          }
+        }
+      }
       actor {
         creation-timeout = 6000s
         default-dispatcher {
@@ -138,20 +144,30 @@ object ActorSystemProvider extends StrictLogging {
         }
         provider = remote        
         allow-java-serialization=off
+        remote {
+          artery {
+            transport = tcp
+            canonical.hostname = "${hostname}"
+            canonical.port = ${port}
+          }
+        }
         ${serializers}
         ${bindings}
-      }
-      remote {
-        enabled-transports = ["akka.remote.netty.tcp"]
-        netty.tcp {
-          hostname = "${hostname}"
-          port = ${port}
-        }
       }
     }""";
     logger.trace(conf);
     conf
   };
+      /*
+      remote.artery.enabled = false
+      remote.classic {
+        enabled-transports = ["akka.remote.classic.netty.tcp"]
+        netty.tcp {
+          hostname = "${hostname}"
+          port = ${port}
+        }
+      }
+      */
 
   private lazy val defaultConf = ConfigFactory.parseString(customConfig());
   lazy val config = ConfigFactory.load(defaultConf);

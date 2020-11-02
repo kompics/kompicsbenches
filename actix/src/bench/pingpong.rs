@@ -3,7 +3,6 @@ use super::*;
 use actix::*;
 use actix_system_provider::{ActixSystem, PoisonPill};
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
-use futures::Future;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
 
@@ -81,7 +80,7 @@ impl BenchmarkInstance for PingPongI {
             Some(ref pinger) => {
                 let latch = self.latch.take().unwrap();
                 let pinger_start_f = pinger.send(Start);
-                pinger_start_f.wait().expect("Should have started!");
+                futures::executor::block_on(pinger_start_f);
                 latch.wait();
             }
             None => unimplemented!(),
@@ -92,8 +91,8 @@ impl BenchmarkInstance for PingPongI {
         let mut system = self.system.take().unwrap();
         let pinger = self.pinger.take().unwrap();
         let ponger = self.ponger.take().unwrap();
-        system.stop(pinger).expect("Pinger didn't stop!");
-        system.stop(ponger).expect("Ponger didn't stop!");
+        system.stop(pinger);
+        system.stop(ponger);
 
         if last_iteration {
             system.shutdown().expect("Actix didn't shut down properly");
@@ -105,9 +104,11 @@ impl BenchmarkInstance for PingPongI {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct Start;
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct Ping(Recipient<Pong>);
 // impl fmt::Debug for Ping {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -116,6 +117,7 @@ struct Ping(Recipient<Pong>);
 // }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct Pong;
 
 struct Pinger {

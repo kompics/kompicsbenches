@@ -6,11 +6,14 @@ import akka.util.ByteString
 import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.ThroughputPingPongRequest
+
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.language.postfixOps
 
 object NetThroughputPingPong extends DistributedBenchmark {
 

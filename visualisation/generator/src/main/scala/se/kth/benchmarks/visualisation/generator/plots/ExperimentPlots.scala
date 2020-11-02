@@ -1,7 +1,7 @@
 package se.kth.benchmarks.visualisation.generator.plots
 
 import scala.reflect._
-import se.kth.benchmarks.visualisation.generator.{BenchmarkData, DataSeries, ErrorBarSeries, ImplGroupedResult, JsRaw, JsString, PlotData, PlotGroup, Series, Statistics}
+import se.kth.benchmarks.visualisation.generator.{BenchmarkData, DataSeries, ErrorBarSeries, FrameworkPlotStyle, ImplGroupedResult, JsRaw, JsString, PlotData, PlotGroup, Series, Statistics}
 import se.kth.benchmarks.runner.{Benchmark, BenchmarkWithSpace, ParameterSpacePB, Parameters}
 import kompics.benchmarks.benchmarks._
 
@@ -37,10 +37,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
           (key, groupedSeries(key), groupedErrorSeries(key))
         }).toList;
         val sortedSeries: List[Series] = mergedSeries.sortBy(_._1).map(t => List[Series](t._2, t._3)).flatten;
-        val pimpedSeries: List[Series] = sortedSeries.map(
-          _.addMeta(
-            "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}")
-          )
+        val pimpedSeries: List[Series] = sortedSeries.map( series => {
+          series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}"))
+          .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+            .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+            .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+        }
         );
         val paramsS = paramSeries.map(_.toString);
         val corePlotId = s"${bench.symbol.toLowerCase()}-${plotId(params)}";
@@ -59,10 +61,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
           .mapValues(_.map2DWithCalc(identity, paramSeries, (t, stats) => calculateValue(calculatedParams, t, stats)))
           .toList;
         val sortedCalculatedSeries: List[Series] = calculatedSeries.sortBy(_._1).map(t => t._2);
-        val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(
-          _.addMeta(
-            "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}")
-          )
+        val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(series => {
+          series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}"))
+          .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+            .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+            .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+        }
         );
         val calculatedPlotId = s"${corePlotId}-calculated";
         val calculatedPlot = PlotData(
@@ -100,10 +104,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
           (key, groupedSeries(key), groupedErrorSeries(key))
         }).toList;
         val sortedSeries: List[Series] = mergedSeries.sortBy(_._1).map(t => List[Series](t._2, t._3)).flatten;
-        val pimpedSeries: List[Series] = sortedSeries.map(
-          _.addMeta(
-            "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}")
-          )
+        val pimpedSeries: List[Series] = sortedSeries.map( series => {
+          series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}"))
+            .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+            .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+            .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+        }
         );
         val paramsS = paramSeries.map(_.toString);
         val corePlotId = s"${bench.symbol.toLowerCase()}-${plotId(params)}";
@@ -155,10 +161,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
         }
         val mergedSeries = merged.toList;
         val sortedSeries: List[Series] = mergedSeries.map(t => List[Series](t._2, t._3)).flatten; // already sorted preslice
-        val pimpedSeries: List[Series] = sortedSeries.map(
-          _.addMeta(
-            "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}")
-          )
+        val pimpedSeries: List[Series] = sortedSeries.map( series => {
+          series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${units}'}"))
+            .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+            .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+            .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+        }
         );
         val paramsS = paramSeries.map(_.toString);
         val corePlotId = s"${bench.symbol.toLowerCase()}-${plotId(params)}";
@@ -177,10 +185,12 @@ abstract class ExperimentPlots[Params <: Parameters.Message[Params]](val bench: 
           .mapValues(_.map2DWithCalc(identity, paramSeries, (t, stats) => calculateValue(calculatedParams, t, stats)))
           .toList;
         val sortedCalculatedSeries: List[Series] = calculatedSeries.map(t => t._2);
-        val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(
-          _.addMeta(
-            "tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}")
-          )
+        val pimpedCalculatedSeries: List[Series] = sortedCalculatedSeries.map(series => {
+          series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: '${calculatedUnits}'}"))
+            .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+            .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+            .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+        }
         );
         val calculatedPlotId = s"${corePlotId}-calculated";
         val calculatedPlot = PlotData(

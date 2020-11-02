@@ -5,6 +5,7 @@ use actix_system_provider::ActixSystem;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::FibonacciRequest;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
+use futures::Sink;
 
 #[derive(Default)]
 pub struct Fibonacci;
@@ -58,7 +59,7 @@ impl BenchmarkInstance for FibonacciI {
                 let latch2 = latch.clone();
                 let fib = system
                     .start(move || FibonacciActor::with(ResultTarget::Latch(latch2)))
-                    .expect("FibonacciActor never started!");
+                    .expect("Create FibonacciActor");
 
                 self.fib = Some(fib);
                 self.latch = Some(latch);
@@ -99,11 +100,13 @@ enum ResultTarget {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct FibRequest {
     n: u32,
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct FibResponse {
     value: u64,
 }

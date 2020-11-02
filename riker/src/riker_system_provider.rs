@@ -1,12 +1,12 @@
 use riker::actors::*;
-
-use futures_preview::executor::{block_on, ThreadPool};
+use futures_executor::ThreadPool;
+use futures_preview::executor::block_on;
 use futures_preview::prelude::*;
 use riker_patterns::ask;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
-
-use futures_preview::future::RemoteHandle;
+//use futures_preview::future::RemoteHandle;
+use futures::future::RemoteHandle;
 
 use std::ops::Deref;
 use std::sync::Arc;
@@ -72,7 +72,10 @@ impl RikerSystem {
     {
         let uid = self.id_tracker.fetch_add(1u64, Ordering::SeqCst);
         let name = format!("{}-{}", name_prefix, uid);
-        self.system.actor_of(props, &name)
+        self.system.actor_of_props(
+            &name,
+            props,
+        )
     }
 
     pub fn ask<T, A, R>(&self, actor: &A, value: T) -> RemoteHandle<R>
@@ -110,7 +113,7 @@ mod tests {
         }
 
         fn props() -> BoxActorProd<MyActor> {
-            Props::new(MyActor::new)
+            Props::new_from(MyActor::new)
         }
     }
 

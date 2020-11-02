@@ -64,9 +64,7 @@ impl BenchmarkInstance for AllPairsShortestPathI {
             .expect("Block Size should fit into usize");
         self.block_size = Some(block_size);
         let mut system = crate::actix_system_provider::new_system("apsp");
-        let manager = system
-            .start(move || ManagerActor::with(block_size))
-            .expect("ManagerActor never started!");
+        let manager = ManagerActor::with(block_size).start();
         self.manager = Some(manager);
         self.system = Some(system);
         let graph = generate_graph(num_nodes);
@@ -99,8 +97,8 @@ impl BenchmarkInstance for AllPairsShortestPathI {
 
         if last_iteration {
             if let Some(manager) = self.manager.take() {
-                system.stop(manager).expect("Manager never died!");
-            }
+                system.stop(manager);
+            };
             self.graph = None;
 
             system.shutdown().expect("Actix didn't shut down properly");
@@ -113,11 +111,13 @@ impl BenchmarkInstance for AllPairsShortestPathI {
 }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct ComputeFW {
     graph: Arc<Graph<f64>>,
     latch: Arc<CountdownEvent>,
 }
 #[derive(Message)]
+#[rtype(result = "()")]
 struct BlockResult {
     block: Arc<Block<f64>>,
 }
@@ -132,9 +132,11 @@ struct BlockResult {
 // }
 
 #[derive(Message)]
+#[rtype(result = "()")]
 struct Neighbours(Vec<Recipient<PhaseResult>>);
 
 #[derive(Message, Clone)]
+#[rtype(result = "()")]
 struct PhaseResult {
     k: Phase,
     data: Arc<Block<f64>>,

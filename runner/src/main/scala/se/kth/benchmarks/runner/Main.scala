@@ -50,9 +50,9 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
     default = Some(false)
   );
 
-  val benchmarks = opt[List[String]](
+  val benchmarks = opt[String](
     descr = "Only run benchmarks whose symbols appear in this list.",
-    default = Some(Nil)
+    default = None
   );
 
   requireOne(outputFolder, console);

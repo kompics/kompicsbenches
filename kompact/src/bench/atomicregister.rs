@@ -929,10 +929,6 @@ pub mod mixed_atomicregister {
                     let finished_latch = Arc::new(CountdownEvent::new(1));
                     /*** Setup Broadcast component ***/
                     let (bcast_comp, unique_reg_f) = system.create_and_register(BroadcastComp::new);
-                    let bcast_comp_f = system.start_notify(&bcast_comp);
-                    bcast_comp_f
-                        .wait_timeout(Duration::from_millis(1000))
-                        .expect("BroadcastComp never started!");
 
                     unique_reg_f
                         .wait_timeout(Duration::from_millis(1000))
@@ -964,6 +960,14 @@ pub mod mixed_atomicregister {
                         "AtomicRegisterComp failed to register!",
                     );
 
+                    biconnect_components::<BroadcastPort, _, _>(&bcast_comp, &atomic_register)
+                        .expect("Could not connect components!");
+
+                    let bcast_comp_f = system.start_notify(&bcast_comp);
+                    bcast_comp_f
+                        .wait_timeout(Duration::from_millis(1000))
+                        .expect("BroadcastComp never started!");
+
                     let atomic_register_f = system.start_notify(&atomic_register);
                     atomic_register_f
                         .wait_timeout(Duration::from_millis(1000))
@@ -987,8 +991,7 @@ pub mod mixed_atomicregister {
                     //         biconnect(&mut bcast_def.bcast_port, &mut atomicreg_def.bcast_port);
                     //     },
                     // )
-                    biconnect_components::<BroadcastPort, _, _>(&bcast_comp, &atomic_register)
-                        .expect("Could not connect components!");
+
 
                     /*** Setup partitioning actor ***/
                     let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {

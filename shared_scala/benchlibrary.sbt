@@ -2,7 +2,7 @@ name := "Benchmark Suite Shared"
 
 organization in ThisBuild := "se.kth.benchmarks"
 
-version in ThisBuild := "1.0.0-SNAPSHOT"
+version in ThisBuild := "1.0.1-SNAPSHOT"
 
 scalaVersion in ThisBuild := "2.12.9"
 
@@ -12,7 +12,7 @@ PB.protoSources in Compile := Seq(baseDirectory.value / "../proto/")
 
 libraryDependencies ++= Seq(
   //"com.thesamet.scalapb" %% "compilerplugin" % "0.7.4",
-  "io.grpc" % "grpc-netty" % scalapb.compiler.Version.grpcJavaVersion,
+  "io.grpc" % "grpc-netty-shaded" % scalapb.compiler.Version.grpcJavaVersion,
   "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
   "com.typesafe.scala-logging" %% "scala-logging" % "3.+",
   "com.github.hipjim" %% "scala-retry" % "0.3.0",
@@ -23,6 +23,6 @@ libraryDependencies ++= Seq(
 
 fork := true;
 
-PB.targets in Compile := Seq(
-  scalapb.gen() -> (sourceManaged in Compile).value
+Compile / PB.targets := Seq(
+  scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
 )

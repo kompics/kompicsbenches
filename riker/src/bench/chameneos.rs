@@ -213,7 +213,7 @@ impl ChameneosMallActor {
         num_chameneos: usize,
         latch: Arc<CountdownEvent>,
     ) -> BoxActorProd<ChameneosMallActor> {
-        Props::new(move || ChameneosMallActor::with(num_meetings, num_chameneos, latch.clone()))
+        Props::new_from(move || ChameneosMallActor::with(num_meetings, num_chameneos, latch.clone()))
     }
 }
 
@@ -267,7 +267,7 @@ impl ChameneoActor {
         mall: ActorRef<MallMsg>,
         initial_colour: ChameneosColour,
     ) -> BoxActorProd<ChameneoActor> {
-        Props::new(move || ChameneoActor::with(mall.clone(), initial_colour))
+        Props::new_from(move || ChameneoActor::with(mall.clone(), initial_colour))
     }
 }
 

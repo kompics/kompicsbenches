@@ -6,12 +6,19 @@ import "messages.proto";
 service BenchmarkRunner {
 	rpc Ready (ReadyRequest) returns (ReadyResponse);
 	rpc Shutdown (ShutdownRequest) returns (ShutdownAck);
+	rpc Fibonacci (FibonacciRequest) returns (TestResult);
 
 	rpc PingPong (PingPongRequest) returns (TestResult);
 	rpc NetPingPong (PingPongRequest) returns (TestResult);
 	rpc ThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc NetThroughputPingPong (ThroughputPingPongRequest) returns (TestResult);
 	rpc AtomicRegister (AtomicRegisterRequest) returns (TestResult);
+	rpc StreamingWindows (StreamingWindowsRequest) returns (TestResult);
+	rpc Fibonacci (FibonacciRequest) returns (TestResult);
+	rpc Chameneos (ChameneosRequest) returns (TestResult);
+	rpc AllPairsShortestPath (APSPRequest) returns (TestResult);
+	rpc AtomicBroadcast (AtomicBroadcastRequest) returns (TestResult);
+	rpc SizedThroughput (SizedThroughputRequest) returns (TestResult);
 }
 
 message PingPongRequest {
@@ -28,4 +35,41 @@ message AtomicRegisterRequest {
 	float write_workload = 2;
 	uint32 partition_size = 3;
 	uint64 number_of_keys = 4;
+}
+
+message StreamingWindowsRequest {
+	uint32 number_of_partitions = 1;
+	uint64 batch_size = 2;
+	string window_size = 3;
+	uint64 number_of_windows = 4;
+	uint64 window_size_amplification = 5;
+}
+
+message SizedThroughputRequest {
+	uint32 message_size = 1;
+	uint32 batch_size = 2;
+	uint32 number_of_batches = 3;
+	uint32 number_of_pairs = 4;
+}
+message FibonacciRequest {
+	uint32 fib_number = 1;
+}
+
+message ChameneosRequest {
+	uint32 number_of_chameneos = 1;
+	uint64 number_of_meetings = 2;
+}
+
+message APSPRequest {
+	uint32 number_of_nodes = 1;
+	uint32 block_size = 2;
+}
+
+message AtomicBroadcastRequest {
+	string algorithm = 1;
+	uint64 number_of_nodes = 2;
+	uint64 number_of_proposals = 3;
+	uint64 concurrent_proposals = 4;
+	string reconfiguration = 5;
+	string reconfig_policy = 6;
 }

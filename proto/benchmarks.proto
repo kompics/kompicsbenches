@@ -17,6 +17,7 @@ service BenchmarkRunner {
 	rpc Chameneos (ChameneosRequest) returns (TestResult);
 	rpc AllPairsShortestPath (APSPRequest) returns (TestResult);
 	rpc AtomicBroadcast (AtomicBroadcastRequest) returns (TestResult);
+	rpc SizedThroughput (SizedThroughputRequest) returns (TestResult);
 }
 
 message PingPongRequest {
@@ -41,6 +42,13 @@ message StreamingWindowsRequest {
 	string window_size = 3;
 	uint64 number_of_windows = 4;
 	uint64 window_size_amplification = 5;
+}
+
+message SizedThroughputRequest {
+	uint32 message_size = 1;
+	uint32 batch_size = 2;
+	uint32 number_of_batches = 3;
+	uint32 number_of_pairs = 4;
 }
 
 message FibonacciRequest {

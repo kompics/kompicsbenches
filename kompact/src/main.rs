@@ -1,3 +1,4 @@
+#![feature(new_uninit)]
 #[macro_use]
 extern crate benchmark_suite_shared;
 

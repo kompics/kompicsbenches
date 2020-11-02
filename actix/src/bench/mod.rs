@@ -63,7 +63,12 @@ impl BenchmarkFactory for Factory {
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(all_pairs_shortest_path::AllPairsShortestPath {}.into())
     }
+
     fn atomic_broadcast(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::FutureWork)
+    }
+
+    fn sized_throughput(&self) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
     }
 }

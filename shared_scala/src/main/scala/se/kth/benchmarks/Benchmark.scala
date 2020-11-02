@@ -62,4 +62,5 @@ trait BenchmarkFactory {
   def chameneos(): Benchmark;
   def fibonacci: Benchmark;
   def atomicBroadcast(): DistributedBenchmark;
+  def sizedThroughput: DistributedBenchmark;
 }

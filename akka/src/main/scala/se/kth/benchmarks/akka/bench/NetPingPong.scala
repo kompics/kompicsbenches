@@ -5,11 +5,14 @@ import akka.serialization.Serializer
 import se.kth.benchmarks.akka.{ActorSystemProvider, SerializerBindings, SerializerIds}
 import se.kth.benchmarks._
 import kompics.benchmarks.benchmarks.PingPongRequest
+
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import java.util.concurrent.CountDownLatch
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.language.postfixOps
 
 object NetPingPong extends DistributedBenchmark {
 

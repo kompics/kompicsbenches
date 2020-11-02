@@ -137,7 +137,7 @@ impl FibonacciActor {
     }
 
     fn props(report_to: ResultTarget) -> BoxActorProd<FibonacciActor> {
-        Props::new(move || FibonacciActor::with(report_to.clone()))
+        Props::new_from(move || FibonacciActor::with(report_to.clone()))
     }
 
     fn send_result(&mut self, response: FibonacciMsg, ctx: &Context<FibonacciMsg>) {
@@ -165,16 +165,16 @@ impl Actor for FibonacciActor {
                 } else {
                     let self_ref = ctx.myself();
                     let f1 = ctx
-                        .actor_of(
-                            FibonacciActor::props(ResultTarget::Parent(self_ref.clone())),
+                        .actor_of_props(
                             "fib1",
+                            FibonacciActor::props(ResultTarget::Parent(self_ref.clone())),
                         )
                         .expect("Fibonacci Child");
                     f1.tell(FibonacciMsg::request(n - 1u32), None);
                     let f2 = ctx
-                        .actor_of(
-                            FibonacciActor::props(ResultTarget::Parent(self_ref.clone())),
+                        .actor_of_props(
                             "fib2",
+                            FibonacciActor::props(ResultTarget::Parent(self_ref.clone())),
                         )
                         .expect("Fibonacci Child");
                     f2.tell(FibonacciMsg::request(n - 2u32), None);

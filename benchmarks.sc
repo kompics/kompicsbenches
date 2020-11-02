@@ -58,24 +58,24 @@ case class BenchmarkRunner(bench: BenchmarkInfo, runner: Runner) {
 
 val javaBin = binp('java);
 //val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx32G", "-XX:+UseG1GC","-XX:+HeapDumpOnOutOfMemoryError");
-val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx8G", "-XX:+UseG1GC","-XX:+HeapDumpOnOutOfMemoryError");
+val javaOpts = Seq[Shellable]("-Xms1G", "-Xmx16G", "-XX:+UseG1GC","-XX:+HeapDumpOnOutOfMemoryError");
 
 val implementations: Map[String, BenchmarkImpl] = Map(
 	"AKKA" -> BenchmarkImpl(
 		symbol="AKKA",
 		label="Akka",
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "untyped", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar"))
+		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "untyped", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "untyped", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "untyped", benchMasterAddr, benchClientAddr)),
+		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar"))
 	),
 	"AKKATYPED" -> BenchmarkImpl(
 		symbol="AKKATYPED",
 		label="Akka Typed",
-		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchRunnerAddr)),
-		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchRunnerAddr, benchMasterAddr, numClients)),
-		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar", "typed", benchMasterAddr, benchClientAddr)),
-		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.0-SNAPSHOT.jar"))
+		local = (benchRunnerAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "typed", benchRunnerAddr)),
+		remote = (benchRunnerAddr, benchMasterAddr, numClients) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "typed", benchRunnerAddr, benchMasterAddr, numClients)),
+		client = (benchMasterAddr, benchClientAddr) => Runner(relp("akka"), javaBin, javaOpts ++ Seq[Shellable]("-jar", "target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar", "typed", benchMasterAddr, benchClientAddr)),
+		mustCopy = List(relp("akka/target/scala-2.12/Akka Benchmark Suite-assembly-0.3.1-SNAPSHOT.jar"))
 	),
 	"KOMPICSSC" -> BenchmarkImpl(
 		symbol="KOMPICSSC",

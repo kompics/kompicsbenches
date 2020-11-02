@@ -1,7 +1,6 @@
 package se.kth.benchmarks.akka.typed_bench
 
 import java.util.concurrent.{CountDownLatch, TimeUnit}
-
 import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
 import akka.actor.typed.scaladsl.AskPattern._
@@ -15,6 +14,8 @@ import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.language.postfixOps
 
 object Fibonacci extends Benchmark {
   override type Conf = FibonacciRequest;
@@ -78,7 +79,7 @@ object Fibonacci extends Benchmark {
   }
 
   class SystemSupervisor(context: ActorContext[SystemSupervisor.SystemMessage])
-      extends AbstractBehavior[SystemSupervisor.SystemMessage] {
+      extends AbstractBehavior[SystemSupervisor.SystemMessage](context) {
     import SystemSupervisor._;
 
     private var fib: ActorRef[FibonacciMsg] = null;
@@ -117,12 +118,12 @@ object Fibonacci extends Benchmark {
       Behaviors.setup(context => new FibonacciActor(context, Left(parent)));
   }
 
-  class FibonacciActor(val context: ActorContext[FibonacciMsg],
+  class FibonacciActor(context: ActorContext[FibonacciMsg],
                        val reportTo: Either[ActorRef[FibonacciMsg], CountDownLatch])
-      extends AbstractBehavior[FibonacciMsg] {
+      extends AbstractBehavior[FibonacciMsg](context) {
     import FibonacciMsg._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val selfRef = context.self
 

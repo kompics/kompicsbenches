@@ -1,7 +1,7 @@
 val commonSettings = Seq(
   organization := "se.kth.benchmarks",
   version := "1.0.0-SNAPSHOT",
-  scalaVersion := "2.12.10",
+  scalaVersion := "2.12.9",
   scalacOptions ++= Seq("-deprecation", "-feature"),
   resolvers += Resolver.mavenLocal,
   resolvers += Resolver.bintrayRepo("lkrollcom", "maven")

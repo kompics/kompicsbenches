@@ -196,7 +196,7 @@ impl ManagerActor {
     }
 
     fn props(block_size: usize) -> BoxActorProd<ManagerActor> {
-        Props::new(move || ManagerActor::with(block_size))
+        Props::new_from(move || ManagerActor::with(block_size))
     }
 
     fn distribute_graph(&mut self, graph: &Graph<f64>, ctx: &Context<ManagerMsg>) {
@@ -212,9 +212,9 @@ impl ManagerActor {
             .map(|row| {
                 row.iter()
                     .map(|block| {
-                        ctx.actor_of(
-                            BlockActor::props(block.clone(), num_nodes, self_ref.clone()),
+                        ctx.actor_of_props(
                             &format!("block-actor-{}", block.block_id()),
+                            BlockActor::props(block.clone(), num_nodes, self_ref.clone()),
                         )
                         .expect("BlockActor should have started")
                     })
@@ -347,7 +347,7 @@ impl BlockActor {
         num_nodes: usize,
         manager: ActorRef<ManagerMsg>,
     ) -> BoxActorProd<BlockActor> {
-        Props::new(move || BlockActor::with(initial_block.clone(), num_nodes, manager.clone()))
+        Props::new_from(move || BlockActor::with(initial_block.clone(), num_nodes, manager.clone()))
     }
 
     fn notify_neighbours(&self) -> () {
