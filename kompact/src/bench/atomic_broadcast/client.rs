@@ -19,7 +19,7 @@ enum ExperimentState {
 
 #[derive(Debug)]
 pub enum LocalClientMessage {
-    Run,
+    Run(u64),
     Stop,
     GetMetaResults(Ask<(), (u64, Vec<(u64, Duration)>)>), // (num_timed_out, latency)
 }
@@ -52,7 +52,7 @@ pub struct Client {
     num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(Vec<u64>, Vec<u64>)>,
-    leader_election_latch: Arc<CountdownEvent>,
+    leader_election_promise: Option<KPromise<u64>>,
     finished_latch: Arc<CountdownEvent>,
     latest_proposal_id: u64,
     responses: HashMap<u64, Option<Duration>>,
@@ -64,6 +64,7 @@ pub struct Client {
     num_timed_out: u64,
     leader_changes: Vec<u64>,
     retry_proposal: Option<u64>,
+    measure_latency: bool,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -78,8 +79,9 @@ impl Client {
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         timeout: u64,
-        leader_election_latch: Arc<CountdownEvent>,
+        leader_election_promise: Option<KPromise<u64>>,
         finished_latch: Arc<CountdownEvent>,
+        measure_latency: bool,
     ) -> Client {
         Client {
             ctx: ComponentContext::uninitialised(),
@@ -87,7 +89,7 @@ impl Client {
             num_concurrent_proposals,
             nodes,
             reconfig,
-            leader_election_latch,
+            leader_election_promise,
             finished_latch,
             latest_proposal_id: 0,
             responses: HashMap::with_capacity(num_proposals as usize),
@@ -99,6 +101,7 @@ impl Client {
             num_timed_out: 0,
             leader_changes: vec![],
             retry_proposal: None,
+            measure_latency,
             #[cfg(feature = "track_timeouts")]
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
@@ -150,8 +153,8 @@ impl Client {
             i
         };
         for id in from..=to {
-            let cache_start_time = self.num_concurrent_proposals == 1
-                || self.state == ExperimentState::ProposedReconfiguration;
+            let cache_start_time =
+                self.measure_latency || self.state == ExperimentState::ProposedReconfiguration;
             let current_time = match cache_start_time {
                 true => Some(SystemTime::now()),
                 _ => None,
@@ -192,13 +195,13 @@ impl Client {
                     );
                 }
             } else {
-                info!(
+                /*info!(
                     self.ctx.log(),
                     "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}",
                     self.leader_changes.len(),
                     self.leader_changes,
                     self.current_leader
-                );
+                );*/
             }
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
@@ -320,8 +323,9 @@ impl Actor for Client {
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
-            LocalClientMessage::Run => {
+            LocalClientMessage::Run(leader) => {
                 self.state = ExperimentState::Running;
+                self.current_leader = leader;
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
             }
@@ -362,11 +366,8 @@ impl Actor for Client {
                         match self.state {
                             ExperimentState::LeaderElection => {
                                 self.current_leader = pid;
-                                match self.leader_election_latch.decrement() {
-                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}", pid),
-                                    Err(e) => if e != CountdownError::AlreadySet {
-                                        panic!("Failed to decrement election latch: {:?}", e);
-                                    }
+                                if let Some(promise) = self.leader_election_promise.take() {
+                                    promise.fulfil(self.current_leader).expect("Failed to fulfil promise with first leader pid");
                                 }
                             },
                             ExperimentState::ReconfigurationElection => {

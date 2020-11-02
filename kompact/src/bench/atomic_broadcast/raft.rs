@@ -145,16 +145,8 @@ where
             )
         });
         let kill_recipient: Recipient<KillResponse> = self.actor_ref().recipient();
-        let (communicator, comm_f) = system.create_and_register(|| {
-            Communicator::with(
-                communicator_peers,
-                self.cached_client
-                    .as_ref()
-                    .expect("No cached client")
-                    .clone(),
-                kill_recipient,
-            )
-        });
+        let (communicator, comm_f) =
+            system.create_and_register(|| Communicator::with(communicator_peers, kill_recipient));
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
         let comm_alias_f = system.register_by_alias(&communicator, communicator_alias);
         biconnect_components::<CommunicationPort, _, _>(&communicator, &raft_comp)
@@ -260,7 +252,7 @@ where
                 debug!(self.ctx.log(), "Node {} became leader", pid);
                 if notify_client {
                     self.cached_client
-                        .as_ref()
+                        .take()
                         .expect("No cached client!")
                         .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
                         .expect("Should serialise FirstLeader");
@@ -325,8 +317,8 @@ where
             ATOMICBCAST_ID => {
                 if !self.stopped {
                     if self.current_leader == self.pid || self.current_leader == 0 {
-                        // if no leader, let raftcomp hold back
-                        if let AtomicBroadcastMsg::Proposal(p) = m
+                        let NetMessage { sender, data, .. } = m;
+                        if let AtomicBroadcastMsg::Proposal(p) = data
                             .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
                             .expect("Should be AtomicBroadcastMsg!")
                         {
@@ -334,7 +326,7 @@ where
                                 .as_ref()
                                 .expect("No active RaftComp")
                                 .actor_ref()
-                                .tell(RaftCompMsg::Propose(p));
+                                .tell(RaftCompMsg::Propose(p, sender));
                         }
                     } else if self.current_leader > 0 {
                         let leader = self.peers.get(&self.current_leader).unwrap_or_else(|| {
@@ -415,7 +407,7 @@ where
 
 #[derive(Debug)]
 pub enum RaftCompMsg {
-    Propose(Proposal),
+    Propose(Proposal, ActorPath),
     Stop,
     SequenceReq(Ask<(), Vec<u64>>),
 }
@@ -457,7 +449,8 @@ where
     num_peers: usize,
     stopped: bool,
     stopped_peers: HashSet<u64>,
-    hb_proposals: Vec<Proposal>,
+    hb_proposals: Vec<(Proposal, ActorPath)>,
+    reconfig_client: Option<ActorPath>,
 }
 
 impl<S> ComponentLifecycle for RaftComp<S>
@@ -491,9 +484,9 @@ where
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
-            RaftCompMsg::Propose(p) => {
+            RaftCompMsg::Propose(p, client) => {
                 if self.reconfig_state != ReconfigurationState::Removed {
-                    self.propose(p);
+                    self.propose(p, client);
                 }
             }
             RaftCompMsg::SequenceReq(sr) => {
@@ -589,6 +582,7 @@ where
             stopped_peers: HashSet::new(),
             num_peers,
             hb_proposals: vec![],
+            reconfig_client: None,
         }
     }
 
@@ -627,8 +621,8 @@ where
         if leader != 0 {
             if !self.hb_proposals.is_empty() {
                 let proposals = std::mem::take(&mut self.hb_proposals);
-                for proposal in proposals {
-                    self.propose(proposal);
+                for (proposal, client) in proposals {
+                    self.propose(proposal, client);
                 }
             }
             if leader != self.current_leader {
@@ -651,9 +645,9 @@ where
         let _ = self.raw_raft.step(msg);
     }
 
-    fn propose(&mut self, proposal: Proposal) {
+    fn propose(&mut self, proposal: Proposal, client: ActorPath) {
         if self.raw_raft.raft.leader_id == 0 {
-            self.hb_proposals.push(proposal);
+            self.hb_proposals.push((proposal, client));
             return;
         }
         match proposal.reconfig {
@@ -715,13 +709,19 @@ where
                             }
                         }
                     }
+                    self.reconfig_client = Some(client);
                     self.reconfig_state = ReconfigurationState::Pending;
                 }
             }
             None => {
                 // i.e normal operation
                 let data = proposal.data;
-                self.raw_raft.propose(vec![], data).unwrap_or_else(|_| {
+                let mut ser_client = Vec::<u8>::new();
+                client
+                    .serialise(&mut ser_client)
+                    .expect("Failed to serialise ClientComp actorpath");
+
+                self.raw_raft.propose(ser_client, data).unwrap_or_else(|_| {
                     panic!(
                         "Failed to propose. leader: {}, lead_transferee: {:?}",
                         self.raw_raft.raft.leader_id, self.raw_raft.raft.lead_transferee
@@ -844,8 +844,10 @@ where
                             store.set_conf_state(cs, None);
 
                             let pr = ProposalResp::with(data, leader);
-                            self.communication_port
-                                .trigger(CommunicatorMsg::ProposalResponse(pr));
+                            if let Some(client) = self.reconfig_client.take() {
+                                self.communication_port
+                                    .trigger(CommunicatorMsg::ProposalResponse(pr, client));
+                            }
                         }
                         _ => unimplemented!(),
                     }
@@ -854,8 +856,10 @@ where
                     if self.raw_raft.raft.state == StateRole::Leader {
                         let pr =
                             ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id);
+                        let client = ActorPath::deserialise(&mut entry.get_context())
+                            .expect("Context should be proposing client's actorpath!");
                         self.communication_port
-                            .trigger(CommunicatorMsg::ProposalResponse(pr));
+                            .trigger(CommunicatorMsg::ProposalResponse(pr, client));
                     }
                 }
             }

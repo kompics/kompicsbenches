@@ -21,8 +21,8 @@ pub enum AtomicBroadcastCompMsg {
 pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
-    ProposalResponse(ProposalResp),
-    PendingReconfiguration(Vec<u8>),
+    ProposalResponse(ProposalResp, ActorPath),
+    PendingReconfiguration(Vec<u8>, ActorPath),
     SendStop(u64),
 }
 
@@ -38,21 +38,18 @@ pub struct Communicator {
     ctx: ComponentContext<Communicator>,
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
-    client: ActorPath,              // cached client to send SequenceResp to
     supervisor: Recipient<KillResponse>,
 }
 
 impl Communicator {
     pub fn with(
         peers: HashMap<u64, ActorPath>,
-        client: ActorPath,
         supervisor: Recipient<KillResponse>,
     ) -> Communicator {
         Communicator {
             ctx: ComponentContext::uninitialised(),
             atomic_broadcast_port: ProvidedPort::uninitialised(),
             peers,
-            client,
             supervisor,
         }
     }
@@ -88,15 +85,15 @@ impl Provide<CommunicationPort> for Communicator {
                     .tell_serialised(pm, self)
                     .expect("Should serialise RawPaxosMsg");
             }
-            CommunicatorMsg::ProposalResponse(pr) => {
+            CommunicatorMsg::ProposalResponse(pr, client) => {
                 trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
-                self.client
+                client
                     .tell_serialised(am, self)
                     .expect("Should serialise ProposalResp");
             }
-            CommunicatorMsg::PendingReconfiguration(data) => {
-                self.client
+            CommunicatorMsg::PendingReconfiguration(data, client) => {
+                client
                     .tell_serialised(AtomicBroadcastMsg::PendingReconfiguration(data), self)
                     .expect("Should serialise PendingReconfiguration");
             }

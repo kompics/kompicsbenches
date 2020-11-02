@@ -45,8 +45,16 @@ pub mod raft {
 
         fn deserialise(buf: &mut dyn Buf) -> Result<TikvRaftMsg, SerError> {
             let bytes = buf.bytes();
-            let rm: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes)
-                .expect("Protobuf failed to deserialise TikvRaftMsg");
+            let remaining = buf.remaining();
+            let rm: TikvRaftMsg = if bytes.len() < remaining {
+                let mut dst = Vec::with_capacity(remaining);
+                buf.copy_to_slice(dst.as_mut_slice());
+                parse_from_bytes::<TikvRaftMsg>(dst.as_slice())
+                    .expect("Protobuf failed to deserialise TikvRaftMsg")
+            } else {
+                parse_from_bytes::<TikvRaftMsg>(bytes)
+                    .expect("Protobuf failed to deserialise TikvRaftMsg")
+            };
             Ok(rm)
         }
     }
@@ -215,13 +223,16 @@ pub mod paxos {
 
         fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
             match e {
-                Entry::Normal(d) => {
+                Entry::Normal(d, cd) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
                     let data = d.as_slice();
                     buf.put_u32(data.len() as u32);
                     buf.put_slice(data);
+                    let client_data = cd.as_slice();
+                    buf.put_u32(client_data.len() as u32);
+                    buf.put_slice(client_data);
                 }
-                Entry::StopSign(ss) => {
+                Entry::StopSign(ss, cd) => {
                     buf.put_u8(SS_ENTRY_ID);
                     buf.put_u32(ss.config_id);
                     buf.put_u32(ss.nodes.len() as u32);
@@ -233,6 +244,9 @@ pub mod paxos {
                         }
                         _ => buf.put_u8(0),
                     }
+                    let client_data = cd.as_slice();
+                    buf.put_u32(client_data.len() as u32);
+                    buf.put_slice(client_data);
                 }
             }
         }
@@ -256,7 +270,10 @@ pub mod paxos {
                     let data_len = buf.get_u32() as usize;
                     let mut data = vec![0; data_len];
                     buf.copy_to_slice(&mut data);
-                    Entry::Normal(data)
+                    let client_data_len = buf.get_u32() as usize;
+                    let mut client_data = vec![0; client_data_len];
+                    buf.copy_to_slice(&mut client_data);
+                    Entry::Normal(data, client_data)
                 }
                 SS_ENTRY_ID => {
                     let config_id = buf.get_u32();
@@ -270,7 +287,10 @@ pub mod paxos {
                         _ => None,
                     };
                     let ss = StopSign::with(config_id, nodes, skip_prepare_n);
-                    Entry::StopSign(ss)
+                    let client_data_len = buf.get_u32() as usize;
+                    let mut client_data = vec![0; client_data_len];
+                    buf.copy_to_slice(&mut client_data);
+                    Entry::StopSign(ss, client_data)
                 }
                 error_id => panic!(format!(
                     "Got unexpected id in deserialise_entry: {}",

@@ -59,7 +59,7 @@ where
 
 #[derive(Debug)]
 pub enum PaxosReplicaMsg {
-    Propose(Proposal),
+    Propose(Proposal, ActorPath),
     LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
     GetAllEntries(Ask<(), Vec<Entry>>),
     Stop,
@@ -208,16 +208,8 @@ where
         });
         /*** create and register Communicator ***/
         let kill_recipient: Recipient<KillResponse> = self.ctx.actor_ref().recipient();
-        let (communicator, comm_f) = system.create_and_register(|| {
-            Communicator::with(
-                communicator_peers,
-                self.cached_client
-                    .as_ref()
-                    .expect("No cached client!")
-                    .clone(),
-                kill_recipient,
-            )
-        });
+        let (communicator, comm_f) =
+            system.create_and_register(|| Communicator::with(communicator_peers, kill_recipient));
         /*** create and register BLE ***/
         let (ble_comp, ble_f) = system.create_and_register(|| {
             BallotLeaderComp::with(
@@ -403,7 +395,8 @@ where
     }
 
     fn deserialise_and_propose(&self, m: NetMessage) {
-        if let AtomicBroadcastMsg::Proposal(p) = m
+        let NetMessage { sender, data, .. } = m;
+        if let AtomicBroadcastMsg::Proposal(p) = data
             .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
             .expect("Should be AtomicBroadcastMsg!")
         {
@@ -411,7 +404,9 @@ where
                 .paxos_replicas
                 .get(self.active_config.1)
                 .expect("Could not get PaxosComp actor ref despite being leader");
-            active_paxos.actor_ref().tell(PaxosReplicaMsg::Propose(p));
+            active_paxos
+                .actor_ref()
+                .tell(PaxosReplicaMsg::Propose(p, sender));
         }
     }
 
@@ -430,8 +425,10 @@ where
         let num_continued_nodes = num_ready_peers + num_unready_peers;
         let idx = config_id as usize - 1;
         let rem_segments: Vec<_> = (1..=num_continued_nodes).map(|x| x as u32).collect();
-        self.pending_seq_transfers[idx] =
-            (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
+        self.pending_seq_transfers[idx] = (
+            rem_segments,
+            vec![Entry::Normal(vec![], vec![]); seq_len as usize],
+        );
         let offset = seq_len / num_continued_nodes as u64;
         // get segment from unready nodes (probably have early segments of final sequence)
         let skip = skip_tag.unwrap_or(0);
@@ -689,7 +686,7 @@ where
     S: SequenceTraits,
 {
     Leader(u32, u64),
-    Reconfig(FinalMsg<S>),
+    Reconfig(FinalMsg<S>, ActorPath),
     StopResp,
     KillResp,
     CleanupIteration(Ask<(), ()>),
@@ -745,7 +742,7 @@ where
                         if pid == self.pid {
                             // notify client if no leader before
                             self.cached_client
-                                .as_ref()
+                                .take()
                                 .expect("No cached client!")
                                 .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
                                 .expect("Should serialise FirstLeader");
@@ -768,7 +765,7 @@ where
                     self.leader_in_active_config = pid;
                 }
             }
-            PaxosCompMsg::Reconfig(r) => {
+            PaxosCompMsg::Reconfig(r, client) => {
                 /*** ReconfigResponse to client ***/
                 let new_config_len = r.nodes.len();
                 let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
@@ -783,9 +780,7 @@ where
                     data.put_u64(*pid);
                 }
                 let pr = ProposalResp::with(data, 0); // let new leader notify client itself when it's ready
-                self.cached_client
-                    .as_ref()
-                    .expect("No cached client!")
+                client
                     .tell_serialised(AtomicBroadcastMsg::ProposalResp(pr), self)
                     .expect("Should serialise ReconfigResponse");
                 /*** handle final sequence and notify new nodes ***/
@@ -1010,7 +1005,7 @@ where
                                                     let seq_len = r.seq_metadata.len;
                                                     let idx = config_id as usize - 1;
                                                     let rem_segments: Vec<_> = (1..=num_expected_transfers).map(|x| x as u32).collect();
-                                                    self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
+                                                    self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![], vec![]); seq_len as usize]);
                                                     let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT/2), move |c, _| c.retry_request_sequence(config_id, seq_len, num_expected_transfers as u64));
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
@@ -1065,7 +1060,7 @@ where
                                     if let Some(seq) = self.prev_sequences.get(&i) {
                                         let sequence = seq.get_sequence();
                                         for entry in sequence {
-                                            if let Entry::Normal(n) = entry {
+                                            if let Entry::Normal(n, _) = entry {
                                                 let id = n.as_slice().get_u64();
                                                 all_entries.push(id);
                                                 unique.insert(id);
@@ -1077,7 +1072,7 @@ where
                                     let active_paxos = self.paxos_replicas.get(self.active_config.1).unwrap();
                                     let sequence = active_paxos.actor_ref().ask(|promise| PaxosReplicaMsg::GetAllEntries(Ask::new(promise, ()))).wait();
                                     for entry in sequence {
-                                        if let Entry::Normal(n) = entry {
+                                        if let Entry::Normal(n, _) = entry {
                                             let id = n.as_slice().get_u64();
                                             all_entries.push(id);
                                             unique.insert(id);
@@ -1195,7 +1190,7 @@ where
         Handled::Ok
     }
 
-    fn handle_stopsign(&mut self, ss: &StopSign) {
+    fn handle_stopsign(&mut self, ss: &StopSign, client: ActorPath) {
         let final_seq = self.paxos.stop_and_get_sequence();
         let new_config_len = ss.nodes.len();
         let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
@@ -1214,7 +1209,7 @@ where
         );
         let nodes = Reconfig::with(continued_nodes, new_nodes);
         let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_n);
-        self.supervisor.tell(PaxosCompMsg::Reconfig(r));
+        self.supervisor.tell(PaxosCompMsg::Reconfig(r, client));
     }
 
     fn get_decided(&mut self) -> Handled {
@@ -1227,29 +1222,37 @@ where
             // leader: check reconfiguration and send responses to client
             let decided_entries = self.paxos.get_decided_entries().to_vec();
             let last = decided_entries.last();
-            if let Some(Entry::StopSign(ss)) = last {
-                self.handle_stopsign(&ss);
+            if let Some(Entry::StopSign(ss, client_data)) = last {
+                let client = ActorPath::deserialise(&mut client_data.as_slice())
+                    .expect("Failed to deserialise Client's actorpath");
+                self.handle_stopsign(&ss, client);
             }
             for decided in decided_entries {
-                if let Entry::Normal(data) = decided {
+                if let Entry::Normal(data, client_data) = decided {
                     let pr = ProposalResp::with(data, self.current_leader);
+                    let client = ActorPath::deserialise(&mut client_data.as_slice())
+                        .expect("Failed to deserialise Client's actorpath");
                     self.communication_port
-                        .trigger(CommunicatorMsg::ProposalResponse(pr));
+                        .trigger(CommunicatorMsg::ProposalResponse(pr, client));
                 }
             }
         } else {
             // follower: just handle a possible reconfiguration
-            if let Some(Entry::StopSign(ss)) = self.paxos.get_decided_entries().last().cloned() {
-                self.handle_stopsign(&ss);
+            if let Some(Entry::StopSign(ss, client_data)) =
+                self.paxos.get_decided_entries().last().cloned()
+            {
+                let client = ActorPath::deserialise(&mut client_data.as_slice())
+                    .expect("Failed to deserialise Client's actorpath");
+                self.handle_stopsign(&ss, client);
             }
         }
         Handled::Ok
     }
 
-    fn propose(&mut self, p: Proposal) -> Result<(), Vec<u8>> {
+    fn propose(&mut self, p: Proposal, client_data: Vec<u8>) -> Result<(), Vec<u8>> {
         match p.reconfig {
-            Some((reconfig, _)) => self.paxos.propose_reconfiguration(reconfig),
-            None => self.paxos.propose_normal(p.data),
+            Some((reconfig, _)) => self.paxos.propose_reconfiguration(reconfig, client_data),
+            None => self.paxos.propose_normal(p.data, client_data),
         }
     }
 }
@@ -1263,12 +1266,17 @@ where
 
     fn receive_local(&mut self, msg: PaxosReplicaMsg) -> Handled {
         match msg {
-            PaxosReplicaMsg::Propose(p) => {
+            PaxosReplicaMsg::Propose(p, client) => {
                 if !self.pending_reconfig {
-                    if let Err(data) = self.propose(p) {
+                    let mut ser_client = Vec::<u8>::new();
+                    client
+                        .serialise(&mut ser_client)
+                        .expect("Failed to serialise ClientComp actorpath");
+                    if let Err(data) = self.propose(p, ser_client) {
+                        // TODO let supervisor know pending reconfig
                         self.pending_reconfig = true;
                         self.communication_port
-                            .trigger(CommunicatorMsg::PendingReconfiguration(data))
+                            .trigger(CommunicatorMsg::PendingReconfiguration(data, client))
                     }
                 }
             }
@@ -1543,11 +1551,15 @@ pub mod raw_paxos {
             self.storage.stopped()
         }
 
-        pub fn propose_normal(&mut self, data: Vec<u8>) -> Result<(), Vec<u8>> {
+        pub fn propose_normal(
+            &mut self,
+            data: Vec<u8>,
+            client_data: Vec<u8>,
+        ) -> Result<(), Vec<u8>> {
             if self.stopped() {
                 Err(data)
             } else {
-                let entry = Entry::Normal(data);
+                let entry = Entry::Normal(data, client_data);
                 match self.state {
                     (Role::Leader, Phase::Prepare) => self.proposals.push(entry),
                     (Role::Leader, Phase::Accept) => self.send_accept(entry),
@@ -1558,7 +1570,11 @@ pub mod raw_paxos {
             }
         }
 
-        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) -> Result<(), Vec<u8>> {
+        pub fn propose_reconfiguration(
+            &mut self,
+            nodes: Vec<u64>,
+            client_data: Vec<u8>,
+        ) -> Result<(), Vec<u8>> {
             if self.stopped() {
                 let mut data: Vec<u8> = Vec::with_capacity(8);
                 data.put_u64(RECONFIG_ID);
@@ -1587,7 +1603,7 @@ pub mod raw_paxos {
                     None
                 };
                 let ss = StopSign::with(self.config_id + 1, nodes, skip_prepare_n);
-                let entry = Entry::StopSign(ss);
+                let entry = Entry::StopSign(ss, client_data);
                 match self.state {
                     (Role::Leader, Phase::Prepare) => self.proposals.push(entry),
                     (Role::Leader, Phase::Accept) => self.send_accept(entry),
@@ -2218,14 +2234,14 @@ pub mod raw_paxos {
 
     #[derive(Clone, Debug, PartialEq)]
     pub enum Entry {
-        Normal(Vec<u8>),
-        StopSign(StopSign),
+        Normal(Vec<u8>, Vec<u8>),
+        StopSign(StopSign, Vec<u8>),
     }
 
     impl Entry {
         pub(crate) fn is_stopsign(&self) -> bool {
             match self {
-                Entry::StopSign(_) => true,
+                Entry::StopSign(_, _) => true,
                 _ => false,
             }
         }

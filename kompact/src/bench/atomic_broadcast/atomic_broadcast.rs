@@ -157,7 +157,8 @@ pub struct AtomicBroadcastMaster {
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
-    client_comp: Option<Arc<Component<Client>>>,
+    first_leader: Option<u64>,
+    client_comps: Vec<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
     num_written_latency: usize, // used to calculate avg of median latency
     latency_hist: Option<Histogram<u64>>,
@@ -176,7 +177,8 @@ impl AtomicBroadcastMaster {
             system: None,
             finished_latch: None,
             iteration_id: 0,
-            client_comp: None,
+            first_leader: None,
+            client_comps: vec![],
             partitioning_actor: None,
             num_written_latency: 0,
             latency_hist: None,
@@ -219,34 +221,89 @@ impl AtomicBroadcastMaster {
     fn create_client(
         &self,
         nodes_id: HashMap<u64, ActorPath>,
+        num_proposals: u64,
+        num_concurrent_proposals: u64,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
-        leader_election_latch: Arc<CountdownEvent>,
-    ) -> (Arc<Component<Client>>, ActorPath) {
+        leader_election_promise: Option<KPromise<u64>>,
+        measure_latency: bool,
+    ) -> (
+        Arc<Component<Client>>,
+        KFuture<RegistrationResult>,
+        KFuture<()>,
+    ) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
         let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
-        let (client_comp, unique_reg_f) = system.create_and_register(|| {
+        let (client, reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
-                self.num_proposals.unwrap(),
-                self.concurrent_proposals.unwrap(),
+                num_proposals,
+                num_concurrent_proposals,
                 nodes_id,
                 reconfig,
                 PROPOSAL_TIMEOUT,
-                leader_election_latch,
-                finished_latch,
+                leader_election_promise,
+                finished_latch.clone(),
+                measure_latency,
             )
         });
-        unique_reg_f.wait_expect(REGISTER_TIMEOUT, "Client failed to register!");
-        let client_comp_f = system.start_notify(&client_comp);
-        client_comp_f
-            .wait_timeout(REGISTER_TIMEOUT)
-            .expect("ClientComp never started!");
-        let client_path = system
-            .register_by_alias(&client_comp, format!("client{}", &self.iteration_id))
+        let start_f = system.start_notify(&client);
+        (client, reg_f, start_f)
+    }
+
+    fn create_clients(
+        &mut self,
+        nodes_id: HashMap<u64, ActorPath>,
+        leader_election_promise: KPromise<u64>,
+    ) -> ActorPath {
+        let n = self.concurrent_proposals.unwrap();
+        let num_proposals = self.num_proposals.unwrap();
+        let proposals_per_client = num_proposals / n;
+        let master_client_proposals = if n * proposals_per_client < num_proposals {
+            num_proposals - n * proposals_per_client
+        } else {
+            proposals_per_client
+        };
+        let mut reg_futures = Vec::with_capacity(n as usize);
+        let mut start_futures = Vec::with_capacity(n as usize);
+        for _ in 1..n {
+            let (client, reg_f, start_f) =
+                self.create_client(nodes_id.clone(), proposals_per_client, 1, None, None, false);
+            self.client_comps.push(client);
+            reg_futures.push(reg_f);
+            start_futures.push(start_f);
+        }
+        let (master_client, master_client_reg_f, master_start_f) = self.create_client(
+            nodes_id,
+            master_client_proposals,
+            1,
+            self.reconfiguration.clone(),
+            Some(leader_election_promise),
+            false,
+        );
+        reg_futures.push(master_client_reg_f);
+        start_futures.push(master_start_f);
+        let master_client_path_f = self
+            .system
+            .as_ref()
+            .unwrap()
+            .register_by_alias(&master_client, format!("client{}", &self.iteration_id));
+
+        FutureCollection::expect_completion(
+            reg_futures,
+            Duration::from_millis(1000),
+            "Client never registered",
+        );
+        FutureCollection::expect_completion(
+            start_futures,
+            Duration::from_millis(1000),
+            "Master client never started",
+        );
+        let master_client_path = master_client_path_f
             .wait_expect(REGISTER_TIMEOUT, "Failed to register alias for ClientComp");
-        (client_comp, client_path)
+        self.client_comps.push(master_client);
+        master_client_path
     }
 
     fn validate_experiment_params(
@@ -375,6 +432,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let mut conf = KompactConfig::default();
         conf.load_config_file("./src/configs/atomic_broadcast.conf");
         let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
@@ -388,38 +446,35 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if self.system.is_none() {
             panic!("No KompactSystem found!")
         }
-        let finished_latch = Arc::new(CountdownEvent::new(1));
+        let num_clients = self.concurrent_proposals.unwrap() as usize;
+        let finished_latch = Arc::new(CountdownEvent::new(num_clients));
         self.finished_latch = Some(finished_latch);
         self.iteration_id += 1;
         let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
         for (id, actorpath) in d.iter().enumerate() {
             nodes_id.insert(id as u64 + 1, actorpath.clone());
         }
-        let leader_election_latch = Arc::new(CountdownEvent::new(1));
-        let (client_comp, client_path) = self.create_client(
-            nodes_id,
-            self.reconfiguration.clone(),
-            leader_election_latch.clone(),
-        );
-        let partitioning_actor = self.initialise_iteration(d, client_path);
+        let (p, f) = promise::<u64>();
+        let master_client_path = self.create_clients(nodes_id, p);
+        let partitioning_actor = self.initialise_iteration(d, master_client_path);
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);
-        leader_election_latch.wait(); // wait until leader is established
+        self.first_leader = Some(f.wait()); // wait until leader is established
         self.partitioning_actor = Some(partitioning_actor);
-        self.client_comp = Some(client_comp);
     }
 
     fn run_iteration(&mut self) -> () {
         println!("Running Atomic Broadcast experiment!");
-        match self.client_comp {
-            Some(ref client_comp) => {
-                client_comp.actor_ref().tell(LocalClientMessage::Run);
-                let finished_latch = self.finished_latch.take().unwrap();
-                finished_latch.wait();
-            }
-            _ => panic!("No client found!"),
+        if self.client_comps.is_empty() {
+            panic!("No clients!");
         }
+        let leader = self.first_leader.expect("No first leader");
+        for client in &self.client_comps {
+            client.actor_ref().tell(LocalClientMessage::Run(leader));
+        }
+        let finished_latch = self.finished_latch.take().unwrap();
+        finished_latch.wait();
     }
 
     fn cleanup_iteration(&mut self, last_iteration: bool, exec_time_millis: f64) -> () {
@@ -428,14 +483,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             exec_time_millis
         );
         let system = self.system.take().unwrap();
-        let client = self.client_comp.take().unwrap();
-        client.actor_ref().tell(LocalClientMessage::Stop);
-        let (num_timed_out, latencies) = client
-            .actor_ref()
-            .ask(|promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
-            .wait();
-        self.num_timed_out.push(num_timed_out);
-        if self.concurrent_proposals == Some(1)
+        let master_client = self.client_comps.last().expect("No master client");
+        master_client.actor_ref().tell(LocalClientMessage::Stop);
+        let client_comps = std::mem::take(&mut self.client_comps);
+        let total_timeouts = client_comps.iter().fold(0, {
+            |total_timeouts, client| {
+                let (num_timed_out, latencies) = client
+                    .actor_ref()
+                    .ask(|promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
+                    .wait();
+                total_timeouts + num_timed_out
+            }
+        });
+        self.num_timed_out.push(total_timeouts);
+        /*if self.concurrent_proposals == Some(1)
             || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
         {
             let dir = format!("{}/latency/", META_RESULTS_DIR);
@@ -457,7 +518,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 histo.record(latency).expect("Failed to record histogram");
             }
             writeln!(file, "").expect("Failed to write raw latency"); // separate each run with empty line. TODO handle in plotting
-        }
+        }*/
 
         if let Some(partitioning_actor) = self.partitioning_actor.take() {
             let stop_f = partitioning_actor
@@ -467,10 +528,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             stop_f.wait();
             // stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
 
-            let kill_client_f = system.kill_notify(client);
-            kill_client_f
-                .wait_timeout(REGISTER_TIMEOUT)
-                .expect("Client never died");
+            for client in client_comps {
+                let kill_client_f = system.kill_notify(client);
+                kill_client_f
+                    .wait_timeout(REGISTER_TIMEOUT)
+                    .expect("Client never died");
+            }
 
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
@@ -604,6 +667,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let mut conf = KompactConfig::default();
         conf.load_config_file("./src/configs/atomic_broadcast.conf");
         let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
