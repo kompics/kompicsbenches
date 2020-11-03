@@ -45,8 +45,16 @@ pub mod raft {
 
         fn deserialise(buf: &mut dyn Buf) -> Result<TikvRaftMsg, SerError> {
             let bytes = buf.bytes();
-            let rm: TikvRaftMsg = parse_from_bytes::<TikvRaftMsg>(bytes)
-                .expect("Protobuf failed to deserialise TikvRaftMsg");
+            let remaining = buf.remaining();
+            let rm: TikvRaftMsg = if bytes.len() < remaining {
+                let mut dst = Vec::with_capacity(remaining);
+                buf.copy_to_slice(dst.as_mut_slice());
+                parse_from_bytes::<TikvRaftMsg>(dst.as_slice())
+                    .expect("Protobuf failed to deserialise TikvRaftMsg")
+            } else {
+                parse_from_bytes::<TikvRaftMsg>(bytes)
+                    .expect("Protobuf failed to deserialise TikvRaftMsg")
+            };
             Ok(rm)
         }
     }

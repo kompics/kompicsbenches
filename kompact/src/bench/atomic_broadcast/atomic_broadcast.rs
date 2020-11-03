@@ -375,6 +375,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let mut conf = KompactConfig::default();
         conf.load_config_file("./src/configs/atomic_broadcast.conf");
         let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
@@ -604,6 +605,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let mut conf = KompactConfig::default();
         conf.load_config_file("./src/configs/atomic_broadcast.conf");
         let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
