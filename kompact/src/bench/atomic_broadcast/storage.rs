@@ -724,7 +724,6 @@ pub mod paxos {
     use super::super::messages::paxos::ballot_leader_election::Ballot;
     use super::super::paxos::{raw_paxos::Entry, PaxosStateTraits, SequenceTraits};
     use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
-    use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
     use std::fmt::Debug;
     use std::mem;
     use std::sync::Arc;
@@ -955,9 +954,7 @@ pub mod paxos {
 
     impl Sequence for MemorySequence {
         fn new() -> Self {
-            MemorySequence {
-                sequence: Vec::with_capacity(MAX_INFLIGHT),
-            }
+            MemorySequence { sequence: vec![] }
         }
 
         fn new_with_sequence(seq: Vec<Entry>) -> Self {

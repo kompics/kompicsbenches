@@ -1,9 +1,10 @@
 extern crate raft as tikv_raft;
 
-use crate::bench::atomic_broadcast::parameters::DATA_SIZE_HINT;
 use crate::serialiser_ids;
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
+
+pub const DATA_SIZE_HINT: usize = 8; // TODO
 
 pub mod raft {
     extern crate raft as tikv_raft;
@@ -62,7 +63,7 @@ pub mod raft {
 
 pub mod paxos {
     use super::super::paxos::raw_paxos::Entry;
-    use crate::bench::atomic_broadcast::parameters::DATA_SIZE_HINT;
+    use crate::bench::atomic_broadcast::messages::DATA_SIZE_HINT;
     use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
     use crate::serialiser_ids;
     use ballot_leader_election::Ballot;

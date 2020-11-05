@@ -27,6 +27,7 @@ memmap                  = "0.7.0"
 hashbrown               = "0.8.0"
 indexmap                = "1.4.0"
 hdrhistogram            = "6.0"
+hocon 					= {version = "0.3.6", default-features = false}
 
 
 [dev-dependencies]

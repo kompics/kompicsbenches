@@ -1,3 +1,4 @@
+use super::atomic_broadcast::ExperimentConfig;
 use super::communicator::{
     AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
 };
@@ -7,7 +8,6 @@ use super::messages::paxos::{
     SequenceSegment, SequenceTransfer,
 };
 use super::messages::{StopMsg as NetStopMsg, *};
-use super::parameters::{paxos::*, *};
 use super::storage::paxos::*;
 use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
 use crate::partitioning_actor::{Init, PartitioningActorMsg, PartitioningActorSer};
@@ -102,6 +102,7 @@ where
     pending_kill_comps: usize,
     cleanup_latch: Option<Ask<(), ()>>,
     hb_proposals: Vec<NetMessage>,
+    experiment_config: ExperimentConfig,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -109,7 +110,11 @@ where
     S: SequenceTraits,
     P: PaxosStateTraits,
 {
-    pub fn with(initial_config: Vec<u64>, policy: ReconfigurationPolicy) -> PaxosComp<S, P> {
+    pub fn with(
+        initial_config: Vec<u64>,
+        policy: ReconfigurationPolicy,
+        experiment_config: ExperimentConfig,
+    ) -> PaxosComp<S, P> {
         PaxosComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
@@ -136,6 +141,7 @@ where
             pending_kill_comps: 0,
             cleanup_latch: None,
             hb_proposals: vec![],
+            experiment_config,
         }
     }
 
@@ -196,6 +202,7 @@ where
         let stopkill_recipient: Recipient<StopKillResponse> = self.ctx.actor_ref().recipient();
         /*** create and register Paxos ***/
         let log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
+        let max_inflight = self.experiment_config.max_inflight;
         let (paxos_comp, paxos_f) = system.create_and_register(|| {
             PaxosReplica::with(
                 self.ctx.actor_ref(),
@@ -204,6 +211,7 @@ where
                 self.pid,
                 log,
                 skip_prepare_n,
+                max_inflight,
             )
         });
         /*** create and register Communicator ***/
@@ -219,16 +227,30 @@ where
             )
         });
         /*** create and register BLE ***/
+        let election_timeout = self.experiment_config.election_timeout;
+        let config = self.ctx.config();
+        let ble_delta = config["paxos"]["ble_delta"]
+            .as_i64()
+            .expect("Failed to load get_decided_period");
+        let prio_start = if ble_prio {
+            config["paxos"]["prio_start_round"]
+                .as_i64()
+                .expect("Failed to load prio_start_round") as u64
+        } else {
+            0
+        };
+        let initial_election_factor = self.experiment_config.initial_election_factor;
         let (ble_comp, ble_f) = system.create_and_register(|| {
             BallotLeaderComp::with(
                 ble_peers,
                 self.pid,
-                ELECTION_TIMEOUT,
-                BLE_DELTA,
+                election_timeout as u64,
+                ble_delta as u64,
                 stopkill_recipient,
-                ble_prio,
+                prio_start,
                 quick_start,
                 skip_prepare_n,
+                initial_election_factor,
             )
         });
         let communicator_alias = format!(
@@ -478,7 +500,10 @@ where
                 self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
             }
         }
-        let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| {
+        let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
+            .as_duration()
+            .expect("Failed to load get_decided_period");
+        let timer = self.schedule_once(transfer_timeout, move |c, _| {
             c.retry_request_sequence(config_id, seq_len, num_continued_nodes as u64)
         });
         self.retry_transfer_timers.insert(config_id, timer);
@@ -523,7 +548,10 @@ where
                     self.request_sequence(*pid, config_id, from_idx, to_idx, *tag);
                 }
             }
-            let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT), move |c, _| {
+            let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
+                .as_duration()
+                .expect("Failed to load get_decided_period");
+            let timer = self.schedule_once(transfer_timeout, move |c, _| {
                 c.retry_request_sequence(config_id, seq_len, total_segments)
             });
             self.retry_transfer_timers.insert(config_id, timer);
@@ -1011,7 +1039,8 @@ where
                                                     let idx = config_id as usize - 1;
                                                     let rem_segments: Vec<_> = (1..=num_expected_transfers).map(|x| x as u32).collect();
                                                     self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
-                                                    let timer = self.schedule_once(Duration::from_millis(TRANSFER_TIMEOUT/2), move |c, _| c.retry_request_sequence(config_id, seq_len, num_expected_transfers as u64));
+                                                    let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"].as_duration().expect("Failed to load get_decided_period");
+                                                    let timer = self.schedule_once(transfer_timeout, move |c, _| c.retry_request_sequence(config_id, seq_len, num_expected_transfers as u64));
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
                                             }
@@ -1137,8 +1166,9 @@ where
         pid: u64,
         raw_paxos_log: KompactLogger,
         skipped_prepare: Option<Ballot>,
+        max_inflight: usize,
     ) -> PaxosReplica<S, P> {
-        let seq = S::new();
+        let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
         let paxos = Paxos::with(
@@ -1148,6 +1178,7 @@ where
             storage,
             raw_paxos_log,
             skipped_prepare,
+            Some(max_inflight),
         );
         PaxosReplica {
             ctx: ComponentContext::uninitialised(),
@@ -1167,16 +1198,21 @@ where
     }
 
     fn start_timers(&mut self) {
-        let decided_timer = self.schedule_periodic(
-            Duration::from_millis(1),
-            Duration::from_millis(GET_DECIDED_PERIOD),
-            move |c, _| c.get_decided(),
-        );
-        let outgoing_timer = self.schedule_periodic(
-            Duration::from_millis(0),
-            Duration::from_millis(OUTGOING_MSGS_PERIOD),
-            move |p, _| p.send_outgoing(),
-        );
+        let config = self.ctx.config();
+        let get_decided_period = config["paxos"]["get_decided_period"]
+            .as_duration()
+            .expect("Failed to load get_decided_period");
+        let outgoing_period = config["experiment"]["outgoing_period"]
+            .as_duration()
+            .expect("Failed to load outgoing_period");
+        let decided_timer =
+            self.schedule_periodic(Duration::from_millis(1), get_decided_period, move |c, _| {
+                c.get_decided()
+            });
+        let outgoing_timer =
+            self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |p, _| {
+                p.send_outgoing()
+            });
         self.timers = Some((decided_timer, outgoing_timer));
     }
 
@@ -1248,7 +1284,13 @@ where
 
     fn propose(&mut self, p: Proposal) -> Result<(), Vec<u8>> {
         match p.reconfig {
-            Some((reconfig, _)) => self.paxos.propose_reconfiguration(reconfig),
+            Some((reconfig, _)) => {
+                let prio_start_round = self.ctx.config()["paxos"]["prio_start_round"]
+                    .as_i64()
+                    .map(|x| x as u64);
+                self.paxos
+                    .propose_reconfiguration(reconfig, prio_start_round)
+            }
             None => self.paxos.propose_normal(p.data),
         }
     }
@@ -1382,8 +1424,6 @@ pub mod raw_paxos {
     use super::super::messages::paxos::*;
     use super::super::storage::paxos::Storage;
     use super::{PaxosStateTraits, SequenceTraits};
-    use crate::bench::atomic_broadcast::parameters::paxos::PRIO_START_ROUND;
-    use crate::bench::atomic_broadcast::parameters::MAX_INFLIGHT;
     use crate::serialiser_ids::RECONFIG_ID;
     use kompact::prelude::BufMut;
     use kompact::KompactLogger;
@@ -1419,6 +1459,7 @@ pub mod raw_paxos {
         outgoing: Vec<Message>,
         num_nodes: usize,
         log: KompactLogger,
+        max_inflight: usize,
     }
 
     impl<S, P> Paxos<S, P>
@@ -1434,6 +1475,7 @@ pub mod raw_paxos {
             storage: Storage<S, P>,
             log: KompactLogger,
             skipped_prepare: Option<Ballot>,
+            max_inflight: Option<usize>,
         ) -> Paxos<S, P> {
             let num_nodes = &peers.len() + 1;
             let majority = num_nodes / 2 + 1;
@@ -1463,6 +1505,7 @@ pub mod raw_paxos {
             };
             let n_leader = skipped_prepare.unwrap_or_else(|| Ballot::with(0, 0));
             // info!(log, "Start raw paxos pid: {}, state: {:?}, n_leader: {:?}", pid, state, n_leader);
+            let max_inflight = max_inflight.unwrap_or(100000);
             let mut paxos = Paxos {
                 storage,
                 pid,
@@ -1475,7 +1518,7 @@ pub mod raw_paxos {
                 promises_meta: vec![None; num_nodes],
                 las: vec![0; num_nodes],
                 lds,
-                proposals: Vec::with_capacity(MAX_INFLIGHT),
+                proposals: Vec::with_capacity(max_inflight),
                 lc: 0,
                 prev_ld: 0,
                 acc_sync_ld: 0,
@@ -1484,16 +1527,17 @@ pub mod raw_paxos {
                 batch_accept_meta: vec![None; num_nodes],
                 latest_decide_meta: vec![None; num_nodes],
                 latest_accepted_meta: None,
-                outgoing: Vec::with_capacity(MAX_INFLIGHT),
+                outgoing: Vec::with_capacity(max_inflight),
                 num_nodes,
                 log,
+                max_inflight,
             };
             paxos.storage.set_promise(n_leader);
             paxos
         }
 
         pub fn get_outgoing_msgs(&mut self) -> Vec<Message> {
-            let mut outgoing = Vec::with_capacity(MAX_INFLIGHT);
+            let mut outgoing = Vec::with_capacity(self.max_inflight);
             std::mem::swap(&mut self.outgoing, &mut outgoing);
             #[cfg(feature = "batch_accept")]
             {
@@ -1558,7 +1602,11 @@ pub mod raw_paxos {
             }
         }
 
-        pub fn propose_reconfiguration(&mut self, nodes: Vec<u64>) -> Result<(), Vec<u8>> {
+        pub fn propose_reconfiguration(
+            &mut self,
+            nodes: Vec<u64>,
+            prio_start_round: Option<u64>,
+        ) -> Result<(), Vec<u8>> {
             if self.stopped() {
                 let mut data: Vec<u8> = Vec::with_capacity(8);
                 data.put_u64(RECONFIG_ID);
@@ -1582,7 +1630,7 @@ pub mod raw_paxos {
                         Some((other_idx, _)) => other_idx as u64 + 1, // give leadership of new config to most up-to-date peer
                         None => self.pid,
                     };
-                    Some(Ballot::with(PRIO_START_ROUND, max_pid))
+                    Some(Ballot::with(prio_start_round.unwrap_or(0), max_pid))
                 } else {
                     None
                 };
@@ -2269,6 +2317,7 @@ mod ballot_leader_election {
         stopped: bool,
         stopped_peers: HashSet<u64>,
         quick_timeout: bool,
+        initial_election_factor: u64,
     }
 
     impl BallotLeaderComp {
@@ -2278,20 +2327,15 @@ mod ballot_leader_election {
             hb_delay: u64,
             delta: u64,
             supervisor: Recipient<StopKillResponse>,
-            prio_start: bool,
+            prio_start: u64,
             quick_timeout: bool,
             initial_max_ballot: Option<Ballot>,
+            initial_election_factor: u64,
         ) -> BallotLeaderComp {
             let n = &peers.len() + 1;
             let initial_round = match initial_max_ballot {
                 Some(ballot) if ballot.pid == pid => ballot.n,
-                _ => {
-                    if prio_start {
-                        PRIO_START_ROUND
-                    } else {
-                        0
-                    }
-                }
+                _ => prio_start,
             };
             let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {
@@ -2312,6 +2356,7 @@ mod ballot_leader_election {
                 stopped: false,
                 stopped_peers: HashSet::with_capacity(n),
                 quick_timeout,
+                initial_election_factor,
             }
         }
 
@@ -2341,7 +2386,7 @@ mod ballot_leader_election {
             }
             let delay = if self.quick_timeout {
                 // use short timeout if still no first leader
-                ELECTION_TIMEOUT / INITIAL_ELECTION_FACTOR
+                self.hb_delay / self.initial_election_factor
             } else {
                 self.hb_delay
             };
@@ -2379,7 +2424,7 @@ mod ballot_leader_election {
             }
             let delay = if self.quick_timeout {
                 // use short timeout if still no first leader
-                ELECTION_TIMEOUT / INITIAL_ELECTION_FACTOR
+                self.hb_delay / self.initial_election_factor
             } else {
                 self.hb_delay
             };
