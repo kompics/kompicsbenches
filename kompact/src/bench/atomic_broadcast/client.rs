@@ -77,7 +77,7 @@ impl Client {
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
-        timeout: u64,
+        timeout: Duration,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
@@ -92,7 +92,7 @@ impl Client {
             latest_proposal_id: 0,
             responses: HashMap::with_capacity(num_proposals as usize),
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
-            timeout: Duration::from_millis(timeout),
+            timeout,
             current_leader: 0,
             state: ExperimentState::LeaderElection,
             current_config: initial_config,

@@ -1160,6 +1160,7 @@ dependencies = [
  "grpc",
  "hashbrown 0.8.2",
  "hdrhistogram",
+ "hocon",
  "indexmap",
  "kompact",
  "memmap",
