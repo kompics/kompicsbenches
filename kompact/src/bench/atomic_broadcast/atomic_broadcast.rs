@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use super::super::*;
 use super::client::{Client, LocalClientMessage};
 use super::paxos::{PaxosComp, ReconfigurationPolicy as PaxosReconfigurationPolicy};
-use super::raft::{RaftReplica, ReconfigurationPolicy as RaftReconfigurationPolicy};
+use super::raft::{RaftComp, ReconfigurationPolicy as RaftReconfigurationPolicy};
 use super::storage::paxos::{MemorySequence, MemoryState};
 use crate::partitioning_actor::IterationControlMsg;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicBroadcastRequest;
@@ -17,15 +17,16 @@ use synchronoise::CountdownEvent;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
-use crate::bench::atomic_broadcast::parameters::client::PROPOSAL_TIMEOUT;
-use crate::bench::atomic_broadcast::parameters::META_RESULTS_DIR;
 use crate::bench::atomic_broadcast::paxos::PaxosCompMsg;
-use crate::bench::atomic_broadcast::raft::RaftReplicaMsg;
+use crate::bench::atomic_broadcast::raft::RaftCompMsg;
+use hocon::HoconLoader;
 use kompact::net::buffers::BufferConfig;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
+use std::path::PathBuf;
 use tikv_raft::storage::MemStorage;
 
+const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
 const RAFT_PATH: &str = "raft_replica";
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -148,6 +149,60 @@ fn get_reconfig_data(
 }
 type Storage = MemStorage;
 
+pub struct ExperimentConfig {
+    pub election_timeout: u64,
+    pub outgoing_period: Duration,
+    pub max_inflight: usize,
+    pub initial_election_factor: u64,
+}
+
+impl ExperimentConfig {
+    pub fn new(
+        election_timeout: u64,
+        outgoing_period: Duration,
+        max_inflight: usize,
+        initial_election_factor: u64,
+    ) -> ExperimentConfig {
+        ExperimentConfig {
+            election_timeout,
+            outgoing_period,
+            max_inflight,
+            initial_election_factor,
+        }
+    }
+
+    pub fn load_from_file<P>(path: P) -> ExperimentConfig
+    where
+        P: Into<PathBuf>,
+    {
+        let p: PathBuf = path.into();
+        let config = HoconLoader::new()
+            .load_file(p)
+            .expect("Failed to load file")
+            .hocon()
+            .expect("Failed to load as HOCON");
+        let election_timeout = config["experiment"]["election_timeout"]
+            .as_i64()
+            .expect("Failed to load election_timeout") as u64;
+        let outgoing_period = config["experiment"]["outgoing_period"]
+            .as_duration()
+            .expect("Failed to load outgoing_period");
+        let max_inflight = config["experiment"]["max_inflight"]
+            .as_i64()
+            .expect("Failed to load max_inflight") as usize;
+        let initial_election_factor = config["experiment"]["initial_election_factor"]
+            .as_i64()
+            .expect("Failed to load initial_election_factor")
+            as u64;
+        ExperimentConfig::new(
+            election_timeout,
+            outgoing_period,
+            max_inflight,
+            initial_election_factor,
+        )
+    }
+}
+
 pub struct AtomicBroadcastMaster {
     algorithm: Option<String>,
     num_nodes: Option<u64>,
@@ -164,6 +219,7 @@ pub struct AtomicBroadcastMaster {
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
     experiment_str: Option<String>,
+    meta_results_path: Option<String>,
     master_client_path: Option<ActorPath>
 }
 
@@ -185,6 +241,7 @@ impl AtomicBroadcastMaster {
             latency_hist: None,
             num_timed_out: vec![],
             experiment_str: None,
+            meta_results_path: None,
             master_client_path: None,
         }
     }
@@ -225,6 +282,7 @@ impl AtomicBroadcastMaster {
         nodes_id: HashMap<u64, ActorPath>,
         num_proposals: u64,
         num_concurrent_proposals: u64,
+        client_timeout: Duration,
         reconfig: Option<(Vec<u64>, Vec<u64>)>,
         leader_election_promise: Option<KPromise<u64>>,
         measure_latency: bool,
@@ -244,7 +302,7 @@ impl AtomicBroadcastMaster {
                 num_concurrent_proposals,
                 nodes_id,
                 reconfig,
-                PROPOSAL_TIMEOUT,
+                client_timeout,
                 leader_election_promise,
                 finished_latch.clone(),
                 measure_latency,
@@ -397,6 +455,23 @@ impl AtomicBroadcastMaster {
         }
         Ok(())
     }
+
+    pub fn load_benchmark_config<P>(path: P) -> (Duration, Option<String>)
+    where
+        P: Into<PathBuf>,
+    {
+        let p: PathBuf = path.into();
+        let config = HoconLoader::new()
+            .load_file(p)
+            .expect("Failed to load file")
+            .hocon()
+            .expect("Failed to load as HOCON");
+        let client_timeout = config["experiment"]["client_timeout"]
+            .as_duration()
+            .expect("Failed to load client timeout");
+        let meta_results_path = config["experiment"]["meta_results_path"].as_string();
+        (client_timeout, meta_results_path)
+    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -432,8 +507,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
         }
         let mut conf = KompactConfig::default();
-        conf.load_config_file("./src/configs/atomic_broadcast.conf");
-        let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        conf.load_config_file(CONFIG_PATH);
+        let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
@@ -509,7 +584,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         /*if self.concurrent_proposals == Some(1)
             || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
         {
-            let dir = format!("{}/latency/", META_RESULTS_DIR);
+            let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
+            let dir = format!("{}/latency/", meta_path);
             create_dir_all(&dir)
                 .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
             let mut file = OpenOptions::new()
@@ -554,10 +630,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             }
             self.first_leader = None;
 
+            let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
             let sum: u64 = self.num_timed_out.iter().sum();
             if sum > 0 {
-                let summary_file_path = format!("{}/summary.out", META_RESULTS_DIR);
-                create_dir_all(META_RESULTS_DIR).unwrap_or_else(|_| {
+                let summary_file_path = format!("{}/summary.out", meta_path);
+                create_dir_all(meta_path).unwrap_or_else(|_| {
                     panic!("Failed to create given directory: {}", summary_file_path)
                 });
                 let mut summary_file = OpenOptions::new()
@@ -587,7 +664,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             if self.concurrent_proposals == Some(1)
                 || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
             {
-                let dir = format!("{}/latency/", META_RESULTS_DIR);
+                let dir = format!("{}/latency/", meta_path);
                 create_dir_all(&dir)
                     .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
                 let mut file = OpenOptions::new()
@@ -658,7 +735,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
     paxos_replica: Option<Arc<Component<PaxosComp<MemorySequence, MemoryState>>>>,
-    raft_replica: Option<Arc<Component<RaftReplica<Storage>>>>,
+    raft_replica: Option<Arc<Component<RaftComp<Storage>>>>,
 }
 
 impl AtomicBroadcastClient {
@@ -678,8 +755,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
     fn setup(&mut self, c: Self::ClientConf) -> Self::ClientData {
         println!("Setting up Atomic Broadcast (client)");
         let mut conf = KompactConfig::default();
-        conf.load_config_file("./src/configs/atomic_broadcast.conf");
-        let bc = BufferConfig::from_config_file("./src/configs/atomic_broadcast.conf");
+        conf.load_config_file(CONFIG_PATH);
+        let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
@@ -693,10 +770,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     "pull" => Some(PaxosReconfigurationPolicy::Pull),
                     unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                 };
+                let experiment_config = ExperimentConfig::load_from_file(CONFIG_PATH);
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
                     PaxosComp::with(
                         initial_config,
                         reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
+                        experiment_config,
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
@@ -724,7 +803,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
-                    RaftReplica::<Storage>::with(
+                    RaftComp::<Storage>::with(
                         conf_state.0,
                         reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
                         batch,
@@ -782,7 +861,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             if let Some(raft) = self.raft_replica.as_ref() {
                 let cleanup_f = raft
                     .actor_ref()
-                    .ask(|promise| RaftReplicaMsg::CleanupIteration(Ask::new(promise, ())));
+                    .ask(|promise| RaftCompMsg::CleanupIteration(Ask::new(promise, ())));
                 cleanup_f.wait();
             }
         }
