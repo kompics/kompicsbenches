@@ -1033,7 +1033,7 @@ where
                                                     let seq_len = r.seq_metadata.len;
                                                     let idx = config_id as usize - 1;
                                                     let rem_segments: Vec<_> = (1..=num_expected_transfers).map(|x| x as u32).collect();
-                                                    self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
+                                                    self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![], vec![]); seq_len as usize]);
                                                     let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"].as_duration().expect("Failed to load get_decided_period");
                                                     let timer = self.schedule_once(transfer_timeout, move |c, _| c.retry_request_sequence(config_id, seq_len, num_expected_transfers as u64));
                                                     self.retry_transfer_timers.insert(config_id, timer);
@@ -1287,13 +1287,12 @@ where
 
     fn propose(&mut self, p: Proposal, client_data: Vec<u8>) -> Result<(), Vec<u8>> {
         match p.reconfig {
-            Some((reconfig, _)) => self.paxos.propose_reconfiguration(reconfig, client_data),
             Some((reconfig, _)) => {
                 let prio_start_round = self.ctx.config()["paxos"]["prio_start_round"]
                     .as_i64()
                     .map(|x| x as u64);
                 self.paxos
-                    .propose_reconfiguration(reconfig, prio_start_round, client_data)
+                    .propose_reconfiguration(reconfig, client_data, prio_start_round )
             }
             None => self.paxos.propose_normal(p.data, client_data),
         }

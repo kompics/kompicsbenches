@@ -344,7 +344,7 @@ where
                                 .as_ref()
                                 .expect("No active RaftComp")
                                 .actor_ref()
-                                .tell(RaftReplicaMsg::Propose(p));
+                                .tell(RaftReplicaMsg::Propose(p, sender));
                         }
                     } else if self.current_leader > 0 {
                         let leader = self.peers.get(&self.current_leader).unwrap_or_else(|| {

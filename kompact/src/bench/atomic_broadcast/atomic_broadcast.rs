@@ -325,11 +325,13 @@ impl AtomicBroadcastMaster {
         } else {
             proposals_per_client
         };
+        let (client_timeout, meta_path) = Self::load_benchmark_config(CONFIG_PATH);
+        self.meta_results_path = meta_path;
         let mut reg_futures = Vec::with_capacity(n as usize);
         let mut start_futures = Vec::with_capacity(n as usize);
         for _ in 1..n {
             let (client, reg_f, start_f) =
-                self.create_client(nodes_id.clone(), proposals_per_client, 1, None, None, false);
+                self.create_client(nodes_id.clone(), proposals_per_client, 1, client_timeout, None, None, false);
             self.client_comps.push(client);
             reg_futures.push(reg_f);
             start_futures.push(start_f);
@@ -338,6 +340,7 @@ impl AtomicBroadcastMaster {
             nodes_id,
             master_client_proposals,
             1,
+            client_timeout,
             self.reconfiguration.clone(),
             Some(leader_election_promise),
             false,
