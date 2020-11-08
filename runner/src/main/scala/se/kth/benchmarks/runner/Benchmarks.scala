@@ -307,7 +307,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastTestProposals = List(10L.mio);
   private val atomicBroadcastTestConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
-  private val atomicBroadcastNodes = List(3);
+  private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(20L.mio);
   private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
@@ -432,7 +432,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = paxosNormalSpace.append(raftNormalSpace).append(latencySpace)
+    space = paxosSpace.append(raftSpace).append(latencySpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(

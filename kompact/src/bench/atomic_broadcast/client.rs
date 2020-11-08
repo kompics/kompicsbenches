@@ -63,7 +63,7 @@ pub struct Client {
     current_config: Vec<u64>,
     num_timed_out: u64,
     leader_changes: Vec<u64>,
-    retry_proposal: Option<u64>,
+    retry_proposals: Vec<(u64, Option<SystemTime>)>,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -98,7 +98,7 @@ impl Client {
             current_config: initial_config,
             num_timed_out: 0,
             leader_changes: vec![],
-            retry_proposal: None,
+            retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
             #[cfg(feature = "track_timeouts")]
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
@@ -260,26 +260,32 @@ impl Client {
         Handled::Ok
     }
 
-    fn retry_pending_normal_proposals(
+    fn retry_after_reconfig(
         &mut self,
-        pending_proposals: &mut HashMap<u64, ProposalMetaData>,
     ) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-        let retry = self.retry_proposal.unwrap_or(1); // only normal proposals
         #[cfg(feature = "track_timeouts")]
         {
-            let min = pending_proposals.keys().min();
-            let max = pending_proposals.keys().max();
-            let count = pending_proposals.len();
-            info!(self.ctx.log(), "Retrying proposals after reconfig to node {}. Pending: {}, retry: {}, Min: {:?}, Max: {:?}", self.current_leader, count, retry, min, max);
+            let min = self.retry_proposals.iter().min();
+            let max = self.retry_proposals.iter().max();
+            let count = self.retry_proposals.len();
+            let num_pending = self.pending_proposals.len();
+            info!(self.ctx.log(), "Retrying proposals after reconfig to node {}. Count: {}, min: {:?}, max: {:?}, num_pending: {}", self.current_leader, count, min, max, num_pending);
         }
-        let retry_proposals = pending_proposals.iter_mut().filter(|(id, _)| *id >= &retry);
-        for (id, meta) in retry_proposals {
-            let i = *id;
-            self.propose_normal(i, &leader);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(i));
-            let old_timer = std::mem::replace(&mut meta.timer, timer);
-            self.cancel_timer(old_timer);
+        let retry_proposals = std::mem::take(&mut self.retry_proposals);
+        for (id, start_time) in retry_proposals {
+            self.propose_normal(id, &leader);
+            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
+            let meta = ProposalMetaData::with(start_time, timer);
+            self.pending_proposals.insert(id, meta);
+        }
+    }
+
+    fn hold_back_proposals(&mut self, from: u64) {
+        for i in from..=self.latest_proposal_id {
+            let ProposalMetaData {start_time, timer} = self.pending_proposals.remove(&i).expect(&format!("No proposal with id {} in pending_proposals to hold back", i));
+            self.cancel_timer(timer);
+            self.retry_proposals.push((i, start_time));
         }
     }
 
@@ -376,10 +382,8 @@ impl Actor for Client {
                                     self.leader_changes.push(pid);
                                 }
                                 self.state = ExperimentState::Running;
-                                if !self.pending_proposals.is_empty() {
-                                    let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
-                                    self.retry_pending_normal_proposals(&mut pending_proposals);
-                                    self.pending_proposals = pending_proposals;
+                                if !self.retry_proposals.is_empty() {
+                                    self.retry_after_reconfig();
                                 }
                                 self.send_concurrent_proposals();
                             },
@@ -433,10 +437,8 @@ impl Actor for Client {
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
-                                            if self.state == ExperimentState::ReconfigurationElection && !self.pending_proposals.is_empty() {
-                                                let mut pending_proposals = std::mem::take(&mut self.pending_proposals);
-                                                self.retry_pending_normal_proposals(&mut pending_proposals);
-                                                self.pending_proposals = pending_proposals;
+                                            if self.state == ExperimentState::ReconfigurationElection && !self.retry_proposals.is_empty() {
+                                                self.retry_after_reconfig();
                                             }
                                             self.state = ExperimentState::Running;
                                             self.send_concurrent_proposals();
@@ -452,8 +454,8 @@ impl Actor for Client {
                     AtomicBroadcastMsg::PendingReconfiguration(data) => {
                         if self.reconfig.is_some() {
                             let dropped_proposal = data.as_slice().get_u64();
-                            info!(self.ctx.log(), "Got PendingReconfiguration: {}. Pending proposals: {}, min: {:?}, max: {:?}", dropped_proposal, self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
-                            self.retry_proposal = Some(dropped_proposal);
+                            // info!(self.ctx.log(), "Got PendingReconfiguration: {}. Pending proposals: {}, min: {:?}, max: {:?}", dropped_proposal, self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
+                            self.hold_back_proposals(dropped_proposal);
                             self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
                         }
                     }

@@ -1149,6 +1149,7 @@ where
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
+    skipped_prepare: bool,
     pending_reconfig: bool,
     stopped: bool,
     stopped_peers: HashSet<u64>,
@@ -1165,19 +1166,23 @@ where
         config_id: u32,
         pid: u64,
         raw_paxos_log: KompactLogger,
-        skipped_prepare: Option<Ballot>,
+        skipped_prepare_ballot: Option<Ballot>,
         max_inflight: usize,
     ) -> PaxosReplica<S, P> {
         let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
+        let skipped_prepare = match skipped_prepare_ballot {
+            Some(b) if b.pid != pid => true,
+            _ => false,
+        };
         let paxos = Paxos::with(
             config_id,
             pid,
             peers.clone(),
             storage,
             raw_paxos_log,
-            skipped_prepare,
+            skipped_prepare_ballot,
             Some(max_inflight),
         );
         PaxosReplica {
@@ -1192,6 +1197,7 @@ where
             pid,
             current_leader: 0,
             timers: None,
+            skipped_prepare,
             pending_reconfig: false,
             stopped: false,
         }
@@ -1205,6 +1211,7 @@ where
         let outgoing_period = config["experiment"]["outgoing_period"]
             .as_duration()
             .expect("Failed to load outgoing_period");
+        let request_acceptsync_timer = config["paxos"]["request_acceptsync_timer"].as_duration().expect("Failed to load request_acceptsync_timer");
         let decided_timer =
             self.schedule_periodic(Duration::from_millis(1), get_decided_period, move |c, _| {
                 c.get_decided()
@@ -1213,6 +1220,12 @@ where
             self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |p, _| {
                 p.send_outgoing()
             });
+        if self.skipped_prepare {
+            let _ = self.schedule_periodic(Duration::from_millis(0), request_acceptsync_timer, move |c, _| {
+                c.paxos.request_acceptsync_if_not_started();
+                Handled::Ok
+            });
+        }
         self.timers = Some((decided_timer, outgoing_timer));
     }
 
@@ -1254,8 +1267,9 @@ where
     }
 
     fn get_decided(&mut self) -> Handled {
-        if self.current_leader != self.paxos.leader {
-            self.current_leader = self.paxos.leader;
+        let leader = self.paxos.get_current_leader();
+        if self.current_leader != leader {
+            self.current_leader = leader;
             self.supervisor
                 .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader));
         }
@@ -1442,7 +1456,7 @@ pub mod raw_paxos {
         majority: usize,
         peers: Vec<u64>, // excluding self pid
         state: (Role, Phase),
-        pub leader: u64,
+        leader: u64,
         n_leader: Ballot,
         promises_meta: Vec<Option<(Ballot, usize)>>,
         las: Vec<u64>,
@@ -1534,6 +1548,10 @@ pub mod raw_paxos {
             };
             paxos.storage.set_promise(n_leader);
             paxos
+        }
+
+        pub fn get_current_leader(&self) -> u64 {
+            self.leader
         }
 
         pub fn get_outgoing_msgs(&mut self) -> Vec<Message> {
@@ -1658,6 +1676,17 @@ pub mod raw_paxos {
 
         pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
             self.storage.stop_and_get_sequence()
+        }
+
+        /// Allows user to request acceptsync if still not started after skipping prepare phase in reconfiguration.
+        /// Breaks the deadlock of when the leader has sent all its accept messages and waits for accepted but
+        /// followers never received those due to they hadn't started yet.
+        pub fn request_acceptsync_if_not_started(&mut self) {
+            if self.state == (Role::Follower, Phase::FirstAccept) {
+                self.state.1 = Phase::AcceptSyncReq;
+                self.outgoing
+                    .push(Message::with(self.pid, self.leader, PaxosMsg::AcceptSyncReq));
+            } // else: we have already started in new config, don't care about this call
         }
 
         fn clear_peers_state(&mut self) {
@@ -1981,6 +2010,9 @@ pub mod raw_paxos {
         }
 
         fn handle_acceptsync_req(&mut self, from: u64) {
+            if self.state.0 != Role::Leader || self.state.1 == Phase::FirstAccept {
+                return;
+            }
             let entries = self.storage.get_sequence();
             let acc_sync = AcceptSync::with(self.n_leader, entries, 0, true);
             let pm = PaxosMsg::AcceptSync(acc_sync);
