@@ -1480,6 +1480,7 @@ pub mod raw_paxos {
         num_nodes: usize,
         log: KompactLogger,
         max_inflight: usize,
+        requested_firstaccept: bool,
     }
 
     impl<S, P> Paxos<S, P>
@@ -1551,6 +1552,7 @@ pub mod raw_paxos {
                 num_nodes,
                 log,
                 max_inflight,
+                requested_firstaccept: false,
             };
             paxos.storage.set_promise(n_leader);
             paxos
@@ -1688,7 +1690,7 @@ pub mod raw_paxos {
         /// Breaks the deadlock of when the leader has sent all its accept messages and waits for accepted but
         /// followers never received those due to they hadn't started yet.
         pub fn request_firstaccept_if_not_started(&mut self) {
-            if self.state == (Role::Follower, Phase::FirstAccept) {
+            if self.state == (Role::Follower, Phase::FirstAccept) && !self.requested_firstaccept {
                 self.outgoing.push(Message::with(
                     self.pid,
                     self.leader,
@@ -2025,7 +2027,6 @@ pub mod raw_paxos {
             if self.state.0 != Role::Leader || self.state.1 == Phase::FirstAccept {
                 return;
             }
-            info!(self.log, "Handling FirstAcceptReq from {}", from);
             let entries = self.storage.get_sequence();
             let f = FirstAccept::with(self.n_leader, entries);
             let pm = PaxosMsg::FirstAccept(f);
@@ -2169,7 +2170,6 @@ pub mod raw_paxos {
             if self.state == (Role::Follower, Phase::FirstAccept)
                 && self.storage.get_promise() == f.n
             {
-                info!(self.log, "Got FirstAccept with {} entries", f.entries.len());
                 let mut entries = f.entries;
                 self.storage.set_accepted_ballot(f.n);
                 self.accept_entries(f.n, &mut entries);
@@ -2194,8 +2194,8 @@ pub mod raw_paxos {
                         }
                     }
                 }
-                (Role::Follower, Phase::FirstAccept) => {
-                    info!(self.log, "Sending FirstAcceptReq to {}", from);
+                (Role::Follower, Phase::FirstAccept) if !self.requested_firstaccept => {
+                    self.requested_firstaccept = true;
                     self.outgoing
                         .push(Message::with(self.pid, from, PaxosMsg::FirstAcceptReq));
                 }
