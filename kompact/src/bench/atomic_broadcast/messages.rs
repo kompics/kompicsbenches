@@ -124,12 +124,12 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub struct FirstAccept {
         pub n: Ballot,
-        pub entry: Entry,
+        pub entries: Vec<Entry>,
     }
 
     impl FirstAccept {
-        pub fn with(n: Ballot, entry: Entry) -> FirstAccept {
-            FirstAccept { n, entry }
+        pub fn with(n: Ballot, entries: Vec<Entry>) -> FirstAccept {
+            FirstAccept { n, entries }
         }
     }
 
@@ -174,8 +174,8 @@ pub mod paxos {
     pub enum PaxosMsg {
         Prepare(Prepare),
         Promise(Promise),
-        AcceptSyncReq,
         AcceptSync(AcceptSync),
+        FirstAcceptReq,
         FirstAccept(FirstAccept),
         AcceptDecide(AcceptDecide),
         Accepted(Accepted),
@@ -203,7 +203,7 @@ pub mod paxos {
     const ACCEPTED_ID: u8 = 5;
     const DECIDE_ID: u8 = 6;
     const PROPOSALFORWARD_ID: u8 = 7;
-    const ACCEPTSYNCREQ_ID: u8 = 8;
+    const FIRSTACCEPTREQ_ID: u8 = 8;
     const FIRSTACCEPT_ID: u8 = 9;
 
     const NORMAL_ENTRY_ID: u8 = 1;
@@ -308,7 +308,7 @@ pub mod paxos {
             let msg_size = match &self.msg {
                 PaxosMsg::Prepare(_) => 41,
                 PaxosMsg::Promise(p) => 41 + p.sfx.len() * DATA_SIZE_HINT,
-                PaxosMsg::AcceptSyncReq => 1,
+                PaxosMsg::FirstAcceptReq => 1,
                 PaxosMsg::AcceptSync(a) => 26 + a.entries.len() * DATA_SIZE_HINT,
                 PaxosMsg::FirstAccept(_) => 17 + DATA_SIZE_HINT,
                 PaxosMsg::AcceptDecide(a) => 25 + a.entries.len() * DATA_SIZE_HINT,
@@ -335,8 +335,8 @@ pub mod paxos {
                     buf.put_u64(p.ld);
                     PaxosSer::serialise_entries(&p.sfx, buf);
                 }
-                PaxosMsg::AcceptSyncReq => {
-                    buf.put_u8(ACCEPTSYNCREQ_ID);
+                PaxosMsg::FirstAcceptReq => {
+                    buf.put_u8(FIRSTACCEPTREQ_ID);
                 }
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
@@ -349,7 +349,7 @@ pub mod paxos {
                 PaxosMsg::FirstAccept(f) => {
                     buf.put_u8(FIRSTACCEPT_ID);
                     PaxosSer::serialise_ballot(&f.n, buf);
-                    PaxosSer::serialise_entry(&f.entry, buf);
+                    PaxosSer::serialise_entries(&f.entries, buf);
                 }
                 PaxosMsg::AcceptDecide(a) => {
                     buf.put_u8(ACCEPTDECIDE_ID);
@@ -444,15 +444,15 @@ pub mod paxos {
                     let msg = Message::with(from, to, pf);
                     Ok(msg)
                 }
-                ACCEPTSYNCREQ_ID => {
-                    let accsync_req = PaxosMsg::AcceptSyncReq;
+                FIRSTACCEPTREQ_ID => {
+                    let accsync_req = PaxosMsg::FirstAcceptReq;
                     let msg = Message::with(from, to, accsync_req);
                     Ok(msg)
                 }
                 FIRSTACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
-                    let entry = Self::deserialise_entry(buf);
-                    let f = FirstAccept::with(n, entry);
+                    let entries = Self::deserialise_entries(buf);
+                    let f = FirstAccept::with(n, entries);
                     let msg = Message::with(from, to, PaxosMsg::FirstAccept(f));
                     Ok(msg)
                 }

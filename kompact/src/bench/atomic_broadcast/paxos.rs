@@ -1211,7 +1211,9 @@ where
         let outgoing_period = config["experiment"]["outgoing_period"]
             .as_duration()
             .expect("Failed to load outgoing_period");
-        let request_acceptsync_timer = config["paxos"]["request_acceptsync_timer"].as_duration().expect("Failed to load request_acceptsync_timer");
+        let request_acceptsync_timer = config["paxos"]["request_acceptsync_timer"]
+            .as_duration()
+            .expect("Failed to load request_acceptsync_timer");
         let decided_timer =
             self.schedule_periodic(Duration::from_millis(1), get_decided_period, move |c, _| {
                 c.get_decided()
@@ -1221,10 +1223,14 @@ where
                 p.send_outgoing()
             });
         if self.skipped_prepare {
-            let _ = self.schedule_periodic(Duration::from_millis(0), request_acceptsync_timer, move |c, _| {
-                c.paxos.request_acceptsync_if_not_started();
-                Handled::Ok
-            });
+            let _ = self.schedule_periodic(
+                Duration::from_millis(0),
+                request_acceptsync_timer,
+                move |c, _| {
+                    c.paxos.request_firstaccept_if_not_started();
+                    Handled::Ok
+                },
+            );
         }
         self.timers = Some((decided_timer, outgoing_timer));
     }
@@ -1591,7 +1597,7 @@ pub mod raw_paxos {
                     (Role::Leader, Phase::Accept) => self.handle_promise_accept(prom, m.from),
                     _ => {}
                 },
-                PaxosMsg::AcceptSyncReq => self.handle_acceptsync_req(m.from),
+                PaxosMsg::FirstAcceptReq => self.handle_firstacceptreq(m.from),
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
                 PaxosMsg::FirstAccept(f) => self.handle_firstaccept(f),
                 PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc, m.from),
@@ -1678,14 +1684,16 @@ pub mod raw_paxos {
             self.storage.stop_and_get_sequence()
         }
 
-        /// Allows user to request acceptsync if still not started after skipping prepare phase in reconfiguration.
+        /// Allows user to request FirstAccept if still not started after skipping prepare phase in reconfiguration.
         /// Breaks the deadlock of when the leader has sent all its accept messages and waits for accepted but
         /// followers never received those due to they hadn't started yet.
-        pub fn request_acceptsync_if_not_started(&mut self) {
+        pub fn request_firstaccept_if_not_started(&mut self) {
             if self.state == (Role::Follower, Phase::FirstAccept) {
-                self.state.1 = Phase::AcceptSyncReq;
-                self.outgoing
-                    .push(Message::with(self.pid, self.leader, PaxosMsg::AcceptSyncReq));
+                self.outgoing.push(Message::with(
+                    self.pid,
+                    self.leader,
+                    PaxosMsg::FirstAcceptReq,
+                ));
             } // else: we have already started in new config, don't care about this call
         }
 
@@ -1768,7 +1776,7 @@ pub mod raw_paxos {
                 .filter(|(_, x)| x.is_some())
                 .map(|(idx, _)| idx as u64 + 1);
             for pid in promised_pids {
-                let f = FirstAccept::with(self.n_leader, entry.clone());
+                let f = FirstAccept::with(self.n_leader, vec![entry.clone()]);
                 self.outgoing
                     .push(Message::with(self.pid, pid, PaxosMsg::FirstAccept(f)));
             }
@@ -1792,6 +1800,7 @@ pub mod raw_paxos {
                             match msg {
                                 PaxosMsg::AcceptDecide(a) => a.entries.push(entry.clone()),
                                 PaxosMsg::AcceptSync(acc) => acc.entries.push(entry.clone()),
+                                PaxosMsg::FirstAccept(f) => f.entries.push(entry.clone()),
                                 _ => panic!("Not Accept or AcceptSync when batching"),
                             }
                         }
@@ -1841,6 +1850,9 @@ pub mod raw_paxos {
                                 }
                                 PaxosMsg::AcceptSync(acc) => {
                                     acc.entries.append(entries.clone().as_mut())
+                                }
+                                PaxosMsg::FirstAccept(f) => {
+                                    f.entries.append(entries.clone().as_mut())
                                 }
                                 _ => panic!("Not Accept or AcceptSync when batching"),
                             }
@@ -2009,16 +2021,17 @@ pub mod raw_paxos {
             }
         }
 
-        fn handle_acceptsync_req(&mut self, from: u64) {
+        fn handle_firstacceptreq(&mut self, from: u64) {
             if self.state.0 != Role::Leader || self.state.1 == Phase::FirstAccept {
                 return;
             }
+            info!(self.log, "Handling FirstAcceptReq from {}", from);
             let entries = self.storage.get_sequence();
-            let acc_sync = AcceptSync::with(self.n_leader, entries, 0, true);
-            let pm = PaxosMsg::AcceptSync(acc_sync);
+            let f = FirstAccept::with(self.n_leader, entries);
+            let pm = PaxosMsg::FirstAccept(f);
             if cfg!(feature = "batch_accept") {
                 let idx = from as usize - 1;
-                /*** replace any cached msg with the AcceptSync (as receiver will discard the original msg anyway) ***/
+                /*** replace any cached msg with the FirstAccept (as receiver will discard the original msg anyway) ***/
                 let cache_idx = if let Some((_, cached_accept_idx)) =
                     self.batch_accept_meta.get_mut(idx).unwrap()
                 {
@@ -2126,8 +2139,7 @@ pub mod raw_paxos {
 
         fn handle_accept_sync(&mut self, acc_sync: AcceptSync, from: u64) {
             if self.state == (Role::Follower, Phase::Prepare)
-                || self.state == (Role::Follower, Phase::AcceptSyncReq)
-                    && self.storage.get_promise() == acc_sync.n
+                && self.storage.get_promise() == acc_sync.n
             {
                 self.storage.set_accepted_ballot(acc_sync.n);
                 let mut entries = acc_sync.entries;
@@ -2157,7 +2169,8 @@ pub mod raw_paxos {
             if self.state == (Role::Follower, Phase::FirstAccept)
                 && self.storage.get_promise() == f.n
             {
-                let mut entries = vec![f.entry];
+                info!(self.log, "Got FirstAccept with {} entries", f.entries.len());
+                let mut entries = f.entries;
                 self.storage.set_accepted_ballot(f.n);
                 self.accept_entries(f.n, &mut entries);
                 self.state.1 = Phase::Accept;
@@ -2182,9 +2195,9 @@ pub mod raw_paxos {
                     }
                 }
                 (Role::Follower, Phase::FirstAccept) => {
-                    self.state.1 = Phase::AcceptSyncReq;
+                    info!(self.log, "Sending FirstAcceptReq to {}", from);
                     self.outgoing
-                        .push(Message::with(self.pid, from, PaxosMsg::AcceptSyncReq));
+                        .push(Message::with(self.pid, from, PaxosMsg::FirstAcceptReq));
                 }
                 _ => {}
             }
@@ -2194,14 +2207,12 @@ pub mod raw_paxos {
             if self.storage.get_promise() == dec.n {
                 match self.state.1 {
                     Phase::FirstAccept => {
-                        self.state.1 = Phase::AcceptSyncReq;
                         self.outgoing.push(Message::with(
                             self.pid,
                             self.leader,
-                            PaxosMsg::AcceptSyncReq,
+                            PaxosMsg::FirstAcceptReq,
                         ));
                     }
-                    Phase::AcceptSyncReq => {}
                     _ => {
                         self.storage.set_decided_len(dec.ld);
                         /*if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
@@ -2261,7 +2272,6 @@ pub mod raw_paxos {
     #[derive(PartialEq, Debug)]
     enum Phase {
         Prepare,
-        AcceptSyncReq,
         FirstAccept,
         Accept,
         None,
