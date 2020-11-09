@@ -260,9 +260,7 @@ impl Client {
         Handled::Ok
     }
 
-    fn retry_after_reconfig(
-        &mut self,
-    ) {
+    fn retry_after_reconfig(&mut self) {
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         #[cfg(feature = "track_timeouts")]
         {
@@ -283,7 +281,11 @@ impl Client {
 
     fn hold_back_proposals(&mut self, from: u64) {
         for i in from..=self.latest_proposal_id {
-            let ProposalMetaData {start_time, timer} = self.pending_proposals.remove(&i).expect(&format!("No proposal with id {} in pending_proposals to hold back", i));
+            let ProposalMetaData { start_time, timer } =
+                self.pending_proposals.remove(&i).expect(&format!(
+                    "No proposal with id {} in pending_proposals to hold back",
+                    i
+                ));
             self.cancel_timer(timer);
             self.retry_proposals.push((i, start_time));
         }
