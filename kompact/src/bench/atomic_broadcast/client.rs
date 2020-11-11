@@ -1,5 +1,6 @@
 use super::messages::{
-    AtomicBroadcastDeser, AtomicBroadcastMsg, Proposal, StopMsg as NetStopMsg, RECONFIG_ID,
+    AtomicBroadcastDeser, AtomicBroadcastMsg, Proposal, StopMsg as NetStopMsg, StopMsgDeser,
+    RECONFIG_ID,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
@@ -20,8 +21,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    Stop,
-    GetMetaResults(Ask<(), (u64, Vec<(u64, Duration)>)>), // (num_timed_out, latency)
+    Stop(Ask<(), (u64, Vec<(u64, Duration)>)>), // (num_timed_out, latency)
 }
 
 enum Response {
@@ -64,6 +64,7 @@ pub struct Client {
     num_timed_out: u64,
     leader_changes: Vec<u64>,
     retry_proposals: Vec<(u64, Option<SystemTime>)>,
+    stop_ask: Option<Ask<(), (u64, Vec<(u64, Duration)>)>>,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -99,6 +100,7 @@ impl Client {
             num_timed_out: 0,
             leader_changes: vec![],
             retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
+            stop_ask: None,
             #[cfg(feature = "track_timeouts")]
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
@@ -311,6 +313,25 @@ impl Client {
                 .expect("Failed to send Client stop");
         }
     }
+
+    fn reply_stop_ask(&mut self) {
+        let l = std::mem::take(&mut self.responses);
+        let mut v: Vec<_> = l
+            .into_iter()
+            .filter(|(_, latency)| latency.is_some())
+            .collect();
+        v.sort();
+        let latencies: Vec<(u64, Duration)> = v
+            .into_iter()
+            .map(|(id, latency)| (id, latency.unwrap()))
+            .collect();
+        let meta_results = (self.num_timed_out, latencies);
+        self.stop_ask
+            .take()
+            .expect("No stop promise!")
+            .reply(meta_results)
+            .expect("Failed to reply write latency file!");
+    }
 }
 
 impl ComponentLifecycle for Client {
@@ -333,23 +354,9 @@ impl Actor for Client {
                 assert_ne!(self.current_leader, 0);
                 self.send_concurrent_proposals();
             }
-            LocalClientMessage::Stop => {
+            LocalClientMessage::Stop(a) => {
                 self.send_stop();
-            }
-            LocalClientMessage::GetMetaResults(ask) => {
-                let l = std::mem::take(&mut self.responses);
-                let mut v: Vec<_> = l
-                    .into_iter()
-                    .filter(|(_, latency)| latency.is_some())
-                    .collect();
-                v.sort();
-                let latencies: Vec<(u64, Duration)> = v
-                    .into_iter()
-                    .map(|(id, latency)| (id, latency.unwrap()))
-                    .collect();
-                let meta_results = (self.num_timed_out, latencies);
-                ask.reply(meta_results)
-                    .expect("Failed to reply write latency file!");
+                self.stop_ask = Some(a);
             }
         }
         Handled::Ok
@@ -462,6 +469,14 @@ impl Actor for Client {
                         }
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
+                }
+            },
+            stop: NetStopMsg [StopMsgDeser] => {
+                if let NetStopMsg::Peer(pid) = stop {
+                    self.nodes.remove(&pid).expect(&format!("Got stop from unknown pid {}", pid));
+                    if self.nodes.is_empty() {
+                        self.reply_stop_ask();
+                    }
                 }
             },
             !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),

@@ -11,8 +11,7 @@ use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
 use protobuf::Message as PbMessage;
 use rand::Rng;
-use std::{borrow::Borrow, ops::DerefMut, sync::Arc};
-use std::{clone::Clone, marker::Send, time::Duration};
+use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
 use tikv_raft::{prelude::Entry, prelude::Message as TikvRaftMsg, prelude::*, StateRole};
 
 const COMMUNICATOR: &str = "communicator";
@@ -22,15 +21,6 @@ const DELAY: Duration = Duration::from_millis(0);
 pub enum RaftCompMsg {
     Leader(bool, u64),
     ForwardReconfig(u64, (Vec<u64>, Vec<u64>)),
-    StopResp,
-    KillResp,
-    CleanupIteration(Ask<(), ()>),
-}
-
-impl From<KillResponse> for RaftCompMsg {
-    fn from(_: KillResponse) -> Self {
-        RaftCompMsg::KillResp
-    }
 }
 
 #[derive(ComponentDefinition)]
@@ -46,15 +36,11 @@ where
     peers: HashMap<u64, ActorPath>,
     iteration_id: u32,
     stopped: bool,
-    client_stopped: bool,
     partitioning_actor: Option<ActorPath>,
     cached_client: Option<ActorPath>,
     current_leader: u64,
-    pending_stop_comps: usize,
-    pending_kill_comps: usize,
     reconfig_policy: ReconfigurationPolicy,
     batch: bool,
-    cleanup_latch: Option<Ask<(), ()>>,
 }
 
 impl<S> RaftComp<S>
@@ -75,15 +61,11 @@ where
             peers: HashMap::new(),
             iteration_id: 0,
             stopped: false,
-            client_stopped: false,
             partitioning_actor: None,
             cached_client: None,
             current_leader: 0,
-            pending_stop_comps: 0,
-            pending_kill_comps: 0,
             reconfig_policy,
             batch,
-            cleanup_latch: None,
         }
     }
 
@@ -162,7 +144,6 @@ where
                 max_inflight,
             )
         });
-        let kill_recipient: Recipient<KillResponse> = self.actor_ref().recipient();
         let (communicator, comm_f) = system.create_and_register(|| {
             Communicator::with(
                 communicator_peers,
@@ -170,7 +151,6 @@ where
                     .as_ref()
                     .expect("No cached client")
                     .clone(),
-                kill_recipient,
             )
         });
         let communicator_alias = format!("{}{}-{}", COMMUNICATOR, self.pid, self.iteration_id);
@@ -204,15 +184,6 @@ where
         })
     }
 
-    fn send_stop_ack(&self) {
-        // info!(self.ctx.log(), "Sending StopAck");
-        self.partitioning_actor
-            .as_ref()
-            .expect("No cached partitioning actor")
-            .tell_serialised(PartitioningActorMsg::StopAck, self)
-            .expect("Should serialise StopAck");
-    }
-
     fn start_components(&self) {
         let raft = self.raft_replica.as_ref().expect("No raft comp to start!");
         let communicator = self
@@ -223,43 +194,32 @@ where
         self.ctx.system().start(communicator);
     }
 
-    fn stop_components(&mut self) {
+    fn cleanup_iteration(&mut self) -> Handled {
+        self.stopped = true;
         // info!(self.ctx.log(), "Stopping components");
         if let Some(raft) = self.raft_replica.as_ref() {
-            raft.actor_ref().tell(RaftReplicaMsg::Stop);
-            self.pending_stop_comps += 1;
-        }
-        if self.pending_stop_comps == 0 && self.client_stopped {
-            self.send_stop_ack();
-            if self.cleanup_latch.is_some() {
-                self.kill_components();
-            }
-        }
-    }
+            let stop_f = raft
+                .actor_ref()
+                .ask(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
+            Handled::block_on(self, move |mut async_self| async move {
+                stop_f.await.expect("Failed to stop RaftReplica");
+                let system = async_self.ctx.system();
+                let mut kill_futures = Vec::with_capacity(2);
 
-    fn kill_components(&mut self) {
-        // info!(self.ctx.log(), "Killing components");
-        assert!(self.stopped, "Kill components but not stopped");
-        assert_eq!(
-            self.pending_stop_comps, 0,
-            "Kill components but not all components stopped"
-        );
-        let system = self.ctx.system();
-        if let Some(raft) = self.raft_replica.take() {
-            self.pending_kill_comps += 1;
-            system.kill(raft);
-        }
-        if let Some(communicator) = self.communicator.take() {
-            self.pending_kill_comps += 1;
-            system.kill(communicator);
-        }
-        if self.pending_kill_comps == 0 && self.client_stopped {
-            // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
-            self.cleanup_latch
-                .take()
-                .expect("No cleanup latch")
-                .reply(())
-                .expect("Failed to reply cleanup");
+                let raft = async_self.raft_replica.take().unwrap();
+                let kill_raft = system.kill_notify(raft);
+
+                let communicator = async_self.communicator.take().unwrap();
+                let kill_comm = system.kill_notify(communicator);
+
+                kill_futures.push(kill_raft);
+                kill_futures.push(kill_comm);
+                for f in kill_futures {
+                    f.await.expect("Failed to kill");
+                }
+            })
+        } else {
+            Handled::Ok
         }
     }
 }
@@ -295,44 +255,6 @@ where
                     .expect("No actorpath to current leader")
                     .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
                     .expect("Should serialise")
-            }
-            RaftCompMsg::StopResp => {
-                assert!(self.stopped, "Got unexpected StopResp when not stopped");
-                assert!(
-                    self.pending_stop_comps > 0,
-                    "Got unexpected StopResp when no pending stop comps"
-                );
-                self.pending_stop_comps -= 1;
-                // info!(self.ctx.log(), "Got stop response. Remaining: {}", self.pending_stop_comps);
-                if self.pending_stop_comps == 0 && self.stopped && self.client_stopped {
-                    self.send_stop_ack();
-                    if self.cleanup_latch.is_some() {
-                        self.kill_components();
-                    }
-                }
-            }
-            RaftCompMsg::KillResp => {
-                assert!(self.stopped, "Got unexpected KillResp when not stopped");
-                assert!(
-                    self.pending_kill_comps > 0,
-                    "Got unexpected KillResp when no pending kill comps"
-                );
-                self.pending_kill_comps -= 1;
-                // info!(self.ctx.log(), "Got kill response. Remaining: {}", self.pending_kill_comps);
-                if self.pending_kill_comps == 0 && self.client_stopped {
-                    // info!(self.ctx.log(), "Killed all components. Decrementing cleanup latch");
-                    self.cleanup_latch
-                        .take()
-                        .expect("No cleanup latch")
-                        .reply(())
-                        .expect("Failed to reply clean up latch");
-                }
-            }
-            RaftCompMsg::CleanupIteration(a) => {
-                self.cleanup_latch = Some(a);
-                if self.stopped && self.pending_stop_comps == 0 {
-                    self.kill_components();
-                }
             }
         }
         Handled::Ok
@@ -371,6 +293,7 @@ where
                     p: PartitioningActorMsg [PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
+                                info!(self.ctx.log(), "Raft got init, pid: {}", init.pid);
                                 self.current_leader = 0;
                                 self.iteration_id = init.init_id;
                                 let my_pid = init.pid as u64;
@@ -380,9 +303,6 @@ where
                                 self.peers = init.nodes.into_iter().enumerate().map(|(idx, ap)| (idx as u64 + 1, ap)).filter(|(pid, _)| pid != &my_pid).collect();
                                 self.pid = my_pid;
                                 self.partitioning_actor = Some(sender);
-                                self.pending_stop_comps = 0;
-                                self.pending_kill_comps = 0;
-                                self.client_stopped = false;
                                 self.stopped = false;
                                 let handled = self.create_components();
                                 return handled;
@@ -390,24 +310,14 @@ where
                             PartitioningActorMsg::Run => {
                                 self.start_components();
                             },
-                            PartitioningActorMsg::Stop => {
-                                self.partitioning_actor = Some(sender);
-                                self.stopped = true;
-                                self.stop_components();
-                            },
                             _ => {},
                         }
                     },
                     client_stop: NetStopMsg [StopMsgDeser] => {
                         if let NetStopMsg::Client = client_stop {
                             // info!(self.ctx.log(), "Got client stop");
-                            self.client_stopped = true;
-                            if self.stopped && self.pending_stop_comps == 0 {
-                                self.send_stop_ack();
-                                if self.cleanup_latch.is_some() {
-                                    self.kill_components();
-                                }
-                            }
+                            assert!(!self.stopped);
+                            return self.cleanup_iteration();
                         }
                     },
                     tm: TestMessage [TestMessageSer] => {
@@ -434,7 +344,7 @@ where
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
     Propose(Proposal),
-    Stop,
+    Stop(Ask<(), ()>),
     SequenceReq(Ask<(), Vec<u64>>),
 }
 
@@ -477,6 +387,7 @@ where
     stopped_peers: HashSet<u64>,
     hb_proposals: Vec<Proposal>,
     max_inflight: usize,
+    stop_ask: Option<Ask<(), ()>>,
 }
 
 impl<S> ComponentLifecycle for RaftReplica<S>
@@ -497,7 +408,6 @@ where
             .mut_store()
             .clear()
             .expect("Failed to clear storage!");
-        self.supervisor.tell(RaftCompMsg::KillResp);
         Handled::Ok
     }
 }
@@ -537,13 +447,15 @@ where
                 sr.reply(sequence)
                     .expect("Failed to respond SequenceReq ask");
             }
-            RaftReplicaMsg::Stop => {
+            RaftReplicaMsg::Stop(ask) => {
                 self.communication_port
-                    .trigger(CommunicatorMsg::SendStop(self.raw_raft.raft.id));
+                    .trigger(CommunicatorMsg::SendStop(self.raw_raft.raft.id, true));
                 self.stop_timers();
                 self.stopped = true;
                 if self.stopped_peers.len() == self.num_peers {
-                    self.supervisor.tell(RaftCompMsg::StopResp)
+                    ask.reply(()).expect("Failed to reply Stop ask");
+                } else {
+                    self.stop_ask = Some(ask);
                 }
             }
         }
@@ -575,7 +487,11 @@ where
                 );
                 // info!(self.ctx.log(), "Got stop from {}. received: {}, num_peers: {}", from_pid, self.stopped_peers.len(), self.num_peers);
                 if self.stopped_peers.len() == self.num_peers && self.stopped {
-                    self.supervisor.tell(RaftCompMsg::StopResp);
+                    self.stop_ask
+                        .take()
+                        .expect("No stop ask")
+                        .reply(())
+                        .expect("Failed to reply Stop ask");
                 }
             }
             _ => {}
@@ -610,6 +526,7 @@ where
             num_peers,
             hb_proposals: vec![],
             max_inflight,
+            stop_ask: None,
         }
     }
 

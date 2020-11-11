@@ -892,9 +892,6 @@ pub mod paxos {
 #[derive(Clone, Debug)]
 pub struct Run;
 
-#[derive(Debug)]
-pub struct KillResponse;
-
 pub const RECONFIG_ID: u64 = 0;
 
 #[derive(Clone, Debug)]

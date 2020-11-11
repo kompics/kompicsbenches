@@ -391,6 +391,7 @@ impl AtomicBroadcastMaster {
                     )));
                 }
                 self.reconfiguration = reconfig;
+                self.num_nodes = Some(n);
             }
             Err(e) => return Err(e),
         }
@@ -438,7 +439,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         self.experiment_str = Some(experiment_str);
         self.algorithm = Some(c.algorithm.clone());
-        self.num_nodes = Some(c.number_of_nodes);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         if c.concurrent_proposals == 1
@@ -468,8 +468,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.finished_latch = Some(finished_latch);
         self.iteration_id += 1;
         let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-        for (id, actorpath) in d.iter().enumerate() {
-            nodes_id.insert(id as u64 + 1, actorpath.clone());
+        let num_nodes_needed = self.num_nodes.expect("No cached num_nodes") as usize;
+        let mut nodes = d;
+        nodes.truncate(num_nodes_needed);
+        for (id, ap) in nodes.iter().enumerate() {
+            nodes_id.insert(id as u64 + 1, ap.clone());
         }
         let (client_timeout, meta_path) = Self::load_benchmark_config(CONFIG_PATH);
         self.meta_results_path = meta_path;
@@ -480,7 +483,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.reconfiguration.clone(),
             leader_election_latch.clone(),
         );
-        let partitioning_actor = self.initialise_iteration(d, client_path);
+        let partitioning_actor = self.initialise_iteration(nodes, client_path);
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);
@@ -503,15 +506,14 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
     fn cleanup_iteration(&mut self, last_iteration: bool, exec_time_millis: f64) -> () {
         println!(
-            "Cleaning up Atomic Broadcast (master). Exec_time: {}",
-            exec_time_millis
+            "Cleaning up Atomic Broadcast (master) iteration {}. Exec_time: {}",
+            self.iteration_id, exec_time_millis
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        client.actor_ref().tell(LocalClientMessage::Stop);
         let (num_timed_out, latencies) = client
             .actor_ref()
-            .ask(|promise| LocalClientMessage::GetMetaResults(Ask::new(promise, ())))
+            .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(num_timed_out);
         if self.concurrent_proposals == Some(1)
@@ -539,19 +541,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             writeln!(file, "").expect("Failed to write raw latency"); // separate each run with empty line. TODO handle in plotting
         }
 
+        let kill_client_f = system.kill_notify(client);
+        kill_client_f
+            .wait_timeout(REGISTER_TIMEOUT)
+            .expect("Client never died");
+
         if let Some(partitioning_actor) = self.partitioning_actor.take() {
-            let stop_f = partitioning_actor
-                .actor_ref()
-                .ask(|promise| IterationControlMsg::Stop(Ask::new(promise, ())));
-
-            stop_f.wait();
-            // stop_f.wait_timeout(STOP_TIMEOUT).expect("Timed out while stopping iteration");
-
-            let kill_client_f = system.kill_notify(client);
-            kill_client_f
-                .wait_timeout(REGISTER_TIMEOUT)
-                .expect("Client never died");
-
             let kill_pactor_f = system.kill_notify(partitioning_actor);
             kill_pactor_f
                 .wait_timeout(REGISTER_TIMEOUT)
@@ -779,19 +774,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
-        } else {
-            if let Some(paxos) = self.paxos_replica.as_ref() {
-                let cleanup_f = paxos
-                    .actor_ref()
-                    .ask(|promise| PaxosCompMsg::CleanupIteration(Ask::new(promise, ())));
-                cleanup_f.wait();
-            }
-            if let Some(raft) = self.raft_replica.as_ref() {
-                let cleanup_f = raft
-                    .actor_ref()
-                    .ask(|promise| RaftCompMsg::CleanupIteration(Ask::new(promise, ())));
-                cleanup_f.wait();
-            }
         }
     }
 }
