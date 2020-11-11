@@ -2,7 +2,7 @@ extern crate raft as tikv_raft;
 
 use super::messages::paxos::Message as RawPaxosMsg;
 use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
-use crate::bench::atomic_broadcast::messages::{paxos::PaxosSer, raft::RawRaftSer, KillResponse};
+use crate::bench::atomic_broadcast::messages::{paxos::PaxosSer, raft::RawRaftSer};
 use crate::bench::atomic_broadcast::messages::{
     AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
 };
@@ -23,7 +23,7 @@ pub enum CommunicatorMsg {
     RawPaxosMsg(RawPaxosMsg),
     ProposalResponse(ProposalResp),
     PendingReconfiguration(Vec<u8>),
-    SendStop(u64),
+    SendStop(u64, bool),
 }
 
 pub struct CommunicationPort;
@@ -39,31 +39,20 @@ pub struct Communicator {
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
     peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
     client: ActorPath,              // cached client to send SequenceResp to
-    supervisor: Recipient<KillResponse>,
 }
 
 impl Communicator {
-    pub fn with(
-        peers: HashMap<u64, ActorPath>,
-        client: ActorPath,
-        supervisor: Recipient<KillResponse>,
-    ) -> Communicator {
+    pub fn with(peers: HashMap<u64, ActorPath>, client: ActorPath) -> Communicator {
         Communicator {
             ctx: ComponentContext::uninitialised(),
             atomic_broadcast_port: ProvidedPort::uninitialised(),
             peers,
             client,
-            supervisor,
         }
     }
 }
 
-impl ComponentLifecycle for Communicator {
-    fn on_kill(&mut self) -> Handled {
-        self.supervisor.tell(KillResponse);
-        Handled::Ok
-    }
-}
+ignore_lifecycle!(Communicator);
 
 impl Provide<CommunicationPort> for Communicator {
     fn handle(&mut self, msg: CommunicatorMsg) -> Handled {
@@ -100,10 +89,15 @@ impl Provide<CommunicationPort> for Communicator {
                     .tell_serialised(AtomicBroadcastMsg::PendingReconfiguration(data), self)
                     .expect("Should serialise PendingReconfiguration");
             }
-            CommunicatorMsg::SendStop(my_pid) => {
+            CommunicatorMsg::SendStop(my_pid, ack_client) => {
                 trace!(self.ctx.log(), "Sending stop");
                 for ap in self.peers.values() {
                     ap.tell_serialised(NetStopMsg::Peer(my_pid), self)
+                        .expect("Should serialise StopMsg")
+                }
+                if ack_client {
+                    self.client
+                        .tell_serialised(NetStopMsg::Peer(my_pid), self)
                         .expect("Should serialise StopMsg")
                 }
             }

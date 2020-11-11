@@ -48,3 +48,6 @@ track_reconfig_latency = [] # measure latency for proposals during reconfig
 
 #default = []
 default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync"]
+
+[profile.release]
+lto = true
