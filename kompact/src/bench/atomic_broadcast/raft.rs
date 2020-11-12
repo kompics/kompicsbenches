@@ -2,6 +2,7 @@ extern crate raft as tikv_raft;
 
 use super::messages::{StopMsg as NetStopMsg, StopMsgDeser, *};
 use super::storage::raft::*;
+use crate::bench::atomic_broadcast::atomic_broadcast::Done;
 use crate::bench::atomic_broadcast::communicator::{
     AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
 };
@@ -21,6 +22,7 @@ const DELAY: Duration = Duration::from_millis(0);
 pub enum RaftCompMsg {
     Leader(bool, u64),
     ForwardReconfig(u64, (Vec<u64>, Vec<u64>)),
+    KillComponents(Ask<(), Done>),
 }
 
 #[derive(ComponentDefinition)]
@@ -194,33 +196,40 @@ where
         self.ctx.system().start(communicator);
     }
 
-    fn cleanup_iteration(&mut self) -> Handled {
+    fn stop_components(&mut self) -> Handled {
         self.stopped = true;
         // info!(self.ctx.log(), "Stopping components");
-        if let Some(raft) = self.raft_replica.as_ref() {
-            let stop_f = raft
-                .actor_ref()
-                .ask(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
-            Handled::block_on(self, move |mut async_self| async move {
-                stop_f.await.expect("Failed to stop RaftReplica");
-                let system = async_self.ctx.system();
-                let mut kill_futures = Vec::with_capacity(2);
+        let raft = self
+            .raft_replica
+            .as_ref()
+            .expect("Got stop but no Raft replica");
+        let stop_f = raft
+            .actor_ref()
+            .ask(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
+        Handled::block_on(self, move |_| async move {
+            stop_f.await.expect("Failed to stop RaftReplica");
+        })
+    }
 
-                let raft = async_self.raft_replica.take().unwrap();
-                let kill_raft = system.kill_notify(raft);
+    fn kill_components(&mut self, ask: Ask<(), Done>) -> Handled {
+        let system = self.ctx.system();
+        let mut kill_futures = Vec::with_capacity(2);
 
-                let communicator = async_self.communicator.take().unwrap();
-                let kill_comm = system.kill_notify(communicator);
+        let raft = self.raft_replica.take().unwrap();
+        let kill_raft = system.kill_notify(raft);
 
-                kill_futures.push(kill_raft);
-                kill_futures.push(kill_comm);
-                for f in kill_futures {
-                    f.await.expect("Failed to kill");
-                }
-            })
-        } else {
-            Handled::Ok
-        }
+        let communicator = self.communicator.take().unwrap();
+        let kill_comm = system.kill_notify(communicator);
+
+        kill_futures.push(kill_raft);
+        kill_futures.push(kill_comm);
+
+        Handled::block_on(self, move |_| async move {
+            for f in kill_futures {
+                f.await.expect("Failed to kill");
+            }
+            ask.reply(Done).expect("Failed to reply done");
+        })
     }
 }
 
@@ -255,6 +264,9 @@ where
                     .expect("No actorpath to current leader")
                     .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
                     .expect("Should serialise")
+            }
+            RaftCompMsg::KillComponents(ask) => {
+                return self.kill_components(ask);
             }
         }
         Handled::Ok
@@ -317,7 +329,7 @@ where
                         if let NetStopMsg::Client = client_stop {
                             // info!(self.ctx.log(), "Got client stop");
                             assert!(!self.stopped);
-                            return self.cleanup_iteration();
+                            return self.stop_components();
                         }
                     },
                     tm: TestMessage [TestMessageSer] => {

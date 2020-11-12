@@ -48,6 +48,9 @@ impl ClientParams {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Done;
+
 #[derive(Default)]
 pub struct AtomicBroadcast;
 
@@ -511,11 +514,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        let (num_timed_out, latencies) = client
+        let meta_results = client
             .actor_ref()
             .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
-        self.num_timed_out.push(num_timed_out);
+        self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1)
             || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
         {
@@ -533,7 +536,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 ))
                 .expect("Failed to open latency file");
             let histo = self.latency_hist.as_mut().unwrap();
-            for (_, l) in latencies {
+            for (_, l) in meta_results.latencies {
                 let latency = l.as_micros() as u64;
                 writeln!(file, "{}", latency).expect("Failed to write raw latency");
                 histo.record(latency).expect("Failed to record histogram");
@@ -657,16 +660,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
 pub struct AtomicBroadcastClient {
     system: Option<KompactSystem>,
-    paxos_replica: Option<Arc<Component<PaxosComp<MemorySequence, MemoryState>>>>,
-    raft_replica: Option<Arc<Component<RaftComp<Storage>>>>,
+    paxos_comp: Option<Arc<Component<PaxosComp<MemorySequence, MemoryState>>>>,
+    raft_comp: Option<Arc<Component<RaftComp<Storage>>>>,
 }
 
 impl AtomicBroadcastClient {
     fn new() -> AtomicBroadcastClient {
         AtomicBroadcastClient {
             system: None,
-            paxos_replica: None,
-            raft_replica: None,
+            paxos_comp: None,
+            raft_comp: None,
         }
     }
 }
@@ -709,7 +712,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 paxos_replica_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("ReplicaComp never started!");
-                self.paxos_replica = Some(paxos_replica);
+                self.paxos_comp = Some(paxos_replica);
                 self_path
             }
             raft if raft == "raft-nobatch" || raft == "raft-batch" => {
@@ -741,7 +744,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("RaftComp never started!");
 
-                self.raft_replica = Some(raft_replica);
+                self.raft_comp = Some(raft_replica);
                 self_path
             }
             unknown => panic!("Got unknown algorithm: {}", unknown),
@@ -757,15 +760,27 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 
     fn cleanup_iteration(&mut self, last_iteration: bool) -> () {
         println!("Cleaning up Atomic Broadcast (client)");
+        if let Some(paxos) = &self.paxos_comp {
+            let kill_comps_f = paxos
+                .actor_ref()
+                .ask(|p| PaxosCompMsg::KillComponents(Ask::new(p, ())));
+            kill_comps_f.wait();
+        }
+        if let Some(raft) = &self.raft_comp {
+            let kill_comps_f = raft
+                .actor_ref()
+                .ask(|p| RaftCompMsg::KillComponents(Ask::new(p, ())));
+            kill_comps_f.wait();
+        }
         if last_iteration {
             let system = self.system.take().unwrap();
-            if let Some(replica) = self.paxos_replica.take() {
+            if let Some(replica) = self.paxos_comp.take() {
                 let kill_replica_f = system.kill_notify(replica);
                 kill_replica_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("Paxos Replica never died!");
             }
-            if let Some(raft_replica) = self.raft_replica.take() {
+            if let Some(raft_replica) = self.raft_comp.take() {
                 let kill_raft_f = system.kill_notify(raft_replica);
                 kill_raft_f
                     .wait_timeout(REGISTER_TIMEOUT)

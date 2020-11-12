@@ -21,7 +21,7 @@ enum ExperimentState {
 #[derive(Debug)]
 pub enum LocalClientMessage {
     Run,
-    Stop(Ask<(), (u64, Vec<(u64, Duration)>)>), // (num_timed_out, latency)
+    Stop(Ask<(), MetaResults>), // (num_timed_out, latency)
 }
 
 enum Response {
@@ -45,6 +45,21 @@ impl ProposalMetaData {
     }
 }
 
+#[derive(Debug)]
+pub struct MetaResults {
+    pub num_timed_out: u64,
+    pub latencies: Vec<(u64, Duration)>,
+}
+
+impl MetaResults {
+    pub fn with(num_timed_out: u64, latencies: Vec<(u64, Duration)>) -> Self {
+        MetaResults {
+            num_timed_out,
+            latencies,
+        }
+    }
+}
+
 #[derive(ComponentDefinition)]
 pub struct Client {
     ctx: ComponentContext<Self>,
@@ -64,7 +79,7 @@ pub struct Client {
     num_timed_out: u64,
     leader_changes: Vec<u64>,
     retry_proposals: Vec<(u64, Option<SystemTime>)>,
-    stop_ask: Option<Ask<(), (u64, Vec<(u64, Duration)>)>>,
+    stop_ask: Option<Ask<(), MetaResults>>,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -325,7 +340,7 @@ impl Client {
             .into_iter()
             .map(|(id, latency)| (id, latency.unwrap()))
             .collect();
-        let meta_results = (self.num_timed_out, latencies);
+        let meta_results = MetaResults::with(self.num_timed_out, latencies);
         self.stop_ask
             .take()
             .expect("No stop promise!")
@@ -334,15 +349,7 @@ impl Client {
     }
 }
 
-impl ComponentLifecycle for Client {
-    fn on_kill(&mut self) -> Handled {
-        let pending_proposals = std::mem::take(&mut self.pending_proposals);
-        for proposal_meta in pending_proposals {
-            self.cancel_timer(proposal_meta.1.timer);
-        }
-        Handled::Ok
-    }
-}
+ignore_lifecycle!(Client);
 
 impl Actor for Client {
     type Message = LocalClientMessage;
@@ -355,6 +362,10 @@ impl Actor for Client {
                 self.send_concurrent_proposals();
             }
             LocalClientMessage::Stop(a) => {
+                let pending_proposals = std::mem::take(&mut self.pending_proposals);
+                for proposal_meta in pending_proposals {
+                    self.cancel_timer(proposal_meta.1.timer);
+                }
                 self.send_stop();
                 self.stop_ask = Some(a);
             }

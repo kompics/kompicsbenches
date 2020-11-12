@@ -9,6 +9,7 @@ use super::messages::paxos::{
 };
 use super::messages::{StopMsg as NetStopMsg, *};
 use super::storage::paxos::*;
+use crate::bench::atomic_broadcast::atomic_broadcast::Done;
 use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
 use crate::partitioning_actor::{Init, PartitioningActorMsg, PartitioningActorSer};
 use crate::serialiser_ids::ATOMICBCAST_ID;
@@ -79,10 +80,6 @@ struct ConfigMeta {
 impl ConfigMeta {
     fn new(id: u32) -> Self {
         ConfigMeta { id, leader: 0 }
-    }
-
-    fn with(id: u32, leader: u64) -> Self {
-        ConfigMeta { id, leader }
     }
 }
 
@@ -259,7 +256,7 @@ where
                 ble_delta as u64,
                 prio_start,
                 quick_start,
-                skip_prepare_n,
+                skip_prepare_n.clone(),
                 initial_election_factor,
             )
         });
@@ -320,6 +317,14 @@ where
                 ap.tell_serialised(resp, async_self.deref_mut())
                     .expect("Should serialise");
             }
+
+            match skip_prepare_n {
+                Some(n) if n.pid == async_self.pid => async_self
+                    .ctx
+                    .actor_ref()
+                    .tell(PaxosCompMsg::Leader(config_id, n.pid)),
+                _ => {}
+            }
         })
     }
 
@@ -347,7 +352,7 @@ where
         }
     }
 
-    fn cleanup_iteration(&mut self) -> Handled {
+    fn stop_components(&mut self) -> Handled {
         self.stopped = true;
         let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
         for (_, timer) in retry_timers {
@@ -361,68 +366,75 @@ where
         self.complete_sequences.clear();
         let num_comps =
             self.ble_comps.len() + self.paxos_replicas.len() + self.communicator_comps.len();
+        assert!(
+            num_comps > 0,
+            "Should not get client stop if no child components"
+        );
         debug!(self.ctx.log(), "Killing {} child components...", num_comps);
-        if num_comps == 0 {
-            Handled::Ok
-        } else {
-            let mut stop_futures = vec![];
-            let late_stop = self.next_config_id.is_some();
-            let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
-            for ble in rest_ble {
-                stop_futures.push(
-                    ble.actor_ref()
-                        .ask(|p| BLEStop(Ask::new(p, (self.pid, false)))),
-                );
-            }
+        let mut stop_futures = Vec::with_capacity(num_comps);
+        let late_stop = self.next_config_id.is_some();
+        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
+        for ble in rest_ble {
             stop_futures.push(
-                ble_last
-                    .actor_ref()
-                    .ask(|p| BLEStop(Ask::new(p, (self.pid, late_stop)))),
+                ble.actor_ref()
+                    .ask(|p| BLEStop(Ask::new(p, (self.pid, false)))),
             );
-
-            let (last, rest) = self
-                .paxos_replicas
-                .split_last()
-                .expect("No paxos replicas!");
-            for paxos_replica in rest {
-                stop_futures.push(
-                    paxos_replica
-                        .actor_ref()
-                        .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (false, false)))),
-                );
-            }
-            stop_futures.push(
-                last.actor_ref()
-                    .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (true, late_stop)))),
-            );
-
-            if late_stop {
-                self.start_replica();
-            }
-
-            Handled::block_on(self, move |mut async_self| async move {
-                for stop_f in stop_futures {
-                    stop_f.await.expect("Failed to stop child components!");
-                }
-                let system = async_self.ctx.system();
-                let mut kill_futures = vec![];
-                for ble in async_self.ble_comps.drain(..) {
-                    let ble_f = system.kill_notify(ble);
-                    kill_futures.push(ble_f);
-                }
-                for paxos in async_self.paxos_replicas.drain(..) {
-                    let paxos_f = system.kill_notify(paxos);
-                    kill_futures.push(paxos_f);
-                }
-                for communicator in async_self.communicator_comps.drain(..) {
-                    let comm_f = system.kill_notify(communicator);
-                    kill_futures.push(comm_f);
-                }
-                for f in kill_futures {
-                    f.await.expect("Failed to kill child components");
-                }
-            })
         }
+        stop_futures.push(
+            ble_last
+                .actor_ref()
+                .ask(|p| BLEStop(Ask::new(p, (self.pid, late_stop)))),
+        );
+
+        let (paxos_last, rest) = self
+            .paxos_replicas
+            .split_last()
+            .expect("No paxos replicas!");
+        for paxos_replica in rest {
+            stop_futures.push(
+                paxos_replica
+                    .actor_ref()
+                    .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (false, false)))),
+            );
+        }
+        stop_futures.push(
+            paxos_last
+                .actor_ref()
+                .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (true, late_stop)))),
+        );
+
+        if late_stop {
+            self.start_replica();
+        }
+
+        Handled::block_on(self, move |_| async move {
+            for stop_f in stop_futures {
+                stop_f.await.expect("Failed to stop child components!");
+            }
+        })
+    }
+
+    fn kill_components(&mut self, ask: Ask<(), Done>) -> Handled {
+        let system = self.ctx.system();
+        let mut kill_futures = vec![];
+        for ble in self.ble_comps.drain(..) {
+            let ble_f = system.kill_notify(ble);
+            kill_futures.push(ble_f);
+        }
+        for paxos in self.paxos_replicas.drain(..) {
+            let paxos_f = system.kill_notify(paxos);
+            kill_futures.push(paxos_f);
+        }
+        for communicator in self.communicator_comps.drain(..) {
+            let comm_f = system.kill_notify(communicator);
+            kill_futures.push(comm_f);
+        }
+        Handled::block_on(self, move |_| async move {
+            for f in kill_futures {
+                f.await.expect("Failed to kill child components");
+            }
+            ask.reply(Done).unwrap();
+        })
     }
 
     fn new_iteration(&mut self, init: Init) -> Handled {
@@ -744,6 +756,7 @@ where
 {
     Leader(u32, u64),
     Reconfig(FinalMsg<S>),
+    KillComponents(Ask<(), Done>),
 }
 
 impl<S, P> ComponentLifecycle for PaxosComp<S, P>
@@ -850,7 +863,7 @@ where
                 /*** Start new replica if continued ***/
                 let mut nodes = r.nodes.continued_nodes;
                 let mut new_nodes = r.nodes.new_nodes;
-                let handled = if nodes.contains(&self.pid) {
+                if nodes.contains(&self.pid) {
                     if let ReconfigurationPolicy::Eager = self.policy {
                         let st = self.create_eager_sequence_transfer(&nodes, prev_config_id);
                         for pid in &new_nodes {
@@ -870,7 +883,7 @@ where
                     let ble_prio =
                         self.active_config.leader == self.pid && cfg!(feature = "headstart_ble");
                     let quick_start = r.skip_prepare_n.is_none();
-                    self.create_replica(
+                    let handled = self.create_replica(
                         r.config_id,
                         nodes,
                         false,
@@ -878,17 +891,12 @@ where
                         ble_prio,
                         quick_start,
                         r.skip_prepare_n,
-                    )
-                } else {
-                    Handled::Ok
-                };
-                match r.skip_prepare_n {
-                    Some(n) if n.pid == self.pid => self
-                        .ctx
-                        .actor_ref()
-                        .tell(PaxosCompMsg::Leader(r.config_id, n.pid)),
-                    _ => {}
+                    );
+                    return handled;
                 }
+            }
+            PaxosCompMsg::KillComponents(ask) => {
+                let handled = self.kill_components(ask);
                 return handled;
             }
         }
@@ -1001,11 +1009,11 @@ where
                                                     self.retry_transfer_timers.insert(config_id, timer);
                                                 },
                                             }
-                                            let handled = self.create_replica(r.config_id, nodes, false, false, false, quick_start, r.skip_prepare_n);
                                             if let Some(tag) = skip_tag {
                                                 let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
                                                 self.handle_sequence_transfer(st);
                                             }
+                                            let handled = self.create_replica(r.config_id, nodes, false, false, false, quick_start, r.skip_prepare_n);
                                             return handled;
                                         }
                                     },
@@ -1032,7 +1040,7 @@ where
                     },
                     client_stop: NetStopMsg [StopMsgDeser] => {
                         if let NetStopMsg::Client = client_stop {
-                            return self.cleanup_iteration();
+                            return self.stop_components();
                         }
                     },
                     tm: TestMessage [TestMessageSer] => {
@@ -1195,8 +1203,12 @@ where
     }
 
     fn stop_if_pending(&mut self) -> Handled {
-        if let Some(ask) = self.stop_ask.take() {
-            ask.reply(()).expect("Failed to reply to stop ask");
+        if self.stopped_peers.len() != self.peers.len() {
+            self.stop_ask
+                .take()
+                .expect("No stop ask")
+                .reply(())
+                .expect("Failed to reply to late stop ask");
         }
         Handled::Ok
     }
@@ -2431,8 +2443,12 @@ mod ballot_leader_election {
         }
 
         fn stop_if_pending(&mut self) -> Handled {
-            if let Some(ask) = self.stop_ask.take() {
-                ask.reply(()).expect("Failed to reply to stop ask");
+            if self.stopped_peers.len() != self.peers.len() {
+                self.stop_ask
+                    .take()
+                    .expect("No stop ask!")
+                    .reply(())
+                    .expect("Failed to reply to late stop ask");
             }
             Handled::Ok
         }
@@ -2484,12 +2500,10 @@ mod ballot_leader_election {
             if self.stopped_peers.len() == self.peers.len() {
                 stop.0.reply(()).expect("Failed to reply to stop ask!");
             } else {
-                if late_stop {
-                    if late_stop {
-                        self.schedule_once(Duration::from_secs(3), move |c, _| c.stop_if_pending());
-                    }
-                }
                 self.stop_ask = Some(stop.0);
+                if late_stop {
+                    self.schedule_once(Duration::from_secs(3), move |c, _| c.stop_if_pending());
+                }
             }
             Handled::Ok
         }
