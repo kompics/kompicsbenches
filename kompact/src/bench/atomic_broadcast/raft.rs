@@ -215,14 +215,14 @@ where
         let system = self.ctx.system();
         let mut kill_futures = Vec::with_capacity(2);
 
-        let raft = self.raft_replica.take().unwrap();
-        let kill_raft = system.kill_notify(raft);
-
-        let communicator = self.communicator.take().unwrap();
-        let kill_comm = system.kill_notify(communicator);
-
-        kill_futures.push(kill_raft);
-        kill_futures.push(kill_comm);
+        if let Some(raft) = self.raft_replica.take() {
+            let kill_raft = system.kill_notify(raft);
+            kill_futures.push(kill_raft);
+        }
+        if let Some(communicator) = self.communicator.take() {
+            let kill_comm = system.kill_notify(communicator);
+            kill_futures.push(kill_comm);
+        }
 
         Handled::block_on(self, move |_| async move {
             for f in kill_futures {
