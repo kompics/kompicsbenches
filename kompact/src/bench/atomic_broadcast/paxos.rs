@@ -789,7 +789,7 @@ where
                             for net_msg in hb_proposals {
                                 self.deserialise_and_propose(net_msg);
                             }
-                        } else if pid != self.pid && !hb_proposals.is_empty() {
+                        } else if !hb_proposals.is_empty() {
                             let idx = pid as usize - 1;
                             let leader = self.nodes.get(idx).unwrap_or_else(|| {
                                 panic!(
@@ -1257,9 +1257,14 @@ where
             if let Some(Entry::StopSign(ss)) = last {
                 self.handle_stopsign(&ss);
             }
+            let latest_leader = if self.pending_reconfig {
+                0   // if we are/have reconfigured don't call ourselves leader
+            } else {
+                self.pid
+            };
             for decided in decided_entries {
                 if let Entry::Normal(data) = decided {
-                    let pr = ProposalResp::with(data, self.current_leader);
+                    let pr = ProposalResp::with(data, latest_leader);
                     self.communication_port
                         .trigger(CommunicatorMsg::ProposalResponse(pr));
                 }
