@@ -22,7 +22,6 @@ pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(RawPaxosMsg),
     ProposalResponse(ProposalResp),
-    PendingReconfiguration(Vec<u8>),
     SendStop(u64, bool),
 }
 
@@ -83,11 +82,6 @@ impl Provide<CommunicationPort> for Communicator {
                 self.client
                     .tell_serialised(am, self)
                     .expect("Should serialise ProposalResp");
-            }
-            CommunicatorMsg::PendingReconfiguration(data) => {
-                self.client
-                    .tell_serialised(AtomicBroadcastMsg::PendingReconfiguration(data), self)
-                    .expect("Should serialise PendingReconfiguration");
             }
             CommunicatorMsg::SendStop(my_pid, ack_client) => {
                 trace!(self.ctx.log(), "Sending stop");
