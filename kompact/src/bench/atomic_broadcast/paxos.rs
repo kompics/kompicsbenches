@@ -75,11 +75,12 @@ pub enum ReconfigurationPolicy {
 struct ConfigMeta {
     id: u32,
     leader: u64,
+    pending_reconfig: bool
 }
 
 impl ConfigMeta {
     fn new(id: u32) -> Self {
-        ConfigMeta { id, leader: 0 }
+        ConfigMeta { id, leader: 0, pending_reconfig: false }
     }
 }
 
@@ -202,8 +203,7 @@ where
         nodes: Vec<u64>,
         send_ack: bool,
         start: bool,
-        ble_prio: bool,
-        quick_start: bool,
+        ble_quick_start: bool,
         skip_prepare_n: Option<Ballot>,
     ) -> Handled {
         let mut peers = nodes;
@@ -240,13 +240,6 @@ where
         let ble_delta = config["paxos"]["ble_delta"]
             .as_i64()
             .expect("Failed to load get_decided_period");
-        let prio_start = if ble_prio {
-            config["paxos"]["prio_start_round"]
-                .as_i64()
-                .expect("Failed to load prio_start_round") as u64
-        } else {
-            0
-        };
         let initial_election_factor = self.experiment_config.initial_election_factor;
         let (ble_comp, ble_f) = system.create_and_register(|| {
             BallotLeaderComp::with(
@@ -254,8 +247,7 @@ where
                 self.pid,
                 election_timeout as u64,
                 ble_delta as u64,
-                prio_start,
-                quick_start,
+                ble_quick_start,
                 skip_prepare_n.clone(),
                 initial_election_factor,
             )
@@ -300,6 +292,14 @@ where
                 system.start(&paxos);
                 system.start(&ble_comp);
                 system.start(&communicator);
+
+                match skip_prepare_n {
+                    Some(n) => async_self
+                        .ctx
+                        .actor_ref()
+                        .tell(PaxosCompMsg::Leader(config_id, n.pid)),
+                    _ => {}
+                }
             } else {
                 async_self.next_config_id = Some(config_id);
             }
@@ -316,14 +316,6 @@ where
                     .expect("PartitioningActor not found!");
                 ap.tell_serialised(resp, async_self.deref_mut())
                     .expect("Should serialise");
-            }
-
-            match skip_prepare_n {
-                Some(n) if n.pid == async_self.pid => async_self
-                    .ctx
-                    .actor_ref()
-                    .tell(PaxosCompMsg::Leader(config_id, n.pid)),
-                _ => {}
             }
         })
     }
@@ -455,7 +447,6 @@ where
                 1,
                 self.initial_config.clone(),
                 true,
-                false,
                 false,
                 true,
                 None,
@@ -755,6 +746,7 @@ where
     S: SequenceTraits,
 {
     Leader(u32, u64),
+    PendingReconfig(Vec<u8>),
     Reconfig(FinalMsg<S>),
     KillComponents(Ask<(), Done>),
 }
@@ -804,6 +796,14 @@ where
                     }
                     self.active_config.leader = pid;
                 }
+            }
+            PaxosCompMsg::PendingReconfig(data) => {
+                self.active_config.pending_reconfig = true;
+                self.cached_client
+                    .as_ref()
+                    .expect("No cached client!")
+                    .tell_serialised(AtomicBroadcastMsg::PendingReconfiguration(data), self)
+                    .expect("Should serialise FirstLeader");
             }
             PaxosCompMsg::Reconfig(r) => {
                 /*** ReconfigResponse to client ***/
@@ -880,16 +880,13 @@ where
                         }
                     }
                     nodes.append(&mut new_nodes);
-                    let ble_prio =
-                        self.active_config.leader == self.pid && cfg!(feature = "headstart_ble");
-                    let quick_start = r.skip_prepare_n.is_none();
+                    let ble_quick_start = r.skip_prepare_n.is_none();
                     let handled = self.create_replica(
                         r.config_id,
                         nodes,
                         false,
                         true,
-                        ble_prio,
-                        quick_start,
+                        ble_quick_start,
                         r.skip_prepare_n,
                     );
                     return handled;
@@ -906,7 +903,7 @@ where
     fn receive_network(&mut self, m: NetMessage) -> Handled {
         match m.data.ser_id {
             ATOMICBCAST_ID => {
-                if !self.stopped {
+                if !self.stopped && !self.active_config.pending_reconfig {
                     match self.active_config.leader {
                         my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
                         other_pid if other_pid > 0 => {
@@ -976,12 +973,12 @@ where
                                         let mut new_nodes = r.nodes.new_nodes;
                                         let from = r.from;
                                         nodes.append(&mut new_nodes);
-                                        let quick_start = r.skip_prepare_n.is_none();
+                                        let ble_quick_start = r.skip_prepare_n.is_none();
                                         if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                             // only SS in final sequence and no other prev sequences -> start directly
                                             let final_sequence = S::new_with_sequence(vec![]);
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                            let handled = self.create_replica(r.config_id, nodes, false, true, false, quick_start, r.skip_prepare_n);
+                                            let handled = self.create_replica(r.config_id, nodes, false, true, ble_quick_start, r.skip_prepare_n);
                                             return handled;
                                         } else {
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
@@ -1013,7 +1010,7 @@ where
                                                 let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
                                                 self.handle_sequence_transfer(st);
                                             }
-                                            let handled = self.create_replica(r.config_id, nodes, false, false, false, quick_start, r.skip_prepare_n);
+                                            let handled = self.create_replica(r.config_id, nodes, false, false, ble_quick_start, r.skip_prepare_n);
                                             return handled;
                                         }
                                     },
@@ -1257,7 +1254,7 @@ where
             if let Some(Entry::StopSign(ss)) = last {
                 self.handle_stopsign(&ss);
             }
-            let latest_leader = if self.pending_reconfig {
+            let latest_leader = if self.paxos.stopped() {
                 0   // if we are/have reconfigured don't call ourselves leader
             } else {
                 self.pid
@@ -1305,8 +1302,7 @@ where
                 if !self.pending_reconfig {
                     if let Err(data) = self.propose(p) {
                         self.pending_reconfig = true;
-                        self.communication_port
-                            .trigger(CommunicatorMsg::PendingReconfiguration(data))
+                        self.supervisor.tell(PaxosCompMsg::PendingReconfig(data));
                     }
                 }
             }
@@ -2363,7 +2359,6 @@ mod ballot_leader_election {
             pid: u64,
             hb_delay: u64,
             delta: u64,
-            prio_start: u64,
             quick_timeout: bool,
             initial_max_ballot: Option<Ballot>,
             initial_election_factor: u64,
@@ -2371,7 +2366,7 @@ mod ballot_leader_election {
             let n = &peers.len() + 1;
             let initial_round = match initial_max_ballot {
                 Some(ballot) if ballot.pid == pid => ballot.n,
-                _ => prio_start,
+                _ => 0,
             };
             let initial_ballot = Ballot::with(initial_round, pid);
             BallotLeaderComp {

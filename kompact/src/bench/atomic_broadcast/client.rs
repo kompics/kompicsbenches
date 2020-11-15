@@ -78,6 +78,7 @@ pub struct Client {
     current_config: Vec<u64>,
     num_timed_out: u64,
     leader_changes: Vec<u64>,
+    first_proposal_after_reconfig: Option<u64>,
     retry_proposals: Vec<(u64, Option<SystemTime>)>,
     stop_ask: Option<Ask<(), MetaResults>>,
     #[cfg(feature = "track_timeouts")]
@@ -114,6 +115,7 @@ impl Client {
             current_config: initial_config,
             num_timed_out: 0,
             leader_changes: vec![],
+            first_proposal_after_reconfig: None,
             retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
             stop_ask: None,
             #[cfg(feature = "track_timeouts")]
@@ -153,33 +155,56 @@ impl Client {
     fn send_concurrent_proposals(&mut self) {
         let num_inflight = self.pending_proposals.len() as u64;
         assert!(num_inflight <= self.num_concurrent_proposals);
-        if self.latest_proposal_id == self.num_proposals
-            || num_inflight == self.num_concurrent_proposals
-            || self.current_leader == 0
-        {
+        let available_n = self.num_concurrent_proposals - num_inflight;
+        if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
-        let from = self.latest_proposal_id + 1;
-        let i = self.latest_proposal_id + self.num_concurrent_proposals - num_inflight;
-        let to = if i > self.num_proposals {
-            self.num_proposals
-        } else {
-            i
-        };
-        for id in from..=to {
+        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
+        if self.retry_proposals.is_empty() {    // normal case
+            let from = self.latest_proposal_id + 1;
+            let i = self.latest_proposal_id + available_n;
+            let to = if i > self.num_proposals {
+                self.num_proposals
+            } else {
+                i
+            };
+            if from > to { return; }
             let cache_start_time = self.num_concurrent_proposals == 1
                 || self.state == ExperimentState::ProposedReconfiguration;
-            let current_time = match cache_start_time {
-                true => Some(SystemTime::now()),
-                _ => None,
+            for id in from..=to {
+                let current_time = match cache_start_time {
+                    true => Some(SystemTime::now()),
+                    _ => None,
+                };
+                self.propose_normal(id, &leader);
+                let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
+                let proposal_meta = ProposalMetaData::with(current_time, timer);
+                self.pending_proposals.insert(id, proposal_meta);
+            }
+            self.latest_proposal_id = to;
+        } else {
+            let num_retry_proposals = self.retry_proposals.len();
+            let n = if num_retry_proposals > available_n as usize {
+                available_n as usize
+            } else {
+                num_retry_proposals
             };
-            let leader = self.nodes.get(&self.current_leader).unwrap();
-            self.propose_normal(id, leader);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
-            let proposal_meta = ProposalMetaData::with(current_time, timer);
-            self.pending_proposals.insert(id, proposal_meta);
+            let retry_proposals: Vec<_> = self.retry_proposals.drain(0..n).collect();
+            #[cfg(feature = "track_timeouts")]
+                {
+                    let min = retry_proposals.iter().min();
+                    let max = retry_proposals.iter().max();
+                    let count = retry_proposals.len();
+                    let num_pending = self.pending_proposals.len();
+                    info!(self.ctx.log(), "Retrying proposals to node {}. Count: {}, min: {:?}, max: {:?}, num_pending: {}", self.current_leader, count, min, max, num_pending);
+                }
+            for (id, start_time) in retry_proposals{
+                self.propose_normal(id, &leader);
+                let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
+                let meta = ProposalMetaData::with(start_time, timer);
+                self.pending_proposals.insert(id, meta);
+            }
         }
-        self.latest_proposal_id = to;
     }
 
     fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
@@ -277,27 +302,8 @@ impl Client {
         Handled::Ok
     }
 
-    fn retry_after_reconfig(&mut self) {
-        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-        #[cfg(feature = "track_timeouts")]
-        {
-            let min = self.retry_proposals.iter().min();
-            let max = self.retry_proposals.iter().max();
-            let count = self.retry_proposals.len();
-            let num_pending = self.pending_proposals.len();
-            info!(self.ctx.log(), "Retrying proposals after reconfig to node {}. Count: {}, min: {:?}, max: {:?}, num_pending: {}", self.current_leader, count, min, max, num_pending);
-        }
-        let retry_proposals = std::mem::take(&mut self.retry_proposals);
-        for (id, start_time) in retry_proposals {
-            self.propose_normal(id, &leader);
-            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
-            let meta = ProposalMetaData::with(start_time, timer);
-            self.pending_proposals.insert(id, meta);
-        }
-    }
-
-    fn hold_back_proposals(&mut self, from: u64) {
-        for i in from..=self.latest_proposal_id {
+    fn hold_back_proposals(&mut self, from: u64, to: u64) {
+        for i in from..=to {
             let ProposalMetaData { start_time, timer } =
                 self.pending_proposals.remove(&i).expect(&format!(
                     "No proposal with id {} in pending_proposals to hold back",
@@ -402,8 +408,8 @@ impl Actor for Client {
                                     self.leader_changes.push(pid);
                                 }
                                 self.state = ExperimentState::Running;
-                                if !self.retry_proposals.is_empty() {
-                                    self.retry_after_reconfig();
+                                if self.retry_proposals.is_empty() {
+                                    self.first_proposal_after_reconfig = Some(self.latest_proposal_id);
                                 }
                                 self.send_concurrent_proposals();
                             },
@@ -457,9 +463,6 @@ impl Actor for Client {
                                         if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
                                             self.state = ExperimentState::ReconfigurationElection;
                                         } else {    // Raft: continue if there is a leader
-                                            if self.state == ExperimentState::ReconfigurationElection && !self.retry_proposals.is_empty() {
-                                                self.retry_after_reconfig();
-                                            }
                                             self.state = ExperimentState::Running;
                                             self.send_concurrent_proposals();
                                             if leader_changed {
@@ -472,11 +475,26 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::PendingReconfiguration(data) => {
-                        if self.reconfig.is_some() {
-                            let dropped_proposal = data.as_slice().get_u64();
-                            // info!(self.ctx.log(), "Got PendingReconfiguration: {}. Pending proposals: {}, min: {:?}, max: {:?}", dropped_proposal, self.pending_proposals.len(), self.pending_proposals.keys().filter(|x| **x > 0 ).min(), self.pending_proposals.keys().max());
-                            self.hold_back_proposals(dropped_proposal);
-                            self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
+                        let dropped_proposal = data.as_slice().get_u64();
+                        match self.state {
+                            ExperimentState::Running => {
+                                if self.reconfig.is_some() {    // still running in old config
+                                    self.hold_back_proposals(dropped_proposal, self.latest_proposal_id);
+                                    self.state = ExperimentState::ReconfigurationElection;  // wait for FirstLeader in new configuration before proposing more
+                                } else {    // already running in new configuration
+                                    match self.first_proposal_after_reconfig {
+                                        Some(first_id) => {
+                                            self.hold_back_proposals(dropped_proposal, first_id);
+                                            self.send_concurrent_proposals();
+                                        }
+                                        _ => unreachable!("Running in new configuration but never cached first proposal in new config!?"),
+                                    }
+                                }
+                            }
+                            ExperimentState::ReconfigurationElection => {
+                                self.hold_back_proposals(dropped_proposal, self.latest_proposal_id);
+                            }
+                            _ => {}
                         }
                     }
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
