@@ -2,98 +2,48 @@ package se.kth.benchmarks.runner
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
-
-import scala.concurrent.{Await, Future}
+import scala.concurrent.Future
 import scala.util.{Failure, Success, Try}
 import com.lkroll.common.macros.Macros
-import se.kth.benchmarks.Statistics
-import se.kth.benchmarks.runner.BenchMode.BenchMode
-
 import scala.concurrent.duration._
 
-case class TestConverged(cached: Long, converged: Long);
 case class BenchmarkRun[Params](name: String, symbol: String, invoke: (Runner.Stub, Params) => Future[TestResult]);
-
-object BenchMode extends Enumeration {
-  type BenchMode = Value
-  val NORMAL, TEST, CONVERGE = Value
-}
 
 trait Benchmark {
   def name: String;
   def symbol: String;
-  def withStub(stub: Runner.Stub, mode: BenchMode)(f: (Future[TestResult], ParameterDescription, Long, Option[TestConverged]) => Unit): Unit;
-  def requiredRuns(benchMode: BenchMode): Long;
+  def withStub(stub: Runner.Stub, testing: Boolean)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit;
+  def requiredRuns(testing: Boolean): Long;
 }
 object Benchmark {
   def apply[Params](b: BenchmarkRun[Params],
                     space: ParameterSpace[Params],
-                    testSpace: ParameterSpace[Params],
-                    convergeSpace: Option[ParameterSpace[Params]],
-                    convergeFunction: Option[(Params, Long) => Long]): BenchmarkWithSpace[Params] =
-    BenchmarkWithSpace(b, space, testSpace, convergeSpace, convergeFunction);
+                    testSpace: ParameterSpace[Params]): BenchmarkWithSpace[Params] =
+    BenchmarkWithSpace(b, space, testSpace);
   def apply[Params](name: String,
                     symbol: String,
                     invoke: (Runner.Stub, Params) => Future[TestResult],
                     space: ParameterSpace[Params],
-                    testSpace: ParameterSpace[Params],
-                    convergeSpace: Option[ParameterSpace[Params]],
-                    convergeFunction: Option[(Params, Long) => Long]): BenchmarkWithSpace[Params] =
-    BenchmarkWithSpace(BenchmarkRun(name, symbol, invoke), space, testSpace, convergeSpace, convergeFunction);
+                    testSpace: ParameterSpace[Params]): BenchmarkWithSpace[Params] =
+    BenchmarkWithSpace(BenchmarkRun(name, symbol, invoke), space, testSpace);
 }
 case class BenchmarkWithSpace[Params](b: BenchmarkRun[Params],
                                       space: ParameterSpace[Params],
-                                      testSpace: ParameterSpace[Params],
-                                      convergeSpace: Option[ParameterSpace[Params]],
-                                      convergeFunction: Option[(Params, Long) => Long])  // params, prev_result, current_result
+                                      testSpace: ParameterSpace[Params])
     extends Benchmark {
   override def name: String = b.name;
   override def symbol: String = b.symbol;
   def run = b.invoke;
   override def withStub(stub: Runner.Stub,
-                        mode: BenchMode)(f: (Future[TestResult], ParameterDescription, Long, Option[TestConverged]) => Unit): Unit = {
+                        testing: Boolean)(f: (Future[TestResult], ParameterDescription, Long) => Unit): Unit = {
     var index = 0L;
-    val useSpace = mode match {
-      case BenchMode.NORMAL => space
-      case BenchMode.TEST => testSpace
-      case BenchMode.CONVERGE => convergeSpace.get
-    }
-    var cached_conv_value = 0L;
+    val useSpace = if (testing) testSpace else space;
     useSpace.foreach { p =>
       index += 1L;
-      val res = run(stub, p);
-      if (mode == BenchMode.CONVERGE) {
-        val result = Await.ready(res, Duration.Inf).value.get;
-        result match {
-          case Success(r) => {
-            r match {
-              case TestSuccess(_, data) => {
-                val stats = new Statistics(data);
-                val mean = stats.sampleMean;
-                val calculated_conv_value = convergeFunction.get.apply(p, mean.toLong);
-                val converged = if (calculated_conv_value <= cached_conv_value) {
-                  Some(TestConverged(cached_conv_value, calculated_conv_value))
-                } else {
-                  None
-                };
-                cached_conv_value = calculated_conv_value;
-                f(res, useSpace.describe(p), index, converged)
-              }
-              case _ => f(res, useSpace.describe(p), index, None)
-            }
-          }
-          case _ => f(res, useSpace.describe(p), index, None)
-        }
-      } else {
-        f(res, useSpace.describe(p), index, None)
-      }
+      f(run(stub, p), useSpace.describe(p), index)
     }
   }
-  override def requiredRuns(mode: BenchMode): Long = mode match {
-    case BenchMode.NORMAL => space.size
-    case BenchMode.TEST => testSpace.size
-    case BenchMode.CONVERGE => convergeSpace.get.size
-  }
+  override def requiredRuns(testing: Boolean): Long = if (testing) testSpace.size else space.size;
 }
 
 object Benchmarks extends ParameterDescriptionImplicits {
@@ -115,9 +65,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .mapped(1L.mio to 10L.mio by 1L.mio)
       .msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n)),
     testSpace =
-      ParameterSpacePB.mapped(10L.k to 100L.k by 10L.k).msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n)),
-    convergeSpace = None,
-    convergeFunction = None
+      ParameterSpacePB.mapped(10L.k to 100L.k by 10L.k).msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n))
   );
 
   val netPingPong = Benchmark(
@@ -129,9 +77,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     space =
       ParameterSpacePB.mapped(1L.k to 10L.k by 1L.k).msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n)),
     testSpace =
-      ParameterSpacePB.mapped(100L to 1L.k by 100L).msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n)),
-    convergeSpace = None,
-    convergeFunction = None
+      ParameterSpacePB.mapped(100L to 1L.k by 100L).msg[PingPongRequest](n => PingPongRequest(numberOfMessages = n))
   );
 
   val throughputPingPong = Benchmark(
@@ -151,9 +97,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(messagesPerPair = n, pipelineSize = p, parallelism = par, staticOnly = s)
-      },
-      convergeSpace = None,
-      convergeFunction = None
+      }
   );
 
   val netThroughputPingPong = Benchmark(
@@ -173,9 +117,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .msg[ThroughputPingPongRequest] {
         case (n, p, par, s) =>
           ThroughputPingPongRequest(messagesPerPair = n, pipelineSize = p, parallelism = par, staticOnly = s)
-      },
-    convergeSpace = None,
-    convergeFunction = None
+      }
   );
 
   private val windowDataSize = 0.008; // 8kB in MB
@@ -210,9 +152,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
                                   numberOfWindows = nw,
                                   windowSizeAmplification = windowAmp)
         }
-      },
-    convergeSpace = None,
-    convergeFunction = None
+      }
   );
 
   val atomicRegister = Benchmark(
@@ -235,9 +175,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .msg[AtomicRegisterRequest] {
         case ((rwl, wwl), p, k) =>
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
-      },
-    convergeSpace = None,
-    convergeFunction = None
+      }
   );
 
   val fibonacci = Benchmark(
@@ -251,9 +189,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n)),
     testSpace = ParameterSpacePB
       .mapped(22 to 28 by 1)
-      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n)),
-    convergeSpace = None,
-    convergeFunction = None
+      .msg[FibonacciRequest](n => FibonacciRequest(fibNumber = n))
   );
 
   val chameneos = Benchmark(
@@ -271,9 +207,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
       .cross(List(2, 3, 4, 5, 6, 7, 8, 16), List(100.k))
       .msg[ChameneosRequest] {
         case (nc, nm) => ChameneosRequest(numberOfChameneos = nc, numberOfMeetings = nm)
-      },
-    convergeSpace = None,
-    convergeFunction = None
+      }
   );
 
   val allPairsShortestPath = Benchmark(
@@ -297,23 +231,21 @@ object Benchmarks extends ParameterDescriptionImplicits {
           assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
           APSPRequest(numberOfNodes = nn, blockSize = bs)
         }
-      },
-    convergeSpace = None,
-    convergeFunction = None
+      }
   );
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(10L.mio);
-  private val atomicBroadcastTestConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
+  private val atomicBroadcastTestProposals = List(5L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(500L, 1L.k, 2L.k);
 
   private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(20L.mio);
   private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
 
-  private val paxos = List("paxos-batch");
+  private val paxos = List("paxos");
 
-  private val raft = List("raft-batch");
+  private val raft = List("raft");
   private val raft_reconfig = List("replace-follower", "replace-leader");
 
   private val paxos_reconfig = List("pull");
@@ -352,7 +284,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigTestSpace = ParameterSpacePB
     .cross(
-      List("raft-batch"),
+      raft,
       atomicBroadcastTestNodes,
       atomicBroadcastTestProposals,
       atomicBroadcastTestConcurrentProposals,
@@ -416,16 +348,6 @@ object Benchmarks extends ParameterDescriptionImplicits {
       List("none"),
     );
 
-  private val atomicBroadcastConvergeSpace = ParameterSpacePB
-    .cross(
-      List("raft-batch"),
-      List(3),
-      5L.mio to 15L.mio by 1L.mio,
-      List(1L.k),
-      List("off"),
-      List("none"),
-    );
-
   val atomicBroadcast = Benchmark(
     name = "Atomic Broadcast",
     symbol = "ATOMICBROADCAST",
@@ -455,24 +377,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfiguration = r,
             reconfigPolicy = rp,
           )
-      },
-    convergeSpace = Some(
-      atomicBroadcastConvergeSpace
-        .msg[AtomicBroadcastRequest] {
-          case (a, nn, np, cp, r, rp) =>
-            AtomicBroadcastRequest(
-              algorithm = a,
-              numberOfNodes = nn,
-              numberOfProposals = np,
-              concurrentProposals = cp,
-              reconfiguration = r,
-              reconfigPolicy = rp,
-            )
-        }
-      ),
-    convergeFunction = Some((a: AtomicBroadcastRequest, l: Long) => {
-      a.numberOfProposals * 1000/l  // ops/s
-    })
+      }
   );
 
   val benchmarks: List[Benchmark] = Macros.memberList[Benchmark];

@@ -42,7 +42,6 @@ where
     cached_client: Option<ActorPath>,
     current_leader: u64,
     reconfig_policy: ReconfigurationPolicy,
-    batch: bool,
 }
 
 impl<S> RaftComp<S>
@@ -52,7 +51,6 @@ where
     pub fn with(
         initial_config: Vec<u64>,
         reconfig_policy: ReconfigurationPolicy,
-        batch: bool,
     ) -> Self {
         RaftComp {
             ctx: ComponentContext::uninitialised(),
@@ -67,7 +65,6 @@ where
             cached_client: None,
             current_leader: 0,
             reconfig_policy,
-            batch,
         }
     }
 
@@ -92,14 +89,14 @@ where
         let election_tick = election_timeout / tick_period;
         let heartbeat_tick = leader_hb_period / tick_period;
         // info!(self.ctx.log(), "RawRaft config: election_tick={}, heartbeat_tick={}", election_tick, heartbeat_tick);
-        let max_size_per_msg = if self.batch { max_batch_size } else { 0 };
+        let max_size_per_msg = max_batch_size;
         let c = Config {
             id: self.pid,
             election_tick,  // number of ticks without HB before starting election
             heartbeat_tick, // leader sends HB every heartbeat_tick
             max_inflight_msgs,
             max_size_per_msg,
-            batch_append: self.batch,
+            batch_append: true,
             ..Default::default()
         };
         assert!(c.validate().is_ok(), "Invalid RawRaft config");
