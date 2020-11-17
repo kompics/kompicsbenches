@@ -323,7 +323,7 @@ impl AtomicBroadcastMaster {
             )));
         }
         match &c.algorithm.to_lowercase() {
-            paxos if paxos == "paxos" || paxos == "paxos-batch" => {
+            paxos if paxos == "paxos" => {
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
                         if c.reconfig_policy.to_lowercase() != "none" {
@@ -349,7 +349,7 @@ impl AtomicBroadcastMaster {
                     }
                 }
             }
-            raft if raft == "raft-nobatch" || raft == "raft-batch" => {
+            raft if raft == "raft" => {
                 match c.reconfiguration.to_lowercase().as_ref() {
                     "off" => {
                         if c.reconfig_policy.to_lowercase() != "none" {
@@ -715,8 +715,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self.paxos_comp = Some(paxos_replica);
                 self_path
             }
-            raft if raft == "raft-nobatch" || raft == "raft-batch" => {
-                let batch = raft == "raft-batch";
+            raft if raft == "raft" => {
                 let conf_state = get_initial_conf(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
@@ -732,7 +731,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                     RaftComp::<Storage>::with(
                         conf_state.0,
                         reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
-                        batch,
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");

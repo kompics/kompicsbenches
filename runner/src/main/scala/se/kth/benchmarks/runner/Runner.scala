@@ -22,11 +22,7 @@ object Runner {
 class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
   val prefix = conf.prefix();
-  val mode = conf.mode() match {
-    case "normal" => BenchMode.NORMAL
-    case "test" => BenchMode.TEST
-    case "converge" => BenchMode.CONVERGE
-  };
+  val testing = conf.testing();
 
   val sinks: List[DataSink] = {
     if (conf.console()) {
@@ -106,8 +102,8 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
 
   def runOne(b: Benchmark): Unit = {
     logger.info(s"Running ${b.name}");
-    val numRuns = b.requiredRuns(mode);
-    b.withStub(stub, mode) { (f, p, i, c) =>
+    val numRuns = b.requiredRuns(testing);
+    b.withStub(stub, testing) { (f, p, i) =>
       logger.info(s"Awaiting run result [$i/$numRuns]...");
       val result = Await.ready(f, Duration.Inf).value.get;
       result match {
@@ -119,11 +115,6 @@ class Runner(conf: Conf, stub: Runner.Stub) extends LazyLogging {
             case TestSuccess(nRuns, data) => {
               logger.info(s"Benchmark ${b.name} run [$i/$numRuns] finished successfully with ${nRuns} runs.");
               sinks.foreach(_.sink(b.symbol, p, data));
-              if (mode == BenchMode.CONVERGE && c.isDefined) {
-                val converged = c.get;
-                logger.info(s"Benchmark ${b.name} converged at run [$i/$numRuns] with params ${p.toCSV}. Calculated converge values: cached: ${converged.cached}, converged: ${converged.converged}")
-                return
-              }
             }
           }
           logger.info(s"Benchmark ${b.name} run [$i/$numRuns] finished.");
