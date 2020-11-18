@@ -1,11 +1,7 @@
 use kompact::prelude::SerId;
 
 /* serids for Partitioning Actor messages */
-pub const PARTITIONING_INIT_MSG: SerId = 44;
-pub const PARTITIONING_INIT_ACK_MSG: SerId = PARTITIONING_INIT_MSG;
-pub const PARTITIONING_RUN_MSG: SerId = 45;
-pub const PARTITIONING_DONE_MSG: SerId = PARTITIONING_RUN_MSG;
-pub const PARTITIONING_TESTDONE_MSG: SerId = 47;
+pub const PARTITIONING_ID: SerId = 45;
 
 pub const ATOMICREG_ID: SerId = 46;
 
@@ -17,3 +13,11 @@ pub const STATIC_PONG_ID: SerId = 53;
 pub const SW_SOURCE_ID: SerId = 54;
 pub const SW_SINK_ID: SerId = 55;
 pub const SW_WINDOWER_ID: SerId = 56;
+
+pub const RAFT_ID: SerId = 57;
+pub const BLE_ID: SerId = 58;
+pub const ATOMICBCAST_ID: SerId = 59;
+pub const PAXOS_ID: SerId = 60;
+pub const RECONFIG_ID: SerId = 61;
+pub const TEST_SEQ_ID: SerId = 62;
+pub const STOP_ID: SerId = 63;

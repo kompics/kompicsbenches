@@ -5,8 +5,8 @@ authors = ["Lars Kroll <lkroll@kth.se>"]
 edition = "2018"
 
 [dependencies]
-kompact 				= { git = "https://github.com/kompics/kompact"}
-#kompact 				= { path = "../../kompact/core/" }
+#kompact 				= { git = "https://github.com/kompics/kompact"}
+kompact 				= { path = "../../kompact/core/" }
 #kompact 				= "0.8"
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
@@ -21,6 +21,14 @@ num_cpus 				= "1"
 parse_duration 			= "2"
 rand 					= {version = "0.7", features = ["small_rng"]}
 chrono                  = "0.4"
+raft                    = "0.6.0-alpha"
+uuid                    = { version = "0.8", features = ["v4"] }
+memmap                  = "0.7.0"
+hashbrown               = "0.8.0"
+indexmap                = "1.4.0"
+hdrhistogram            = "6.0"
+hocon 					= {version = "0.3.6", default-features = false}
+
 
 #[dependencies.kompact]
 #git = "https://github.com/adamhass/kompact"
@@ -34,3 +42,19 @@ uuid = { version = "0.8", features = ["v4"] }
 
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
+
+batch_accept = []
+latest_decide = []
+latest_accepted = []
+
+max_accsync = []
+headstart_ble = []
+
+track_timeouts = [] # client keep tracks of which proposals timed out
+track_reconfig_latency = [] # measure latency for proposals during reconfig
+
+#default = []
+default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync"]
+
+[profile.release]
+lto = true

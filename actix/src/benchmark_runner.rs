@@ -148,4 +148,11 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerImpl {
         });
         grpc::SingleResponse::no_metadata(f)
     }
+    fn atomic_broadcast(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::AtomicBroadcastRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }

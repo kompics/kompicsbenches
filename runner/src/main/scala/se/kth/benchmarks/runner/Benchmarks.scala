@@ -171,7 +171,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
                                 numberOfKeys = k)
       },
     testSpace = ParameterSpacePB
-      .cross(List((0.5f, 0.5f), (0.95f, 0.05f)), List(3, 5), List(500, 1000, 2000))
+      .cross(List((0.5f, 0.5f)), List(3), List(1000))
       .msg[AtomicRegisterRequest] {
         case ((rwl, wwl), p, k) =>
           AtomicRegisterRequest(readWorkload = rwl, writeWorkload = wwl, partitionSize = p, numberOfKeys = k)
@@ -231,6 +231,152 @@ object Benchmarks extends ParameterDescriptionImplicits {
           assert(nn % bs == 0, "BlockSize must evenly divide nodes!");
           APSPRequest(numberOfNodes = nn, blockSize = bs)
         }
+      }
+  );
+
+  /*** split into different parameter spaces as some parameters are dependent on each other ***/
+  private val atomicBroadcastTestNodes = List(3);
+  private val atomicBroadcastTestProposals = List(5L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(500L, 1L.k, 2L.k);
+
+  private val atomicBroadcastNodes = List(3, 5);
+  private val atomicBroadcastProposals = List(20L.mio);
+  private val atomicBroadcastConcurrentProposals = List(10L.k, 100L.k, 1L.mio);
+
+  private val paxos = List("paxos");
+
+  private val raft = List("raft");
+  private val raft_reconfig = List("replace-follower", "replace-leader");
+
+  private val paxos_reconfig = List("pull");
+
+  private val paxosNormalTestSpace = ParameterSpacePB // paxos test without reconfig
+    .cross(
+      paxos,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
+      List("off"),
+      List("none"),
+    );
+
+  private val paxosReconfigTestSpace = ParameterSpacePB // paxos test with reconfig
+    .cross(
+      paxos,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
+      List("single"),
+      paxos_reconfig,
+    );
+
+  private val paxosTestSpace = paxosNormalTestSpace.append(paxosReconfigTestSpace);
+
+  private val raftNormalTestSpace = ParameterSpacePB
+    .cross(
+      raft,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
+      List("off"),
+      List("none"),
+    );
+
+  private val raftReconfigTestSpace = ParameterSpacePB
+    .cross(
+      raft,
+      atomicBroadcastTestNodes,
+      atomicBroadcastTestProposals,
+      atomicBroadcastTestConcurrentProposals,
+      List("single"),
+      raft_reconfig,
+    );
+
+  private val raftTestSpace = raftNormalTestSpace.append(raftReconfigTestSpace);
+
+  private val paxosNormalSpace = ParameterSpacePB
+    .cross(
+      paxos,
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("off"),
+      List("none"),
+    );
+
+  private val paxosReconfigSpace = ParameterSpacePB
+    .cross(
+      paxos,
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("single"),
+      paxos_reconfig,
+    );
+
+  private val paxosSpace = paxosNormalSpace.append(paxosReconfigSpace);
+
+  private val raftNormalSpace = ParameterSpacePB
+    .cross(
+      raft,
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("off"),
+      List("none"),
+    );
+
+  private val raftReconfigSpace = ParameterSpacePB
+    .cross(
+      List("raft-batch"),
+      atomicBroadcastNodes,
+      atomicBroadcastProposals,
+      atomicBroadcastConcurrentProposals,
+      List("single"),
+      raft_reconfig,
+    );
+
+  private val raftSpace = raftNormalSpace.append(raftReconfigSpace);
+
+  private val latencySpace = ParameterSpacePB
+    .cross(
+      List("paxos", "raft-batch"),
+      List(3),
+      List(10L.k),
+      List(1L),
+      List("off"),
+      List("none"),
+    );
+
+  val atomicBroadcast = Benchmark(
+    name = "Atomic Broadcast",
+    symbol = "ATOMICBROADCAST",
+    invoke = (stub, request: AtomicBroadcastRequest) => {
+      stub.atomicBroadcast(request)
+    },
+    space = paxosSpace.append(raftSpace).append(latencySpace)
+      .msg[AtomicBroadcastRequest] {
+        case (a, nn, np, cp, r, rp) =>
+          AtomicBroadcastRequest(
+            algorithm = a,
+            numberOfNodes = nn,
+            numberOfProposals = np,
+            concurrentProposals = cp,
+            reconfiguration = r,
+            reconfigPolicy = rp,
+          )
+      },
+    testSpace = paxosTestSpace.append(raftTestSpace)
+      .msg[AtomicBroadcastRequest] {
+        case (a, nn, np, cp, r, rp) =>
+          AtomicBroadcastRequest(
+            algorithm = a,
+            numberOfNodes = nn,
+            numberOfProposals = np,
+            concurrentProposals = cp,
+            reconfiguration = r,
+            reconfigPolicy = rp,
+          )
       }
   );
 

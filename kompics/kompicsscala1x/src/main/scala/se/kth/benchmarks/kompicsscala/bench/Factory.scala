@@ -13,4 +13,5 @@ object Factory extends BenchmarkFactory {
   override def fibonacci: Benchmark = Fibonacci;
   override def chameneos(): Benchmark = Chameneos;
   override def allPairsShortestPath(): Benchmark = AllPairsShortestPath;
+  override def atomicBroadcast(): DistributedBenchmark = ???;
 }

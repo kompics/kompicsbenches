@@ -16,12 +16,14 @@ use synchronoise::CountdownEvent;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientParams {
+    num_keys: u64,
     read_workload: f32,
     write_workload: f32,
 }
 impl ClientParams {
-    fn new(read_workload: f32, write_workload: f32) -> ClientParams {
+    fn new(num_keys: u64, read_workload: f32, write_workload: f32) -> ClientParams {
         ClientParams {
+            num_keys,
             read_workload,
             write_workload,
         }
@@ -59,27 +61,34 @@ pub mod actor_atomicregister {
 
         fn str_to_client_conf(str: String) -> Result<Self::ClientConf, BenchmarkError> {
             let split: Vec<_> = str.split(',').collect();
-            if split.len() != 2 {
+            if split.len() != 3 {
                 Err(BenchmarkError::InvalidMessage(format!(
                     "String '{}' does not represent a client conf!",
                     str
                 )))
             } else {
-                let readwl_str = split[0];
+                let num_keys_str = split[0];
+                let num_keys = num_keys_str.parse::<u64>().map_err(|e| {
+                    BenchmarkError::InvalidMessage(format!(
+                        "String '{}' does not represent a client conf: {:?}",
+                        str, e
+                    ))
+                })?;
+                let readwl_str = split[1];
                 let read_workload = readwl_str.parse::<f32>().map_err(|e| {
                     BenchmarkError::InvalidMessage(format!(
                         "String '{}' does not represent a client conf: {:?}",
                         str, e
                     ))
                 })?;
-                let writewl_str = split[1];
+                let writewl_str = split[2];
                 let write_workload = writewl_str.parse::<f32>().map_err(|e| {
                     BenchmarkError::InvalidMessage(format!(
                         "String '{}' does not represent a client conf: {:?}",
                         str, e
                     ))
                 })?;
-                Ok(ClientParams::new(read_workload, write_workload))
+                Ok(ClientParams::new(num_keys, read_workload, write_workload))
             }
         }
 
@@ -91,7 +100,7 @@ pub mod actor_atomicregister {
         }
 
         fn client_conf_to_str(c: Self::ClientConf) -> String {
-            format!("{},{}", c.read_workload, c.write_workload)
+            format!("{},{},{}", c.num_keys, c.read_workload, c.write_workload)
         }
 
         fn client_data_to_str(d: Self::ClientData) -> String {
@@ -153,6 +162,7 @@ pub mod actor_atomicregister {
                 .new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
+                num_keys: c.number_of_keys,
                 read_workload: c.read_workload,
                 write_workload: c.write_workload,
             };
@@ -168,6 +178,7 @@ pub mod actor_atomicregister {
                     /*** Setup atomic register ***/
                     let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                         AtomicRegisterActor::with(
+                            self.num_keys.unwrap(),
                             self.read_workload.unwrap(),
                             self.write_workload.unwrap(),
                             false,
@@ -196,7 +207,7 @@ pub mod actor_atomicregister {
                     /*** Add self path to vector of nodes ***/
                     let self_path = ActorPath::Named(NamedPath::with_system(
                         system.system_path(),
-                        vec![format!("atomicreg_actor{}", &self.init_id).into()],
+                        vec![format!("atomicreg_actor{}", &self.init_id)],
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
                     nodes.push(self_path);
@@ -210,7 +221,6 @@ pub mod actor_atomicregister {
                             Some(finished_latch.clone()),
                             self.init_id,
                             nodes,
-                            self.num_keys.unwrap(),
                             None,
                         )
                     });
@@ -223,6 +233,9 @@ pub mod actor_atomicregister {
                     partitioning_actor_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never started!");
+
+                    let prepare = IterationControlMsg::Prepare(None);
+                    partitioning_actor.actor_ref().tell(prepare);
 
                     self.init_id += 1;
                     self.finished_latch = Some(finished_latch);
@@ -241,7 +254,7 @@ pub mod actor_atomicregister {
             let finished_latch = self.finished_latch.take().unwrap();
             if let Some(ref partitioning_actor) = self.partitioning_actor {
                 let partitioning_actor_ref = partitioning_actor.actor_ref();
-                partitioning_actor_ref.tell(Run);
+                partitioning_actor_ref.tell(IterationControlMsg::Run);
                 finished_latch.wait();
             } else {
                 unimplemented!()
@@ -304,7 +317,7 @@ pub mod actor_atomicregister {
             let system = crate::kompact_system_provider::global()
                 .new_remote_system_with_threads("atomicregister", 4);
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
-                AtomicRegisterActor::with(c.read_workload, c.write_workload, false)
+                AtomicRegisterActor::with(c.num_keys, c.read_workload, c.write_workload, false)
             });
             let named_reg_f = system.register_by_alias(&atomic_register, "atomicreg_actor");
             unique_reg_f.wait_expect(
@@ -361,8 +374,7 @@ pub mod actor_atomicregister {
         nodes: Option<Vec<ActorPath>>,
         n: u32,
         rank: u32,
-        min_key: u64,
-        max_key: u64,
+        num_keys: u64,
         read_count: u64,
         write_count: u64,
         current_run_id: u32,
@@ -374,7 +386,12 @@ pub mod actor_atomicregister {
     }
 
     impl AtomicRegisterActor {
-        fn with(read_workload: f32, write_workload: f32, testing: bool) -> AtomicRegisterActor {
+        fn with(
+            num_keys: u64,
+            read_workload: f32,
+            write_workload: f32,
+            testing: bool,
+        ) -> AtomicRegisterActor {
             AtomicRegisterActor {
                 ctx: ComponentContext::uninitialised(),
                 read_workload,
@@ -383,8 +400,7 @@ pub mod actor_atomicregister {
                 nodes: None,
                 n: 0,
                 rank: 0,
-                min_key: 0,
-                max_key: 0,
+                num_keys,
                 read_count: 0,
                 write_count: 0,
                 current_run_id: 0,
@@ -399,13 +415,10 @@ pub mod actor_atomicregister {
             self.current_run_id = init.init_id;
             let n_usize = init.nodes.len();
             self.n = n_usize as u32;
-            self.rank = init.rank;
-            self.min_key = init.min_key;
-            self.max_key = init.max_key;
-            let num_keys = ((&self.max_key - &self.min_key) + 1) as usize;
-            self.register_state = HashMap::with_capacity(num_keys); // clears maps
-            self.register_readlist = HashMap::with_capacity(num_keys);
-            for i in init.min_key..=init.max_key {
+            self.rank = init.pid;
+            self.register_state = HashMap::with_capacity(self.num_keys as usize); // clears maps
+            self.register_readlist = HashMap::with_capacity(self.num_keys as usize);
+            for i in 0..self.num_keys {
                 self.register_state.insert(i, AtomicRegisterState::new());
                 self.register_readlist.insert(i, HashMap::new());
             }
@@ -459,9 +472,8 @@ pub mod actor_atomicregister {
         }
 
         fn invoke_operations(&mut self) -> () {
-            let num_keys = self.max_key - self.min_key + 1;
-            let num_reads = (num_keys as f32 * self.read_workload) as u64;
-            let num_writes = (num_keys as f32 * self.write_workload) as u64;
+            let num_reads = (self.num_keys as f32 * self.read_workload) as u64;
+            let num_writes = (self.num_keys as f32 * self.write_workload) as u64;
             self.read_count = num_reads;
             self.write_count = num_writes;
             if self.rank % 2 == 0 {
@@ -469,7 +481,7 @@ pub mod actor_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = self.min_key + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -477,7 +489,7 @@ pub mod actor_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = self.min_key + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
@@ -515,18 +527,21 @@ pub mod actor_atomicregister {
             }
         }
 
-        fn send_done(&self) -> () {
+        fn send_done(&mut self) -> () {
             if !self.testing {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((Done, PartitioningActorSer), self);
+                    .tell_serialised(PartitioningActorMsg::Done, self)
+                    .expect("Should serialise");
             } else {
+                let td = PartitioningActorMsg::TestDone(std::mem::take(&mut self.timestamps));
                 info!(self.ctx.log(), "Sending TestDone");
-                self.master.as_ref().unwrap().tell(
-                    (TestDone(self.timestamps.clone()), PartitioningActorSer),
-                    self,
-                );
+                self.master
+                    .as_ref()
+                    .unwrap()
+                    .tell_serialised(td, self)
+                    .expect("Should serialise");
             }
         }
 
@@ -551,16 +566,18 @@ pub mod actor_atomicregister {
             let sender = msg.sender.clone();
             let ser_id = msg.ser_id();
             match_deser! {msg; {
-                init: Init [PartitioningActorSer] => {
-                    info!(self.ctx.log(), "AtomicRegisterActor {} got Init", self.n);
-                    self.new_iteration(&init);
-                    self.nodes = Some(init.nodes);
-                    let init_ack = InitAck(self.current_run_id);
-                    sender.tell((init_ack, PARTITIONING_ACTOR_SER), self);
-                    self.master = Some(sender);
-                },
-                _run: Run [PartitioningActorSer] => {
-                    self.invoke_operations();
+                p: PartitioningActorMsg [PartitioningActorSer] => {
+                    match p {
+                        PartitioningActorMsg::Init(init) => {
+                            self.new_iteration(&init);
+                            self.nodes = Some(init.nodes);
+                            let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
+                            sender.tell_serialised(init_ack, self).expect("Should serialise");
+                            self.master = Some(sender);
+                        },
+                        PartitioningActorMsg::Run => self.invoke_operations(),
+                        e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
+                    }
                 },
                 arm: AtomicRegisterMessage [AtomicRegisterSer] => {
                     match arm {
@@ -591,10 +608,8 @@ pub mod actor_atomicregister {
                                     if readlist.is_empty() {
                                         current_register.first_received_ts = v.ts;
                                         current_register.readval = v.value;
-                                    } else if current_register.skip_impose {
-                                        if current_register.first_received_ts != v.ts {
-                                            current_register.skip_impose = false;
-                                        }
+                                    } else if current_register.skip_impose && current_register.first_received_ts != v.ts {
+                                        current_register.skip_impose = false;
                                     }
                                 }
                                 readlist.insert(v.sender_rank, (v.ts, v.wr, v.value));
@@ -701,7 +716,12 @@ pub mod actor_atomicregister {
                 let system = crate::kompact_system_provider::global()
                     .new_remote_system_with_threads(format!("atomicregister{}", i), 4);
                 let (atomic_register, unique_reg_f) = system.create_and_register(|| {
-                    AtomicRegisterActor::with(read_workload.clone(), write_workload.clone(), true)
+                    AtomicRegisterActor::with(
+                        num_keys,
+                        read_workload.clone(),
+                        write_workload.clone(),
+                        true,
+                    )
                 });
                 let named_reg_f =
                     system.register_by_alias(&atomic_register, format!("atomicreg_actor{}", i));
@@ -734,7 +754,7 @@ pub mod actor_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, num_keys, Some(p))
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -746,11 +766,10 @@ pub mod actor_atomicregister {
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("PartitioningComp never started!");
-            println!("\nAwaiting prepare latch\n");
+            let pref = partitioning_actor.actor_ref();
+            pref.tell(IterationControlMsg::Prepare(None));
             prepare_latch.wait();
-            let partitioning_actor_ref = partitioning_actor.actor_ref();
-            partitioning_actor_ref.tell(Run);
-            println!("\nAwaiting results\n");
+            pref.tell(IterationControlMsg::Run);
             let results = f.wait();
             for system in systems {
                 system
@@ -793,27 +812,35 @@ pub mod mixed_atomicregister {
 
         fn str_to_client_conf(str: String) -> Result<Self::ClientConf, BenchmarkError> {
             let split: Vec<_> = str.split(',').collect();
-            if split.len() != 2 {
+            if split.len() != 3 {
                 Err(BenchmarkError::InvalidMessage(format!(
                     "String '{}' does not represent a client conf!",
                     str
                 )))
             } else {
-                let readwl_str = split[0];
+                let num_keys_str = split[0];
+                let num_keys = num_keys_str.parse::<u64>().map_err(|e| {
+                    BenchmarkError::InvalidMessage(format!(
+                        "String '{}' does not represent a client conf: {:?}",
+                        str, e
+                    ))
+                })?;
+
+                let readwl_str = split[1];
                 let read_workload = readwl_str.parse::<f32>().map_err(|e| {
                     BenchmarkError::InvalidMessage(format!(
                         "String '{}' does not represent a client conf: {:?}",
                         str, e
                     ))
                 })?;
-                let writewl_str = split[1];
+                let writewl_str = split[2];
                 let write_workload = writewl_str.parse::<f32>().map_err(|e| {
                     BenchmarkError::InvalidMessage(format!(
                         "String '{}' does not represent a client conf: {:?}",
                         str, e
                     ))
                 })?;
-                Ok(ClientParams::new(read_workload, write_workload))
+                Ok(ClientParams::new(num_keys, read_workload, write_workload))
             }
         }
 
@@ -825,7 +852,7 @@ pub mod mixed_atomicregister {
         }
 
         fn client_conf_to_str(c: Self::ClientConf) -> String {
-            format!("{},{}", c.read_workload, c.write_workload)
+            format!("{},{},{}", c.num_keys, c.read_workload, c.write_workload)
         }
 
         fn client_data_to_str(d: Self::ClientData) -> String {
@@ -889,6 +916,7 @@ pub mod mixed_atomicregister {
                 .new_remote_system_with_threads("atomicregister", 4);
             self.system = Some(system);
             let params = ClientParams {
+                num_keys: c.number_of_keys,
                 read_workload: c.read_workload,
                 write_workload: c.write_workload,
             };
@@ -917,6 +945,7 @@ pub mod mixed_atomicregister {
                     /*** Setup atomic register ***/
                     let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                         AtomicRegisterComp::with(
+                            self.num_keys.unwrap(),
                             self.read_workload.unwrap(),
                             self.write_workload.unwrap(),
                             bcast_comp.actor_ref(),
@@ -946,10 +975,10 @@ pub mod mixed_atomicregister {
                     /*** Add self path to vector of nodes ***/
                     let self_path = ActorPath::Named(NamedPath::with_system(
                         system.system_path(),
-                        vec![format!("atomicreg_comp{}", &self.init_id).into()],
+                        vec![format!("atomicreg_comp{}", &self.init_id)],
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
-                    nodes.push(self_path.clone());
+                    nodes.push(self_path);
                     for i in 0..(self.partition_size.unwrap() - 1) as usize {
                         nodes.push(d[i].clone());
                     }
@@ -971,7 +1000,6 @@ pub mod mixed_atomicregister {
                             Some(finished_latch.clone()),
                             self.init_id,
                             nodes,
-                            self.num_keys.unwrap(),
                             None,
                         )
                     });
@@ -984,6 +1012,9 @@ pub mod mixed_atomicregister {
                     partitioning_actor_f
                         .wait_timeout(Duration::from_millis(1000))
                         .expect("PartitioningComp never started!");
+                    partitioning_actor
+                        .actor_ref()
+                        .tell(IterationControlMsg::Prepare(None));
 
                     self.init_id += 1;
                     self.finished_latch = Some(finished_latch);
@@ -1003,7 +1034,7 @@ pub mod mixed_atomicregister {
                     let finished_latch = self.finished_latch.take().unwrap();
                     if let Some(partitioning_actor) = self.partitioning_actor.take() {
                         let partitioning_actor_ref = partitioning_actor.actor_ref();
-                        partitioning_actor_ref.tell(Run);
+                        partitioning_actor_ref.tell(IterationControlMsg::Run);
                         finished_latch.wait();
                         self.partitioning_actor = Some(partitioning_actor);
                     } else {
@@ -1092,6 +1123,7 @@ pub mod mixed_atomicregister {
             /*** Setup atomic register ***/
             let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                 AtomicRegisterComp::with(
+                    c.num_keys,
                     c.read_workload,
                     c.write_workload,
                     bcast_comp.actor_ref(),
@@ -1255,8 +1287,7 @@ pub mod mixed_atomicregister {
         nodes: Option<Vec<ActorPath>>,
         n: u32,
         rank: u32,
-        min_key: u64,
-        max_key: u64,
+        num_keys: u64,
         read_count: u64,
         write_count: u64,
         current_run_id: u32,
@@ -1269,6 +1300,7 @@ pub mod mixed_atomicregister {
 
     impl AtomicRegisterComp {
         fn with(
+            num_keys: u64,
             read_workload: f32,
             write_workload: f32,
             bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
@@ -1284,8 +1316,7 @@ pub mod mixed_atomicregister {
                 nodes: None,
                 n: 0,
                 rank: 0,
-                min_key: 0,
-                max_key: 0,
+                num_keys,
                 read_count: 0,
                 write_count: 0,
                 current_run_id: 0,
@@ -1300,13 +1331,10 @@ pub mod mixed_atomicregister {
             self.current_run_id = init.init_id;
             let n_usize = init.nodes.len();
             self.n = n_usize as u32;
-            self.rank = init.rank;
-            self.min_key = init.min_key;
-            self.max_key = init.max_key;
-            let num_keys = ((&self.max_key - &self.min_key) + 1) as usize;
-            self.register_state = HashMap::with_capacity(num_keys); // clear maps
-            self.register_readlist = HashMap::with_capacity(num_keys);
-            for i in init.min_key..=init.max_key {
+            self.rank = init.pid;
+            self.register_state = HashMap::with_capacity(self.num_keys as usize); // clear maps
+            self.register_readlist = HashMap::with_capacity(self.num_keys as usize);
+            for i in 0..self.num_keys {
                 self.register_state.insert(i, AtomicRegisterState::new());
                 self.register_readlist.insert(i, HashMap::new());
             }
@@ -1362,9 +1390,8 @@ pub mod mixed_atomicregister {
         }
 
         fn invoke_operations(&mut self) -> () {
-            let num_keys = self.max_key - self.min_key + 1;
-            let num_reads = (num_keys as f32 * self.read_workload) as u64;
-            let num_writes = (num_keys as f32 * self.write_workload) as u64;
+            let num_reads = (self.num_keys as f32 * self.read_workload) as u64;
+            let num_writes = (self.num_keys as f32 * self.write_workload) as u64;
             self.read_count = num_reads;
             self.write_count = num_writes;
             if self.rank % 2 == 0 {
@@ -1372,7 +1399,7 @@ pub mod mixed_atomicregister {
                     self.invoke_read(key);
                 }
                 for l in 0..num_writes {
-                    let key = self.min_key + num_reads + l;
+                    let key = num_reads + l;
                     self.invoke_write(key);
                 }
             } else {
@@ -1380,7 +1407,7 @@ pub mod mixed_atomicregister {
                     self.invoke_write(key);
                 }
                 for l in 0..num_reads {
-                    let key = self.min_key + num_writes + l;
+                    let key = num_writes + l;
                     self.invoke_read(key);
                 }
             }
@@ -1423,12 +1450,15 @@ pub mod mixed_atomicregister {
                 self.master
                     .as_ref()
                     .unwrap()
-                    .tell((Done, PartitioningActorSer), self);
+                    .tell_serialised(PartitioningActorMsg::Done, self)
+                    .expect("Should serialise");
             } else {
-                self.master.as_ref().unwrap().tell(
-                    (TestDone(self.timestamps.clone()), PartitioningActorSer),
-                    self,
-                );
+                let td = PartitioningActorMsg::TestDone(self.timestamps.to_owned());
+                self.master
+                    .as_ref()
+                    .unwrap()
+                    .tell_serialised(td, self)
+                    .expect("Should serialise");
             }
         }
     }
@@ -1446,29 +1476,33 @@ pub mod mixed_atomicregister {
 
         fn receive_local(&mut self, _msg: Self::Message) -> Handled {
             let master = self.master.as_ref().unwrap();
-            let init_ack = InitAck(self.current_run_id);
-            master.tell((init_ack, PARTITIONING_ACTOR_SER), self);
+            let init_ack = PartitioningActorMsg::InitAck(self.current_run_id);
+            master
+                .tell_serialised(init_ack, self)
+                .expect("Should serialise");
             Handled::Ok
         }
 
         fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let sender = msg.sender.clone();
-
             match_deser! {msg; {
-                init: Init [PartitioningActorSer] => {
-                    self.new_iteration(&init);
-                    self.nodes = Some(init.nodes.clone());
-                    self.master = Some(sender);
-                    let self_path = self.actor_path();
-                    self.bcast_ref.tell(
-                        WithSender::from(CacheInfo {
-                            sender: self_path,
-                            nodes: init.nodes,
-                        }, self)
-                    );
-                },
-                _run: Run [PartitioningActorSer] => {
-                    self.invoke_operations();
+                p: PartitioningActorMsg [PartitioningActorSer] => {
+                    match p {
+                        PartitioningActorMsg::Init(init) => {
+                            self.new_iteration(&init);
+                            self.nodes = Some(init.nodes.clone());
+                            self.master = Some(sender);
+                            let self_path = self.actor_path();
+                            self.bcast_ref.tell(
+                                WithSender::from(CacheInfo {
+                                    sender: self_path,
+                                    nodes: init.nodes,
+                                }, self)
+                            );
+                        },
+                        PartitioningActorMsg::Run => self.invoke_operations(),
+                        e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
+                    }
                 },
                 arm: AtomicRegisterMessage [AtomicRegisterSer] => {
                     match arm {
@@ -1499,10 +1533,8 @@ pub mod mixed_atomicregister {
                                     if readlist.is_empty() {
                                         current_register.first_received_ts = v.ts;
                                         current_register.readval = v.value;
-                                    } else if current_register.skip_impose {
-                                        if current_register.first_received_ts != v.ts {
-                                            current_register.skip_impose = false;
-                                        }
+                                    } else if current_register.skip_impose && current_register.first_received_ts != v.ts {
+                                        current_register.skip_impose = false;
                                     }
                                 }
                                 readlist.insert(v.sender_rank, (v.ts, v.wr, v.value));
@@ -1623,6 +1655,7 @@ pub mod mixed_atomicregister {
                 /*** Setup atomic register ***/
                 let (atomic_register, unique_reg_f) = system.create_and_register(|| {
                     AtomicRegisterComp::with(
+                        num_keys,
                         read_workload.clone(),
                         write_workload.clone(),
                         bcast_comp.actor_ref(),
@@ -1662,7 +1695,7 @@ pub mod mixed_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, num_keys, Some(p))
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -1672,10 +1705,13 @@ pub mod mixed_atomicregister {
             partitioning_actor_f
                 .wait_timeout(Duration::from_millis(1000))
                 .expect("PartitioningComp never started!");
+            partitioning_actor
+                .actor_ref()
+                .tell(IterationControlMsg::Prepare(None));
+
             prepare_latch.wait();
             let partitioning_actor_ref = partitioning_actor.actor_ref();
-            partitioning_actor_ref.tell(Run);
-            println!("\nAwaiting results\n");
+            partitioning_actor_ref.tell(IterationControlMsg::Run);
             let results = f.wait();
             println!("\nShutting down systems\n");
             for system in systems {
@@ -1752,6 +1788,7 @@ struct Write {
     value: u32,
 }
 
+#[derive(Clone)]
 struct AtomicRegisterSer;
 //const ATOMIC_REGISTER_SER: AtomicRegisterSer = AtomicRegisterSer {};
 const READ_ID: i8 = 1;

@@ -36,6 +36,7 @@ object Plotter extends StrictLogging {
       case "APSP"                         => plots.AllPairsShortestPath.plot(data)
       case "ATOMICREGISTER"               => plots.AtomicRegister.plot(data)
       case "STREAMINGWINDOWS"             => plots.StreamingWindows.plot(data)
+      case "ATOMICBROADCAST"              => plots.AtomicBroadcast.plot(data)
       case _                              => PlotGroup.Empty // TODO
     }
   }
@@ -317,6 +318,31 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
     }
     val meta = Map(
       "name" -> JsString(s"$implLabel error"),
+      "type" -> JsString("errorbar")
+    );
+    ErrorBarSeries(meta, series)
+  }
+  def mapCI95Bars[T: Ordering: ClassTag](f: Params => T, labels: Array[T]): ErrorBarSeries = {
+    val series = Array.ofDim[(Double, Double)](labels.length);
+    var localOffset = 0;
+    for (i <- 0 until labels.length) {
+      val expected = labels(i);
+      val localPosition = i - localOffset;
+      if (params.length > localPosition) {
+        val actual = f(params(localPosition));
+        if (actual == expected) {
+          val stats = this.stats(localPosition);
+          series(i) = stats.symmetricConfidenceInterval95;
+        } else {
+          series(i) = (Double.NaN, Double.NaN);
+          localOffset += 1;
+        }
+      } else {
+        series(i) = (Double.NaN, Double.NaN);
+      }
+    }
+    val meta = Map(
+      "name" -> JsString(s"$implLabel ci95"),
       "type" -> JsString("errorbar")
     );
     ErrorBarSeries(meta, series)

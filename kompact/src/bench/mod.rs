@@ -3,6 +3,7 @@ use benchmark_suite_shared::benchmark::*;
 use std::time::Duration;
 
 pub mod all_pairs_shortest_path;
+pub mod atomic_broadcast;
 pub mod atomicregister;
 pub mod chameneos;
 pub mod fibonacci;
@@ -71,6 +72,12 @@ impl BenchmarkFactory for ComponentFactory {
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(all_pairs_shortest_path::component_apsp::AllPairsShortestPath {}.into())
     }
+
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
 }
 
 pub fn actor() -> Box<dyn BenchmarkFactory> {
@@ -135,6 +142,12 @@ impl BenchmarkFactory for ActorFactory {
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Ok(all_pairs_shortest_path::actor_apsp::AllPairsShortestPath {}.into())
     }
+
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
 }
 pub fn mixed() -> Box<dyn BenchmarkFactory> {
     Box::new(MixedFactory {})
@@ -146,6 +159,9 @@ impl BenchmarkFactory for MixedFactory {
         match label {
             atomicregister::mixed_atomicregister::AtomicRegister::LABEL => {
                 self.atomic_register().map_into()
+            }
+            atomic_broadcast::atomic_broadcast::AtomicBroadcast::LABEL => {
+                self.atomic_broadcast().map_into()
             }
             _ => Err(NotImplementedError::NotFound),
         }
@@ -190,5 +206,11 @@ impl BenchmarkFactory for MixedFactory {
     }
     fn all_pairs_shortest_path(&self) -> Result<Box<dyn AbstractBenchmark>, NotImplementedError> {
         Err(NotImplementedError::FutureWork)
+    }
+
+    fn atomic_broadcast(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(atomic_broadcast::atomic_broadcast::AtomicBroadcast {}.into())
     }
 }

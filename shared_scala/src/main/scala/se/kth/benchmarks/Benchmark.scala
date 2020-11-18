@@ -61,4 +61,5 @@ trait BenchmarkFactory {
   def allPairsShortestPath(): Benchmark;
   def chameneos(): Benchmark;
   def fibonacci: Benchmark;
+  def atomicBroadcast(): DistributedBenchmark;
 }

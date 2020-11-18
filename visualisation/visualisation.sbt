@@ -3,7 +3,8 @@ val commonSettings = Seq(
   version := "1.0.0-SNAPSHOT",
   scalaVersion := "2.12.10",
   scalacOptions ++= Seq("-deprecation", "-feature"),
-  resolvers += Resolver.mavenLocal
+  resolvers += Resolver.mavenLocal,
+  resolvers += Resolver.bintrayRepo("lkrollcom", "maven")
 );
 
 lazy val root = (project in file("."))
@@ -23,7 +24,10 @@ lazy val plotting = (project in file("plotting"))
       "com.lihaoyi" %%% "scalatags" % "0.8.2",
       "org.scala-js" %%% "scalajs-dom" % "0.9.7",
       "com.github.karasiq" %%% "scalajs-highcharts" % "1.2.1",
-      "org.scalatest" %%% "scalatest" % "3.1.0" % "test"
+      "org.scalatest" %%% "scalatest" % "3.1.0" % "test",
+      "se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT" excludeAll (
+        ExclusionRule(organization = "io.netty")
+      ),
     )
     //mainClass in Compile := Some("se.kth.benchmarks.visualisation.plotting.Plotting"),
     //scalaJSUseMainModuleInitializer := true
@@ -42,6 +46,9 @@ lazy val generator = (project in file("generator"))
       "com.github.tototoshi" %% "scala-csv" % "1.3.6",
       "se.kth.benchmarks" %% "benchmark-suite-runner" % "0.3.0-SNAPSHOT" excludeAll(
         //ExclusionRule(organization = "io.grpc"),
+        ExclusionRule(organization = "io.netty")
+      ),
+      "se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT" excludeAll (
         ExclusionRule(organization = "io.netty")
       ),
       "org.scalatest" %% "scalatest" % "3.1.0" % "test"
