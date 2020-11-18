@@ -160,7 +160,8 @@ impl Client {
             return;
         }
         let leader = self.nodes.get(&self.current_leader).unwrap().clone();
-        if self.retry_proposals.is_empty() {    // normal case
+        if self.retry_proposals.is_empty() {
+            // normal case
             let from = self.latest_proposal_id + 1;
             let i = self.latest_proposal_id + available_n;
             let to = if i > self.num_proposals {
@@ -168,7 +169,9 @@ impl Client {
             } else {
                 i
             };
-            if from > to { return; }
+            if from > to {
+                return;
+            }
             let cache_start_time = self.num_concurrent_proposals == 1
                 || self.state == ExperimentState::ProposedReconfiguration;
             for id in from..=to {
@@ -191,14 +194,14 @@ impl Client {
             };
             let retry_proposals: Vec<_> = self.retry_proposals.drain(0..n).collect();
             #[cfg(feature = "track_timeouts")]
-                {
-                    let min = retry_proposals.iter().min();
-                    let max = retry_proposals.iter().max();
-                    let count = retry_proposals.len();
-                    let num_pending = self.pending_proposals.len();
-                    info!(self.ctx.log(), "Retrying proposals to node {}. Count: {}, min: {:?}, max: {:?}, num_pending: {}", self.current_leader, count, min, max, num_pending);
-                }
-            for (id, start_time) in retry_proposals{
+            {
+                let min = retry_proposals.iter().min();
+                let max = retry_proposals.iter().max();
+                let count = retry_proposals.len();
+                let num_pending = self.pending_proposals.len();
+                info!(self.ctx.log(), "Retrying proposals to node {}. Count: {}, min: {:?}, max: {:?}, num_pending: {}", self.current_leader, count, min, max, num_pending);
+            }
+            for (id, start_time) in retry_proposals {
                 self.propose_normal(id, &leader);
                 let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
                 let meta = ProposalMetaData::with(start_time, timer);

@@ -75,12 +75,16 @@ pub enum ReconfigurationPolicy {
 struct ConfigMeta {
     id: u32,
     leader: u64,
-    pending_reconfig: bool
+    pending_reconfig: bool,
 }
 
 impl ConfigMeta {
     fn new(id: u32) -> Self {
-        ConfigMeta { id, leader: 0, pending_reconfig: false }
+        ConfigMeta {
+            id,
+            leader: 0,
+            pending_reconfig: false,
+        }
     }
 }
 
@@ -443,14 +447,7 @@ where
         self.cached_client = Some(client);
         if self.initial_config.contains(&self.pid) {
             self.next_config_id = Some(1);
-            self.create_replica(
-                1,
-                self.initial_config.clone(),
-                true,
-                false,
-                true,
-                None,
-            )
+            self.create_replica(1, self.initial_config.clone(), true, false, true, None)
         } else {
             let resp = PartitioningActorMsg::InitAck(self.iteration_id);
             let ap = self
@@ -1255,7 +1252,7 @@ where
                 self.handle_stopsign(&ss);
             }
             let latest_leader = if self.paxos.stopped() {
-                0   // if we are/have reconfigured don't call ourselves leader
+                0 // if we are/have reconfigured don't call ourselves leader
             } else {
                 self.pid
             };

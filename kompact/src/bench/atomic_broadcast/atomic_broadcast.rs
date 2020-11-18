@@ -323,60 +323,57 @@ impl AtomicBroadcastMaster {
             )));
         }
         match &c.algorithm.to_lowercase() {
-            paxos if paxos == "paxos" => {
-                match c.reconfiguration.to_lowercase().as_ref() {
-                    "off" => {
-                        if c.reconfig_policy.to_lowercase() != "none" {
-                            return Err(BenchmarkError::InvalidTest(
-                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.reconfig_policy)
-                            ));
-                        }
-                    }
-                    s if s == "single" || s == "majority" => {
-                        let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
-                        if reconfig_policy != "eager" && reconfig_policy != "pull" {
-                            return Err(BenchmarkError::InvalidTest(format!(
-                                "Unimplemented Paxos transfer policy: {}",
-                                &c.reconfig_policy
-                            )));
-                        }
-                    }
-                    _ => {
+            paxos if paxos == "paxos" => match c.reconfiguration.to_lowercase().as_ref() {
+                "off" => {
+                    if c.reconfig_policy.to_lowercase() != "none" {
                         return Err(BenchmarkError::InvalidTest(format!(
-                            "Unimplemented Paxos reconfiguration: {}",
-                            &c.reconfiguration
+                            "Reconfiguration is off, transfer policy should be none, but found: {}",
+                            &c.reconfig_policy
                         )));
                     }
                 }
-            }
-            raft if raft == "raft" => {
-                match c.reconfiguration.to_lowercase().as_ref() {
-                    "off" => {
-                        if c.reconfig_policy.to_lowercase() != "none" {
-                            return Err(BenchmarkError::InvalidTest(
-                                format!("Reconfiguration is off, transfer policy should be none, but found: {}", &c.reconfig_policy)
-                            ));
-                        }
-                    }
-                    s if s == "single" || s == "majority" => {
-                        let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
-                        if reconfig_policy != "replace-leader"
-                            && reconfig_policy != "replace-follower"
-                        {
-                            return Err(BenchmarkError::InvalidTest(format!(
-                                "Unimplemented Raft transfer policy: {}",
-                                &c.reconfig_policy
-                            )));
-                        }
-                    }
-                    _ => {
+                s if s == "single" || s == "majority" => {
+                    let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
+                    if reconfig_policy != "eager" && reconfig_policy != "pull" {
                         return Err(BenchmarkError::InvalidTest(format!(
-                            "Unimplemented Raft reconfiguration: {}",
-                            &c.reconfiguration
+                            "Unimplemented Paxos transfer policy: {}",
+                            &c.reconfig_policy
                         )));
                     }
                 }
-            }
+                _ => {
+                    return Err(BenchmarkError::InvalidTest(format!(
+                        "Unimplemented Paxos reconfiguration: {}",
+                        &c.reconfiguration
+                    )));
+                }
+            },
+            raft if raft == "raft" => match c.reconfiguration.to_lowercase().as_ref() {
+                "off" => {
+                    if c.reconfig_policy.to_lowercase() != "none" {
+                        return Err(BenchmarkError::InvalidTest(format!(
+                            "Reconfiguration is off, transfer policy should be none, but found: {}",
+                            &c.reconfig_policy
+                        )));
+                    }
+                }
+                s if s == "single" || s == "majority" => {
+                    let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
+                    if reconfig_policy != "replace-leader" && reconfig_policy != "replace-follower"
+                    {
+                        return Err(BenchmarkError::InvalidTest(format!(
+                            "Unimplemented Raft transfer policy: {}",
+                            &c.reconfig_policy
+                        )));
+                    }
+                }
+                _ => {
+                    return Err(BenchmarkError::InvalidTest(format!(
+                        "Unimplemented Raft reconfiguration: {}",
+                        &c.reconfiguration
+                    )));
+                }
+            },
             _ => {
                 return Err(BenchmarkError::InvalidTest(format!(
                     "Unimplemented atomic broadcast algorithm: {}",

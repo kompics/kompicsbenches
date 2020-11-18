@@ -48,10 +48,7 @@ impl<S> RaftComp<S>
 where
     S: RaftStorage + Send + Clone + 'static,
 {
-    pub fn with(
-        initial_config: Vec<u64>,
-        reconfig_policy: ReconfigurationPolicy,
-    ) -> Self {
+    pub fn with(initial_config: Vec<u64>, reconfig_policy: ReconfigurationPolicy) -> Self {
         RaftComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
