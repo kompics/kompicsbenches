@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "kompact"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "arc-swap",
  "as_num",
@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "kompact-actor-derive"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.7",
@@ -1142,7 +1142,7 @@ dependencies = [
 
 [[package]]
 name = "kompact-component-derive"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.7",

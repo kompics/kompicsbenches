@@ -387,6 +387,7 @@ impl Actor for Client {
                             ExperimentState::LeaderElection => {
                                 self.current_leader = pid;
                                 if let Some(promise) = self.leader_election_promise.take() {
+                                    info!(self.ctx.log(), "Got first leader: {}", self.current_leader);
                                     promise.fulfil(self.current_leader).expect("Failed to fulfil promise with first leader pid");
                                 }
                             },
