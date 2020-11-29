@@ -457,7 +457,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         self.system = Some(system);
-        let last_node_id = if self.reconfiguration.is_some() { c.number_of_nodes + 1 } else { c.number_of_nodes };
+        let last_node_id = if self.reconfiguration.is_some() {
+            c.number_of_nodes + 1
+        } else {
+            c.number_of_nodes
+        };
         let params = ClientParams::with(c.algorithm, last_node_id, c.reconfig_policy);
         Ok(params)
     }
@@ -572,7 +576,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     .expect("Failed to open meta summary file");
                 let len = self.num_timed_out.len();
                 let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
-                self.num_timed_out.sort();
+                self.num_timed_out.sort_unstable();
                 let min = self.num_timed_out.first().unwrap();
                 let max = self.num_timed_out.last().unwrap();
                 let avg = sum / (self.iteration_id as u64);
@@ -583,7 +587,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 );
                 writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
                     .expect("Failed to write meta summary file");
-                writeln!(summary_file, "{}", summary_str).expect(&format!(
+                writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| panic!(
                     "Failed to write meta summary file: {}",
                     summary_str
                 ));

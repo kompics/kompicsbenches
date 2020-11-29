@@ -308,7 +308,7 @@ impl Client {
     fn hold_back_proposals(&mut self, from: u64, to: u64) {
         for i in from..=to {
             let ProposalMetaData { start_time, timer } =
-                self.pending_proposals.remove(&i).expect(&format!(
+                self.pending_proposals.remove(&i).unwrap_or_else(|| panic!(
                     "No proposal with id {} in pending_proposals to hold back",
                     i
                 ));
@@ -505,7 +505,7 @@ impl Actor for Client {
             },
             stop: NetStopMsg [StopMsgDeser] => {
                 if let NetStopMsg::Peer(pid) = stop {
-                    self.nodes.remove(&pid).expect(&format!("Got stop from unknown pid {}", pid));
+                    self.nodes.remove(&pid).unwrap_or_else(|| panic!("Got stop from unknown pid {}", pid));
                     if self.nodes.is_empty() {
                         self.reply_stop_ask();
                     }
