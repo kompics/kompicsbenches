@@ -1,4 +1,4 @@
-use super::atomic_broadcast::ExperimentConfig;
+use super::atomic_broadcast::ExperimentParams;
 use super::communicator::{
     AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
 };
@@ -11,7 +11,7 @@ use super::messages::{StopMsg as NetStopMsg, *};
 use super::storage::paxos::*;
 use crate::bench::atomic_broadcast::atomic_broadcast::Done;
 use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
-use crate::partitioning_actor::{Init, PartitioningActorMsg, PartitioningActorSer};
+use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
 use crate::serialiser_ids::ATOMICBCAST_ID;
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
 use hashbrown::{HashMap, HashSet};
@@ -96,7 +96,7 @@ where
 {
     ctx: ComponentContext<Self>,
     pid: u64,
-    initial_config: Vec<u64>,
+    experiment_configurations: (Vec<u64>, Vec<u64>),
     paxos_replicas: Vec<Arc<Component<PaxosReplica<S, P>>>>,
     ble_comps: Vec<Arc<Component<BallotLeaderComp>>>,
     communicator_comps: Vec<Arc<Component<Communicator>>>,
@@ -105,7 +105,6 @@ where
     prev_sequences: HashMap<u32, Arc<S>>, // TODO vec
     stopped: bool,
     iteration_id: u32,
-    partitioning_actor: Option<ActorPath>,
     policy: ReconfigurationPolicy,
     next_config_id: Option<u32>,
     pending_seq_transfers: Vec<(Vec<u32>, Vec<Entry>)>, // (remaining_segments, entries)
@@ -114,7 +113,7 @@ where
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
     cached_client: Option<ActorPath>,
     hb_proposals: Vec<NetMessage>,
-    experiment_config: ExperimentConfig,
+    experiment_params: ExperimentParams,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -123,14 +122,14 @@ where
     P: PaxosStateTraits,
 {
     pub fn with(
-        initial_config: Vec<u64>,
+        experiment_configurations: (Vec<u64>, Vec<u64>),
         policy: ReconfigurationPolicy,
-        experiment_config: ExperimentConfig,
+        experiment_params: ExperimentParams,
     ) -> PaxosComp<S, P> {
         PaxosComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
-            initial_config,
+            experiment_configurations,
             paxos_replicas: vec![],
             ble_comps: vec![],
             communicator_comps: vec![],
@@ -139,7 +138,6 @@ where
             prev_sequences: HashMap::new(),
             stopped: false,
             iteration_id: 0,
-            partitioning_actor: None,
             policy,
             next_config_id: None,
             pending_seq_transfers: vec![],
@@ -148,7 +146,7 @@ where
             retry_transfer_timers: HashMap::new(),
             cached_client: None,
             hb_proposals: vec![],
-            experiment_config,
+            experiment_params,
         }
     }
 
@@ -205,18 +203,16 @@ where
         &mut self,
         config_id: u32,
         nodes: Vec<u64>,
-        send_ack: bool,
-        start: bool,
         ble_quick_start: bool,
         skip_prepare_n: Option<Ballot>,
-    ) -> Handled {
+    ) -> Vec<KFuture<RegistrationResult>>{
         let mut peers = nodes;
         peers.retain(|pid| pid != &self.pid);
         let (ble_peers, communicator_peers) = self.derive_actorpaths(config_id, &peers);
         let system = self.ctx.system();
         /*** create and register Paxos ***/
         let log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
-        let max_inflight = self.experiment_config.max_inflight;
+        let max_inflight = self.experiment_params.max_inflight;
         let (paxos, paxos_f) = system.create_and_register(|| {
             PaxosReplica::with(
                 self.ctx.actor_ref(),
@@ -239,12 +235,12 @@ where
             )
         });
         /*** create and register BLE ***/
-        let election_timeout = self.experiment_config.election_timeout;
+        let election_timeout = self.experiment_params.election_timeout;
         let config = self.ctx.config();
         let ble_delta = config["paxos"]["ble_delta"]
             .as_i64()
             .expect("Failed to load get_decided_period");
-        let initial_election_factor = self.experiment_config.initial_election_factor;
+        let initial_election_factor = self.experiment_params.initial_election_factor;
         let (ble_comp, ble_f) = system.create_and_register(|| {
             BallotLeaderComp::with(
                 ble_peers,
@@ -270,82 +266,92 @@ where
         biconnect_components::<BallotLeaderElection, _, _>(&ble_comp, &paxos)
             .expect("Could not connect BLE and PaxosComp!");
 
-        Handled::block_on(self, move |mut async_self| async move {
-            paxos_f.await.unwrap().expect("Failed to register paxos");
-            ble_f.await.unwrap().expect("Failed to register ble");
-            comm_f
-                .await
-                .unwrap()
-                .expect("Failed to register communicator");
-            comm_alias_f
-                .await
-                .unwrap()
-                .expect("Failed to register comm_alias");
-            ble_alias_f
-                .await
-                .unwrap()
-                .expect("Failed to register ble_alias");
+        self.paxos_replicas.push(paxos);
+        self.ble_comps.push(ble_comp);
+        self.communicator_comps.push(communicator);
 
-            if start {
-                info!(
-                    async_self.ctx.log(),
-                    "Starting replica pid: {}, config_id: {}", async_self.pid, config_id
-                );
-                async_self.active_config = ConfigMeta::new(config_id);
-                async_self.next_config_id = None;
-                system.start(&paxos);
-                system.start(&ble_comp);
-                system.start(&communicator);
+        vec![paxos_f, ble_f, comm_f, comm_alias_f, ble_alias_f]
 
-                match skip_prepare_n {
-                    Some(n) => async_self
-                        .ctx
-                        .actor_ref()
-                        .tell(PaxosCompMsg::Leader(config_id, n.pid)),
-                    _ => {}
-                }
-            } else {
-                async_self.next_config_id = Some(config_id);
-            }
+        /*
+        paxos_f.await.unwrap().expect("Failed to register paxos");
+        ble_f.await.unwrap().expect("Failed to register ble");
+        comm_f
+            .await
+            .unwrap()
+            .expect("Failed to register communicator");
+        comm_alias_f
+            .await
+            .unwrap()
+            .expect("Failed to register comm_alias");
+        ble_alias_f
+            .await
+            .unwrap()
+            .expect("Failed to register ble_alias");
 
-            async_self.paxos_replicas.push(paxos);
-            async_self.ble_comps.push(ble_comp);
-            async_self.communicator_comps.push(communicator);
-
-            if send_ack {
-                let resp = PartitioningActorMsg::InitAck(async_self.iteration_id);
-                let ap = async_self
-                    .partitioning_actor
-                    .take()
-                    .expect("PartitioningActor not found!");
-                ap.tell_serialised(resp, async_self.deref_mut())
-                    .expect("Should serialise");
-            }
-        })
-    }
-
-    fn start_replica(&mut self) {
-        if let Some(config_id) = self.next_config_id {
+        if start {
             info!(
                 self.ctx.log(),
                 "Starting replica pid: {}, config_id: {}", self.pid, config_id
             );
             self.active_config = ConfigMeta::new(config_id);
-            let paxos = self.paxos_replicas.last().unwrap_or_else(|| {
-                panic!("Could not find PaxosComp with config_id: {}", config_id)
-            });
-            let ble = self
-                .ble_comps
-                .last()
-                .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
-            let communicator = self.communicator_comps.last().unwrap_or_else(|| {
-                panic!("Could not find Communicator with config_id: {}", config_id)
-            });
-            self.ctx.system().start(paxos);
-            self.ctx.system().start(ble);
-            self.ctx.system().start(communicator);
             self.next_config_id = None;
+            system.start(&paxos);
+            system.start(&ble_comp);
+            system.start(&communicator);
+
+            match skip_prepare_n {
+                Some(n) => self
+                    .ctx
+                    .actor_ref()
+                    .tell(PaxosCompMsg::Leader(config_id, n.pid)),
+                _ => {}
+            }
+        }*/
+    }
+
+    fn set_initial_replica_state_after_reconfig(&mut self, config_id: u32, skip_prepare_n: Option<Ballot>) {
+        let idx = config_id as usize - 1;
+        let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| panic!("No replica to set with idx: {}, replicas len: {}", idx, self.paxos_replicas.len()));
+        let ble = self
+            .ble_comps
+            .get(idx)
+            .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
+        paxos.on_definition(|p| {
+            let peers = p.peers.clone();
+            let paxos_state = P::new();
+            let raw_paxos_log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
+            let max_inflight = self.experiment_params.max_inflight;
+            let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
+            let storage = Storage::with(seq, paxos_state);
+            p.paxos = Paxos::with(config_id, self.pid, peers, storage, raw_paxos_log, skip_prepare_n, Some(max_inflight));
+        });
+        if let Some(n) = skip_prepare_n {
+            ble.on_definition(|ble| {
+                ble.set_max_ballot(n);
+                ble.set_quick_timeout(false);
+            });
         }
+    }
+
+    fn start_replica(&mut self, config_id: u32) {
+        let idx = config_id as usize - 1;
+        let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| panic!("No replica to start with idx: {}, replicas len: {}", idx, self.paxos_replicas.len()));
+        info!(
+            self.ctx.log(),
+            "Starting replica pid: {}, config_id: {}", self.pid, config_id
+        );
+        self.active_config = ConfigMeta::new(config_id);
+        let ble = self
+            .ble_comps
+            .get(idx)
+            .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
+        let communicator = self.communicator_comps.get(idx).unwrap_or_else(|| {
+            panic!("Could not find Communicator with config_id: {}", config_id)
+        });
+        self.ctx.system().start(paxos);
+        self.ctx.system().start(ble);
+        self.ctx.system().start(communicator);
+        self.next_config_id = None;
     }
 
     fn stop_components(&mut self) -> Handled {
@@ -399,8 +405,9 @@ where
                 .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (true, late_stop)))),
         );
 
-        if late_stop {
-            self.start_replica();
+        if let Some(config_id) = self.next_config_id {
+            // late stop
+            self.start_replica(config_id);
         }
 
         Handled::block_on(self, move |_| async move {
@@ -433,40 +440,15 @@ where
         })
     }
 
-    fn new_iteration(&mut self, init: Init) -> Handled {
-        self.stopped = false;
-        self.nodes = init.nodes;
-        self.pid = init.pid as u64;
-        self.iteration_id = init.init_id;
-        self.active_config = ConfigMeta::new(0);
-        let ser_client = init
-            .init_data
-            .expect("Init should include ClientComp's actorpath");
-        let client = ActorPath::deserialise(&mut ser_client.as_slice())
-            .expect("Failed to deserialise Client's actorpath");
-        self.cached_client = Some(client);
-        if self.initial_config.contains(&self.pid) {
-            self.next_config_id = Some(1);
-            self.create_replica(1, self.initial_config.clone(), true, false, true, None)
-        } else {
-            let resp = PartitioningActorMsg::InitAck(self.iteration_id);
-            let ap = self
-                .partitioning_actor
-                .take()
-                .expect("PartitioningActor not found!");
-            ap.tell_serialised(resp, self).expect("Should serialise");
-            Handled::Ok
-        }
-    }
-
     fn deserialise_and_propose(&self, m: NetMessage) {
         if let AtomicBroadcastMsg::Proposal(p) = m
             .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
             .expect("Should be AtomicBroadcastMsg!")
         {
-            let active_paxos = &self
+            let idx = self.active_config.id as usize - 1;   // TODO add arc to ConfigMeta
+            let active_paxos = self
                 .paxos_replicas
-                .last()
+                .get(idx)
                 .expect("Could not get PaxosComp actor ref despite being leader");
             active_paxos.actor_ref().tell(PaxosReplicaMsg::Propose(p));
         }
@@ -655,7 +637,8 @@ where
                 // (false, vec![])
                 if self.active_config.id == sr.config_id {
                     // we have not reached final sequence, but might still have requested elements. Outsource request to corresponding PaxosComp
-                    let paxos = self.paxos_replicas.last().unwrap_or_else(|| panic!("No paxos comp with config_id: {} when handling SequenceRequest. Len of PaxosComps: {}", sr.config_id, self.paxos_replicas.len()));
+                    let idx = sr.config_id as usize - 1;
+                    let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| panic!("No paxos replica with idx: {} when handling SequenceRequest. Len of PaxosReplicas: {}", idx, self.paxos_replicas.len()));
                     let prev_seq_metadata = self.get_sequence_metadata(sr.config_id - 1);
                     paxos.actor_ref().tell(PaxosReplicaMsg::LocalSequenceReq(
                         requestor,
@@ -710,11 +693,12 @@ where
                 if let Some(timer) = self.retry_transfer_timers.remove(&config_id) {
                     self.cancel_timer(timer);
                 }
-                if self.complete_sequences.len() + 1 == self.next_config_id.unwrap() as usize {
+                let config_id = self.next_config_id.expect("Got all sequence transfer but no next config id!");
+                if self.complete_sequences.len() + 1 == config_id as usize {
                     // got all sequence transfers
                     self.complete_sequences.clear();
                     debug!(self.ctx.log(), "Got all previous sequences!");
-                    self.start_replica();
+                    self.start_replica(config_id);
                 }
             }
         } else {
@@ -858,11 +842,11 @@ where
                         .expect("Should serialise!");
                 }
                 /*** Start new replica if continued ***/
-                let mut nodes = r.nodes.continued_nodes;
-                let mut new_nodes = r.nodes.new_nodes;
-                if nodes.contains(&self.pid) {
+                let continued_nodes = r.nodes.continued_nodes;
+                let new_nodes = r.nodes.new_nodes;
+                if continued_nodes.contains(&self.pid) {
                     if let ReconfigurationPolicy::Eager = self.policy {
-                        let st = self.create_eager_sequence_transfer(&nodes, prev_config_id);
+                        let st = self.create_eager_sequence_transfer(&continued_nodes, prev_config_id);
                         for pid in &new_nodes {
                             let idx = *pid as usize - 1;
                             let actorpath = self.nodes.get(idx).unwrap_or_else(|| {
@@ -876,17 +860,8 @@ where
                                 .expect("Should serialise!");
                         }
                     }
-                    nodes.append(&mut new_nodes);
-                    let ble_quick_start = r.skip_prepare_n.is_none();
-                    let handled = self.create_replica(
-                        r.config_id,
-                        nodes,
-                        false,
-                        true,
-                        ble_quick_start,
-                        r.skip_prepare_n,
-                    );
-                    return handled;
+                    self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_n);
+                    self.start_replica(r.config_id);
                 }
             }
             PaxosCompMsg::KillComponents(ask) => {
@@ -925,12 +900,43 @@ where
                     p: PartitioningActorMsg [PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
-                                self.partitioning_actor = Some(sender);
-                                    let handled = self.new_iteration(init);
-                                    return handled;
+                                self.stopped = false;
+                                self.nodes = init.nodes;
+                                self.pid = init.pid as u64;
+                                self.iteration_id = init.init_id;
+                                self.active_config = ConfigMeta::new(0);
+                                let ser_client = init
+                                    .init_data
+                                    .expect("Init should include ClientComp's actorpath");
+                                let client = ActorPath::deserialise(&mut ser_client.as_slice())
+                                    .expect("Failed to deserialise Client's actorpath");
+                                self.cached_client = Some(client);
+
+                                let (initial_configuration, reconfiguration) = std::mem::take(&mut self.experiment_configurations);
+                                let handled = Handled::block_on(self, move |mut async_self| async move {
+                                    if initial_configuration.contains(&async_self.pid) {
+                                        async_self.next_config_id = Some(1);
+                                        let futures = async_self.create_replica(1, initial_configuration, true, None);
+                                        for f in futures {
+                                            f.await.unwrap().expect("Failed to register when creating replica 1");
+                                        }
+                                    }
+                                    if reconfiguration.contains(&async_self.pid) {
+                                        let futures = async_self.create_replica(2, reconfiguration, false, None);
+                                        for f in futures {
+                                            f.await.unwrap().expect("Failed to register when creating replica 2");
+                                        }
+                                    }
+                                    let resp = PartitioningActorMsg::InitAck(async_self.iteration_id);
+                                    sender.tell_serialised(resp, async_self.deref_mut())
+                                        .expect("Should serialise");
+                                });
+                                return handled;
                             },
                             PartitioningActorMsg::Run => {
-                                self.start_replica();
+                                if let Some(config_id) = self.next_config_id {
+                                    self.start_replica(config_id);
+                                }
                             },
                             _ => unimplemented!()
                         }
@@ -958,6 +964,8 @@ where
                                 match self.next_config_id {
                                     None => {
                                         // info!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
+                                        self.next_config_id = Some(r.config_id);
+                                        self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_n);
                                         for pid in &r.nodes.continued_nodes {
                                             if pid == &r.from {
                                                 self.active_peers.0.push(*pid);
@@ -970,13 +978,11 @@ where
                                         let mut new_nodes = r.nodes.new_nodes;
                                         let from = r.from;
                                         nodes.append(&mut new_nodes);
-                                        let ble_quick_start = r.skip_prepare_n.is_none();
                                         if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                             // only SS in final sequence and no other prev sequences -> start directly
                                             let final_sequence = S::new_with_sequence(vec![]);
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
-                                            let handled = self.create_replica(r.config_id, nodes, false, true, ble_quick_start, r.skip_prepare_n);
-                                            return handled;
+                                            self.start_replica(r.config_id);
                                         } else {
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
                                             let skip_tag = if r.segment.is_some() {
@@ -1007,8 +1013,6 @@ where
                                                 let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
                                                 self.handle_sequence_transfer(st);
                                             }
-                                            let handled = self.create_replica(r.config_id, nodes, false, false, ble_quick_start, r.skip_prepare_n);
-                                            return handled;
                                         }
                                     },
                                     Some(next_config_id) => {
@@ -1176,7 +1180,7 @@ where
             self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |p, _| {
                 p.send_outgoing()
             });
-        if self.skipped_prepare {
+        if self.skipped_prepare {   // TODO create timer upon creation and remove this skipped_prepare field from struct
             let _ = self.schedule_periodic(
                 Duration::from_millis(0),
                 request_acceptsync_timer,
@@ -1425,6 +1429,40 @@ pub mod raw_paxos {
     use std::fmt::Debug;
     use std::mem;
     use std::sync::Arc;
+/*
+    /// Fields of Paxos after reconfiguration
+    pub struct ReconfigurationContext {
+        state: (Role, Phase),
+        lds: Vec<Option<u64>>,
+        n_leader: Ballot,
+    }
+
+    impl ReconfigurationContext {
+        fn with(pid: u64, skip_prepare_ballot: Option<Ballot>) -> Self {
+            match skip_prepare_ballot {
+                Some(n_leader) => {
+                    let (role, lds, n) = if n.pid == pid {
+                        let mut v = vec![None; num_nodes];
+                        for peer in &peers {
+                            let idx = *peer as usize - 1;
+                            v[idx] = Some(0);
+                        }
+                        (Role::Leader, v, n_leader)
+                    } else {
+                        (Role::Follower, vec![None; num_nodes], Ballot::with(0, 0))
+                    };
+                    let state = (role, Phase::FirstAccept);
+                    ReconfigurationContext { state, lds, n_leader}
+                }
+                _ => {
+                    let state = (Role::Follower, Phase::None);
+                    let lds = vec![None; num_nodes];
+                    let n_leader = Ballot::with(0, 0);
+                    ReconfigurationContext { state, lds, n_leader}
+                }
+            }
+        }
+    }*/
 
     pub struct Paxos<S, P>
     where
@@ -2386,6 +2424,17 @@ mod ballot_leader_election {
                 quick_timeout,
                 initial_election_factor,
             }
+        }
+
+        /// Sets highest seen ballot. Should only be used BEFORE component is started.
+        pub fn set_max_ballot(&mut self, n: Ballot) {
+            // TODO make sure not already started
+            self.max_ballot = n;
+        }
+
+        /// Sets quick timeout.
+        pub fn set_quick_timeout(&mut self, quick_timeout: bool) {
+            self.quick_timeout = quick_timeout;
         }
 
         fn check_leader(&mut self) {

@@ -112,13 +112,15 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 }
 
-fn get_initial_conf(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
-    let mut conf: Vec<u64> = vec![];
-    for id in 1..=last_node_id {
-        conf.push(id);
+fn get_experiment_configs(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
+    if last_node_id % 2 == 0 {
+        let initial_config: Vec<_> = (1..last_node_id).collect();
+        let reconfig: Vec<_> = (2..=last_node_id).collect();
+        (initial_config, reconfig)
+    } else {
+        let initial_config: Vec<_> = (1..last_node_id).collect();
+        (initial_config, vec![])
     }
-    let initial_conf: (Vec<u64>, Vec<u64>) = (conf, vec![]);
-    initial_conf
 }
 
 fn get_reconfig_data(
@@ -152,21 +154,21 @@ fn get_reconfig_data(
 }
 type Storage = MemStorage;
 
-pub struct ExperimentConfig {
+pub struct ExperimentParams {
     pub election_timeout: u64,
     pub outgoing_period: Duration,
     pub max_inflight: usize,
     pub initial_election_factor: u64,
 }
 
-impl ExperimentConfig {
+impl ExperimentParams {
     pub fn new(
         election_timeout: u64,
         outgoing_period: Duration,
         max_inflight: usize,
         initial_election_factor: u64,
-    ) -> ExperimentConfig {
-        ExperimentConfig {
+    ) -> ExperimentParams {
+        ExperimentParams {
             election_timeout,
             outgoing_period,
             max_inflight,
@@ -174,7 +176,7 @@ impl ExperimentConfig {
         }
     }
 
-    pub fn load_from_file<P>(path: P) -> ExperimentConfig
+    pub fn load_from_file<P>(path: P) -> ExperimentParams
     where
         P: Into<PathBuf>,
     {
@@ -197,7 +199,7 @@ impl ExperimentConfig {
             .as_i64()
             .expect("Failed to load initial_election_factor")
             as u64;
-        ExperimentConfig::new(
+        ExperimentParams::new(
             election_timeout,
             outgoing_period,
             max_inflight,
@@ -455,7 +457,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         self.system = Some(system);
-        let params = ClientParams::with(c.algorithm, c.number_of_nodes, c.reconfig_policy);
+        let last_node_id = if self.reconfiguration.is_some() { c.number_of_nodes + 1 } else { c.number_of_nodes };
+        let params = ClientParams::with(c.algorithm, last_node_id, c.reconfig_policy);
         Ok(params)
     }
 
@@ -686,19 +689,19 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         let named_path = match &c.algorithm {
             paxos if paxos == "paxos" || paxos == "paxos-batch" => {
-                let initial_config = get_initial_conf(c.last_node_id).0;
+                let experiment_configs = get_experiment_configs(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
                     "eager" => Some(PaxosReconfigurationPolicy::Eager),
                     "pull" => Some(PaxosReconfigurationPolicy::Pull),
                     unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                 };
-                let experiment_config = ExperimentConfig::load_from_file(CONFIG_PATH);
+                let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
                 let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
                     PaxosComp::with(
-                        initial_config,
+                        experiment_configs,
                         reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
-                        experiment_config,
+                        experiment_params,
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
@@ -713,20 +716,17 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self_path
             }
             raft if raft == "raft" => {
-                let conf_state = get_initial_conf(c.last_node_id);
+                let voters = get_experiment_configs(c.last_node_id).0;
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
                     "replace-leader" => Some(RaftReconfigurationPolicy::ReplaceLeader),
                     "replace-follower" => Some(RaftReconfigurationPolicy::ReplaceFollower),
                     unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
                 };
-                //                let storage = MemStorage::new_with_conf_state(conf_state);
-                //                let dir = "./diskstorage";
-                //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
                 let (raft_replica, unique_reg_f) = system.create_and_register(|| {
                     RaftComp::<Storage>::with(
-                        conf_state.0,
+                        voters,
                         reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
                     )
                 });
