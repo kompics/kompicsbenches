@@ -436,7 +436,7 @@ where
             .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
             .expect("Should be AtomicBroadcastMsg!")
         {
-            let idx = self.active_config.id as usize - 1; // TODO add arc to ConfigMeta
+            let idx = (self.active_config.id - self.first_config_id) as usize;
             let active_paxos = self
                 .paxos_replicas
                 .get(idx)
@@ -628,7 +628,7 @@ where
                 // (false, vec![])
                 if self.active_config.id == sr.config_id {
                     // we have not reached final sequence, but might still have requested elements. Outsource request to corresponding PaxosComp
-                    let idx = sr.config_id as usize - 1;
+                    let idx = (self.active_config.id - self.first_config_id) as usize;
                     let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| panic!("No paxos replica with idx: {} when handling SequenceRequest. Len of PaxosReplicas: {}", idx, self.paxos_replicas.len()));
                     let prev_seq_metadata = self.get_sequence_metadata(sr.config_id - 1);
                     paxos.actor_ref().tell(PaxosReplicaMsg::LocalSequenceReq(
@@ -1010,7 +1010,7 @@ where
                                                 ReconfigurationPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
                                                     let seq_len = r.seq_metadata.len;
-                                                    let idx = (config_id - self.first_config_id) as usize;
+                                                    let idx = (config_id - 1) as usize;
                                                     let rem_segments: Vec<_> = (1..=num_expected_transfers).map(|x| x as u32).collect();
                                                     self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
                                                     let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"].as_duration().expect("Failed to load get_decided_period");
