@@ -172,6 +172,7 @@ pub mod paxos {
 
     #[derive(Clone, Debug)]
     pub enum PaxosMsg {
+        PrepareReq,
         Prepare(Prepare),
         Promise(Promise),
         AcceptSync(AcceptSync),
@@ -205,6 +206,7 @@ pub mod paxos {
     const PROPOSALFORWARD_ID: u8 = 7;
     const FIRSTACCEPTREQ_ID: u8 = 8;
     const FIRSTACCEPT_ID: u8 = 9;
+    const PREPAREREQ_ID: u8 = 10;
 
     const NORMAL_ENTRY_ID: u8 = 1;
     const SS_ENTRY_ID: u8 = 2;
@@ -322,6 +324,9 @@ pub mod paxos {
             buf.put_u64(self.from);
             buf.put_u64(self.to);
             match &self.msg {
+                PaxosMsg::PrepareReq => {
+                    buf.put_u8(PREPAREREQ_ID);
+                }
                 PaxosMsg::Prepare(p) => {
                     buf.put_u8(PREPARE_ID);
                     PaxosSer::serialise_ballot(&p.n, buf);
@@ -386,6 +391,10 @@ pub mod paxos {
             let from = buf.get_u64();
             let to = buf.get_u64();
             match buf.get_u8() {
+                PREPAREREQ_ID => {
+                    let msg = Message::with(from, to, PaxosMsg::PrepareReq);
+                    Ok(msg)
+                }
                 PREPARE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);

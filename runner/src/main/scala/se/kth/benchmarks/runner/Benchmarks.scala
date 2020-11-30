@@ -328,7 +328,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val raftReconfigSpace = ParameterSpacePB
     .cross(
-      List("raft-batch"),
+      raft,
       atomicBroadcastNodes,
       atomicBroadcastProposals,
       atomicBroadcastConcurrentProposals,
@@ -340,7 +340,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val latencySpace = ParameterSpacePB
     .cross(
-      List("paxos", "raft-batch"),
+      List("paxos", "raft"),
       List(3),
       List(10L.k),
       List(1L),

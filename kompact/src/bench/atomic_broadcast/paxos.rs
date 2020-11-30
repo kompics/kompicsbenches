@@ -1561,6 +1561,7 @@ pub mod raw_paxos {
 
         pub fn handle(&mut self, m: Message) {
             match m.msg {
+                PaxosMsg::PrepareReq => self.handle_preparereq(m.from),
                 PaxosMsg::Prepare(prep) => self.handle_prepare(prep, m.from),
                 PaxosMsg::Promise(prom) => match &self.state {
                     (Role::Leader, Phase::Prepare) => self.handle_promise_prepare(prom, m.from),
@@ -1650,8 +1651,14 @@ pub mod raw_paxos {
             }
         }
 
-        pub(crate) fn stop_and_get_sequence(&mut self) -> Arc<S> {
+        pub fn stop_and_get_sequence(&mut self) -> Arc<S> {
             self.storage.stop_and_get_sequence()
+        }
+
+        pub fn connection_lost(&mut self, pid: u64) {
+            if self.state.0 == Role::Follower && self.leader == pid {
+                self.state = (Role::Follower, Phase::Recover);
+            }
         }
 
         fn clear_peers_state(&mut self) {
@@ -1694,7 +1701,19 @@ pub mod raw_paxos {
                         .push(Message::with(self.pid, *pid, PaxosMsg::Prepare(prep)));
                 }
             } else {
+                if self.state.1 == Phase::Recover {
+                    self.outgoing.push(Message::with(self.pid, l.pid, PaxosMsg::PrepareReq));
+                }
                 self.state.0 = Role::Follower;
+            }
+        }
+
+        fn handle_preparereq(&mut self, from: u64) {
+            if self.state.0 == Role::Leader {
+                let ld = self.storage.get_decided_len();
+                let n_accepted = self.storage.get_accepted_ballot();
+                let prep = Prepare::with(self.n_leader, ld, n_accepted);
+                self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Prepare(prep)));
             }
         }
 
@@ -2241,6 +2260,7 @@ pub mod raw_paxos {
         Prepare,
         FirstAccept,
         Accept,
+        Recover,
         None,
     }
 
