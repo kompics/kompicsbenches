@@ -118,7 +118,7 @@ fn get_experiment_configs(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
         let reconfig: Vec<_> = (2..=last_node_id).collect();
         (initial_config, reconfig)
     } else {
-        let initial_config: Vec<_> = (1..last_node_id).collect();
+        let initial_config: Vec<_> = (1..=last_node_id).collect();
         (initial_config, vec![])
     }
 }
@@ -691,7 +691,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         let named_path = match &c.algorithm {
-            paxos if paxos == "paxos" || paxos == "paxos-batch" => {
+            paxos if paxos == "paxos" => {
                 let experiment_configs = get_experiment_configs(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
