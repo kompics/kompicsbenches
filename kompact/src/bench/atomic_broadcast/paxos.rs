@@ -311,8 +311,7 @@ where
                 .get(idx)
                 .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
             ble.on_definition(|ble| {
-                ble.set_max_ballot(n);
-                ble.set_quick_timeout(false);
+                ble.set_initial_state(n);
             });
         }
     }
@@ -2368,15 +2367,15 @@ mod ballot_leader_election {
             }
         }
 
-        /// Sets highest seen ballot. Should only be used BEFORE component is started.
-        pub fn set_max_ballot(&mut self, n: Ballot) {
+        /// Sets initial state after creation. Should only be used before being started.
+        pub fn set_initial_state(&mut self, initial_ballot: Ballot) {
             // TODO make sure not already started
-            self.max_ballot = n;
-        }
-
-        /// Sets quick timeout.
-        pub fn set_quick_timeout(&mut self, quick_timeout: bool) {
-            self.quick_timeout = quick_timeout;
+            if initial_ballot.pid == self.pid {
+                self.current_ballot = initial_ballot;
+                self.round = initial_ballot.n;
+            }
+            self.max_ballot = initial_ballot;
+            self.quick_timeout = false;
         }
 
         fn check_leader(&mut self) {
