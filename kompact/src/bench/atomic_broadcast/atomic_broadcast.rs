@@ -444,7 +444,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         if c.concurrent_proposals == 1
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
             self.latency_hist =
                 Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
@@ -524,7 +524,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1)
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
             let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
             let dir = format!("{}/latency/", meta_path);
@@ -587,14 +587,13 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 );
                 writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
                     .expect("Failed to write meta summary file");
-                writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| panic!(
-                    "Failed to write meta summary file: {}",
-                    summary_str
-                ));
+                writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| {
+                    panic!("Failed to write meta summary file: {}", summary_str)
+                });
                 summary_file.flush().expect("Failed to flush meta file");
             }
             if self.concurrent_proposals == Some(1)
-                || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+                || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
             {
                 let dir = format!("{}/latency/", meta_path);
                 create_dir_all(&dir)

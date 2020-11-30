@@ -13,7 +13,6 @@ use synchronoise::CountdownEvent;
 enum ExperimentState {
     LeaderElection,
     Running,
-    ProposedReconfiguration,
     ReconfigurationElection,
     Finished,
 }
@@ -172,8 +171,8 @@ impl Client {
             if from > to {
                 return;
             }
-            let cache_start_time = self.num_concurrent_proposals == 1
-                || self.state == ExperimentState::ProposedReconfiguration;
+            let cache_start_time =
+                self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
             for id in from..=to {
                 let current_time = match cache_start_time {
                     true => Some(SystemTime::now()),
@@ -248,10 +247,6 @@ impl Client {
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
-                #[cfg(feature = "track_reconfig_latency")]
-                {
-                    self.state = ExperimentState::ProposedReconfiguration;
-                }
             }
             let timer =
                 self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
@@ -270,10 +265,6 @@ impl Client {
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
-                #[cfg(feature = "track_reconfig_latency")]
-                {
-                    self.state = ExperimentState::ProposedReconfiguration;
-                }
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = self.pending_proposals.get_mut(&id).expect(&format!(
@@ -308,10 +299,12 @@ impl Client {
     fn hold_back_proposals(&mut self, from: u64, to: u64) {
         for i in from..=to {
             let ProposalMetaData { start_time, timer } =
-                self.pending_proposals.remove(&i).unwrap_or_else(|| panic!(
-                    "No proposal with id {} in pending_proposals to hold back",
-                    i
-                ));
+                self.pending_proposals.remove(&i).unwrap_or_else(|| {
+                    panic!(
+                        "No proposal with id {} in pending_proposals to hold back",
+                        i
+                    )
+                });
             self.cancel_timer(timer);
             self.retry_proposals.push((i, start_time));
         }
