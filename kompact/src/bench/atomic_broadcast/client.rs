@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
 use synchronoise::CountdownEvent;
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum ExperimentState {
     LeaderElection,
     Running,
@@ -298,15 +298,18 @@ impl Client {
 
     fn hold_back_proposals(&mut self, from: u64, to: u64) {
         for i in from..=to {
-            let ProposalMetaData { start_time, timer } =
-                self.pending_proposals.remove(&i).unwrap_or_else(|| {
-                    panic!(
-                        "No proposal with id {} in pending_proposals to hold back",
-                        i
+            match self.pending_proposals.remove(&i) {
+                Some(ProposalMetaData { start_time, timer }) => {
+                    self.cancel_timer(timer);
+                    self.retry_proposals.push((i, start_time));
+                }
+                None => {
+                    assert!(
+                        self.responses.contains_key(&i),
+                        "Hold back proposal not in pending and responses: {}. State {:?}, has_reconfig: {}", i, self.state, self.reconfig.is_some()
                     )
-                });
-            self.cancel_timer(timer);
-            self.retry_proposals.push((i, start_time));
+                }
+            }
         }
     }
 

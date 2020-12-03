@@ -1702,7 +1702,8 @@ pub mod raw_paxos {
                 }
             } else {
                 if self.state.1 == Phase::Recover {
-                    self.outgoing.push(Message::with(self.pid, l.pid, PaxosMsg::PrepareReq));
+                    self.outgoing
+                        .push(Message::with(self.pid, l.pid, PaxosMsg::PrepareReq));
                 }
                 self.state.0 = Role::Follower;
             }
@@ -1713,7 +1714,8 @@ pub mod raw_paxos {
                 let ld = self.storage.get_decided_len();
                 let n_accepted = self.storage.get_accepted_ballot();
                 let prep = Prepare::with(self.n_leader, ld, n_accepted);
-                self.outgoing.push(Message::with(self.pid, from, PaxosMsg::Prepare(prep)));
+                self.outgoing
+                    .push(Message::with(self.pid, from, PaxosMsg::Prepare(prep)));
             }
         }
 
