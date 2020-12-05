@@ -9,6 +9,8 @@ use super::messages::paxos::{
 };
 use super::messages::{StopMsg as NetStopMsg, *};
 use super::storage::paxos::*;
+#[cfg(test)]
+use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 use crate::bench::atomic_broadcast::atomic_broadcast::Done;
 use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
 use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
@@ -734,6 +736,8 @@ where
     PendingReconfig(Vec<u8>),
     Reconfig(FinalMsg<S>),
     KillComponents(Ask<(), Done>),
+    #[cfg(test)]
+    GetSequence(Ask<(), SequenceResp>),
 }
 
 impl<S, P> ComponentLifecycle for PaxosComp<S, P>
@@ -872,6 +876,54 @@ where
             PaxosCompMsg::KillComponents(ask) => {
                 let handled = self.kill_components(ask);
                 return handled;
+            }
+            #[cfg(test)]
+            PaxosCompMsg::GetSequence(ask) => {
+                let mut all_entries = vec![];
+                let mut unique = HashSet::new();
+                for i in 1..self.active_config.id {
+                    if let Some(seq) = self.prev_sequences.get(&i) {
+                        let sequence = seq.get_sequence();
+                        for entry in sequence {
+                            if let Entry::Normal(n) = entry {
+                                let id = n.as_slice().get_u64();
+                                all_entries.push(id);
+                                unique.insert(id);
+                            }
+                        }
+                    }
+                }
+                if self.active_config.id > 0 {
+                    let active_paxos = self.paxos_replicas.last().unwrap();
+                    let sequence = active_paxos
+                        .actor_ref()
+                        .ask(|promise| PaxosReplicaMsg::GetAllEntries(Ask::new(promise, ())))
+                        .wait();
+                    for entry in sequence {
+                        if let Entry::Normal(n) = entry {
+                            let id = n.as_slice().get_u64();
+                            all_entries.push(id);
+                            unique.insert(id);
+                        }
+                    }
+                    let min = unique.iter().min();
+                    let max = unique.iter().max();
+                    debug!(
+                        self.ctx.log(),
+                        "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}",
+                        all_entries.len(),
+                        unique.len(),
+                        min,
+                        max
+                    );
+                } else {
+                    warn!(
+                        self.ctx.log(),
+                        "Got SequenceReq but no active paxos: {}", self.active_config.id
+                    );
+                }
+                let sr = SequenceResp::with(self.pid, all_entries);
+                ask.reply(sr).expect("Failed to reply SequenceResp");
             }
         }
         Handled::Ok
@@ -1049,45 +1101,6 @@ where
                             return self.stop_components();
                         }
                     },
-                    tm: TestMessage [TestMessageSer] => {
-                        match tm {
-                            TestMessage::SequenceReq => {
-                                let mut all_entries = vec![];
-                                let mut unique = HashSet::new();
-                                for i in 1..self.active_config.id {
-                                    if let Some(seq) = self.prev_sequences.get(&i) {
-                                        let sequence = seq.get_sequence();
-                                        for entry in sequence {
-                                            if let Entry::Normal(n) = entry {
-                                                let id = n.as_slice().get_u64();
-                                                all_entries.push(id);
-                                                unique.insert(id);
-                                            }
-                                        }
-                                    }
-                                }
-                                if self.active_config.id > 0 {
-                                    let active_paxos = self.paxos_replicas.last().unwrap();
-                                    let sequence = active_paxos.actor_ref().ask(|promise| PaxosReplicaMsg::GetAllEntries(Ask::new(promise, ()))).wait();
-                                    for entry in sequence {
-                                        if let Entry::Normal(n) = entry {
-                                            let id = n.as_slice().get_u64();
-                                            all_entries.push(id);
-                                            unique.insert(id);
-                                         }
-                                    }
-                                    let min = unique.iter().min();
-                                    let max = unique.iter().max();
-                                    debug!(self.ctx.log(), "Got SequenceReq: my seq_len: {}, unique: {}, min: {:?}, max: {:?}", all_entries.len(), unique.len(), min, max);
-                                } else {
-                                    warn!(self.ctx.log(), "Got SequenceReq but no active paxos: {}", self.active_config.id);
-                                }
-                                let sr = SequenceResp::with(self.pid, all_entries);
-                                sender.tell((TestMessage::SequenceResp(sr), TestMessageSer), self);
-                            },
-                            _ => error!(self.ctx.log(), "Got unexpected TestMessage: {:?}", tm),
-                        }
-                    },
                     !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
                     }
                 }
@@ -1237,7 +1250,7 @@ where
             self.supervisor
                 .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader));
         }
-        if self.current_leader == self.pid {
+        if self.current_leader == self.pid {    // Only leader responds to client. This is fine for benchmarking. In real-life, each replica probably caches clients and responds to them.
             // leader: check reconfiguration and send responses to client
             let decided_entries = self.paxos.get_decided_entries().to_vec();
             let last = decided_entries.last();
@@ -2303,10 +2316,7 @@ pub mod raw_paxos {
 
     impl Entry {
         pub(crate) fn is_stopsign(&self) -> bool {
-            match self {
-                Entry::StopSign(_) => true,
-                _ => false,
-            }
+            matches!(self, Entry::StopSign(_))
         }
     }
 }
@@ -2554,165 +2564,5 @@ mod ballot_leader_election {
             }
             Handled::Ok
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::client::tests::TestClient;
-    use super::super::messages::paxos::ballot_leader_election::Ballot;
-    use super::super::messages::Run;
-    use super::*;
-    use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
-    use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
-    use crate::partitioning_actor::{IterationControlMsg, PartitioningActor};
-    use std::sync::Arc;
-    use synchronoise::CountdownEvent;
-
-    fn create_replica_nodes(
-        n: u64,
-        initial_conf: Vec<u64>,
-        policy: ReconfigurationPolicy,
-    ) -> (Vec<KompactSystem>, HashMap<u64, ActorPath>, Vec<ActorPath>) {
-        let mut systems = Vec::with_capacity(n as usize);
-        let mut nodes = HashMap::with_capacity(n as usize);
-        let mut actorpaths = Vec::with_capacity(n as usize);
-        for i in 1..=n {
-            let system = kompact_benchmarks::kompact_system_provider::global()
-                .new_remote_system_with_threads(format!("paxos_replica{}", i), 4);
-            let (replica_comp, unique_reg_f) = system.create_and_register(|| {
-                PaxosComp::<MemorySequence, MemoryState>::with(initial_conf.clone(), policy.clone())
-            });
-            unique_reg_f.wait_expect(
-                Duration::from_millis(1000),
-                "ReplicaComp failed to register!",
-            );
-            let replica_comp_f = system.start_notify(&replica_comp);
-            replica_comp_f
-                .wait_timeout(Duration::from_millis(1000))
-                .expect("ReplicaComp never started!");
-
-            let named_reg_f = system.register_by_alias(&replica_comp, format!("replica{}", i));
-            let self_path = named_reg_f.wait_expect(
-                Duration::from_secs(1),
-                "ReplicaComp failed to register alias",
-            );
-            systems.push(system);
-            nodes.insert(i, self_path.clone());
-            actorpaths.push(self_path);
-        }
-        (systems, nodes, actorpaths)
-    }
-
-    #[test]
-    fn paxos_test() {
-        let num_proposals = 4000;
-        let batch_size = 2000;
-        let config = vec![1, 2, 3];
-        let reconfig: Option<(Vec<u64>, Vec<u64>)> = None;
-        // let reconfig = Some((vec![1,2,6,7,8], vec![]));
-        let n: u64 = match reconfig {
-            None => config.len() as u64,
-            Some(ref r) => *(r.0.last().unwrap()),
-        };
-        let check_sequences = true;
-        let policy = ReconfigurationPolicy::Pull;
-        let active_n = config.len() as u64;
-        let quorum = active_n / 2 + 1;
-
-        let (systems, nodes, actorpaths) = create_replica_nodes(n, config, policy);
-        /*** Setup client ***/
-        let (p, f) = kpromise::<HashMap<u64, Vec<u64>>>();
-        let (client_comp, unique_reg_f) = systems[0].create_and_register(|| {
-            TestClient::with(
-                num_proposals,
-                batch_size,
-                nodes,
-                reconfig.clone(),
-                p,
-                check_sequences,
-            )
-        });
-        unique_reg_f.wait_expect(Duration::from_millis(1000), "Client failed to register!");
-        let system = systems.first().unwrap();
-        let client_comp_f = system.start_notify(&client_comp);
-        client_comp_f
-            .wait_timeout(Duration::from_secs(2))
-            .expect("ClientComp never started!");
-        let named_reg_f = system.register_by_alias(&client_comp, "client");
-        let client_path = named_reg_f.wait_expect(
-            Duration::from_secs(2),
-            "Failed to register alias for ClientComp",
-        );
-        let mut ser_client = Vec::<u8>::new();
-        client_path
-            .serialise(&mut ser_client)
-            .expect("Failed to serialise ClientComp actorpath");
-        /*** Setup partitioning actor ***/
-        let prepare_latch = Arc::new(CountdownEvent::new(1));
-        let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-            PartitioningActor::with(prepare_latch.clone(), None, 1, actorpaths, None)
-        });
-        unique_reg_f.wait_expect(
-            Duration::from_millis(1000),
-            "PartitioningComp failed to register!",
-        );
-
-        let partitioning_actor_f = systems[0].start_notify(&partitioning_actor);
-        partitioning_actor_f
-            .wait_timeout(Duration::from_millis(1000))
-            .expect("PartitioningComp never started!");
-        partitioning_actor
-            .actor_ref()
-            .tell(IterationControlMsg::Prepare(Some(ser_client)));
-        prepare_latch.wait();
-        partitioning_actor
-            .actor_ref()
-            .tell(IterationControlMsg::Run);
-        client_comp.actor_ref().tell(Run);
-        let all_sequences = f
-            .wait_timeout(Duration::from_secs(60))
-            .expect("Failed to get results");
-        let client_sequence = all_sequences
-            .get(&0)
-            .expect("Client's sequence should be in 0...")
-            .to_owned();
-        for system in systems {
-            system
-                .shutdown()
-                .expect("Kompact didn't shut down properly");
-        }
-
-        assert_eq!(num_proposals, client_sequence.len() as u64);
-        for i in 1..=num_proposals {
-            let mut iter = client_sequence.iter();
-            let found = iter.find(|&&x| x == i).is_some();
-            assert_eq!(true, found);
-        }
-        if check_sequences {
-            let mut counter = 0;
-            for i in 1..=n {
-                let sequence = all_sequences
-                    .get(&i)
-                    .unwrap_or_else(|| panic!("Did not get sequence for node {}", i));
-                // println!("Node {}: {:?}", i, sequence.len());
-                // assert!(client_sequence.starts_with(sequence));
-                if let Some(r) = &reconfig {
-                    if r.0.contains(&i) {
-                        for id in &client_sequence {
-                            if !sequence.contains(&id) {
-                                println!("Node {} did not have id: {} in sequence", i, id);
-                                counter += 1;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if counter >= quorum {
-                panic!("Majority of new configuration DOES NOT have all client elements: counter: {}, quorum: {}", counter, quorum);
-            }
-        }
-        println!("PASSED!!!");
     }
 }
