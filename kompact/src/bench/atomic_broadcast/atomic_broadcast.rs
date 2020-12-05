@@ -793,25 +793,15 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 
 #[cfg(test)]
 pub mod tests {
-    use super::super::messages::paxos::ballot_leader_election::Ballot;
-    use super::super::messages::Run;
     use super::*;
-    use crate::bench::atomic_broadcast::messages::paxos::{Message, PaxosMsg};
-    use crate::bench::atomic_broadcast::paxos::raw_paxos::Entry::Normal;
     use crate::bench::atomic_broadcast::paxos::SequenceTraits;
-    use crate::partitioning_actor::{IterationControlMsg, PartitioningActor};
-    use std::sync::Arc;
-    use synchronoise::CountdownEvent;
-    use std::cmp::Ordering;
-
-    // const CLIENT_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[derive(Debug)]
     struct GetSequence(Ask<(), SequenceResp>);
 
     impl<S> Into<PaxosCompMsg<S>> for GetSequence
-        where
-            S: SequenceTraits,
+    where
+        S: SequenceTraits,
     {
         fn into(self) -> PaxosCompMsg<S> {
             PaxosCompMsg::GetSequence(self.0)
@@ -942,12 +932,24 @@ pub mod tests {
     }
 
     fn check_validity(sequence_responses: &[SequenceResp], num_proposals: u64) {
-        let invalid_nodes: Vec<_> = sequence_responses.iter().map(|sr| (sr.node_id, sr.sequence.iter().max().unwrap_or(&0))).filter(|(_, max)| *max > &num_proposals).collect();
-        assert!(invalid_nodes.len() < 1, "Nodes decided unproposed values. Num_proposals: {}, invalied_nodes: {:?}", num_proposals, invalid_nodes);
+        let invalid_nodes: Vec<_> = sequence_responses
+            .iter()
+            .map(|sr| (sr.node_id, sr.sequence.iter().max().unwrap_or(&0)))
+            .filter(|(_, max)| *max > &num_proposals)
+            .collect();
+        assert!(
+            invalid_nodes.len() < 1,
+            "Nodes decided unproposed values. Num_proposals: {}, invalied_nodes: {:?}",
+            num_proposals,
+            invalid_nodes
+        );
     }
 
     fn check_uniform_agreement(sequence_responses: &[SequenceResp]) {
-        let longest_seq = sequence_responses.iter().max_by(|sr, other_sr| sr.sequence.len().cmp(&other_sr.sequence.len())).expect("Empty SequenceResp from nodes!");
+        let longest_seq = sequence_responses
+            .iter()
+            .max_by(|sr, other_sr| sr.sequence.len().cmp(&other_sr.sequence.len()))
+            .expect("Empty SequenceResp from nodes!");
         for sr in sequence_responses {
             assert!(longest_seq.sequence.starts_with(sr.sequence.as_slice()));
         }
@@ -972,7 +974,7 @@ pub mod tests {
         let num_nodes_needed = match reconfiguration {
             "off" => num_nodes,
             "single" => num_nodes + 1,
-            _ => unimplemented!()
+            _ => unimplemented!(),
         };
         let d = DeploymentMetaData::new(num_nodes_needed as u32);
         let (client_systems, clients, client_refs) = create_nodes(
@@ -995,7 +997,7 @@ pub mod tests {
             futures.push(kfuture);
         }
         let sequence_responses: Vec<_> = FutureCollection::collect_results::<Vec<_>>(futures);
-        let quorum_size = (num_nodes as usize / 2 + 1);
+        let quorum_size = num_nodes as usize / 2 + 1;
         check_quorum(&sequence_responses, quorum_size, num_proposals);
         check_validity(&sequence_responses, num_proposals);
         check_uniform_agreement(&sequence_responses);
@@ -1013,7 +1015,14 @@ pub mod tests {
         let concurrent_proposals = 200;
         let reconfiguration = "off";
         let reconfig_policy = "none";
-        run_experiment("paxos", num_nodes, num_proposals, concurrent_proposals, reconfiguration, reconfig_policy);
+        run_experiment(
+            "paxos",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
     }
 
     #[test]
@@ -1023,7 +1032,14 @@ pub mod tests {
         let concurrent_proposals = 200;
         let reconfiguration = "single";
         let reconfig_policy = "pull";
-        run_experiment("paxos", num_nodes, num_proposals, concurrent_proposals, reconfiguration, reconfig_policy);
+        run_experiment(
+            "paxos",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
     }
 
     #[test]
@@ -1033,7 +1049,14 @@ pub mod tests {
         let concurrent_proposals = 200;
         let reconfiguration = "off";
         let reconfig_policy = "none";
-        run_experiment("raft", num_nodes, num_proposals, concurrent_proposals, reconfiguration, reconfig_policy);
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
     }
 
     #[test]
@@ -1042,7 +1065,14 @@ pub mod tests {
         let num_proposals = 1000;
         let concurrent_proposals = 200;
         let reconfiguration = "single";
-        run_experiment("raft", num_nodes, num_proposals, concurrent_proposals, reconfiguration, "replace-follower");
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            "replace-follower",
+        );
     }
 
     #[test]
@@ -1051,6 +1081,13 @@ pub mod tests {
         let num_proposals = 1000;
         let concurrent_proposals = 200;
         let reconfiguration = "single";
-        run_experiment("raft", num_nodes, num_proposals, concurrent_proposals, reconfiguration, "replace-leader");
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            "replace-leader",
+        );
     }
 }

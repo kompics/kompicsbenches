@@ -269,7 +269,10 @@ where
             #[cfg(test)]
             RaftCompMsg::GetSequence(ask) => {
                 let raft_replica = self.raft_replica.as_ref().expect("No raft replica");
-                let seq = raft_replica.actor_ref().ask(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ()))).wait();
+                let seq = raft_replica
+                    .actor_ref()
+                    .ask(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                    .wait();
                 let sr = SequenceResp::with(self.pid, seq);
                 ask.reply(sr).expect("Failed to reply SequenceResp");
             }
@@ -350,6 +353,7 @@ where
 pub enum RaftReplicaMsg {
     Propose(Proposal),
     Stop(Ask<(), ()>),
+    #[cfg(test)]
     SequenceReq(Ask<(), Vec<u64>>),
 }
 
@@ -430,6 +434,18 @@ where
                     self.propose(p);
                 }
             }
+            RaftReplicaMsg::Stop(ask) => {
+                self.communication_port
+                    .trigger(CommunicatorMsg::SendStop(self.raw_raft.raft.id, true));
+                self.stop_timers();
+                self.stopped = true;
+                if self.stopped_peers.len() == self.num_peers {
+                    ask.reply(()).expect("Failed to reply Stop ask");
+                } else {
+                    self.stop_ask = Some(ask);
+                }
+            }
+            #[cfg(test)]
             RaftReplicaMsg::SequenceReq(sr) => {
                 let raft_entries: Vec<Entry> = self.raw_raft.raft.raft_log.all_entries();
                 let mut sequence: Vec<u64> = Vec::with_capacity(raft_entries.len());
@@ -451,17 +467,6 @@ where
                 );
                 sr.reply(sequence)
                     .expect("Failed to respond SequenceReq ask");
-            }
-            RaftReplicaMsg::Stop(ask) => {
-                self.communication_port
-                    .trigger(CommunicatorMsg::SendStop(self.raw_raft.raft.id, true));
-                self.stop_timers();
-                self.stopped = true;
-                if self.stopped_peers.len() == self.num_peers {
-                    ask.reply(()).expect("Failed to reply Stop ask");
-                } else {
-                    self.stop_ask = Some(ask);
-                }
             }
         }
         Handled::Ok

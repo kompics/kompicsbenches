@@ -63,8 +63,9 @@ where
 pub enum PaxosReplicaMsg {
     Propose(Proposal),
     LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
-    GetAllEntries(Ask<(), Vec<Entry>>),
     Stop(Ask<(bool, bool), ()>), // (ack_client, late)
+    #[cfg(test)]
+    SequenceReq(Ask<(), Vec<Entry>>),
 }
 
 #[derive(Clone, Debug)]
@@ -897,7 +898,7 @@ where
                     let active_paxos = self.paxos_replicas.last().unwrap();
                     let sequence = active_paxos
                         .actor_ref()
-                        .ask(|promise| PaxosReplicaMsg::GetAllEntries(Ask::new(promise, ())))
+                        .ask(|promise| PaxosReplicaMsg::SequenceReq(Ask::new(promise, ())))
                         .wait();
                     for entry in sequence {
                         if let Entry::Normal(n) = entry {
@@ -1250,7 +1251,8 @@ where
             self.supervisor
                 .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader));
         }
-        if self.current_leader == self.pid {    // Only leader responds to client. This is fine for benchmarking. In real-life, each replica probably caches clients and responds to them.
+        if self.current_leader == self.pid {
+            // Only leader responds to client. This is fine for benchmarking. In real-life, each replica probably caches clients and responds to them.
             // leader: check reconfiguration and send responses to client
             let decided_entries = self.paxos.get_decided_entries().to_vec();
             let last = decided_entries.last();
@@ -1325,11 +1327,6 @@ where
                     .tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self)
                     .expect("Should serialise!");
             }
-            PaxosReplicaMsg::GetAllEntries(a) => {
-                // for testing only
-                let seq = self.paxos.get_sequence();
-                a.reply(seq).expect("Failed to reply to GetAllEntries");
-            }
             PaxosReplicaMsg::Stop(ask) => {
                 let (ack_client, late_stop) = *ask.request();
                 self.communication_port
@@ -1344,6 +1341,12 @@ where
                     }
                     self.stop_ask = Some(ask);
                 }
+            }
+            #[cfg(test)]
+            PaxosReplicaMsg::SequenceReq(a) => {
+                // for testing only
+                let seq = self.paxos.get_sequence();
+                a.reply(seq).expect("Failed to reply to GetAllEntries");
             }
         }
         Handled::Ok
