@@ -272,10 +272,10 @@ pub mod raft {
             store.snapshot_metadata.index = 1;
             store.snapshot_metadata.term = 1;
             (&mut store.hard_state[DiskStorageCore::TERM_INDEX])
-                .write(&1u64.to_be_bytes())
+                .write_all(&1u64.to_be_bytes())
                 .expect("Failed to write hard state term");
             (&mut store.hard_state[DiskStorageCore::COMMIT_INDEX])
-                .write(&1u64.to_be_bytes())
+                .write_all(&1u64.to_be_bytes())
                 .expect("Failed to write hard state commit");
             store
         }
@@ -321,15 +321,15 @@ pub mod raft {
                     .expect("Protobuf failed to serialise Entry");
                 let ser_entry_len = ser_entry.len() as u64;
                 let ser_len = ser_entry_len.to_be_bytes();
-                self.log.file.write(&ser_len)?; // write len of serialised entry
-                match self.log.file.write(&ser_entry) {
+                self.log.file.write_all(&ser_len)?; // write len of serialised entry
+                match self.log.file.write_all(&ser_entry) {
                     // write entry
                     Ok(_) => {
                         // write to offset file
                         let start = (from_log_index as usize + i) * size_of::<u64>();
                         let stop = start + size_of::<u64>();
                         (&mut self.offset.mem_map[start..stop])
-                            .write(&current_offset.to_be_bytes())
+                            .write_all(&current_offset.to_be_bytes())
                             .expect("Failed to write to offset");
                     }
                     _ => panic!("Failed to write to log"),
@@ -380,18 +380,18 @@ pub mod raft {
             match field {
                 DiskStorageCore::FIRST_INDEX => {
                     (&mut self.raft_metadata[DiskStorageCore::FIRST_INDEX_IS_SET])
-                        .write(&[1u8])
+                        .write_all(&[1u8])
                         .expect("Failed to set first_index bit");
                 }
                 DiskStorageCore::LAST_INDEX => {
                     (&mut self.raft_metadata[DiskStorageCore::LAST_INDEX_IS_SET])
-                        .write(&[1u8])
+                        .write_all(&[1u8])
                         .expect("Failed to set last_index bit");
                 }
                 _ => panic!("Unexpected field"),
             }
             (&mut self.raft_metadata[field])
-                .write(&value.to_be_bytes())
+                .write_all(&value.to_be_bytes())
                 .expect("Failed to write raft metadata");
             self.raft_metadata.flush()?;
             Ok(())
@@ -469,8 +469,9 @@ pub mod raft {
         }
 
         fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
-            (&mut self.hard_state[DiskStorageCore::TERM_INDEX]).write(&term.to_be_bytes())?;
-            (&mut self.hard_state[DiskStorageCore::COMMIT_INDEX]).write(&commit.to_be_bytes())?;
+            (&mut self.hard_state[DiskStorageCore::TERM_INDEX]).write_all(&term.to_be_bytes())?;
+            (&mut self.hard_state[DiskStorageCore::COMMIT_INDEX])
+                .write_all(&commit.to_be_bytes())?;
             Ok(())
         }
 

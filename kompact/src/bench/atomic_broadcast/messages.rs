@@ -172,6 +172,7 @@ pub mod paxos {
 
     #[derive(Clone, Debug)]
     pub enum PaxosMsg {
+        PrepareReq,
         Prepare(Prepare),
         Promise(Promise),
         AcceptSync(AcceptSync),
@@ -205,6 +206,7 @@ pub mod paxos {
     const PROPOSALFORWARD_ID: u8 = 7;
     const FIRSTACCEPTREQ_ID: u8 = 8;
     const FIRSTACCEPT_ID: u8 = 9;
+    const PREPAREREQ_ID: u8 = 10;
 
     const NORMAL_ENTRY_ID: u8 = 1;
     const SS_ENTRY_ID: u8 = 2;
@@ -322,6 +324,9 @@ pub mod paxos {
             buf.put_u64(self.from);
             buf.put_u64(self.to);
             match &self.msg {
+                PaxosMsg::PrepareReq => {
+                    buf.put_u8(PREPAREREQ_ID);
+                }
                 PaxosMsg::Prepare(p) => {
                     buf.put_u8(PREPARE_ID);
                     PaxosSer::serialise_ballot(&p.n, buf);
@@ -386,6 +391,10 @@ pub mod paxos {
             let from = buf.get_u64();
             let to = buf.get_u64();
             match buf.get_u8() {
+                PREPAREREQ_ID => {
+                    let msg = Message::with(from, to, PaxosMsg::PrepareReq);
+                    Ok(msg)
+                }
                 PREPARE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
@@ -1128,84 +1137,6 @@ impl Deserialiser<StopMsg> for StopMsgDeser {
             _ => Err(SerError::InvalidType(
                 "Found unkown id but expected Peer stop or client stop".into(),
             )),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct SequenceResp {
-    pub node_id: u64,
-    pub sequence: Vec<u64>,
-}
-
-impl SequenceResp {
-    pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
-        SequenceResp { node_id, sequence }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum TestMessage {
-    SequenceReq,
-    SequenceResp(SequenceResp),
-}
-
-#[derive(Clone)]
-pub struct TestMessageSer;
-
-const SEQREQ_ID: u8 = 0;
-const SEQRESP_ID: u8 = 1;
-
-impl Serialiser<TestMessage> for TestMessageSer {
-    fn ser_id(&self) -> u64 {
-        serialiser_ids::TEST_SEQ_ID
-    }
-
-    fn size_hint(&self) -> Option<usize> {
-        Some(50000)
-    }
-
-    fn serialise(&self, msg: &TestMessage, buf: &mut dyn BufMut) -> Result<(), SerError> {
-        match msg {
-            TestMessage::SequenceReq => {
-                buf.put_u8(SEQREQ_ID);
-                Ok(())
-            }
-            TestMessage::SequenceResp(sr) => {
-                buf.put_u8(SEQRESP_ID);
-                buf.put_u64(sr.node_id);
-                let seq_len = sr.sequence.len() as u32;
-                buf.put_u32(seq_len);
-                for i in &sr.sequence {
-                    buf.put_u64(*i);
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl Deserialiser<TestMessage> for TestMessageSer {
-    const SER_ID: u64 = serialiser_ids::TEST_SEQ_ID;
-
-    fn deserialise(buf: &mut dyn Buf) -> Result<TestMessage, SerError> {
-        match buf.get_u8() {
-            SEQREQ_ID => Ok(TestMessage::SequenceReq),
-            SEQRESP_ID => {
-                let node_id = buf.get_u64();
-                let sequence_len = buf.get_u32();
-                let mut sequence: Vec<u64> = Vec::new();
-                for _ in 0..sequence_len {
-                    sequence.push(buf.get_u64());
-                }
-                let sr = SequenceResp{ node_id, sequence};
-                Ok(TestMessage::SequenceResp(sr))
-            },
-            _ => {
-                Err(SerError::InvalidType(
-                    "Found unkown id when deserialising TestMessage. Expected SequenceReq or SequenceResp".into(),
-                ))
-            }
         }
     }
 }

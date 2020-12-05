@@ -9,11 +9,10 @@ use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
 use synchronoise::CountdownEvent;
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum ExperimentState {
     LeaderElection,
     Running,
-    ProposedReconfiguration,
     ReconfigurationElection,
     Finished,
 }
@@ -172,8 +171,8 @@ impl Client {
             if from > to {
                 return;
             }
-            let cache_start_time = self.num_concurrent_proposals == 1
-                || self.state == ExperimentState::ProposedReconfiguration;
+            let cache_start_time =
+                self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
             for id in from..=to {
                 let current_time = match cache_start_time {
                     true => Some(SystemTime::now()),
@@ -248,10 +247,6 @@ impl Client {
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(&leader);
-                #[cfg(feature = "track_reconfig_latency")]
-                {
-                    self.state = ExperimentState::ProposedReconfiguration;
-                }
             }
             let timer =
                 self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
@@ -270,10 +265,6 @@ impl Client {
         if id == RECONFIG_ID {
             if let Some(leader) = self.nodes.get(&self.current_leader) {
                 self.propose_reconfiguration(leader);
-                #[cfg(feature = "track_reconfig_latency")]
-                {
-                    self.state = ExperimentState::ProposedReconfiguration;
-                }
             }
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = self.pending_proposals.get_mut(&id).expect(&format!(
@@ -307,13 +298,18 @@ impl Client {
 
     fn hold_back_proposals(&mut self, from: u64, to: u64) {
         for i in from..=to {
-            let ProposalMetaData { start_time, timer } =
-                self.pending_proposals.remove(&i).expect(&format!(
-                    "No proposal with id {} in pending_proposals to hold back",
-                    i
-                ));
-            self.cancel_timer(timer);
-            self.retry_proposals.push((i, start_time));
+            match self.pending_proposals.remove(&i) {
+                Some(ProposalMetaData { start_time, timer }) => {
+                    self.cancel_timer(timer);
+                    self.retry_proposals.push((i, start_time));
+                }
+                None => {
+                    assert!(
+                        self.responses.contains_key(&i),
+                        "Hold back proposal not in pending and responses: {}. State {:?}, has_reconfig: {}", i, self.state, self.reconfig.is_some()
+                    )
+                }
+            }
         }
     }
 
@@ -505,7 +501,7 @@ impl Actor for Client {
             },
             stop: NetStopMsg [StopMsgDeser] => {
                 if let NetStopMsg::Peer(pid) = stop {
-                    self.nodes.remove(&pid).expect(&format!("Got stop from unknown pid {}", pid));
+                    self.nodes.remove(&pid).unwrap_or_else(|| panic!("Got stop from unknown pid {}", pid));
                     if self.nodes.is_empty() {
                         self.reply_stop_ask();
                     }
@@ -515,226 +511,5 @@ impl Actor for Client {
         }
         }
         Handled::Ok
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-    use crate::bench::atomic_broadcast::messages::{TestMessage, TestMessageSer};
-
-    #[derive(ComponentDefinition)]
-    pub struct TestClient {
-        ctx: ComponentContext<Self>,
-        num_proposals: u64,
-        concurrent_proposals: u64,
-        nodes: HashMap<u64, ActorPath>,
-        reconfig: Option<(Vec<u64>, Vec<u64>)>,
-        test_results: HashMap<u64, Vec<u64>>,
-        finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
-        check_sequences: bool,
-        responses: HashSet<u64>,
-        proposal_timeouts: HashMap<u64, ScheduledTimer>,
-    }
-
-    impl TestClient {
-        pub fn with(
-            num_proposals: u64,
-            concurrent_proposals: u64,
-            nodes: HashMap<u64, ActorPath>,
-            reconfig: Option<(Vec<u64>, Vec<u64>)>,
-            finished_promise: KPromise<HashMap<u64, Vec<u64>>>,
-            check_sequences: bool,
-        ) -> TestClient {
-            let mut tr = HashMap::new();
-            tr.insert(0, Vec::with_capacity(num_proposals as usize));
-            TestClient {
-                ctx: ComponentContext::uninitialised(),
-                num_proposals,
-                concurrent_proposals,
-                nodes,
-                reconfig,
-                test_results: tr,
-                finished_promise,
-                check_sequences,
-                responses: HashSet::with_capacity(num_proposals as usize),
-                proposal_timeouts: HashMap::with_capacity(concurrent_proposals as usize),
-            }
-        }
-
-        fn propose_normal(&mut self, id: u64) {
-            let p = Proposal::normal(id);
-            let node = self
-                .nodes
-                .get(&1)
-                .expect("Could not find actorpath to raft node!");
-            node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
-                .expect("Should serialise proposal");
-            let timer = self.schedule_once(timeout, move |c, _| c.retry_proposal(id));
-            self.proposal_timeouts.insert(id, timer);
-        }
-
-        fn send_normal_proposals<T>(&mut self, r: T)
-        where
-            T: IntoIterator<Item = u64>,
-        {
-            for id in r {
-                self.propose_normal(id);
-            }
-        }
-
-        fn send_batch(&mut self) {
-            let received_count = self.responses.len() as u64;
-            let from = received_count + 1;
-            let i = received_count + self.concurrent_proposals;
-            let to = if i > self.num_proposals {
-                self.num_proposals
-            } else {
-                i
-            };
-            self.send_normal_proposals(from..=to);
-        }
-
-        fn propose_reconfiguration(&mut self) {
-            let reconfig = self.reconfig.take().unwrap();
-            info!(
-                self.ctx.log(),
-                "{}",
-                format!("Sending reconfiguration: {:?}", reconfig)
-            );
-            let p = Proposal::reconfiguration(0, reconfig);
-            let raft_node = self
-                .nodes
-                .get(&1)
-                .expect("Could not find actorpath to raft node!");
-            raft_node
-                .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
-                .expect("Should serialise reconfig proposal");
-        }
-
-        fn retry_proposal(&mut self, id: u64) {
-            if !self.responses.contains(&id) {
-                self.propose_normal(id);
-            }
-        }
-    }
-
-    impl Provide<ControlPort> for TestClient {
-        fn handle(&mut self, event: <ControlPort as Port>::Request) -> Handled {
-            match event {
-                ControlEvent::Start => info!(self.ctx.log(), "Started bcast client"),
-                _ => {} //ignore
-            }
-            Handled::Ok
-        }
-    }
-
-    impl Actor for TestClient {
-        type Message = Run;
-
-        fn receive_local(&mut self, _msg: Self::Message) -> Handled {
-            // info!(self.ctx.log(), "CLIENT ACTORPATH={:?}", self.ctx.actor_path());
-            self.send_batch();
-            self.schedule_periodic(
-                Duration::from_secs(5),
-                Duration::from_secs(30),
-                move |c, _| {
-                    info!(
-                        c.ctx.log(),
-                        "Client: received: {}/{}",
-                        c.responses.len(),
-                        c.num_proposals
-                    )
-                },
-            );
-            Handled::Ok
-        }
-
-        fn receive_network(&mut self, msg: NetMessage) -> Handled {
-            let NetMessage {
-                sender: _,
-                receiver: _,
-                data,
-            } = msg;
-            match_deser! {data; {
-                    am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
-                        match am {
-                            AtomicBroadcastMsg::ProposalResp(pr) => {
-                                    match pr.id {
-                                        RECONFIG_ID => {
-                                            info!(self.ctx.log(), "reconfiguration succeeded?");
-                                            if self.responses.len() as u64 == self.num_proposals {
-                                                if self.check_sequences {
-                                                    info!(self.ctx.log(), "TestClient requesting sequences");
-                                                    for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
-                                                        actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
-                                                    }
-                                                } else {
-                                                    self.finished_promise
-                                                        .to_owned()
-                                                        .fulfil(self.test_results.clone())
-                                                        .expect("Failed to fulfill finished promise after successful reconfiguration");
-                                                }
-                                            } /*else {
-                                                self.send_batch();
-                                            }*/
-                                        },
-                                        _ => {
-                                            if self.responses.insert(pr.id) {
-                                                if pr.id % 100 == 0 {
-                                                    info!(self.ctx.log(), "Got succeeded proposal {}", pr.id);
-                                                }
-                                                if let Some(timer) = self.proposal_timeouts.remove(&pr.id) {
-                                                    self.cancel_timer(timer);
-                                                }
-                                                let decided_sequence = self.test_results.get_mut(&0).unwrap();
-                                                decided_sequence.push(pr.id);
-                                                let received_count = self.responses.len() as u64;
-            //                                    info!(self.ctx.log(), "Got proposal response id: {}", &pr.id);
-                                                if received_count == self.num_proposals {
-                                                    if self.check_sequences {
-                                                        info!(self.ctx.log(), "TestClient requesting sequences. num_responses: {}", self.responses.len());
-                                                        for (_, actorpath) in &self.nodes {  // get sequence of ALL (past or present) nodes
-                                                            actorpath.tell((TestMessage::SequenceReq, TestMessageSer), self);
-                                                        }
-                                                    } else {
-                                                        self.finished_promise
-                                                            .to_owned()
-                                                            .fulfil(self.test_results.clone())
-                                                            .expect("Failed to fulfill finished promise after getting all sequences");
-                                                    }
-                                                } else if received_count % self.concurrent_proposals == 0 {
-                                                    if received_count >= self.num_proposals/2 && self.reconfig.is_some() {
-                                                        self.propose_reconfiguration();
-                                                    }
-                                                    self.send_batch();
-                                                }
-                                            }
-                                        }
-                                    }
-                            },
-                            e => error!(self.ctx.log(), "Client received unexpected msg {:?}", e),
-                        }
-                        Handled::Ok
-                    },
-                    tm: TestMessage [TestMessageSer] => {
-                        match tm {
-                            TestMessage::SequenceResp(sr) => {
-                                self.test_results.insert(sr.node_id, sr.sequence);
-                                if (self.test_results.len()) == self.nodes.len() + 1 {    // got sequences from everybody, we're done
-                                    info!(self.ctx.log(), "Got all sequences");
-                                    self.finished_promise
-                                        .to_owned()
-                                        .fulfil(self.test_results.clone())
-                                        .expect("Failed to fulfill finished promise after getting all sequences");
-                                }
-                            },
-                            _ => error!(self.ctx.log(), "Received unexpected TestMessage {:?}", tm),
-                        }
-                    },
-                    !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
-                }
-                }
-        }
     }
 }

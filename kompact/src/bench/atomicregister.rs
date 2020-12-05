@@ -211,8 +211,8 @@ pub mod actor_atomicregister {
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
                     nodes.push(self_path);
-                    for i in 0..(self.partition_size.unwrap() - 1) as usize {
-                        nodes.push(d[i].clone());
+                    for actor_path in d.iter().take((self.partition_size.unwrap() - 1) as usize) {
+                        nodes.push(actor_path.clone());
                     }
                     /*** Setup partitioning actor ***/
                     let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {
@@ -930,8 +930,7 @@ pub mod mixed_atomicregister {
                     let prepare_latch = Arc::new(CountdownEvent::new(1));
                     let finished_latch = Arc::new(CountdownEvent::new(1));
                     /*** Setup Broadcast component ***/
-                    let (bcast_comp, unique_reg_f) =
-                        system.create_and_register(|| BroadcastComp::new());
+                    let (bcast_comp, unique_reg_f) = system.create_and_register(BroadcastComp::new);
                     let bcast_comp_f = system.start_notify(&bcast_comp);
                     bcast_comp_f
                         .wait_timeout(Duration::from_millis(1000))
@@ -979,8 +978,8 @@ pub mod mixed_atomicregister {
                     ));
                     let mut nodes: Vec<ActorPath> = Vec::new();
                     nodes.push(self_path);
-                    for i in 0..(self.partition_size.unwrap() - 1) as usize {
-                        nodes.push(d[i].clone());
+                    for actor_path in d.iter().take((self.partition_size.unwrap() - 1) as usize) {
+                        nodes.push(actor_path.clone());
                     }
                     /*** Connect broadcast and atomic register ***/
                     // on_dual_definition(
@@ -1110,7 +1109,7 @@ pub mod mixed_atomicregister {
             let system = crate::kompact_system_provider::global()
                 .new_remote_system_with_threads("atomicregister", 4);
             /*** Setup Broadcast component ***/
-            let (bcast_comp, unique_reg_f) = system.create_and_register(|| BroadcastComp::new());
+            let (bcast_comp, unique_reg_f) = system.create_and_register(BroadcastComp::new);
             let bcast_comp_f = system.start_notify(&bcast_comp);
             bcast_comp_f
                 .wait_timeout(Duration::from_millis(1000))

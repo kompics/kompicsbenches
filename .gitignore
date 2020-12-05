@@ -103,5 +103,3 @@ out/
 .metals/
 *.code-workspace
 .vscode
-
-kompact/diskstorage/

@@ -112,13 +112,15 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 }
 
-fn get_initial_conf(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
-    let mut conf: Vec<u64> = vec![];
-    for id in 1..=last_node_id {
-        conf.push(id);
+fn get_experiment_configs(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
+    if last_node_id % 2 == 0 {
+        let initial_config: Vec<_> = (1..last_node_id).collect();
+        let reconfig: Vec<_> = (2..=last_node_id).collect();
+        (initial_config, reconfig)
+    } else {
+        let initial_config: Vec<_> = (1..=last_node_id).collect();
+        (initial_config, vec![])
     }
-    let initial_conf: (Vec<u64>, Vec<u64>) = (conf, vec![]);
-    initial_conf
 }
 
 fn get_reconfig_data(
@@ -152,21 +154,21 @@ fn get_reconfig_data(
 }
 type Storage = MemStorage;
 
-pub struct ExperimentConfig {
+pub struct ExperimentParams {
     pub election_timeout: u64,
     pub outgoing_period: Duration,
     pub max_inflight: usize,
     pub initial_election_factor: u64,
 }
 
-impl ExperimentConfig {
+impl ExperimentParams {
     pub fn new(
         election_timeout: u64,
         outgoing_period: Duration,
         max_inflight: usize,
         initial_election_factor: u64,
-    ) -> ExperimentConfig {
-        ExperimentConfig {
+    ) -> ExperimentParams {
+        ExperimentParams {
             election_timeout,
             outgoing_period,
             max_inflight,
@@ -174,7 +176,7 @@ impl ExperimentConfig {
         }
     }
 
-    pub fn load_from_file<P>(path: P) -> ExperimentConfig
+    pub fn load_from_file<P>(path: P) -> ExperimentParams
     where
         P: Into<PathBuf>,
     {
@@ -197,7 +199,7 @@ impl ExperimentConfig {
             .as_i64()
             .expect("Failed to load initial_election_factor")
             as u64;
-        ExperimentConfig::new(
+        ExperimentParams::new(
             election_timeout,
             outgoing_period,
             max_inflight,
@@ -442,7 +444,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         if c.concurrent_proposals == 1
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
             self.latency_hist =
                 Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
@@ -455,7 +457,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         self.system = Some(system);
-        let params = ClientParams::with(c.algorithm, c.number_of_nodes, c.reconfig_policy);
+        let last_node_id = if self.reconfiguration.is_some() {
+            c.number_of_nodes + 1
+        } else {
+            c.number_of_nodes
+        };
+        let params = ClientParams::with(c.algorithm, last_node_id, c.reconfig_policy);
         Ok(params)
     }
 
@@ -517,7 +524,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1)
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
             let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
             let dir = format!("{}/latency/", meta_path);
@@ -569,7 +576,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                     .expect("Failed to open meta summary file");
                 let len = self.num_timed_out.len();
                 let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
-                self.num_timed_out.sort();
+                self.num_timed_out.sort_unstable();
                 let min = self.num_timed_out.first().unwrap();
                 let max = self.num_timed_out.last().unwrap();
                 let avg = sum / (self.iteration_id as u64);
@@ -580,14 +587,13 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 );
                 writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
                     .expect("Failed to write meta summary file");
-                writeln!(summary_file, "{}", summary_str).expect(&format!(
-                    "Failed to write meta summary file: {}",
-                    summary_str
-                ));
+                writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| {
+                    panic!("Failed to write meta summary file: {}", summary_str)
+                });
                 summary_file.flush().expect("Failed to flush meta file");
             }
             if self.concurrent_proposals == Some(1)
-                || (self.reconfiguration.is_some() && cfg!(feature = "track_reconfig_latency"))
+                || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
             {
                 let dir = format!("{}/latency/", meta_path);
                 create_dir_all(&dir)
@@ -684,62 +690,59 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
-        let named_path = match &c.algorithm {
-            paxos if paxos == "paxos" || paxos == "paxos-batch" => {
-                let initial_config = get_initial_conf(c.last_node_id).0;
+        let named_path = match c.algorithm.as_ref() {
+            "paxos" => {
+                let experiment_configs = get_experiment_configs(c.last_node_id);
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
                     "eager" => Some(PaxosReconfigurationPolicy::Eager),
                     "pull" => Some(PaxosReconfigurationPolicy::Pull),
                     unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                 };
-                let experiment_config = ExperimentConfig::load_from_file(CONFIG_PATH);
-                let (paxos_replica, unique_reg_f) = system.create_and_register(|| {
+                let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
+                let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
                     PaxosComp::with(
-                        initial_config,
+                        experiment_configs,
                         reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
-                        experiment_config,
+                        experiment_params,
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
-                    .register_by_alias(&paxos_replica, PAXOS_PATH)
+                    .register_by_alias(&paxos_comp, PAXOS_PATH)
                     .wait_expect(REGISTER_TIMEOUT, "Failed to register alias for ReplicaComp");
-                let paxos_replica_f = system.start_notify(&paxos_replica);
-                paxos_replica_f
+                let paxos_comp_f = system.start_notify(&paxos_comp);
+                paxos_comp_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("ReplicaComp never started!");
-                self.paxos_comp = Some(paxos_replica);
+                self.paxos_comp = Some(paxos_comp);
                 self_path
             }
-            raft if raft == "raft" => {
-                let conf_state = get_initial_conf(c.last_node_id);
+            "raft" => {
+                let voters = get_experiment_configs(c.last_node_id).0;
                 let reconfig_policy = match c.reconfig_policy.as_ref() {
                     "none" => None,
                     "replace-leader" => Some(RaftReconfigurationPolicy::ReplaceLeader),
                     "replace-follower" => Some(RaftReconfigurationPolicy::ReplaceFollower),
                     unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
                 };
-                //                let storage = MemStorage::new_with_conf_state(conf_state);
-                //                let dir = "./diskstorage";
-                //                let storage = DiskStorage::new_with_conf_state(dir, conf_state);
                 /*** Setup RaftComp ***/
-                let (raft_replica, unique_reg_f) = system.create_and_register(|| {
+                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
                     RaftComp::<Storage>::with(
-                        conf_state.0,
+                        voters,
                         reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
                     )
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system
-                    .register_by_alias(&raft_replica, RAFT_PATH)
+                    .register_by_alias(&raft_comp, RAFT_PATH)
                     .wait_expect(REGISTER_TIMEOUT, "Communicator failed to register!");
-                let raft_replica_f = system.start_notify(&raft_replica);
-                raft_replica_f
+                let raft_comp_f = system.start_notify(&raft_comp);
+                raft_comp_f
                     .wait_timeout(REGISTER_TIMEOUT)
                     .expect("RaftComp never started!");
 
-                self.raft_comp = Some(raft_replica);
+                self.raft_comp = Some(raft_comp);
                 self_path
             }
             unknown => panic!("Got unknown algorithm: {}", unknown),
@@ -785,5 +788,306 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::bench::atomic_broadcast::paxos::SequenceTraits;
+
+    #[derive(Debug)]
+    struct GetSequence(Ask<(), SequenceResp>);
+
+    impl<S> Into<PaxosCompMsg<S>> for GetSequence
+    where
+        S: SequenceTraits,
+    {
+        fn into(self) -> PaxosCompMsg<S> {
+            PaxosCompMsg::GetSequence(self.0)
+        }
+    }
+
+    impl Into<RaftCompMsg> for GetSequence {
+        fn into(self) -> RaftCompMsg {
+            RaftCompMsg::GetSequence(self.0)
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct SequenceResp {
+        pub node_id: u64,
+        pub sequence: Vec<u64>,
+    }
+
+    impl SequenceResp {
+        pub fn with(node_id: u64, sequence: Vec<u64>) -> SequenceResp {
+            SequenceResp { node_id, sequence }
+        }
+    }
+
+    fn create_nodes(
+        n: u64,
+        algorithm: &str,
+        reconfig_policy: &str,
+        last_node_id: u64,
+    ) -> (
+        Vec<KompactSystem>,
+        Vec<ActorPath>,
+        Vec<Recipient<GetSequence>>,
+    ) {
+        let mut systems = Vec::with_capacity(n as usize);
+        let mut actor_paths = Vec::with_capacity(n as usize);
+        let mut actor_refs = Vec::with_capacity(n as usize);
+        let mut conf = KompactConfig::default();
+        conf.load_config_file(CONFIG_PATH);
+        let bc = BufferConfig::from_config_file(CONFIG_PATH);
+        bc.validate();
+        let tcp_no_delay = true;
+        for i in 1..=n {
+            let system = kompact_benchmarks::kompact_system_provider::global()
+                .new_remote_system_with_threads_config(
+                    format!("node{}", i),
+                    4,
+                    conf.clone(),
+                    bc.clone(),
+                    tcp_no_delay,
+                );
+            let (actor_path, actor_ref) = match algorithm {
+                "paxos" => {
+                    let experiment_configs = get_experiment_configs(last_node_id);
+                    let reconfig_policy = match reconfig_policy {
+                        "none" => None,
+                        "eager" => Some(PaxosReconfigurationPolicy::Eager),
+                        "pull" => Some(PaxosReconfigurationPolicy::Pull),
+                        unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
+                    };
+                    let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
+                    let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
+                        PaxosComp::<MemorySequence, MemoryState>::with(
+                            experiment_configs,
+                            reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
+                            experiment_params,
+                        )
+                    });
+                    unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
+                    let self_path = system
+                        .register_by_alias(&paxos_comp, PAXOS_PATH)
+                        .wait_expect(REGISTER_TIMEOUT, "Failed to register alias for ReplicaComp");
+                    let paxos_comp_f = system.start_notify(&paxos_comp);
+                    paxos_comp_f
+                        .wait_timeout(REGISTER_TIMEOUT)
+                        .expect("ReplicaComp never started!");
+                    let r: Recipient<GetSequence> = paxos_comp.actor_ref().recipient();
+                    (self_path, r)
+                }
+                "raft" => {
+                    let voters = get_experiment_configs(last_node_id).0;
+                    let reconfig_policy = match reconfig_policy {
+                        "none" => None,
+                        "replace-leader" => Some(RaftReconfigurationPolicy::ReplaceLeader),
+                        "replace-follower" => Some(RaftReconfigurationPolicy::ReplaceFollower),
+                        unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
+                    };
+                    /*** Setup RaftComp ***/
+                    let (raft_comp, unique_reg_f) = system.create_and_register(|| {
+                        RaftComp::<Storage>::with(
+                            voters,
+                            reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
+                        )
+                    });
+                    unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
+                    let self_path = system
+                        .register_by_alias(&raft_comp, RAFT_PATH)
+                        .wait_expect(REGISTER_TIMEOUT, "Communicator failed to register!");
+                    let raft_comp_f = system.start_notify(&raft_comp);
+                    raft_comp_f
+                        .wait_timeout(REGISTER_TIMEOUT)
+                        .expect("RaftComp never started!");
+
+                    let r: Recipient<GetSequence> = raft_comp.actor_ref().recipient();
+                    (self_path, r)
+                }
+                unknown => panic!("Got unknown algorithm: {}", unknown),
+            };
+            systems.push(system);
+            actor_paths.push(actor_path);
+            actor_refs.push(actor_ref);
+        }
+        (systems, actor_paths, actor_refs)
+    }
+
+    fn check_quorum(sequence_responses: &[SequenceResp], quorum_size: usize, num_proposals: u64) {
+        for i in 1..=num_proposals {
+            let nodes: Vec<_> = sequence_responses
+                .iter()
+                .filter(|sr| sr.sequence.contains(&i))
+                .map(|sr| sr.node_id)
+                .collect();
+            let timed_out_proposal = nodes.len() == 0;
+            if !timed_out_proposal {
+                assert!(nodes.len() >= quorum_size, "Decided value did NOT have majority quorum! proposal_id: {}, contained: {:?}, quorum: {}", i, nodes, quorum_size);
+            }
+        }
+    }
+
+    fn check_validity(sequence_responses: &[SequenceResp], num_proposals: u64) {
+        let invalid_nodes: Vec<_> = sequence_responses
+            .iter()
+            .map(|sr| (sr.node_id, sr.sequence.iter().max().unwrap_or(&0)))
+            .filter(|(_, max)| *max > &num_proposals)
+            .collect();
+        assert!(
+            invalid_nodes.len() < 1,
+            "Nodes decided unproposed values. Num_proposals: {}, invalied_nodes: {:?}",
+            num_proposals,
+            invalid_nodes
+        );
+    }
+
+    fn check_uniform_agreement(sequence_responses: &[SequenceResp]) {
+        let longest_seq = sequence_responses
+            .iter()
+            .max_by(|sr, other_sr| sr.sequence.len().cmp(&other_sr.sequence.len()))
+            .expect("Empty SequenceResp from nodes!");
+        for sr in sequence_responses {
+            assert!(longest_seq.sequence.starts_with(sr.sequence.as_slice()));
+        }
+    }
+
+    fn run_experiment(
+        algorithm: &str,
+        num_nodes: u64,
+        num_proposals: u64,
+        concurrent_proposals: u64,
+        reconfiguration: &str,
+        reconfig_policy: &str,
+    ) {
+        let mut master = AtomicBroadcastMaster::new();
+        let mut experiment = AtomicBroadcastRequest::new();
+        experiment.algorithm = String::from(algorithm);
+        experiment.number_of_nodes = num_nodes;
+        experiment.number_of_proposals = num_proposals;
+        experiment.concurrent_proposals = concurrent_proposals;
+        experiment.reconfiguration = String::from(reconfiguration);
+        experiment.reconfig_policy = String::from(reconfig_policy);
+        let num_nodes_needed = match reconfiguration {
+            "off" => num_nodes,
+            "single" => num_nodes + 1,
+            _ => unimplemented!(),
+        };
+        let d = DeploymentMetaData::new(num_nodes_needed as u32);
+        let (client_systems, clients, client_refs) = create_nodes(
+            num_nodes_needed,
+            experiment.get_algorithm(),
+            experiment.get_reconfig_policy(),
+            num_nodes_needed,
+        );
+        master
+            .setup(experiment, &d)
+            .expect("Failed to setup master");
+        master.prepare_iteration(clients);
+        master.run_iteration();
+
+        let mut futures = vec![];
+        for client in client_refs {
+            let (kprom, kfuture) = promise::<SequenceResp>();
+            let ask = Ask::new(kprom, ());
+            client.tell(GetSequence(ask));
+            futures.push(kfuture);
+        }
+        let sequence_responses: Vec<_> = FutureCollection::collect_results::<Vec<_>>(futures);
+        let quorum_size = num_nodes as usize / 2 + 1;
+        check_quorum(&sequence_responses, quorum_size, num_proposals);
+        check_validity(&sequence_responses, num_proposals);
+        check_uniform_agreement(&sequence_responses);
+
+        master.cleanup_iteration(true, 0.0);
+        for system in client_systems {
+            system.shutdown().expect("Failed to shutdown system");
+        }
+    }
+
+    #[test]
+    fn paxos_normal_test() {
+        let num_nodes = 3;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
+        let reconfiguration = "off";
+        let reconfig_policy = "none";
+        run_experiment(
+            "paxos",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
+    }
+
+    #[test]
+    fn paxos_reconfig_test() {
+        let num_nodes = 3;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
+        let reconfiguration = "single";
+        let reconfig_policy = "pull";
+        run_experiment(
+            "paxos",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
+    }
+
+    #[test]
+    fn raft_normal_test() {
+        let num_nodes = 3;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
+        let reconfiguration = "off";
+        let reconfig_policy = "none";
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            reconfig_policy,
+        );
+    }
+
+    #[test]
+    fn raft_reconfig_follower_test() {
+        let num_nodes = 3;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
+        let reconfiguration = "single";
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            "replace-follower",
+        );
+    }
+
+    #[test]
+    fn raft_reconfig_leader_test() {
+        let num_nodes = 3;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
+        let reconfiguration = "single";
+        run_experiment(
+            "raft",
+            num_nodes,
+            num_proposals,
+            concurrent_proposals,
+            reconfiguration,
+            "replace-leader",
+        );
     }
 }
