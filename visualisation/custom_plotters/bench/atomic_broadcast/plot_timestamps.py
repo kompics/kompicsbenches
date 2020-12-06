@@ -37,7 +37,7 @@ for filename in data_files :
         if count % sample == 0 or (count >= keep_min and count <= keep_max):
             try:
                 x.append(count)
-                y.append(float(line)/1000)  # ms
+                y.append(float(line))
             except:
                 pass
         if count == n:
@@ -64,17 +64,17 @@ dir_name = os.path.basename(os.path.normpath(args.s))
 if "-" in dir_name:
     (nodes, cp) = tuple(dir_name.split("-"))
     fig.update_layout(
-        title="Latency of every {}th proposal, fully-sampled interval: [{}, {}]".format(sample, keep_min, keep_max),
+        title="Timestamp of every {}th response since start of benchmark, fully-sampled interval: [{}, {}]".format(sample, keep_min, keep_max),
         xaxis_title="Proposal id",
-        yaxis_title="Latency (ms)",
+        yaxis_title="Timestamp (ns)",
         legend_title="nodes: {}, concurrent_proposals: {}".format(nodes, cp)
     )
 else:
     fig.update_layout(
-        title="Latency of every proposal",
+        title="Timestamp of every response since start of benchmark",
         xaxis_title="Proposal id",
-        yaxis_title="Latency (ms)",
+        yaxis_title="Timestamp (ns)",
         #legend_title="3 nodes"
     )
        
-fig.write_html(args.t + '/latency.html', auto_open=False)
+fig.write_html(args.t + '/timestamps.html', auto_open=False)

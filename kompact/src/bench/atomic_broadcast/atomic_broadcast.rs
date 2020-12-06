@@ -25,6 +25,7 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use tikv_raft::storage::MemStorage;
+use crate::bench::atomic_broadcast::client::MetaResults;
 
 const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
@@ -416,6 +417,127 @@ impl AtomicBroadcastMaster {
         let meta_results_path = config["experiment"]["meta_results_path"].as_string();
         (client_timeout, meta_results_path)
     }
+
+    #[cfg(feature = "track_timestamps")]
+    fn persist_timestamp_results(&mut self, timestamps: &[Duration]) {
+        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+        let timestamps_dir = format!("{}/timestamps/", meta_path);
+        create_dir_all(&timestamps_dir)
+            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &timestamps_dir));
+        let mut timestamps_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}raw_{}.data",
+                &timestamps_dir,
+                self.experiment_str.as_ref().unwrap()
+            ))
+            .expect("Failed to open latency file");
+        for ts in timestamps {
+            let timestamp = ts.as_nanos() as u64;
+            writeln!(timestamps_file, "{}", timestamp).expect("Failed to write raw latency");
+        }
+        timestamps_file.flush().expect("Failed to flush raw timestamps file");
+    }
+
+    fn persist_latency_results(&mut self, latencies: &[Duration]) {
+        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+        let latency_dir = format!("{}/latency/", meta_path);
+        create_dir_all(&latency_dir)
+            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
+        let mut latency_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}raw_{}.data",
+                &latency_dir,
+                self.experiment_str.as_ref().unwrap()
+            ))
+            .expect("Failed to open latency file");
+
+        let histo = self.latency_hist.as_mut().unwrap();
+        for l in latencies {
+            let latency = l.as_nanos() as u64;
+            writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
+            histo.record(latency).expect("Failed to record histogram");
+        }
+        latency_file.flush().expect("Failed to flush raw latency file");
+    }
+
+    fn persist_latency_summary(&mut self) {
+        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+        let dir = format!("{}/latency/", meta_path);
+        create_dir_all(&dir)
+            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}summary_{}.out",
+                &dir,
+                self.experiment_str.as_ref().unwrap()
+            ))
+            .expect("Failed to open latency file");
+        let hist = std::mem::take(&mut self.latency_hist).unwrap();
+        let quantiles = [
+            0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99,
+            0.999,
+        ];
+        for q in &quantiles {
+            writeln!(
+                file,
+                "Value at quantile {}: {} micro s",
+                q,
+                hist.value_at_quantile(*q)
+            )
+                .expect("Failed to write summary latency file");
+        }
+        let max = hist.max();
+        writeln!(
+            file,
+            "Min: {} micro s, Max: {} micro s, Average: {} micro s",
+            hist.min(),
+            max,
+            hist.mean()
+        )
+            .expect("Failed to write histogram summary");
+        writeln!(file, "Total elements: {}", hist.len())
+            .expect("Failed to write histogram summary");
+        file.flush().expect("Failed to flush histogram file");
+    }
+
+    fn persist_timeouts_summary(&mut self) {
+        let sum: u64 = self.num_timed_out.iter().sum();
+        if sum > 0 {
+            let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+            let summary_file_path = format!("{}/summary.out", meta_path);
+            create_dir_all(meta_path).unwrap_or_else(|_| {
+                panic!("Failed to create given directory: {}", summary_file_path)
+            });
+            let mut summary_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(summary_file_path)
+                .expect("Failed to open meta summary file");
+            let len = self.num_timed_out.len();
+            let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
+            self.num_timed_out.sort_unstable();
+            let min = self.num_timed_out.first().unwrap();
+            let max = self.num_timed_out.last().unwrap();
+            let avg = sum / (self.iteration_id as u64);
+            let median = self.num_timed_out[len / 2];
+            let summary_str = format!(
+                "{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}",
+                timed_out_len, len, sum, avg, median, min, max
+            );
+            writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
+                .expect("Failed to write meta summary file");
+            writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| {
+                panic!("Failed to write meta summary file: {}", summary_str)
+            });
+            summary_file.flush().expect("Failed to flush meta file");
+        }
+    }
 }
 
 impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
@@ -518,34 +640,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        let meta_results = client
+        let MetaResults{ latencies, timestamps, num_timed_out } = client
             .actor_ref()
             .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
-        self.num_timed_out.push(meta_results.num_timed_out);
-        if self.concurrent_proposals == Some(1)
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
-        {
-            let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
-            let dir = format!("{}/latency/", meta_path);
-            create_dir_all(&dir)
-                .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &dir));
-            let mut file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(format!(
-                    "{}raw_{}.data",
-                    &dir,
-                    self.experiment_str.as_ref().unwrap()
-                ))
-                .expect("Failed to open latency file");
-            let histo = self.latency_hist.as_mut().unwrap();
-            for (_, l) in meta_results.latencies {
-                let latency = l.as_micros() as u64;
-                writeln!(file, "{}", latency).expect("Failed to write raw latency");
-                histo.record(latency).expect("Failed to record histogram");
-            }
-            writeln!(file, "").expect("Failed to write raw latency"); // separate each run with empty line. TODO handle in plotting
+        self.num_timed_out.push(num_timed_out);
+        if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
+            self.persist_latency_results(&latencies);
+        }
+        #[cfg(feature = "track_timestamps")] {
+            self.persist_timestamp_results(&timestamps);
         }
 
         let kill_client_f = system.kill_notify(client);
@@ -562,86 +666,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
         if last_iteration {
             println!("Cleaning up last iteration");
-            let meta_path = self.meta_results_path.as_ref().expect("No meta path!");
-            let sum: u64 = self.num_timed_out.iter().sum();
-            if sum > 0 {
-                let summary_file_path = format!("{}/summary.out", meta_path);
-                create_dir_all(meta_path).unwrap_or_else(|_| {
-                    panic!("Failed to create given directory: {}", summary_file_path)
-                });
-                let mut summary_file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(summary_file_path)
-                    .expect("Failed to open meta summary file");
-                let len = self.num_timed_out.len();
-                let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
-                self.num_timed_out.sort_unstable();
-                let min = self.num_timed_out.first().unwrap();
-                let max = self.num_timed_out.last().unwrap();
-                let avg = sum / (self.iteration_id as u64);
-                let median = self.num_timed_out[len / 2];
-                let summary_str = format!(
-                    "{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}",
-                    timed_out_len, len, sum, avg, median, min, max
-                );
-                writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
-                    .expect("Failed to write meta summary file");
-                writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| {
-                    panic!("Failed to write meta summary file: {}", summary_str)
-                });
-                summary_file.flush().expect("Failed to flush meta file");
-            }
-            if self.concurrent_proposals == Some(1)
-                || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
-            {
-                let dir = format!("{}/latency/", meta_path);
-                create_dir_all(&dir)
-                    .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
-                let mut file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(format!(
-                        "{}summary_{}.out",
-                        &dir,
-                        self.experiment_str.as_ref().unwrap()
-                    ))
-                    .expect("Failed to open latency file");
-                let hist = std::mem::take(&mut self.latency_hist).unwrap();
-                let quantiles = [
-                    0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99,
-                    0.999,
-                ];
-                for q in &quantiles {
-                    writeln!(
-                        file,
-                        "Value at quantile {}: {} micro s",
-                        q,
-                        hist.value_at_quantile(*q)
-                    )
-                    .expect("Failed to write summary latency file");
-                }
-                let max = hist.max();
-                writeln!(
-                    file,
-                    "Min: {} micro s, Max: {} micro s, Average: {} micro s",
-                    hist.min(),
-                    max,
-                    hist.mean()
-                )
-                .expect("Failed to write histogram summary");
-                writeln!(file, "Total elements: {}", hist.len())
-                    .expect("Failed to write histogram summary");
-                file.flush().expect("Failed to flush histogram file");
-                // flush raw file
-                let raw_file_path =
-                    format!("{}raw_{}.data", dir, self.experiment_str.as_ref().unwrap());
-                let mut raw_file = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(raw_file_path)
-                    .expect("Failed to open raw latency file");
-                raw_file.flush().expect("Failed to flush raw latency file");
+            self.persist_timeouts_summary();
+            if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
+                self.persist_latency_summary();
             }
             self.algorithm = None;
             self.num_nodes = None;

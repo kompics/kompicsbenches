@@ -8,6 +8,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
 use synchronoise::CountdownEvent;
+#[cfg(feature = "track_timestamps")]
+use quanta::{Clock, Instant};
 
 #[derive(Debug, PartialEq)]
 enum ExperimentState {
@@ -47,14 +49,16 @@ impl ProposalMetaData {
 #[derive(Debug)]
 pub struct MetaResults {
     pub num_timed_out: u64,
-    pub latencies: Vec<(u64, Duration)>,
+    pub latencies: Vec<Duration>,
+    pub timestamps: Vec<Duration>
 }
 
 impl MetaResults {
-    pub fn with(num_timed_out: u64, latencies: Vec<(u64, Duration)>) -> Self {
+    pub fn with(num_timed_out: u64, latencies: Vec<Duration>, timestamps: Vec<Duration>) -> Self {
         MetaResults {
             num_timed_out,
             latencies,
+            timestamps
         }
     }
 }
@@ -84,6 +88,12 @@ pub struct Client {
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
     late_responses: Vec<u64>,
+    #[cfg(feature = "track_timestamps")]
+    clock: Clock,
+    #[cfg(feature = "track_timestamps")]
+    start: Option<Instant>,
+    #[cfg(feature = "track_timestamps")]
+    timestamps: HashMap<u64, Instant>
 }
 
 impl Client {
@@ -121,6 +131,12 @@ impl Client {
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
             late_responses: vec![],
+            #[cfg(feature = "track_timestamps")]
+            clock: Clock::new(),
+            #[cfg(feature = "track_timestamps")]
+            start: None,
+            #[cfg(feature = "track_timestamps")]
+            timestamps: HashMap::with_capacity(num_proposals as usize)
         }
     }
 
@@ -210,6 +226,10 @@ impl Client {
     }
 
     fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
+        #[cfg(feature = "track_timestamps")] {
+            let timestamp = self.clock.now();
+            self.timestamps.insert(id, timestamp);
+        }
         self.responses.insert(id, latency_res);
         let received_count = self.responses.len() as u64;
         if received_count == self.num_proposals && self.reconfig.is_none() {
@@ -341,11 +361,18 @@ impl Client {
             .filter(|(_, latency)| latency.is_some())
             .collect();
         v.sort();
-        let latencies: Vec<(u64, Duration)> = v
+        let latencies: Vec<Duration> = v
             .into_iter()
-            .map(|(id, latency)| (id, latency.unwrap()))
+            .map(|(_, latency)| latency.unwrap())
             .collect();
-        let meta_results = MetaResults::with(self.num_timed_out, latencies);
+        let mut timestamps = vec![];
+        #[cfg(feature = "track_timestamps")] {
+            let mut ts: Vec<_> = std::mem::take(&mut self.timestamps).into_iter().collect();
+            ts.sort();
+            let start = self.start.expect("No cached start point");
+            timestamps = ts.into_iter().map(|(_, timestamp)| timestamp.duration_since(start)).collect();
+        }
+        let meta_results = MetaResults::with(self.num_timed_out, latencies, timestamps);
         self.stop_ask
             .take()
             .expect("No stop promise!")
@@ -364,6 +391,9 @@ impl Actor for Client {
             LocalClientMessage::Run => {
                 self.state = ExperimentState::Running;
                 assert_ne!(self.current_leader, 0);
+                #[cfg(feature = "track_timestamps")] {
+                    self.start = Some(self.clock.now());
+                }
                 self.send_concurrent_proposals();
             }
             LocalClientMessage::Stop(a) => {
