@@ -17,6 +17,7 @@ use synchronoise::CountdownEvent;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
+use crate::bench::atomic_broadcast::client::MetaResults;
 use crate::bench::atomic_broadcast::paxos::PaxosCompMsg;
 use crate::bench::atomic_broadcast::raft::RaftCompMsg;
 use hocon::HoconLoader;
@@ -25,7 +26,6 @@ use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use tikv_raft::storage::MemStorage;
-use crate::bench::atomic_broadcast::client::MetaResults;
 
 const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
@@ -419,8 +419,15 @@ impl AtomicBroadcastMaster {
     }
 
     #[cfg(feature = "track_timestamps")]
-    fn persist_timestamp_results(&mut self, timestamps: &[Duration]) {
-        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+    fn persist_timestamp_results(
+        &mut self,
+        timestamps: &[Duration],
+        leader_changes_t: &[(u64, Duration)],
+    ) {
+        let meta_path = self
+            .meta_results_path
+            .as_ref()
+            .expect("No meta results path!");
         let timestamps_dir = format!("{}/timestamps/", meta_path);
         create_dir_all(&timestamps_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &timestamps_dir));
@@ -432,16 +439,28 @@ impl AtomicBroadcastMaster {
                 &timestamps_dir,
                 self.experiment_str.as_ref().unwrap()
             ))
-            .expect("Failed to open latency file");
+            .expect("Failed to open timestamps file");
+        for (pid, leader_change_ts) in leader_changes_t {
+            let ts = leader_change_ts.as_nanos() as u64;
+            write!(timestamps_file, "{},{} ", pid, ts)
+                .expect("Failed to write leader changes to timestamps file");
+        }
+        writeln!(timestamps_file, "").expect("Failed to write raw timestamps file");
         for ts in timestamps {
             let timestamp = ts.as_nanos() as u64;
-            writeln!(timestamps_file, "{}", timestamp).expect("Failed to write raw latency");
+            writeln!(timestamps_file, "{}", timestamp)
+                .expect("Failed to write raw timestamps file");
         }
-        timestamps_file.flush().expect("Failed to flush raw timestamps file");
+        timestamps_file
+            .flush()
+            .expect("Failed to flush raw timestamps file");
     }
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
-        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+        let meta_path = self
+            .meta_results_path
+            .as_ref()
+            .expect("No meta results path!");
         let latency_dir = format!("{}/latency/", meta_path);
         create_dir_all(&latency_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
@@ -461,11 +480,16 @@ impl AtomicBroadcastMaster {
             writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
             histo.record(latency).expect("Failed to record histogram");
         }
-        latency_file.flush().expect("Failed to flush raw latency file");
+        latency_file
+            .flush()
+            .expect("Failed to flush raw latency file");
     }
 
     fn persist_latency_summary(&mut self) {
-        let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+        let meta_path = self
+            .meta_results_path
+            .as_ref()
+            .expect("No meta results path!");
         let dir = format!("{}/latency/", meta_path);
         create_dir_all(&dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
@@ -480,8 +504,7 @@ impl AtomicBroadcastMaster {
             .expect("Failed to open latency file");
         let hist = std::mem::take(&mut self.latency_hist).unwrap();
         let quantiles = [
-            0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99,
-            0.999,
+            0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999,
         ];
         for q in &quantiles {
             writeln!(
@@ -490,7 +513,7 @@ impl AtomicBroadcastMaster {
                 q,
                 hist.value_at_quantile(*q)
             )
-                .expect("Failed to write summary latency file");
+            .expect("Failed to write summary latency file");
         }
         let max = hist.max();
         writeln!(
@@ -500,7 +523,7 @@ impl AtomicBroadcastMaster {
             max,
             hist.mean()
         )
-            .expect("Failed to write histogram summary");
+        .expect("Failed to write histogram summary");
         writeln!(file, "Total elements: {}", hist.len())
             .expect("Failed to write histogram summary");
         file.flush().expect("Failed to flush histogram file");
@@ -509,7 +532,10 @@ impl AtomicBroadcastMaster {
     fn persist_timeouts_summary(&mut self) {
         let sum: u64 = self.num_timed_out.iter().sum();
         if sum > 0 {
-            let meta_path = self.meta_results_path.as_ref().expect("No meta results path!");
+            let meta_path = self
+                .meta_results_path
+                .as_ref()
+                .expect("No meta results path!");
             let summary_file_path = format!("{}/summary.out", meta_path);
             create_dir_all(meta_path).unwrap_or_else(|_| {
                 panic!("Failed to create given directory: {}", summary_file_path)
@@ -532,9 +558,8 @@ impl AtomicBroadcastMaster {
             );
             writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
                 .expect("Failed to write meta summary file");
-            writeln!(summary_file, "{}", summary_str).unwrap_or_else(|_| {
-                panic!("Failed to write meta summary file: {}", summary_str)
-            });
+            writeln!(summary_file, "{}", summary_str)
+                .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", summary_str));
             summary_file.flush().expect("Failed to flush meta file");
         }
     }
@@ -640,7 +665,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        let MetaResults{ latencies, timestamps, num_timed_out } = client
+        let MetaResults {
+            latencies,
+            timestamps_leader_changes,
+            num_timed_out,
+        } = client
             .actor_ref()
             .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
@@ -648,8 +677,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
             self.persist_latency_results(&latencies);
         }
-        #[cfg(feature = "track_timestamps")] {
-            self.persist_timestamp_results(&timestamps);
+        #[cfg(feature = "track_timestamps")]
+        {
+            let (timestamps, leader_changes_t) =
+                timestamps_leader_changes.expect("No timestamps results!");
+            self.persist_timestamp_results(&timestamps, &leader_changes_t);
         }
 
         let kill_client_f = system.kill_notify(client);
