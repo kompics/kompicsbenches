@@ -236,8 +236,8 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   /*** split into different parameter spaces as some parameters are dependent on each other ***/
   private val atomicBroadcastTestNodes = List(3);
-  private val atomicBroadcastTestProposals = List(5L.k);
-  private val atomicBroadcastTestConcurrentProposals = List(500L, 1L.k, 2L.k);
+  private val atomicBroadcastTestProposals = List(1L.k);
+  private val atomicBroadcastTestConcurrentProposals = List(200L);
 
   private val atomicBroadcastNodes = List(3, 5);
   private val atomicBroadcastProposals = List(20L.mio);
@@ -342,7 +342,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     .cross(
       List("paxos", "raft"),
       List(3),
-      List(10L.k),
+      List(1L.k),
       List(1L),
       List("off"),
       List("none"),
@@ -366,7 +366,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfigPolicy = rp,
           )
       },
-    testSpace = paxosTestSpace.append(raftTestSpace)
+    testSpace = paxosReconfigTestSpace.append(raftReconfigTestSpace)
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(

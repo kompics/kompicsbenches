@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', required=True, help='Directory of raw results')
 parser.add_argument('-n', nargs='?', default=-1, help='Number of lines to read per file')
-parser.add_argument('-t', nargs='?', default='./', help='Output directory')
+parser.add_argument('-t', nargs='?', help='Output directory')
 parser.add_argument('-sample', nargs='?', default=1, help='Sample every X datapoint')
 parser.add_argument('-keep', nargs='+', default=[0, sys.maxint], type=int, help='Interval of datapoints that must be kept (i.e. not sampled)')
 #parser.add_argument('-trim', nargs = '?', default=0, help='Remove the X first and X last datapoints')
@@ -64,5 +64,8 @@ fig.update_layout(
     #legend_title="nodes: {}, concurrent_proposals: {}".format(nodes, cp)
 )
 
-       
-fig.write_html(args.t + '/histogram.html', auto_open=False)
+if args.t is not None:
+    target_dir = args.t
+else:
+    target_dir = args.s       
+fig.write_html(target_dir + '/histogram.html', auto_open=False)

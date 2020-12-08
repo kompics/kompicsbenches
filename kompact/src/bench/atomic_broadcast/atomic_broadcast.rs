@@ -441,13 +441,13 @@ impl AtomicBroadcastMaster {
             ))
             .expect("Failed to open timestamps file");
         for (pid, leader_change_ts) in leader_changes_t {
-            let ts = leader_change_ts.as_nanos() as u64;
+            let ts = leader_change_ts.as_micros() as u64;
             write!(timestamps_file, "{},{} ", pid, ts)
                 .expect("Failed to write leader changes to timestamps file");
         }
         writeln!(timestamps_file, "").expect("Failed to write raw timestamps file");
         for ts in timestamps {
-            let timestamp = ts.as_nanos() as u64;
+            let timestamp = ts.as_micros() as u64;
             writeln!(timestamps_file, "{}", timestamp)
                 .expect("Failed to write raw timestamps file");
         }
