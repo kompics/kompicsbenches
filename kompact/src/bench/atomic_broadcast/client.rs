@@ -4,6 +4,8 @@ use super::messages::{
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
+#[cfg(feature = "track_timestamps")]
+use quanta::{Clock, Instant};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use synchronoise::event::CountdownError;
@@ -47,14 +49,20 @@ impl ProposalMetaData {
 #[derive(Debug)]
 pub struct MetaResults {
     pub num_timed_out: u64,
-    pub latencies: Vec<(u64, Duration)>,
+    pub latencies: Vec<Duration>,
+    pub timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
 }
 
 impl MetaResults {
-    pub fn with(num_timed_out: u64, latencies: Vec<(u64, Duration)>) -> Self {
+    pub fn with(
+        num_timed_out: u64,
+        latencies: Vec<Duration>,
+        timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
+    ) -> Self {
         MetaResults {
             num_timed_out,
             latencies,
+            timestamps_leader_changes,
         }
     }
 }
@@ -84,6 +92,14 @@ pub struct Client {
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
     late_responses: Vec<u64>,
+    #[cfg(feature = "track_timestamps")]
+    clock: Clock,
+    #[cfg(feature = "track_timestamps")]
+    start: Option<Instant>,
+    #[cfg(feature = "track_timestamps")]
+    timestamps: HashMap<u64, Instant>,
+    #[cfg(feature = "track_timestamps")]
+    leader_changes_t: Vec<Instant>,
 }
 
 impl Client {
@@ -121,6 +137,14 @@ impl Client {
             timeouts: vec![],
             #[cfg(feature = "track_timeouts")]
             late_responses: vec![],
+            #[cfg(feature = "track_timestamps")]
+            clock: Clock::new(),
+            #[cfg(feature = "track_timestamps")]
+            start: None,
+            #[cfg(feature = "track_timestamps")]
+            timestamps: HashMap::with_capacity(num_proposals as usize),
+            #[cfg(feature = "track_timestamps")]
+            leader_changes_t: vec![],
         }
     }
 
@@ -210,6 +234,11 @@ impl Client {
     }
 
     fn handle_normal_response(&mut self, id: u64, latency_res: Option<Duration>) {
+        #[cfg(feature = "track_timestamps")]
+        {
+            let timestamp = self.clock.now();
+            self.timestamps.insert(id, timestamp);
+        }
         self.responses.insert(id, latency_res);
         let received_count = self.responses.len() as u64;
         if received_count == self.num_proposals && self.reconfig.is_none() {
@@ -341,11 +370,26 @@ impl Client {
             .filter(|(_, latency)| latency.is_some())
             .collect();
         v.sort();
-        let latencies: Vec<(u64, Duration)> = v
-            .into_iter()
-            .map(|(id, latency)| (id, latency.unwrap()))
-            .collect();
-        let meta_results = MetaResults::with(self.num_timed_out, latencies);
+        let latencies: Vec<Duration> = v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
+        let mut meta_results = MetaResults::with(self.num_timed_out, latencies, None);
+        #[cfg(feature = "track_timestamps")]
+        {
+            let mut ts: Vec<_> = std::mem::take(&mut self.timestamps).into_iter().collect();
+            ts.sort();
+            let start = self.start.expect("No cached start point");
+            let timestamps = ts
+                .into_iter()
+                .map(|(_, timestamp)| timestamp.duration_since(start))
+                .collect();
+            let leader_changes_t = std::mem::take(&mut self.leader_changes_t);
+            let pid_ts = self
+                .leader_changes
+                .iter()
+                .zip(leader_changes_t)
+                .map(|(pid, ts)| (*pid, ts.duration_since(start)))
+                .collect();
+            meta_results.timestamps_leader_changes = Some((timestamps, pid_ts));
+        }
         self.stop_ask
             .take()
             .expect("No stop promise!")
@@ -364,6 +408,13 @@ impl Actor for Client {
             LocalClientMessage::Run => {
                 self.state = ExperimentState::Running;
                 assert_ne!(self.current_leader, 0);
+                #[cfg(feature = "track_timestamps")]
+                {
+                    let now = self.clock.now();
+                    self.start = Some(now);
+                    self.leader_changes.push(self.current_leader);
+                    self.leader_changes_t.push(now);
+                }
                 self.send_concurrent_proposals();
             }
             LocalClientMessage::Stop(a) => {
@@ -405,6 +456,9 @@ impl Actor for Client {
                                     // info!(self.ctx.log(), "Got leader in ReconfigElection: {}. old: {}", pid, self.current_leader);
                                     self.current_leader = pid;
                                     self.leader_changes.push(pid);
+                                    #[cfg(feature = "track_timestamps")] {
+                                        self.leader_changes_t.push(self.clock.now());
+                                    }
                                 }
                                 self.state = ExperimentState::Running;
                                 if self.retry_proposals.is_empty() {
@@ -431,6 +485,9 @@ impl Actor for Client {
                                         // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                         self.current_leader = pr.latest_leader;
                                         self.leader_changes.push(pr.latest_leader);
+                                        #[cfg(feature = "track_timestamps")] {
+                                            self.leader_changes_t.push(self.clock.now());
+                                        }
                                     }
                                     self.handle_normal_response(id, latency);
                                     if self.state != ExperimentState::ReconfigurationElection {
@@ -466,6 +523,9 @@ impl Actor for Client {
                                             self.send_concurrent_proposals();
                                             if leader_changed {
                                                 self.leader_changes.push(pr.latest_leader);
+                                                #[cfg(feature = "track_timestamps")] {
+                                                    self.leader_changes_t.push(self.clock.now());
+                                                }
                                             }
                                         }
                                     }
