@@ -57,7 +57,10 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 		case Some(impl) => {
 			println(s"Found Benchmark ${impl.label} for ${name}. Master is at $master");
 			val logdir = logs / runId;
-			mkdir! logdir;
+			if (!exists(logdir)) {
+				mkdir! logdir;
+				%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $logdir");
+			}
 			val clientRunner = impl.clientRunner(master, s"${publicIf}:${clientPort}");
 			val client = clientRunner.run(logdir);
 			Runtime.getRuntime().addShutdownHook(new Thread() {
@@ -87,6 +90,9 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
@@ -118,7 +124,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 @doc("Run benchmarks using a cluster of nodes.")
 @main
 def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir()): Unit = {
-	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
+	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"), relp("exp_setup.sh"));
 	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
 		case (files, folders) => ((files ++ alwaysCopyFiles).map(_.relativeTo(pwd)), folders.map(_.relativeTo(pwd)))
@@ -147,6 +153,9 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
@@ -187,6 +196,9 @@ def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: 
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = runners.size;
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
