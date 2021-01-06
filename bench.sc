@@ -87,6 +87,9 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
@@ -147,6 +150,9 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = masters.size;
 	var errors = 0;
 	masters.zipWithIndex.foreach { case (master, i) =>
@@ -187,6 +193,9 @@ def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: 
 	mkdir! logdir;
 	val resultsdir = results / runId;
 	mkdir! resultsdir;
+	if (!testing) {
+		%%.apply(root/'bin/'bash, "-c",s"./exp_setup.sh $resultsdir");
+	}
 	val nRunners = runners.size;
 	var errors = 0;
 	runners.zipWithIndex.foreach { case (r, i) =>
