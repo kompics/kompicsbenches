@@ -15,7 +15,7 @@ use kompact::prelude::*;
 use protobuf::Message as PbMessage;
 use rand::Rng;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
-use tikv_raft::{prelude::Entry, prelude::Message as TikvRaftMsg, prelude::*, StateRole};
+use tikv_raft::{prelude::Message as TikvRaftMsg, prelude::*, StateRole};
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);

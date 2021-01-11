@@ -5,9 +5,9 @@ authors = ["Lars Kroll <lkroll@kth.se>"]
 edition = "2018"
 
 [dependencies]
-#kompact 				= { git = "https://github.com/kompics/kompact"}
-kompact 				= { path = "../../kompact/core/" }
-#kompact 				= "0.8"
+kompact 				= { git = "https://github.com/kompics/kompact"}
+#kompact 				= { git = "https://github.com/kompics/kompact", rev = "0f9abc3" }
+#kompact 				= { path = "../../kompact/core/" }
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
 futures         		= "0.1"
@@ -29,14 +29,6 @@ indexmap                = "1.4.0"
 hdrhistogram            = "6.0"
 hocon 					= {version = "0.3.6", default-features = false}
 quanta                  = {version = "0.6.5", optional = true}
-
-
-#[dependencies.kompact]
-#git = "https://github.com/adamhass/kompact"
-#branch = "master"
-#default-features = false
-#features = ["ser_id_8", "silent_logging"]
-#version = "0.10"
 
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }

@@ -45,7 +45,7 @@ pub mod raft {
         const SER_ID: u64 = serialiser_ids::RAFT_ID;
 
         fn deserialise(buf: &mut dyn Buf) -> Result<TikvRaftMsg, SerError> {
-            let bytes = buf.bytes();
+            let bytes = buf.chunk();
             let remaining = buf.remaining();
             let rm: TikvRaftMsg = if bytes.len() < remaining {
                 let mut dst = Vec::with_capacity(remaining);

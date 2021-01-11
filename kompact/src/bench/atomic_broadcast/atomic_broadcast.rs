@@ -17,7 +17,6 @@ use synchronoise::CountdownEvent;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
-use crate::bench::atomic_broadcast::client::MetaResults;
 use crate::bench::atomic_broadcast::paxos::PaxosCompMsg;
 use crate::bench::atomic_broadcast::raft::RaftCompMsg;
 use hocon::HoconLoader;
@@ -665,22 +664,18 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        let MetaResults {
-            latencies,
-            timestamps_leader_changes,
-            num_timed_out,
-        } = client
+        let meta_results = client
             .actor_ref()
             .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
-        self.num_timed_out.push(num_timed_out);
+        self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
-            self.persist_latency_results(&latencies);
+            self.persist_latency_results(&meta_results.latencies);
         }
         #[cfg(feature = "track_timestamps")]
         {
             let (timestamps, leader_changes_t) =
-                timestamps_leader_changes.expect("No timestamps results!");
+                meta_results.timestamps_leader_changes.expect("No timestamps results!");
             self.persist_timestamp_results(&timestamps, &leader_changes_t);
         }
 
