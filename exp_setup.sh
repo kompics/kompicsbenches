@@ -11,10 +11,20 @@ if [ -z "$1" ]
     for val in "${s[@]}"; do
   		echo $val
 	done
+	echo $'\n---------- Kompact Configurations ----------\n'
+	for config_file in kompact/configs/*; do 
+		echo $config_file;
+		cat $config_file; 
+	done
 else
 	file=$1/experimental_setup.out
 	touch $file
     for val in "${s[@]}"; do
   		echo $val >> $file
+	done
+	echo $'\n---------- Kompact Configurations ----------\n' >> $file
+	for config_file in kompact/configs/*; do 
+		echo $config_file >> $file;
+		cat $config_file >> $file; 
 	done
 fi
