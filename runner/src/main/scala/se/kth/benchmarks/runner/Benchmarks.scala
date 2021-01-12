@@ -366,7 +366,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
             reconfigPolicy = rp,
           )
       },
-    testSpace = paxosReconfigTestSpace.append(raftReconfigTestSpace)
+    testSpace = paxosReconfigTestSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
