@@ -1464,7 +1464,6 @@ pub mod raw_paxos {
         num_nodes: usize,
         log: KompactLogger, // TODO provide kompact independent log when used as a library
         max_inflight: usize,
-        requested_firstaccept: bool,
     }
 
     impl<S, P> Paxos<S, P>
@@ -1536,7 +1535,6 @@ pub mod raw_paxos {
                 num_nodes,
                 log,
                 max_inflight,
-                requested_firstaccept: false,
             };
             paxos.storage.set_promise(n_leader);
             paxos
@@ -1584,7 +1582,6 @@ pub mod raw_paxos {
                     (Role::Leader, Phase::Accept) => self.handle_promise_accept(prom, m.from),
                     _ => {}
                 },
-                PaxosMsg::FirstAcceptReq => self.handle_firstacceptreq(m.from),
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
                 PaxosMsg::FirstAccept(f) => self.handle_firstaccept(f),
                 PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc, m.from),
@@ -2017,42 +2014,6 @@ pub mod raw_paxos {
             }
         }
 
-        fn handle_firstacceptreq(&mut self, from: u64) {
-            if self.state.0 != Role::Leader || self.state.1 == Phase::FirstAccept {
-                return;
-            }
-            let entries = self.storage.get_sequence();
-            let f = FirstAccept::with(self.n_leader, entries);
-            let pm = PaxosMsg::FirstAccept(f);
-            if cfg!(feature = "batch_accept") {
-                let idx = from as usize - 1;
-                /*** replace any cached msg with the FirstAccept (as receiver will discard the original msg anyway) ***/
-                let cache_idx = if let Some((_, cached_accept_idx)) =
-                    self.batch_accept_meta.get_mut(idx).unwrap()
-                {
-                    let Message { msg, .. } = self.outgoing.get_mut(*cached_accept_idx).unwrap();
-                    *msg = pm;
-                    *cached_accept_idx
-                } else if let Some((_, cached_decide_idx)) =
-                    self.latest_decide_meta.get_mut(idx).unwrap()
-                {
-                    let Message { msg, .. } = self.outgoing.get_mut(*cached_decide_idx).unwrap();
-                    *msg = pm;
-                    *cached_decide_idx
-                } else {
-                    self.outgoing.push(Message::with(self.pid, from, pm));
-                    self.outgoing.len() - 1
-                };
-                self.batch_accept_meta[idx] = Some((self.n_leader, cache_idx));
-                #[cfg(feature = "latest_decide")]
-                {
-                    self.latest_decide_meta[idx] = None;
-                }
-            } else {
-                self.outgoing.push(Message::with(self.pid, from, pm));
-            }
-        }
-
         fn handle_accepted(&mut self, accepted: Accepted, from: u64) {
             if accepted.n == self.n_leader && self.state == (Role::Leader, Phase::Accept) {
                 self.las[from as usize - 1] = accepted.la;
@@ -2175,10 +2136,11 @@ pub mod raw_paxos {
                         }
                     }
                     (Role::Follower, Phase::Accept) => {
-                        if f.entries.len() as u64 > self.storage.get_sequence_len() {
+                        unreachable!("Got FirstAccept in Accept phase")
+                        /*if f.entries.len() as u64 > self.storage.get_sequence_len() {
                             let mut entries = f.entries;
                             self.storage.append_on_prefix(0, &mut entries);
-                        }
+                        }*/
                     }
                     _ => {}
                 }
@@ -2196,10 +2158,8 @@ pub mod raw_paxos {
                             self.storage.set_decided_len(acc.ld);
                         }
                     }
-                    (Role::Follower, Phase::FirstAccept) if !self.requested_firstaccept => {
-                        self.requested_firstaccept = true;
-                        self.outgoing
-                            .push(Message::with(self.pid, from, PaxosMsg::FirstAcceptReq));
+                    (Role::Follower, Phase::FirstAccept) => {
+                        unreachable!("Got AcceptDecide before FirstAccept")
                     }
                     _ => {}
                 }
@@ -2210,14 +2170,7 @@ pub mod raw_paxos {
             if self.storage.get_promise() == dec.n {
                 match self.state.1 {
                     Phase::FirstAccept => {
-                        if !self.requested_firstaccept {
-                            self.requested_firstaccept = true;
-                            self.outgoing.push(Message::with(
-                                self.pid,
-                                self.leader,
-                                PaxosMsg::FirstAcceptReq,
-                            ));
-                        }
+                        unreachable!("Got Decide before FirstAccept")
                     }
                     _ => {
                         self.storage.set_decided_len(dec.ld);
