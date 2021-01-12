@@ -5,8 +5,8 @@ authors = ["Lars Kroll <lkroll@kth.se>"]
 edition = "2018"
 
 [dependencies]
-#kompact 				= { git = "https://github.com/kompics/kompact"}
-kompact 				= { path = "../../kompact/core/" }
+kompact 				= { git = "https://github.com/kompics/kompact", rev = "6d8b186f9d240fac9bdd1709946f5d8734f420e3"}
+#kompact 				= { path = "../../kompact/core/" }
 #kompact 				= "0.8"
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
@@ -59,4 +59,4 @@ track_timestamps = ["quanta"]
 default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync"]
 
 [profile.release]
-lto = true
+#lto = true
