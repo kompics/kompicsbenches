@@ -2,12 +2,14 @@ use super::*;
 
 use crate::partitioning_actor::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicRegisterRequest;
+#[cfg(test)]
 use benchmark_suite_shared::test_utils::all_linearizable;
 use benchmark_suite_shared::test_utils::KVOperation;
 use benchmark_suite_shared::test_utils::KVTimestamp;
 use chrono::Utc;
 use kompact::prelude::*;
 use partitioning_actor::PartitioningActor;
+#[cfg(test)]
 use rand::Rng;
 use std::collections::HashMap;
 use std::str::FromStr;

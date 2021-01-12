@@ -674,8 +674,9 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         }
         #[cfg(feature = "track_timestamps")]
         {
-            let (timestamps, leader_changes_t) =
-                meta_results.timestamps_leader_changes.expect("No timestamps results!");
+            let (timestamps, leader_changes_t) = meta_results
+                .timestamps_leader_changes
+                .expect("No timestamps results!");
             self.persist_timestamp_results(&timestamps, &leader_changes_t);
         }
 

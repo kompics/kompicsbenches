@@ -1462,7 +1462,7 @@ pub mod raw_paxos {
         latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
-        log: KompactLogger,
+        log: KompactLogger, // TODO provide kompact independent log when used as a library
         max_inflight: usize,
         requested_firstaccept: bool,
     }
@@ -1671,7 +1671,9 @@ pub mod raw_paxos {
             self.storage.stop_and_get_sequence()
         }
 
+        #[allow(dead_code)]
         pub fn connection_lost(&mut self, pid: u64) {
+            // TODO remove allow dead code when fail-recovery is supported
             if self.state.0 == Role::Follower && self.leader == pid {
                 self.state = (Role::Follower, Phase::Recover);
             }
@@ -2236,6 +2238,7 @@ pub mod raw_paxos {
             };
         }
 
+        #[cfg(test)]
         pub fn get_sequence(&self) -> Vec<Entry> {
             self.storage.get_sequence()
         }

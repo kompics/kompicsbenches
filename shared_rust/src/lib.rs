@@ -100,7 +100,6 @@ fn force_shutdown() {
 
 pub mod test_utils {
     use super::*;
-    use arraymap::ArrayMap;
     use benchmarks_grpc::BenchmarkRunner;
     use futures::future::Future;
     use grpc::ClientStubExt;
