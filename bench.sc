@@ -48,7 +48,7 @@ val logs = pwd / 'logs;
 val results = pwd / 'results;
 val defaultNodesFile = pwd / "nodes.conf";
 
-@doc("Run a specific benchmark client.")
+@arg(doc ="Run a specific benchmark client.")
 @main
 def client(name: String, master: AddressArg, runid: String, publicif: String, clientPort: Int = 45678): Unit = {
 	val runId = runid;
@@ -76,7 +76,7 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 	}
 }
 
-@doc("Run benchmarks using a cluster of nodes.")
+@arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
 def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
 	val nodes = readNodes(withNodes);
@@ -118,7 +118,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 	println(s"There were $errors errors. Logs can be found in ${logdir}");
 }
 
-@doc("Run benchmarks using a cluster of nodes.")
+@arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
 def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir()): Unit = {
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
@@ -183,7 +183,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 }
 
 
-@doc("Run local benchmarks only.")
+@arg(doc ="Run local benchmarks only.")
 @main
 def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
 	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));

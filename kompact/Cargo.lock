@@ -350,9 +350,9 @@ dependencies = [
 
 [[package]]
 name = "bytes"
-version = "0.6.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0dcbc35f504eb6fc275a6d20e4ebcda18cf50d40ba6fabff8c711fa16cb3b16"
+checksum = "b700ce4376041dcd0a327fd0097c41095743c4c8af8887265942faf1100bd040"
 dependencies = [
  "serde",
 ]
@@ -1119,12 +1119,13 @@ dependencies = [
 [[package]]
 name = "kompact"
 version = "0.10.1"
+source = "git+https://github.com/kompics/kompact#532d2020080248f4516b5d1f6239b6de19ee74d8"
 dependencies = [
  "arc-swap",
  "as_num",
  "async-std",
  "bitfields",
- "bytes 0.6.0",
+ "bytes 1.0.1",
  "crossbeam-channel 0.4.4",
  "crossbeam-queue 0.2.3",
  "crossbeam-utils 0.7.2",
@@ -1153,6 +1154,7 @@ dependencies = [
 [[package]]
 name = "kompact-actor-derive"
 version = "0.10.1"
+source = "git+https://github.com/kompics/kompact#532d2020080248f4516b5d1f6239b6de19ee74d8"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.7",
@@ -1162,6 +1164,7 @@ dependencies = [
 [[package]]
 name = "kompact-component-derive"
 version = "0.10.1"
+source = "git+https://github.com/kompics/kompact#532d2020080248f4516b5d1f6239b6de19ee74d8"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.7",
