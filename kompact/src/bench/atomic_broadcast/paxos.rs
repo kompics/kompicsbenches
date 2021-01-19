@@ -1584,7 +1584,7 @@ pub mod raw_paxos {
                 },
                 PaxosMsg::AcceptSync(acc_sync) => self.handle_accept_sync(acc_sync, m.from),
                 PaxosMsg::FirstAccept(f) => self.handle_firstaccept(f),
-                PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc, m.from),
+                PaxosMsg::AcceptDecide(acc) => self.handle_acceptdecide(acc),
                 PaxosMsg::Accepted(accepted) => self.handle_accepted(accepted, m.from),
                 PaxosMsg::Decide(d) => self.handle_decide(d),
                 PaxosMsg::ProposalForward(proposals) => self.handle_forwarded_proposal(proposals),
@@ -2135,19 +2135,12 @@ pub mod raw_paxos {
                             self.forward_proposals(proposals);
                         }
                     }
-                    (Role::Follower, Phase::Accept) => {
-                        unreachable!("Got FirstAccept in Accept phase")
-                        /*if f.entries.len() as u64 > self.storage.get_sequence_len() {
-                            let mut entries = f.entries;
-                            self.storage.append_on_prefix(0, &mut entries);
-                        }*/
-                    }
                     _ => {}
                 }
             }
         }
 
-        fn handle_acceptdecide(&mut self, acc: AcceptDecide, from: u64) {
+        fn handle_acceptdecide(&mut self, acc: AcceptDecide) {
             if self.storage.get_promise() == acc.n {
                 match self.state {
                     (Role::Follower, Phase::Accept) => {
@@ -2157,9 +2150,6 @@ pub mod raw_paxos {
                         if acc.ld > self.storage.get_decided_len() {
                             self.storage.set_decided_len(acc.ld);
                         }
-                    }
-                    (Role::Follower, Phase::FirstAccept) => {
-                        unreachable!("Got AcceptDecide before FirstAccept")
                     }
                     _ => {}
                 }
@@ -2174,9 +2164,6 @@ pub mod raw_paxos {
                     }
                     _ => {
                         self.storage.set_decided_len(dec.ld);
-                        /*if dec.ld == self.storage.get_sequence_len() && self.stopped() && self.leader == self.pid{
-                            info!(self.log, "Decided StopSign: ld={}, las: {:?}", dec.ld, self.las);
-                        }*/
                     }
                 }
             }
