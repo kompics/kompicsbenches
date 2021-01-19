@@ -2158,13 +2158,8 @@ pub mod raw_paxos {
 
         fn handle_decide(&mut self, dec: Decide) {
             if self.storage.get_promise() == dec.n {
-                match self.state.1 {
-                    Phase::FirstAccept => {
-                        unreachable!("Got Decide before FirstAccept")
-                    }
-                    _ => {
-                        self.storage.set_decided_len(dec.ld);
-                    }
+                if self.state.1 != Phase::FirstAccept {
+                    self.storage.set_decided_len(dec.ld);
                 }
             }
         }
