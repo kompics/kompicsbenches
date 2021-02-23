@@ -1283,9 +1283,7 @@ pub mod mixed_atomicregister {
         bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
         read_workload: f32,
         write_workload: f32,
-
         master: Option<ActorPath>,
-        nodes: Option<Vec<ActorPath>>,
         n: u32,
         rank: u32,
         num_keys: u64,
@@ -1314,7 +1312,6 @@ pub mod mixed_atomicregister {
                 read_workload,
                 write_workload,
                 master: None,
-                nodes: None,
                 n: 0,
                 rank: 0,
                 num_keys,
@@ -1491,7 +1488,6 @@ pub mod mixed_atomicregister {
                     match p {
                         PartitioningActorMsg::Init(init) => {
                             self.new_iteration(&init);
-                            self.nodes = Some(init.nodes.clone());
                             self.master = Some(sender);
                             let self_path = self.actor_path();
                             self.bcast_ref.tell(

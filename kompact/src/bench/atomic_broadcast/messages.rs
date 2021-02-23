@@ -281,10 +281,10 @@ pub mod paxos {
                     let ss = StopSign::with(config_id, nodes, skip_prepare_n);
                     Entry::StopSign(ss)
                 }
-                error_id => panic!(format!(
+                error_id => panic!(
                     "Got unexpected id in deserialise_entry: {}",
                     error_id
-                )),
+                ),
             }
         }
 

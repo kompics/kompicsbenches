@@ -372,13 +372,13 @@ where
         for ble in rest_ble {
             stop_futures.push(
                 ble.actor_ref()
-                    .ask(|p| BLEStop(Ask::new(p, (self.pid, false)))),
+                    .ask_with(|p| BLEStop(Ask::new(p, (self.pid, false)))),
             );
         }
         stop_futures.push(
             ble_last
                 .actor_ref()
-                .ask(|p| BLEStop(Ask::new(p, (self.pid, late_stop)))),
+                .ask_with(|p| BLEStop(Ask::new(p, (self.pid, late_stop)))),
         );
 
         let (paxos_last, rest) = self
@@ -389,13 +389,13 @@ where
             stop_futures.push(
                 paxos_replica
                     .actor_ref()
-                    .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (false, false)))),
+                    .ask_with(|p| PaxosReplicaMsg::Stop(Ask::new(p, (false, false)))),
             );
         }
         stop_futures.push(
             paxos_last
                 .actor_ref()
-                .ask(|p| PaxosReplicaMsg::Stop(Ask::new(p, (true, late_stop)))),
+                .ask_with(|p| PaxosReplicaMsg::Stop(Ask::new(p, (true, late_stop)))),
         );
 
         if let Some(config_id) = self.next_config_id {
@@ -898,7 +898,7 @@ where
                     let active_paxos = self.paxos_replicas.last().unwrap();
                     let sequence = active_paxos
                         .actor_ref()
-                        .ask(|promise| PaxosReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                        .ask_with(|promise| PaxosReplicaMsg::SequenceReq(Ask::new(promise, ())))
                         .wait();
                     for entry in sequence {
                         if let Entry::Normal(n) = entry {
@@ -1462,7 +1462,7 @@ pub mod raw_paxos {
         latest_accepted_meta: Option<(Ballot, usize)>,
         outgoing: Vec<Message>,
         num_nodes: usize,
-        log: KompactLogger, // TODO provide kompact independent log when used as a library
+        pub log: KompactLogger, // TODO provide kompact independent log when used as a library
         max_inflight: usize,
     }
 

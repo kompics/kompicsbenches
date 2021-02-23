@@ -271,7 +271,7 @@ impl DistributedBenchmarkMaster for StreamingWindowsMaster {
             .iter()
             .map(|source| {
                 let source_ref = source.1.actor_ref();
-                source_ref.ask(|promise| SourceMsg::Reset(Ask::new(promise, ())))
+                source_ref.ask_with(|promise| SourceMsg::Reset(Ask::new(promise, ())))
             })
             .collect();
         self.sink_refs.clear();

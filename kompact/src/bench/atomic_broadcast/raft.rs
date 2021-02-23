@@ -203,7 +203,7 @@ where
             .expect("Got stop but no Raft replica");
         let stop_f = raft
             .actor_ref()
-            .ask(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
+            .ask_with(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
         Handled::block_on(self, move |_| async move {
             stop_f.await.expect("Failed to stop RaftReplica");
         })
@@ -271,7 +271,7 @@ where
                 let raft_replica = self.raft_replica.as_ref().expect("No raft replica");
                 let seq = raft_replica
                     .actor_ref()
-                    .ask(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                    .ask_with(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
                     .wait();
                 let sr = SequenceResp::with(self.pid, seq);
                 ask.reply(sr).expect("Failed to reply SequenceResp");

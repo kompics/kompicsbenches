@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn test_client_data() {
         let ref1 = ActorPath::Unique(UniquePath::new(
-            Transport::LOCAL,
+            Transport::Local,
             "127.0.0.1".parse().expect("hardcoded IP"),
             8080,
             Uuid::new_v4(),
@@ -563,7 +563,7 @@ mod tests {
         let ref1_deser = ActorPath::from_str(&ref1_string).unwrap();
         assert_eq!(ref1, ref1_deser);
         let ref2 = ActorPath::Unique(UniquePath::new(
-            Transport::LOCAL,
+            Transport::Local,
             "127.0.0.1".parse().expect("hardcoded IP"),
             8080,
             Uuid::new_v4(),
