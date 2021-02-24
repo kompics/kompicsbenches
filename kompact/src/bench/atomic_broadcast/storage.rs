@@ -3,13 +3,14 @@ pub mod raft {
 
     use memmap::MmapMut;
     use protobuf::{parse_from_bytes, Message as PbMessage};
-    use std::fs::remove_dir_all;
-    use std::io::prelude::*;
-    use std::io::{Error as IOError, ErrorKind::NotFound};
-    use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
     use std::{
-        convert::TryInto, fs::create_dir_all, fs::File, fs::OpenOptions, io::SeekFrom, io::Write,
-        mem::size_of, ops::Range, path::PathBuf,
+        convert::TryInto,
+        fs::{create_dir_all, remove_dir_all, File, OpenOptions},
+        io::{prelude::*, Error as IOError, ErrorKind::NotFound, SeekFrom, Write},
+        mem::size_of,
+        ops::Range,
+        path::PathBuf,
+        sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     };
     use tikv_raft::{prelude::*, storage::*, util::limit_size, Error, StorageError};
 
@@ -722,8 +723,9 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::bench::atomic_broadcast::messages::paxos::PaxosSer;
-    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
+    use crate::bench::atomic_broadcast::{
+        messages::paxos::PaxosSer, paxos::ballot_leader_election::Ballot,
+    };
     use std::fmt::Debug;
 
     use leaderpaxos::storage::*;

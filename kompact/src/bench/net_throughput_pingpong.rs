@@ -2,8 +2,7 @@ use super::*;
 
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::ThroughputPingPongRequest;
 use kompact::prelude::*;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use synchronoise::CountdownEvent;
 
 use messages::{Ping, Pong, Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};

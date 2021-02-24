@@ -1,12 +1,13 @@
 extern crate raft as tikv_raft;
 
-use crate::bench::atomic_broadcast::messages::paxos::PaxosMsgWrapper;
-use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
-use crate::bench::atomic_broadcast::messages::{paxos::PaxosSer, raft::RawRaftSer};
-use crate::bench::atomic_broadcast::messages::{
-    AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
+use crate::bench::atomic_broadcast::{
+    messages::{
+        paxos::{PaxosMsgWrapper, PaxosSer},
+        raft::{RaftMsg, RawRaftSer},
+        AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
+    },
+    paxos::ballot_leader_election::Ballot,
 };
-use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
 use hashbrown::HashMap;
 use kompact::prelude::*;
 use leaderpaxos::messages::Message as PaxosMsg;

@@ -1,18 +1,21 @@
-use super::atomic_broadcast::ExperimentParams;
-use super::communicator::{
-    AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
+use super::{
+    atomic_broadcast::ExperimentParams,
+    communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
+    messages::{
+        paxos::{
+            Reconfig, ReconfigInit, ReconfigSer, ReconfigurationMsg, SequenceMetaData,
+            SequenceRequest, SequenceSegment, SequenceTransfer,
+        },
+        StopMsg as NetStopMsg, *,
+    },
 };
-use super::messages::paxos::{
-    Reconfig, ReconfigInit, ReconfigSer, ReconfigurationMsg, SequenceMetaData, SequenceRequest,
-    SequenceSegment, SequenceTransfer,
-};
-use super::messages::{StopMsg as NetStopMsg, *};
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
-use crate::bench::atomic_broadcast::atomic_broadcast::Done;
-use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
-use crate::serialiser_ids::ATOMICBCAST_ID;
+use crate::{
+    bench::atomic_broadcast::{atomic_broadcast::Done, paxos::ballot_leader_election::Ballot},
+    partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
+    serialiser_ids::ATOMICBCAST_ID,
+};
 use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
 use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
@@ -21,9 +24,7 @@ use rand::Rng;
 use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
 use crate::bench::atomic_broadcast::messages::paxos::PaxosMsgWrapper;
-use leaderpaxos::leader_election::*;
-use leaderpaxos::paxos::*;
-use leaderpaxos::storage::*;
+use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -1452,10 +1453,10 @@ where
 }
 
 pub(crate) mod ballot_leader_election {
-    use super::super::messages::{
-        paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
+    use super::{
+        super::messages::{paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser},
+        *,
     };
-    use super::*;
     use leaderpaxos::leader_election::Round;
     use std::time::Duration;
 

@@ -27,8 +27,7 @@ pub fn run(
     wait_for: usize,
     benchmarks: Box<dyn BenchmarkFactory>,
     logger: Logger,
-) -> ()
-{
+) -> () {
     let (check_in_sender, check_in_receiver) = cbchannel::unbounded();
     let (bench_sender, bench_receiver) = cbchannel::unbounded();
     let mut inst = BenchmarkMaster::new(
@@ -150,16 +149,14 @@ impl ClientEntry {
         address: String,
         port: u16,
         stub: distributed_grpc::BenchmarkClientClient,
-    ) -> ClientEntry
-    {
+    ) -> ClientEntry {
         ClientEntry { address, port, stub: Arc::new(stub) }
     }
 
     pub(crate) fn cleanup(
         &self,
         is_final: bool,
-    ) -> impl Future<Item = distributed::CleanupResponse, Error = grpc::Error>
-    {
+    ) -> impl Future<Item = distributed::CleanupResponse, Error = grpc::Error> {
         let mut msg = distributed::CleanupInfo::new();
         msg.set_field_final(is_final);
         self.stub.cleanup(::grpc::RequestOptions::default(), msg).drop_metadata()
@@ -168,16 +165,14 @@ impl ClientEntry {
     pub(crate) fn setup(
         &self,
         msg: distributed::SetupConfig,
-    ) -> impl Future<Item = distributed::SetupResponse, Error = grpc::Error>
-    {
+    ) -> impl Future<Item = distributed::SetupResponse, Error = grpc::Error> {
         self.stub.setup(::grpc::RequestOptions::default(), msg).drop_metadata()
     }
 
     pub(crate) fn shutdown(
         &self,
         msg: messages::ShutdownRequest,
-    ) -> impl Future<Item = messages::ShutdownAck, Error = grpc::Error>
-    {
+    ) -> impl Future<Item = messages::ShutdownAck, Error = grpc::Error> {
         self.stub.shutdown(::grpc::RequestOptions::default(), msg).drop_metadata()
     }
 }
@@ -192,8 +187,7 @@ impl BenchRequest {
     fn new(
         invocation: BenchInvocation,
         promise: oneshot::Sender<messages::TestResult>,
-    ) -> BenchRequest
-    {
+    ) -> BenchRequest {
         BenchRequest::Invoke { invocation, promise }
     }
 }
@@ -206,8 +200,7 @@ impl BenchInvocation {
     fn new<M: ::protobuf::Message + UnwindSafe>(
         benchmark: AbstractBench,
         msg: M,
-    ) -> BenchInvocation
-    {
+    ) -> BenchInvocation {
         BenchInvocation { benchmark, msg: Box::new(msg) }
     }
 
@@ -215,8 +208,7 @@ impl BenchInvocation {
     fn new_local<M: ::protobuf::Message + UnwindSafe>(
         benchmark: Box<dyn AbstractBenchmark>,
         msg: M,
-    ) -> BenchInvocation
-    {
+    ) -> BenchInvocation {
         BenchInvocation { benchmark: AbstractBench::Local(benchmark), msg: Box::new(msg) }
     }
 
@@ -224,8 +216,7 @@ impl BenchInvocation {
     fn new_distributed<M: ::protobuf::Message + UnwindSafe>(
         benchmark: Box<dyn AbstractDistributedBenchmark>,
         msg: M,
-    ) -> BenchInvocation
-    {
+    ) -> BenchInvocation {
         BenchInvocation {
             benchmark: AbstractBench::Distributed(benchmark),
             msg:       Box::new(msg),
@@ -249,8 +240,7 @@ impl BenchmarkMaster {
         wait_for: usize,
         check_in_queue: cbchannel::Receiver<distributed::ClientInfo>,
         bench_queue: cbchannel::Receiver<BenchRequest>,
-    ) -> BenchmarkMaster
-    {
+    ) -> BenchmarkMaster {
         BenchmarkMaster {
             logger,
             wait_for,
@@ -356,8 +346,7 @@ impl BenchmarkMaster {
         &mut self,
         promise: oneshot::Sender<messages::TestResult>,
         invocation: BenchInvocation,
-    ) -> ()
-    {
+    ) -> () {
         let msg = invocation.msg;
         let (res, label) = match invocation.benchmark {
             AbstractBench::Local(b) => {
@@ -387,8 +376,7 @@ impl BenchmarkMaster {
         &mut self,
         b: Box<dyn AbstractBenchmark>,
         msg: Box<dyn ::protobuf::Message + UnwindSafe>,
-    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
-    {
+    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError> {
         self.state.cas(State::READY, State::RUN).expect("Wasn't ready to run!");
         let blogger = self.logger.new(o!("benchmark" => b.label()));
         info!(blogger, "Starting local test {}", b.label());
@@ -405,8 +393,7 @@ impl BenchmarkMaster {
         &mut self,
         b: Box<dyn AbstractDistributedBenchmark>,
         msg: Box<dyn ::protobuf::Message + UnwindSafe>,
-    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError>
-    {
+    ) -> impl Future<Item = messages::TestResult, Error = BenchmarkError> {
         let blogger = self.logger.new(o!("benchmark" => b.label()));
         let state_copy = self.state.clone();
         let state_copy2 = self.state.clone();
@@ -498,8 +485,7 @@ impl MasterHandler {
         logger: Logger,
         state: StateHolder,
         check_in_queue: cbchannel::Sender<distributed::ClientInfo>,
-    ) -> MasterHandler
-    {
+    ) -> MasterHandler {
         MasterHandler { logger, state, check_in_queue }
     }
 }
@@ -509,8 +495,7 @@ impl distributed_grpc::BenchmarkMaster for MasterHandler {
         &self,
         _o: ::grpc::RequestOptions,
         p: distributed::ClientInfo,
-    ) -> ::grpc::SingleResponse<distributed::CheckinResponse>
-    {
+    ) -> ::grpc::SingleResponse<distributed::CheckinResponse> {
         if self.state.get() == State::INIT {
             info!(self.logger, "Got Check-In from {}:{}", p.get_address(), p.get_port(),);
             self.check_in_queue.send(p).unwrap();
@@ -534,16 +519,14 @@ impl RunnerHandler {
         benchmarks: Box<dyn BenchmarkFactory>,
         bench_queue: cbchannel::Sender<BenchRequest>,
         state: StateHolder,
-    ) -> RunnerHandler
-    {
+    ) -> RunnerHandler {
         RunnerHandler { logger, benchmarks, bench_queue, state }
     }
 
     fn enqeue(
         &self,
         inv: BenchInvocation,
-    ) -> impl Future<Item = messages::TestResult, Error = grpc::Error>
-    {
+    ) -> impl Future<Item = messages::TestResult, Error = grpc::Error> {
         let (promise, future) = oneshot::channel::<messages::TestResult>();
         let req = BenchRequest::new(inv, promise);
         match self.bench_queue.send(req) {
@@ -585,8 +568,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         _p: messages::ReadyRequest,
-    ) -> grpc::SingleResponse<messages::ReadyResponse>
-    {
+    ) -> grpc::SingleResponse<messages::ReadyResponse> {
         info!(self.logger, "Got ready? req.");
         let mut msg = messages::ReadyResponse::new();
         if self.state.get() == State::READY {
@@ -601,8 +583,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: ::grpc::RequestOptions,
         p: messages::ShutdownRequest,
-    ) -> ::grpc::SingleResponse<messages::ShutdownAck>
-    {
+    ) -> ::grpc::SingleResponse<messages::ShutdownAck> {
         info!(self.logger, "Got shutdown request: {:?}", p);
         self.bench_queue.send(BenchRequest::Shutdown(p.force)).expect("Command channel broke!"); // make sure children get shut down
         if p.force {
@@ -615,8 +596,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::PingPongRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got req: {:?}", p);
         let b_res = self.benchmarks.ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -626,8 +606,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::PingPongRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got net req: {:?}", p);
         let b_res = self.benchmarks.net_ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -637,8 +616,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::ThroughputPingPongRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got req: {:?}", p);
         let b_res = self.benchmarks.throughput_ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -648,8 +626,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::ThroughputPingPongRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got net req: {:?}", p);
         let b_res = self.benchmarks.net_throughput_ping_pong();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -659,8 +636,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::AtomicRegisterRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got net req: {:?}", p);
         let b_res = self.benchmarks.atomic_register();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -670,8 +646,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::StreamingWindowsRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got net req: {:?}", p);
         let b_res = self.benchmarks.streaming_windows();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -681,8 +656,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::FibonacciRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got fib req: {:?}", p);
         let b_res = self.benchmarks.fibonacci();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -692,8 +666,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::ChameneosRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got chameneos req: {:?}", p);
         let b_res = self.benchmarks.chameneos();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -703,8 +676,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::APSPRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got APSP req: {:?}", p);
         let b_res = self.benchmarks.all_pairs_shortest_path();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
@@ -714,8 +686,7 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
         &self,
         _o: grpc::RequestOptions,
         p: benchmarks::AtomicBroadcastRequest,
-    ) -> grpc::SingleResponse<messages::TestResult>
-    {
+    ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got Atomic Broadcast req: {:?}", p);
         let b_res = self.benchmarks.atomic_broadcast();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))

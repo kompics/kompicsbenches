@@ -1,12 +1,13 @@
 use super::*;
 
-use benchmark_suite_shared::helpers::graphs::*;
-use benchmark_suite_shared::kompics_benchmarks::benchmarks::APSPRequest;
+use benchmark_suite_shared::{helpers::graphs::*, kompics_benchmarks::benchmarks::APSPRequest};
 use kompact::prelude::*;
-use std::collections::BTreeMap;
-use std::convert::TryInto;
-use std::fmt;
-use std::sync::{Arc, Weak};
+use std::{
+    collections::BTreeMap,
+    convert::TryInto,
+    fmt,
+    sync::{Arc, Weak},
+};
 use synchronoise::CountdownEvent;
 
 pub mod actor_apsp {

@@ -1,21 +1,28 @@
 extern crate raft as tikv_raft;
 
-use super::messages::{StopMsg as NetStopMsg, StopMsgDeser, *};
-use super::storage::raft::*;
+use super::{
+    messages::{StopMsg as NetStopMsg, StopMsgDeser, *},
+    storage::raft::*,
+};
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
-use crate::bench::atomic_broadcast::atomic_broadcast::Done;
-use crate::bench::atomic_broadcast::communicator::{
-    AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
+use crate::{
+    bench::atomic_broadcast::{
+        atomic_broadcast::Done,
+        communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
+    },
+    partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
+    serialiser_ids::ATOMICBCAST_ID,
 };
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
-use crate::serialiser_ids::ATOMICBCAST_ID;
 use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
 use protobuf::Message as PbMessage;
 use rand::Rng;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
-use tikv_raft::{prelude::Message as TikvRaftMsg, prelude::*, StateRole};
+use tikv_raft::{
+    prelude::{Message as TikvRaftMsg, *},
+    StateRole,
+};
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);

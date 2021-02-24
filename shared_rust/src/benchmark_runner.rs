@@ -222,8 +222,7 @@ impl DistributedIteration {
     pub(crate) fn new(
         master: Box<dyn AbstractBenchmarkMaster>,
         client_data_l: Vec<(ClientEntry, ClientDataHolder)>,
-    ) -> DistributedIteration
-    {
+    ) -> DistributedIteration {
         DistributedIteration { master, client_data_l, n_runs: 0, results: Vec::new() }
     }
 

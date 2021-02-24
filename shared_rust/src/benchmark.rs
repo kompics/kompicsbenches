@@ -273,8 +273,7 @@ mod distributed_benchmark {
             &mut self,
             msg: Box<dyn (::protobuf::Message)>,
             meta: &DeploymentMetaData,
-        ) -> Result<ClientConfHolder, BenchmarkError>
-        {
+        ) -> Result<ClientConfHolder, BenchmarkError> {
             let res = B::msg_to_master_conf(msg);
             res.and_then(|c| {
                 self.bm.setup(c, meta).map(|cconf| {
@@ -553,8 +552,7 @@ pub(crate) mod tests {
             &mut self,
             _c: Self::MasterConf,
             _m: &DeploymentMetaData,
-        ) -> Result<Self::ClientConf, BenchmarkError>
-        {
+        ) -> Result<Self::ClientConf, BenchmarkError> {
             Ok("ok".into())
         }
 

@@ -762,8 +762,7 @@ mod tests {
             &mut self,
             _c: Self::MasterConf,
             _m: &DeploymentMetaData,
-        ) -> Result<Self::ClientConf, BenchmarkError>
-        {
+        ) -> Result<Self::ClientConf, BenchmarkError> {
             println!("Master setting up");
             Ok(())
         }
@@ -866,8 +865,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: messages::ReadyRequest,
-        ) -> grpc::SingleResponse<messages::ReadyResponse>
-        {
+        ) -> grpc::SingleResponse<messages::ReadyResponse> {
             println!("Got ready? req.");
             let mut msg = messages::ReadyResponse::new();
             msg.set_status(true);
@@ -878,8 +876,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: messages::ShutdownRequest,
-        ) -> ::grpc::SingleResponse<messages::ShutdownAck>
-        {
+        ) -> ::grpc::SingleResponse<messages::ShutdownAck> {
             unimplemented!();
         }
 
@@ -887,8 +884,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             p: benchmarks::PingPongRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             println!("Got ping_pong req: {}", p.number_of_messages);
             let bench = benchmark::BenchmarkFactory::ping_pong(self);
             let f = benchmark_runner::run_async(move || match bench {
@@ -906,8 +902,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: benchmarks::PingPongRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             grpc::SingleResponse::completed(benchmark_runner::not_implemented())
         }
 
@@ -915,8 +910,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             p: benchmarks::ThroughputPingPongRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             println!("Got req: {:?}", p);
             let bench = benchmark::BenchmarkFactory::throughput_ping_pong(self);
             let f = benchmark_runner::run_async(move || match bench {
@@ -934,8 +928,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: benchmarks::ThroughputPingPongRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             grpc::SingleResponse::completed(benchmark_runner::not_implemented())
         }
 
@@ -943,8 +936,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: benchmarks::AtomicRegisterRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             grpc::SingleResponse::completed(benchmark_runner::not_implemented())
         }
 
@@ -952,8 +944,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             _p: benchmarks::StreamingWindowsRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             grpc::SingleResponse::completed(benchmark_runner::not_implemented())
         }
 
@@ -961,8 +952,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             p: benchmarks::FibonacciRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             println!("Got fibonacci req: {:?}", p);
             let bench = benchmark::BenchmarkFactory::fibonacci(self);
             let f = benchmark_runner::run_async(move || match bench {
@@ -980,8 +970,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             p: benchmarks::ChameneosRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             println!("Got chameneos req: {:?}", p);
             let bench = benchmark::BenchmarkFactory::chameneos(self);
             let f = benchmark_runner::run_async(move || match bench {
@@ -999,8 +988,7 @@ mod tests {
             &self,
             _o: grpc::RequestOptions,
             p: benchmarks::APSPRequest,
-        ) -> grpc::SingleResponse<messages::TestResult>
-        {
+        ) -> grpc::SingleResponse<messages::TestResult> {
             println!("Got APSP req: {:?}", p);
             let bench = benchmark::BenchmarkFactory::all_pairs_shortest_path(self);
             let f = benchmark_runner::run_async(move || match bench {

@@ -3,12 +3,8 @@ use super::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::StreamingWindowsRequest;
 use kompact::prelude::*;
 use parse_duration;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
-use std::convert::TryInto;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
+use std::{convert::TryInto, str::FromStr, sync::Arc, time::Duration};
 use synchronoise::CountdownEvent;
 
 pub struct WindowerConfig {

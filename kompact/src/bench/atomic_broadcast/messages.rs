@@ -62,15 +62,19 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::bench::atomic_broadcast::messages::DATA_SIZE_HINT;
-    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
-    use crate::serialiser_ids;
+    use crate::{
+        bench::atomic_broadcast::{
+            messages::DATA_SIZE_HINT, paxos::ballot_leader_election::Ballot,
+        },
+        serialiser_ids,
+    };
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
-    use leaderpaxos::leader_election::Leader;
-    use leaderpaxos::messages::*;
-    use leaderpaxos::storage::{Entry, StopSign};
-    use std::fmt::Debug;
-    use std::ops::Deref;
+    use leaderpaxos::{
+        leader_election::Leader,
+        messages::*,
+        storage::{Entry, StopSign},
+    };
+    use std::{fmt::Debug, ops::Deref};
 
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
