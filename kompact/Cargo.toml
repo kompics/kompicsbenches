@@ -29,6 +29,7 @@ indexmap                = "1.4.0"
 hdrhistogram            = "6.0"
 hocon 					= {version = "0.3.6", default-features = false}
 quanta                  = {version = "0.6.5", optional = true}
+leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos" }
 
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }

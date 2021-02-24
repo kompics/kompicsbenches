@@ -62,139 +62,15 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use super::super::paxos::raw_paxos::Entry;
     use crate::bench::atomic_broadcast::messages::DATA_SIZE_HINT;
-    use crate::bench::atomic_broadcast::paxos::raw_paxos::StopSign;
+    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
     use crate::serialiser_ids;
-    use ballot_leader_election::Ballot;
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
+    use leaderpaxos::leader_election::Leader;
+    use leaderpaxos::messages::*;
+    use leaderpaxos::storage::{Entry, StopSign};
     use std::fmt::Debug;
-
-    #[derive(Clone, Debug)]
-    pub struct Prepare {
-        pub n: Ballot,
-        pub ld: u64,
-        pub n_accepted: Ballot,
-    }
-
-    impl Prepare {
-        pub fn with(n: Ballot, ld: u64, n_accepted: Ballot) -> Prepare {
-            Prepare { n, ld, n_accepted }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Promise {
-        pub n: Ballot,
-        pub n_accepted: Ballot,
-        pub sfx: Vec<Entry>,
-        pub ld: u64,
-    }
-
-    impl Promise {
-        pub fn with(n: Ballot, n_accepted: Ballot, sfx: Vec<Entry>, ld: u64) -> Promise {
-            Promise {
-                n,
-                n_accepted,
-                sfx,
-                ld,
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct AcceptSync {
-        pub n: Ballot,
-        pub entries: Vec<Entry>,
-        pub ld: u64,
-        pub sync: bool, // true -> append on prefix(ld), false -> append
-    }
-
-    impl AcceptSync {
-        pub fn with(n: Ballot, sfx: Vec<Entry>, ld: u64, sync: bool) -> AcceptSync {
-            AcceptSync {
-                n,
-                entries: sfx,
-                ld,
-                sync,
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct FirstAccept {
-        pub n: Ballot,
-        pub entries: Vec<Entry>,
-    }
-
-    impl FirstAccept {
-        pub fn with(n: Ballot, entries: Vec<Entry>) -> FirstAccept {
-            FirstAccept { n, entries }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct AcceptDecide {
-        pub n: Ballot,
-        pub ld: u64,
-        pub entries: Vec<Entry>,
-    }
-
-    impl AcceptDecide {
-        pub fn with(n: Ballot, ld: u64, entries: Vec<Entry>) -> AcceptDecide {
-            AcceptDecide { n, ld, entries }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Accepted {
-        pub n: Ballot,
-        pub la: u64,
-    }
-
-    impl Accepted {
-        pub fn with(n: Ballot, la: u64) -> Accepted {
-            Accepted { n, la }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Decide {
-        pub ld: u64,
-        pub n: Ballot,
-    }
-
-    impl Decide {
-        pub fn with(ld: u64, n: Ballot) -> Decide {
-            Decide { ld, n }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub enum PaxosMsg {
-        PrepareReq,
-        Prepare(Prepare),
-        Promise(Promise),
-        AcceptSync(AcceptSync),
-        FirstAccept(FirstAccept),
-        AcceptDecide(AcceptDecide),
-        Accepted(Accepted),
-        Decide(Decide),
-        ProposalForward(Vec<Entry>),
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Message {
-        pub from: u64,
-        pub to: u64,
-        pub msg: PaxosMsg,
-    }
-
-    impl Message {
-        pub fn with(from: u64, to: u64, msg: PaxosMsg) -> Message {
-            Message { from, to, msg }
-        }
-    }
+    use std::ops::Deref;
 
     const PREPARE_ID: u8 = 1;
     const PROMISE_ID: u8 = 2;
@@ -222,7 +98,7 @@ pub mod paxos {
             buf.put_u64(ballot.pid);
         }
 
-        fn serialise_entry(e: &Entry, buf: &mut dyn BufMut) {
+        fn serialise_entry(e: &Entry<Ballot>, buf: &mut dyn BufMut) {
             match e {
                 Entry::Normal(d) => {
                     buf.put_u8(NORMAL_ENTRY_ID);
@@ -235,10 +111,11 @@ pub mod paxos {
                     buf.put_u32(ss.config_id);
                     buf.put_u32(ss.nodes.len() as u32);
                     ss.nodes.iter().for_each(|pid| buf.put_u64(*pid));
-                    match ss.skip_prepare_n {
-                        Some(n) => {
+                    match ss.skip_prepare_use_leader {
+                        Some(l) => {
                             buf.put_u8(1);
-                            Self::serialise_ballot(&n, buf);
+                            buf.put_u64(l.pid);
+                            Self::serialise_ballot(&l.round, buf);
                         }
                         _ => buf.put_u8(0),
                     }
@@ -246,7 +123,7 @@ pub mod paxos {
             }
         }
 
-        pub(crate) fn serialise_entries(ents: &[Entry], buf: &mut dyn BufMut) {
+        pub(crate) fn serialise_entries(ents: &[Entry<Ballot>], buf: &mut dyn BufMut) {
             buf.put_u32(ents.len() as u32);
             for e in ents {
                 Self::serialise_entry(e, buf);
@@ -259,7 +136,7 @@ pub mod paxos {
             Ballot::with(n, pid)
         }
 
-        fn deserialise_entry(buf: &mut dyn Buf) -> Entry {
+        fn deserialise_entry(buf: &mut dyn Buf) -> Entry<Ballot> {
             match buf.get_u8() {
                 NORMAL_ENTRY_ID => {
                     let data_len = buf.get_u32() as usize;
@@ -274,21 +151,22 @@ pub mod paxos {
                     for _ in 0..nodes_len {
                         nodes.push(buf.get_u64());
                     }
-                    let skip_prepare_n = match buf.get_u8() {
-                        1 => Some(Self::deserialise_ballot(buf)),
+                    let skip_prepare_use_leader = match buf.get_u8() {
+                        1 => {
+                            let pid = buf.get_u64();
+                            let ballot = Self::deserialise_ballot(buf);
+                            Some(Leader::with(pid, ballot))
+                        }
                         _ => None,
                     };
-                    let ss = StopSign::with(config_id, nodes, skip_prepare_n);
+                    let ss = StopSign::with(config_id, nodes, skip_prepare_use_leader);
                     Entry::StopSign(ss)
                 }
-                error_id => panic!(
-                    "Got unexpected id in deserialise_entry: {}",
-                    error_id
-                ),
+                error_id => panic!("Got unexpected id in deserialise_entry: {}", error_id),
             }
         }
 
-        pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry> {
+        pub fn deserialise_entries(buf: &mut dyn Buf) -> Vec<Entry<Ballot>> {
             let len = buf.get_u32();
             let mut ents = Vec::with_capacity(len as usize);
             for _ in 0..len {
@@ -298,7 +176,18 @@ pub mod paxos {
         }
     }
 
-    impl Serialisable for Message {
+    #[derive(Clone, Debug)]
+    pub struct PaxosMsgWrapper(pub Message<Ballot>);
+
+    impl Deref for PaxosMsgWrapper {
+        type Target = Message<Ballot>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl Serialisable for PaxosMsgWrapper {
         fn ser_id(&self) -> u64 {
             serialiser_ids::PAXOS_ID
         }
@@ -378,10 +267,11 @@ pub mod paxos {
             Ok(self)
         }
     }
-    impl Deserialiser<Message> for PaxosSer {
+
+    impl Deserialiser<Message<Ballot>> for PaxosSer {
         const SER_ID: u64 = serialiser_ids::PAXOS_ID;
 
-        fn deserialise(buf: &mut dyn Buf) -> Result<Message, SerError> {
+        fn deserialise(buf: &mut dyn Buf) -> Result<Message<Ballot>, SerError> {
             let from = buf.get_u64();
             let to = buf.get_u64();
             match buf.get_u8() {
@@ -465,11 +355,11 @@ pub mod paxos {
     pub struct SequenceSegment {
         pub from_idx: u64,
         pub to_idx: u64,
-        pub entries: Vec<Entry>,
+        pub entries: Vec<Entry<Ballot>>,
     }
 
     impl SequenceSegment {
-        pub fn with(from_idx: u64, to_idx: u64, entries: Vec<Entry>) -> SequenceSegment {
+        pub fn with(from_idx: u64, to_idx: u64, entries: Vec<Entry<Ballot>>) -> SequenceSegment {
             SequenceSegment {
                 from_idx,
                 to_idx,
@@ -577,7 +467,7 @@ pub mod paxos {
         pub seq_metadata: SequenceMetaData,
         pub from: u64,
         pub segment: Option<SequenceSegment>,
-        pub skip_prepare_n: Option<Ballot>,
+        pub skip_prepare_use_leader: Option<Leader<Ballot>>,
     }
 
     impl ReconfigInit {
@@ -587,7 +477,7 @@ pub mod paxos {
             seq_metadata: SequenceMetaData,
             from: u64,
             segment: Option<SequenceSegment>,
-            skip_prepare_n: Option<Ballot>,
+            skip_prepare_use_leader: Option<Leader<Ballot>>,
         ) -> ReconfigInit {
             ReconfigInit {
                 config_id,
@@ -595,7 +485,7 @@ pub mod paxos {
                 seq_metadata,
                 from,
                 segment,
-                skip_prepare_n,
+                skip_prepare_use_leader,
             }
         }
     }
@@ -643,10 +533,11 @@ pub mod paxos {
                         }
                         None => buf.put_u8(0),
                     }
-                    match &r.skip_prepare_n {
-                        Some(n) => {
+                    match &r.skip_prepare_use_leader {
+                        Some(l) => {
                             buf.put_u8(1);
-                            PaxosSer::serialise_ballot(n, buf);
+                            buf.put_u64(l.pid);
+                            PaxosSer::serialise_ballot(&l.round, buf);
                         }
                         None => buf.put_u8(0),
                     }
@@ -708,8 +599,12 @@ pub mod paxos {
                         }
                         _ => None,
                     };
-                    let skip_prepare_n = match buf.get_u8() {
-                        1 => Some(PaxosSer::deserialise_ballot(buf)),
+                    let skip_prepare_use_leader = match buf.get_u8() {
+                        1 => {
+                            let leader_pid = buf.get_u64();
+                            let ballot = PaxosSer::deserialise_ballot(buf);
+                            Some(Leader::with(leader_pid, ballot))
+                        }
                         _ => None,
                     };
                     let seq_metadata =
@@ -721,7 +616,7 @@ pub mod paxos {
                         seq_metadata,
                         from,
                         segment,
-                        skip_prepare_n,
+                        skip_prepare_use_leader,
                     );
                     Ok(ReconfigurationMsg::Init(r))
                 }
@@ -757,30 +652,7 @@ pub mod paxos {
 
     pub mod ballot_leader_election {
         use super::super::*;
-
-        #[derive(Clone, Copy, Eq, Debug, Ord, PartialOrd, PartialEq)]
-        pub struct Ballot {
-            pub n: u64,
-            pub pid: u64,
-        }
-
-        impl Ballot {
-            pub fn with(n: u64, pid: u64) -> Ballot {
-                Ballot { n, pid }
-            }
-        }
-
-        #[derive(Copy, Clone, Debug)]
-        pub struct Leader {
-            pub pid: u64,
-            pub ballot: Ballot,
-        }
-
-        impl Leader {
-            pub fn with(pid: u64, ballot: Ballot) -> Leader {
-                Leader { pid, ballot }
-            }
-        }
+        use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {
