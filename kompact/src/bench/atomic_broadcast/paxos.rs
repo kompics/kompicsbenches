@@ -1228,7 +1228,7 @@ where
     fn send_outgoing(&mut self) -> Handled {
         for out_msg in self.paxos.get_outgoing_msgs() {
             self.communication_port
-                .trigger(CommunicatorMsg::RawPaxosMsg(PaxosMsgWrapper(out_msg)));
+                .trigger(CommunicatorMsg::RawPaxosMsg(out_msg));
         }
         Handled::Ok
     }

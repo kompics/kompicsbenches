@@ -23,7 +23,7 @@ pub enum AtomicBroadcastCompMsg {
 #[derive(Clone, Debug)]
 pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
-    RawPaxosMsg(PaxosMsgWrapper),
+    RawPaxosMsg(PaxosMsg<Ballot>),
     ProposalResponse(ProposalResp),
     SendStop(u64, bool),
 }
@@ -76,7 +76,7 @@ impl Provide<CommunicationPort> for Communicator {
                 trace!(self.ctx.log(), "sending {:?}", pm);
                 let receiver = self.peers.get(&pm.to).unwrap_or_else(|| panic!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}. PaxosMsg: {:?}", &pm.to, self.peers.keys(), pm));
                 receiver
-                    .tell_serialised(pm, self)
+                    .tell_serialised(PaxosMsgWrapper(pm), self)
                     .expect("Should serialise RawPaxosMsg");
             }
             CommunicatorMsg::ProposalResponse(pr) => {
