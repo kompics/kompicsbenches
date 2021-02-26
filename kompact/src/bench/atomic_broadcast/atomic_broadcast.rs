@@ -842,14 +842,15 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::bench::atomic_broadcast::paxos::SequenceTraits;
+    use leaderpaxos::storage::SequenceTraits;
+    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
 
     #[derive(Debug)]
     struct GetSequence(Ask<(), SequenceResp>);
 
     impl<S> Into<PaxosCompMsg<S>> for GetSequence
     where
-        S: SequenceTraits,
+        S: SequenceTraits<Ballot>,
     {
         fn into(self) -> PaxosCompMsg<S> {
             PaxosCompMsg::GetSequence(self.0)
