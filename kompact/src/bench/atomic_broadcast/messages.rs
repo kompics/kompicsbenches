@@ -1005,3 +1005,27 @@ impl Deserialiser<StopMsg> for StopMsgDeser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    extern crate test;
+
+    use test::Bencher;
+    use crate::bench::atomic_broadcast::messages::paxos::PaxosMsgWrapper;
+    use leaderpaxos::messages::{Message, PaxosMsg, AcceptDecide};
+    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
+    use leaderpaxos::storage::Entry;
+    use kompact::prelude::Serialisable;
+
+    #[bench]
+    fn bench_paxos_msg_wrapper_ser(b: &mut Bencher) {
+        let ballot = Ballot::with(10, 1);
+        let data: Vec<Entry<Ballot>> = vec![Entry::Normal(vec![1; 8]); 1000];
+        let paxos_msg = PaxosMsg::AcceptDecide(AcceptDecide::with(ballot, 500, data));
+        let msg = Message::with(1, 2, paxos_msg);
+        let wrap = PaxosMsgWrapper(msg);
+
+        let mut buf = Vec::with_capacity(10000);
+        b.iter(|| wrap.serialise(&mut buf).expect("Failed to serialise"));
+    }
+}

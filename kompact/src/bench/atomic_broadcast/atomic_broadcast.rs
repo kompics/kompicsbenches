@@ -1060,8 +1060,8 @@ pub mod tests {
     #[test]
     fn paxos_normal_test() {
         let num_nodes = 3;
-        let num_proposals = 1000;
-        let concurrent_proposals = 200;
+        let num_proposals = 50000;
+        let concurrent_proposals = 10000;
         let reconfiguration = "off";
         let reconfig_policy = "none";
         run_experiment(
