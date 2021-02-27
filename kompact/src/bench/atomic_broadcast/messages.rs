@@ -222,6 +222,7 @@ pub mod paxos {
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
                     buf.put_u64(p.ld);
+                    buf.put_u64(p.sfx_len);
                 }
                 PaxosMsg::Promise(p) => {
                     buf.put_u8(PROMISE_ID);
@@ -284,7 +285,8 @@ pub mod paxos {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
                     let ld = buf.get_u64();
-                    let p = Prepare::with(n, ld, n_accepted);
+                    let sfx_len = buf.get_u64();
+                    let p = Prepare::with(n, ld, n_accepted, sfx_len);
                     Message::with(from, to, PaxosMsg::Prepare(p))
                 }
                 PROMISE_ID => {
