@@ -278,18 +278,14 @@ pub mod paxos {
         fn deserialise(buf: &mut dyn Buf) -> Result<Message<Ballot>, SerError> {
             let from = buf.get_u64();
             let to = buf.get_u64();
-            match buf.get_u8() {
-                PREPAREREQ_ID => {
-                    let msg = Message::with(from, to, PaxosMsg::PrepareReq);
-                    Ok(msg)
-                }
+            let msg = match buf.get_u8() {
+                PREPAREREQ_ID => Message::with(from, to, PaxosMsg::PrepareReq),
                 PREPARE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
                     let ld = buf.get_u64();
                     let p = Prepare::with(n, ld, n_accepted);
-                    let msg = Message::with(from, to, PaxosMsg::Prepare(p));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::Prepare(p))
                 }
                 PROMISE_ID => {
                     let n = Self::deserialise_ballot(buf);
@@ -297,8 +293,7 @@ pub mod paxos {
                     let ld = buf.get_u64();
                     let sfx = Self::deserialise_entries(buf);
                     let prom = Promise::with(n, n_accepted, sfx, ld);
-                    let msg = Message::with(from, to, PaxosMsg::Promise(prom));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::Promise(prom))
                 }
                 ACCEPTSYNC_ID => {
                     let ld = buf.get_u64();
@@ -310,48 +305,45 @@ pub mod paxos {
                     let n = Self::deserialise_ballot(buf);
                     let sfx = Self::deserialise_entries(buf);
                     let acc_sync = AcceptSync::with(n, sfx, ld, sync);
-                    let msg = Message::with(from, to, PaxosMsg::AcceptSync(acc_sync));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::AcceptSync(acc_sync))
                 }
                 ACCEPTDECIDE_ID => {
                     let ld = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let entries = Self::deserialise_entries(buf);
                     let a = AcceptDecide::with(n, ld, entries);
-                    let msg = Message::with(from, to, PaxosMsg::AcceptDecide(a));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::AcceptDecide(a))
                 }
                 ACCEPTED_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let ld = buf.get_u64();
                     let acc = Accepted::with(n, ld);
-                    let msg = Message::with(from, to, PaxosMsg::Accepted(acc));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::Accepted(acc))
                 }
                 DECIDE_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let ld = buf.get_u64();
                     let d = Decide::with(ld, n);
-                    let msg = Message::with(from, to, PaxosMsg::Decide(d));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::Decide(d))
                 }
                 PROPOSALFORWARD_ID => {
                     let entries = Self::deserialise_entries(buf);
                     let pf = PaxosMsg::ProposalForward(entries);
-                    let msg = Message::with(from, to, pf);
-                    Ok(msg)
+                    Message::with(from, to, pf)
                 }
                 FIRSTACCEPT_ID => {
                     let n = Self::deserialise_ballot(buf);
                     let entries = Self::deserialise_entries(buf);
                     let f = FirstAccept::with(n, entries);
-                    let msg = Message::with(from, to, PaxosMsg::FirstAccept(f));
-                    Ok(msg)
+                    Message::with(from, to, PaxosMsg::FirstAccept(f))
                 }
-                _ => Err(SerError::InvalidType(
-                    "Found unkown id but expected PaxosMsg".into(),
-                )),
-            }
+                _ => {
+                    return Err(SerError::InvalidType(
+                        "Found unkown id but expected PaxosMsg".into(),
+                    ));
+                },
+            };
+            Ok(msg)
         }
     }
 
@@ -1003,29 +995,5 @@ impl Deserialiser<StopMsg> for StopMsgDeser {
                 "Found unkown id but expected Peer stop or client stop".into(),
             )),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    extern crate test;
-
-    use test::Bencher;
-    use crate::bench::atomic_broadcast::messages::paxos::PaxosMsgWrapper;
-    use leaderpaxos::messages::{Message, PaxosMsg, AcceptDecide};
-    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
-    use leaderpaxos::storage::Entry;
-    use kompact::prelude::Serialisable;
-
-    #[bench]
-    fn bench_paxos_msg_wrapper_ser(b: &mut Bencher) {
-        let ballot = Ballot::with(10, 1);
-        let data: Vec<Entry<Ballot>> = vec![Entry::Normal(vec![1; 8]); 1000];
-        let paxos_msg = PaxosMsg::AcceptDecide(AcceptDecide::with(ballot, 500, data));
-        let msg = Message::with(1, 2, paxos_msg);
-        let wrap = PaxosMsgWrapper(msg);
-
-        let mut buf = Vec::with_capacity(10000);
-        b.iter(|| wrap.serialise(&mut buf).expect("Failed to serialise"));
     }
 }

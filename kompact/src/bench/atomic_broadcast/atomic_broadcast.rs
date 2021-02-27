@@ -1058,10 +1058,11 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn paxos_normal_test() {
         let num_nodes = 3;
-        let num_proposals = 50000;
-        let concurrent_proposals = 10000;
+        let num_proposals = 1000;
+        let concurrent_proposals = 200;
         let reconfiguration = "off";
         let reconfig_policy = "none";
         run_experiment(
@@ -1075,6 +1076,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn paxos_reconfig_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1092,6 +1094,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_normal_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1109,6 +1112,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_reconfig_follower_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1125,6 +1129,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_reconfig_leader_test() {
         let num_nodes = 3;
         let num_proposals = 1000;

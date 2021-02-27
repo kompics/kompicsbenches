@@ -23,7 +23,6 @@ use kompact::prelude::*;
 use rand::Rng;
 use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
-use crate::bench::atomic_broadcast::messages::paxos::PaxosMsgWrapper;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 const BLE: &str = "ble";
