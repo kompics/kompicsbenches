@@ -1293,12 +1293,12 @@ where
     fn propose(&mut self, p: Proposal) -> Result<(), ProposeErr> {
         match p.reconfig {
             Some((reconfig, _)) => {
-                /*
-                let prio_start_round = self.ctx.config()["paxos"]["prio_start_round"]
+                let n = self.ctx.config()["paxos"]["prio_start_round"]
                     .as_i64()
-                    .map(|x| x as u64);
-                */
-                self.paxos.propose_reconfiguration(reconfig, None)
+                    .expect("No prio start round in config!")
+                    as u64;
+                let prio_start_round = Ballot::with(n, 0);
+                self.paxos.propose_reconfiguration(reconfig, Some(prio_start_round))
             }
             None => self.paxos.propose_normal(p.data),
         }
