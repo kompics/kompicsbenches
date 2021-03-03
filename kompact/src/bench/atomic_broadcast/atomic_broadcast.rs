@@ -209,7 +209,6 @@ impl ExperimentParams {
 }
 
 pub struct AtomicBroadcastMaster {
-    algorithm: Option<String>,
     num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
@@ -219,7 +218,6 @@ pub struct AtomicBroadcastMaster {
     iteration_id: u32,
     client_comp: Option<Arc<Component<Client>>>,
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
-    num_written_latency: usize, // used to calculate avg of median latency
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
     experiment_str: Option<String>,
@@ -229,7 +227,6 @@ pub struct AtomicBroadcastMaster {
 impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
-            algorithm: None,
             num_nodes: None,
             num_proposals: None,
             concurrent_proposals: None,
@@ -239,7 +236,6 @@ impl AtomicBroadcastMaster {
             iteration_id: 0,
             client_comp: None,
             partitioning_actor: None,
-            num_written_latency: 0,
             latency_hist: None,
             num_timed_out: vec![],
             experiment_str: None,
@@ -586,7 +582,6 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             c.reconfig_policy
         );
         self.experiment_str = Some(experiment_str);
-        self.algorithm = Some(c.algorithm.clone());
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
         if c.concurrent_proposals == 1
@@ -666,7 +661,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let client = self.client_comp.take().unwrap();
         let meta_results = client
             .actor_ref()
-            .ask(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
+            .ask_with(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
@@ -698,14 +693,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
                 self.persist_latency_summary();
             }
-            self.algorithm = None;
             self.num_nodes = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
             self.experiment_str = None;
             self.num_timed_out.clear();
-            self.num_written_latency = 0;
             self.iteration_id = 0;
             system
                 .shutdown()
@@ -816,13 +809,13 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         if let Some(paxos) = &self.paxos_comp {
             let kill_comps_f = paxos
                 .actor_ref()
-                .ask(|p| PaxosCompMsg::KillComponents(Ask::new(p, ())));
+                .ask_with(|p| PaxosCompMsg::KillComponents(Ask::new(p, ())));
             kill_comps_f.wait();
         }
         if let Some(raft) = &self.raft_comp {
             let kill_comps_f = raft
                 .actor_ref()
-                .ask(|p| RaftCompMsg::KillComponents(Ask::new(p, ())));
+                .ask_with(|p| RaftCompMsg::KillComponents(Ask::new(p, ())));
             kill_comps_f.wait();
         }
         if last_iteration {
@@ -849,14 +842,15 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::bench::atomic_broadcast::paxos::SequenceTraits;
+    use leaderpaxos::storage::SequenceTraits;
+    use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
 
     #[derive(Debug)]
     struct GetSequence(Ask<(), SequenceResp>);
 
     impl<S> Into<PaxosCompMsg<S>> for GetSequence
     where
-        S: SequenceTraits,
+        S: SequenceTraits<Ballot>,
     {
         fn into(self) -> PaxosCompMsg<S> {
             PaxosCompMsg::GetSequence(self.0)
@@ -1064,6 +1058,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn paxos_normal_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1081,6 +1076,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn paxos_reconfig_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1098,6 +1094,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_normal_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1115,6 +1112,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_reconfig_follower_test() {
         let num_nodes = 3;
         let num_proposals = 1000;
@@ -1131,6 +1129,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn raft_reconfig_leader_test() {
         let num_nodes = 3;
         let num_proposals = 1000;

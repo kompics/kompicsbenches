@@ -1,21 +1,28 @@
 extern crate raft as tikv_raft;
 
-use super::messages::{StopMsg as NetStopMsg, StopMsgDeser, *};
-use super::storage::raft::*;
+use super::{
+    messages::{StopMsg as NetStopMsg, StopMsgDeser, *},
+    storage::raft::*,
+};
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
-use crate::bench::atomic_broadcast::atomic_broadcast::Done;
-use crate::bench::atomic_broadcast::communicator::{
-    AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg,
+use crate::{
+    bench::atomic_broadcast::{
+        atomic_broadcast::Done,
+        communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
+    },
+    partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
+    serialiser_ids::ATOMICBCAST_ID,
 };
-use crate::partitioning_actor::{PartitioningActorMsg, PartitioningActorSer};
-use crate::serialiser_ids::ATOMICBCAST_ID;
 use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
 use protobuf::Message as PbMessage;
 use rand::Rng;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
-use tikv_raft::{prelude::Message as TikvRaftMsg, prelude::*, StateRole};
+use tikv_raft::{
+    prelude::{Message as TikvRaftMsg, *},
+    StateRole,
+};
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -86,6 +93,12 @@ where
         let max_batch_size = config["raft"]["max_batch_size"]
             .as_i64()
             .expect("Failed to load max_batch_size") as u64;
+        let pre_vote = config["raft"]["pre_vote"]
+            .as_bool()
+            .expect("Failed to load pre_vote");
+        let check_quorum = config["raft"]["check_quorum"]
+            .as_bool()
+            .expect("Failed to load check_quorum");
         // convert from ms to logical clock ticks
         let election_tick = election_timeout / tick_period;
         let heartbeat_tick = leader_hb_period / tick_period;
@@ -98,6 +111,8 @@ where
             max_inflight_msgs,
             max_size_per_msg,
             batch_append: true,
+            pre_vote,
+            check_quorum,
             ..Default::default()
         };
         assert!(c.validate().is_ok(), "Invalid RawRaft config");
@@ -203,7 +218,7 @@ where
             .expect("Got stop but no Raft replica");
         let stop_f = raft
             .actor_ref()
-            .ask(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
+            .ask_with(|p| RaftReplicaMsg::Stop(Ask::new(p, ())));
         Handled::block_on(self, move |_| async move {
             stop_f.await.expect("Failed to stop RaftReplica");
         })
@@ -271,7 +286,7 @@ where
                 let raft_replica = self.raft_replica.as_ref().expect("No raft replica");
                 let seq = raft_replica
                     .actor_ref()
-                    .ask(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
+                    .ask_with(|promise| RaftReplicaMsg::SequenceReq(Ask::new(promise, ())))
                     .wait();
                 let sr = SequenceResp::with(self.pid, seq);
                 ask.reply(sr).expect("Failed to reply SequenceResp");

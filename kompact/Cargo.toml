@@ -1,7 +1,7 @@
 [package]
 name = "kompact_benchmarks"
 version = "0.1.0"
-authors = ["Lars Kroll <lkroll@kth.se>"]
+authors = ["Lars Kroll <lkroll@kth.se>", "Harald Ng <hng@kth.se>"]
 edition = "2018"
 
 [dependencies]
@@ -29,6 +29,7 @@ indexmap                = "1.4.0"
 hdrhistogram            = "6.0"
 hocon 					= {version = "0.3.6", default-features = false}
 quanta                  = {version = "0.6.5", optional = true}
+leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos", features = ["batch_accept"] }
 
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }
@@ -36,19 +37,11 @@ uuid = { version = "0.8", features = ["v4"] }
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
 
-batch_accept = []
-latest_decide = []
-latest_accepted = []
-
-max_accsync = []
-headstart_ble = []
-
 track_timeouts = [] # client keep tracks of which proposals timed out
 track_latency = [] # measure latency for proposals
 track_timestamps = ["quanta"]
 
 #default = []
-default = ["batch_accept", "latest_decide", "latest_accepted", "max_accsync"]
 
 [profile.release]
 lto = true

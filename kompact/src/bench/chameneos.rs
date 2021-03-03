@@ -1,10 +1,10 @@
 use super::*;
 
-use benchmark_suite_shared::helpers::chameneos::ChameneosColour;
-use benchmark_suite_shared::kompics_benchmarks::benchmarks::ChameneosRequest;
+use benchmark_suite_shared::{
+    helpers::chameneos::ChameneosColour, kompics_benchmarks::benchmarks::ChameneosRequest,
+};
 use kompact::prelude::*;
-use std::convert::TryInto;
-use std::sync::Arc;
+use std::{convert::TryInto, sync::Arc};
 use synchronoise::CountdownEvent;
 
 pub mod actor_chameneos {

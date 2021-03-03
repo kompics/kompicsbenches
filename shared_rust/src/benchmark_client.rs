@@ -26,8 +26,7 @@ pub fn run(
     master_port: u16,
     benchmarks: Box<dyn BenchmarkFactory>,
     logger: Logger,
-) -> ()
-{
+) -> () {
     let (command_sender, command_receiver) = cbchannel::unbounded();
     let mut inst = BenchmarkClient::new(
         logger.new(
@@ -135,8 +134,7 @@ impl BenchmarkClient {
         master_address: IpAddr,
         master_port: u16,
         command_queue: cbchannel::Receiver<ClientCommand>,
-    ) -> BenchmarkClient
-    {
+    ) -> BenchmarkClient {
         BenchmarkClient {
             logger,
             state: StateHolder::init(),
@@ -304,8 +302,7 @@ impl distributed_grpc::BenchmarkClient for ClientHandler {
         &self,
         _o: ::grpc::RequestOptions,
         p: distributed::SetupConfig,
-    ) -> ::grpc::SingleResponse<distributed::SetupResponse>
-    {
+    ) -> ::grpc::SingleResponse<distributed::SetupResponse> {
         let (cmd, f) = ClientCommand::from_setup(p);
         self.command_queue.send(cmd).expect("Command channel broke!");
         grpc::SingleResponse::no_metadata(f.map_err(|c| c.into()))
@@ -315,8 +312,7 @@ impl distributed_grpc::BenchmarkClient for ClientHandler {
         &self,
         _o: ::grpc::RequestOptions,
         p: distributed::CleanupInfo,
-    ) -> ::grpc::SingleResponse<distributed::CleanupResponse>
-    {
+    ) -> ::grpc::SingleResponse<distributed::CleanupResponse> {
         let (cmd, f) = ClientCommand::from_cleanup(p);
         self.command_queue.send(cmd).expect("Command channel broke!");
         grpc::SingleResponse::no_metadata(f.map_err(|c| c.into()))
@@ -326,8 +322,7 @@ impl distributed_grpc::BenchmarkClient for ClientHandler {
         &self,
         _o: ::grpc::RequestOptions,
         p: messages::ShutdownRequest,
-    ) -> ::grpc::SingleResponse<messages::ShutdownAck>
-    {
+    ) -> ::grpc::SingleResponse<messages::ShutdownAck> {
         info!(self.logger, "Got shutdown request: {:?}", p);
         if p.force {
             crate::force_shutdown();

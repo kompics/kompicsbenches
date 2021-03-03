@@ -3,12 +3,8 @@ use super::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::StreamingWindowsRequest;
 use kompact::prelude::*;
 use parse_duration;
-use rand::rngs::SmallRng;
-use rand::{Rng, SeedableRng};
-use std::convert::TryInto;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
+use std::{convert::TryInto, str::FromStr, sync::Arc, time::Duration};
 use synchronoise::CountdownEvent;
 
 pub struct WindowerConfig {
@@ -271,7 +267,7 @@ impl DistributedBenchmarkMaster for StreamingWindowsMaster {
             .iter()
             .map(|source| {
                 let source_ref = source.1.actor_ref();
-                source_ref.ask(|promise| SourceMsg::Reset(Ask::new(promise, ())))
+                source_ref.ask_with(|promise| SourceMsg::Reset(Ask::new(promise, ())))
             })
             .collect();
         self.sink_refs.clear();

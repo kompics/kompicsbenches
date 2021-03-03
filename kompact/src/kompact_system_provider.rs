@@ -1,8 +1,6 @@
 //use super::*;
 
-use kompact::executors::*;
-use kompact::net::buffers::BufferConfig;
-use kompact::prelude::*;
+use kompact::{executors::*, net::buffers::BufferConfig, prelude::*};
 use num_cpus;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 

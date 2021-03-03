@@ -3,9 +3,7 @@ use super::*;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::PingPongRequest;
 use kompact::prelude::*;
 use messages::{Run, StaticPing, StaticPong, RUN, STATIC_PING, STATIC_PONG};
-use std::borrow::Borrow;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{borrow::Borrow, str::FromStr, sync::Arc};
 use synchronoise::CountdownEvent;
 
 #[derive(Default)]

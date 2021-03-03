@@ -1,26 +1,29 @@
 extern crate raft as tikv_raft;
 
-use super::messages::paxos::Message as RawPaxosMsg;
-use crate::bench::atomic_broadcast::messages::raft::RaftMsg;
-use crate::bench::atomic_broadcast::messages::{paxos::PaxosSer, raft::RawRaftSer};
-use crate::bench::atomic_broadcast::messages::{
-    AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
+use crate::bench::atomic_broadcast::{
+    messages::{
+        paxos::{PaxosMsgWrapper, PaxosSer},
+        raft::{RaftMsg, RawRaftSer},
+        AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
+    },
+    paxos::ballot_leader_election::Ballot,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
+use leaderpaxos::messages::Message as PaxosMsg;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
 pub enum AtomicBroadcastCompMsg {
     RawRaftMsg(RawRaftMsg),
-    RawPaxosMsg(RawPaxosMsg),
+    RawPaxosMsg(PaxosMsg<Ballot>),
     StopMsg(u64),
 }
 
 #[derive(Clone, Debug)]
 pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
-    RawPaxosMsg(RawPaxosMsg),
+    RawPaxosMsg(PaxosMsg<Ballot>),
     ProposalResponse(ProposalResp),
     SendStop(u64, bool),
 }
@@ -36,7 +39,7 @@ impl Port for CommunicationPort {
 pub struct Communicator {
     ctx: ComponentContext<Communicator>,
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
-    peers: HashMap<u64, ActorPath>, // tikv raft node id -> actorpath
+    peers: HashMap<u64, ActorPath>, // node id -> actorpath
     client: ActorPath,              // cached client to send SequenceResp to
 }
 
@@ -73,7 +76,7 @@ impl Provide<CommunicationPort> for Communicator {
                 trace!(self.ctx.log(), "sending {:?}", pm);
                 let receiver = self.peers.get(&pm.to).unwrap_or_else(|| panic!("RawPaxosMsg: Could not find actorpath for id={}. Known peers: {:?}. PaxosMsg: {:?}", &pm.to, self.peers.keys(), pm));
                 receiver
-                    .tell_serialised(pm, self)
+                    .tell_serialised(PaxosMsgWrapper(pm), self)
                     .expect("Should serialise RawPaxosMsg");
             }
             CommunicatorMsg::ProposalResponse(pr) => {
@@ -84,7 +87,7 @@ impl Provide<CommunicationPort> for Communicator {
                     .expect("Should serialise ProposalResp");
             }
             CommunicatorMsg::SendStop(my_pid, ack_client) => {
-                trace!(self.ctx.log(), "Sending stop");
+                debug!(self.ctx.log(), "Sending stop to {:?}", self.peers.keys());
                 for ap in self.peers.values() {
                     ap.tell_serialised(NetStopMsg::Peer(my_pid), self)
                         .expect("Should serialise StopMsg")
@@ -114,7 +117,7 @@ impl Actor for Communicator {
             r: RawRaftMsg [RawRaftSer] => {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
             },
-            p: RawPaxosMsg [PaxosSer] => {
+            p: PaxosMsg<Ballot> [PaxosSer] => {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
             },
             stop: NetStopMsg [StopMsgDeser] => {

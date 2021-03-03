@@ -1,12 +1,13 @@
 use super::*;
 
-use benchmark_suite_shared::helpers::graphs::*;
-use benchmark_suite_shared::kompics_benchmarks::benchmarks::APSPRequest;
+use benchmark_suite_shared::{helpers::graphs::*, kompics_benchmarks::benchmarks::APSPRequest};
 use kompact::prelude::*;
-use std::collections::BTreeMap;
-use std::convert::TryInto;
-use std::fmt;
-use std::sync::{Arc, Weak};
+use std::{
+    collections::BTreeMap,
+    convert::TryInto,
+    fmt,
+    sync::{Arc, Weak},
+};
 use synchronoise::CountdownEvent;
 
 pub mod actor_apsp {
@@ -31,8 +32,6 @@ pub mod actor_apsp {
     }
 
     pub struct AllPairsShortestPathI {
-        num_nodes: Option<usize>,
-        block_size: Option<usize>,
         system: Option<KompactSystem>,
         manager: Option<Arc<Component<ManagerActor>>>,
         graph: Option<Arc<Graph<f64>>>,
@@ -42,8 +41,6 @@ pub mod actor_apsp {
     impl AllPairsShortestPathI {
         fn new() -> AllPairsShortestPathI {
             AllPairsShortestPathI {
-                num_nodes: None,
-                block_size: None,
                 system: None,
                 manager: None,
                 graph: None,
@@ -60,12 +57,10 @@ pub mod actor_apsp {
                 .number_of_nodes
                 .try_into()
                 .expect("Nodes should fit into usize");
-            self.num_nodes = Some(num_nodes);
             let block_size: usize = c
                 .block_size
                 .try_into()
                 .expect("Block Size should fit into usize");
-            self.block_size = Some(block_size);
             let system = crate::kompact_system_provider::global().new_system("apsp");
             let manager = system.create(|| ManagerActor::with(block_size));
             let manager_f = system.start_notify(&manager);
@@ -113,8 +108,6 @@ pub mod actor_apsp {
                 system
                     .shutdown()
                     .expect("Kompics didn't shut down properly");
-                self.num_nodes = None;
-                self.block_size = None;
             } else {
                 self.system = Some(system);
             }
@@ -462,8 +455,6 @@ pub mod component_apsp {
     }
 
     pub struct AllPairsShortestPathI {
-        num_nodes: Option<usize>,
-        block_size: Option<usize>,
         system: Option<KompactSystem>,
         manager: Option<Arc<Component<ManagerActor>>>,
         graph: Option<Arc<Graph<f64>>>,
@@ -473,8 +464,6 @@ pub mod component_apsp {
     impl AllPairsShortestPathI {
         fn new() -> AllPairsShortestPathI {
             AllPairsShortestPathI {
-                num_nodes: None,
-                block_size: None,
                 system: None,
                 manager: None,
                 graph: None,
@@ -491,12 +480,10 @@ pub mod component_apsp {
                 .number_of_nodes
                 .try_into()
                 .expect("Nodes should fit into usize");
-            self.num_nodes = Some(num_nodes);
             let block_size: usize = c
                 .block_size
                 .try_into()
                 .expect("Block Size should fit into usize");
-            self.block_size = Some(block_size);
             let system = crate::kompact_system_provider::global().new_system("apsp");
             let manager = system.create(|| ManagerActor::with(block_size));
             let manager_f = system.start_notify(&manager);
@@ -550,8 +537,6 @@ pub mod component_apsp {
                 system
                     .shutdown()
                     .expect("Kompics didn't shut down properly");
-                self.num_nodes = None;
-                self.block_size = None;
             } else {
                 self.system = Some(system);
             }

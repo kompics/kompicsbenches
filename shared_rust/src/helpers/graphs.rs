@@ -257,8 +257,7 @@ impl<T> Block<T> {
         col_offset: usize,
         data: Vec<Vec<T>>,
         formatter: fn(&T) -> String,
-    ) -> Block<T>
-    {
+    ) -> Block<T> {
         let block_size = data.len();
         let graph = Graph::with(data, formatter);
         Block { block_id, num_blocks_per_dim, row_offset, col_offset, block_size, graph }

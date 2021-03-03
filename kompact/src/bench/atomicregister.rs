@@ -1,19 +1,18 @@
 use super::*;
 
 use crate::partitioning_actor::*;
-use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicRegisterRequest;
 #[cfg(test)]
 use benchmark_suite_shared::test_utils::all_linearizable;
-use benchmark_suite_shared::test_utils::KVOperation;
-use benchmark_suite_shared::test_utils::KVTimestamp;
+use benchmark_suite_shared::{
+    kompics_benchmarks::benchmarks::AtomicRegisterRequest,
+    test_utils::{KVOperation, KVTimestamp},
+};
 use chrono::Utc;
 use kompact::prelude::*;
 use partitioning_actor::PartitioningActor;
 #[cfg(test)]
 use rand::Rng;
-use std::collections::HashMap;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{collections::HashMap, str::FromStr, sync::Arc};
 use synchronoise::CountdownEvent;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1283,9 +1282,7 @@ pub mod mixed_atomicregister {
         bcast_ref: ActorRef<WithSender<CacheInfo, CacheNodesAck>>,
         read_workload: f32,
         write_workload: f32,
-
         master: Option<ActorPath>,
-        nodes: Option<Vec<ActorPath>>,
         n: u32,
         rank: u32,
         num_keys: u64,
@@ -1314,7 +1311,6 @@ pub mod mixed_atomicregister {
                 read_workload,
                 write_workload,
                 master: None,
-                nodes: None,
                 n: 0,
                 rank: 0,
                 num_keys,
@@ -1491,7 +1487,6 @@ pub mod mixed_atomicregister {
                     match p {
                         PartitioningActorMsg::Init(init) => {
                             self.new_iteration(&init);
-                            self.nodes = Some(init.nodes.clone());
                             self.master = Some(sender);
                             let self_path = self.actor_path();
                             self.bcast_ref.tell(

@@ -6,10 +6,11 @@ use hashbrown::HashMap;
 use kompact::prelude::*;
 #[cfg(feature = "track_timestamps")]
 use quanta::{Clock, Instant};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use synchronoise::event::CountdownError;
-use synchronoise::CountdownEvent;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+use synchronoise::{event::CountdownError, CountdownEvent};
 
 #[derive(Debug, PartialEq)]
 enum ExperimentState {
