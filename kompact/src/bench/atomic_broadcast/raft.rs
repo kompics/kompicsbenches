@@ -93,6 +93,12 @@ where
         let max_batch_size = config["raft"]["max_batch_size"]
             .as_i64()
             .expect("Failed to load max_batch_size") as u64;
+        let pre_vote = config["raft"]["pre_vote"]
+            .as_bool()
+            .expect("Failed to load pre_vote");
+        let check_quorum = config["raft"]["check_quorum"]
+            .as_bool()
+            .expect("Failed to load check_quorum");
         // convert from ms to logical clock ticks
         let election_tick = election_timeout / tick_period;
         let heartbeat_tick = leader_hb_period / tick_period;
@@ -105,6 +111,8 @@ where
             max_inflight_msgs,
             max_size_per_msg,
             batch_append: true,
+            pre_vote,
+            check_quorum,
             ..Default::default()
         };
         assert!(c.validate().is_ok(), "Invalid RawRaft config");
