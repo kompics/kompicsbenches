@@ -975,8 +975,8 @@ where
             }
             _ => {
                 let NetMessage { sender, data, .. } = m;
-                match_deser! {data; {
-                    p: PartitioningActorMsg [PartitioningActorSer] => {
+                match_deser! {data {
+                    msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
                                 self.reset_state();
@@ -1023,7 +1023,7 @@ where
                             _ => unimplemented!()
                         }
                     },
-                    rm: ReconfigurationMsg [ReconfigSer] => {
+                    msg(rm): ReconfigurationMsg [using ReconfigSer] => {
                         match rm {
                             ReconfigurationMsg::Init(r) => {
                                 if self.stopped {
@@ -1118,12 +1118,13 @@ where
                             }
                         }
                     },
-                    client_stop: NetStopMsg [StopMsgDeser] => {
+                    msg(client_stop): NetStopMsg [using StopMsgDeser] => {
                         if let NetStopMsg::Client = client_stop {
                             return self.stop_components();
                         }
                     },
-                    !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                    err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                    default(_) => unimplemented!("Expected either PartitioningActorMsg, ReconfigurationMsg or NetStopMsg!"),
                     }
                 }
             }
@@ -1672,8 +1673,8 @@ pub(crate) mod ballot_leader_election {
 
         fn receive_network(&mut self, m: NetMessage) -> Handled {
             let NetMessage { sender, data, .. } = m;
-            match_deser! {data; {
-                hb: HeartbeatMsg [BallotLeaderSer] => {
+            match_deser! {data {
+                msg(hb): HeartbeatMsg [using BallotLeaderSer] => {
                     match hb {
                         HeartbeatMsg::Request(req) if !self.stopped => {
                             if req.max_ballot > self.max_ballot {
@@ -1693,7 +1694,7 @@ pub(crate) mod ballot_leader_election {
                         _ => {},
                     }
                 },
-                stop: NetStopMsg [StopMsgDeser] => {
+                msg(stop): NetStopMsg [using StopMsgDeser] => {
                     if let NetStopMsg::Peer(pid) = stop {
                         assert!(self.stopped_peers.insert(pid), "BLE got duplicate stop from peer {}", pid);
                         debug!(self.ctx.log(), "BLE got stopped from peer {}", pid);
@@ -1708,7 +1709,8 @@ pub(crate) mod ballot_leader_election {
                     }
 
                 },
-                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                default(_) => unimplemented!("Should be either HeartbeatMsg or NetStopMsg!"),
             }
             }
             Handled::Ok

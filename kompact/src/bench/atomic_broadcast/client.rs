@@ -436,8 +436,8 @@ impl Actor for Client {
             receiver: _,
             data,
         } = m;
-        match_deser! {data; {
-            am: AtomicBroadcastMsg [AtomicBroadcastDeser] => {
+        match_deser! {data {
+            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
@@ -560,7 +560,7 @@ impl Actor for Client {
                     _ => error!(self.ctx.log(), "Client received unexpected msg"),
                 }
             },
-            stop: NetStopMsg [StopMsgDeser] => {
+            msg(stop): NetStopMsg [using StopMsgDeser] => {
                 if let NetStopMsg::Peer(pid) = stop {
                     self.nodes.remove(&pid).unwrap_or_else(|| panic!("Got stop from unknown pid {}", pid));
                     if self.nodes.is_empty() {
@@ -568,7 +568,8 @@ impl Actor for Client {
                     }
                 }
             },
-            !Err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
+            err(e) => error!(self.ctx.log(), "{}", &format!("Client failed to deserialise msg: {:?}", e)),
+            default(_) => unimplemented!("Should be either AtomicBroadcastMsg or NetStopMsg"),
         }
         }
         Handled::Ok

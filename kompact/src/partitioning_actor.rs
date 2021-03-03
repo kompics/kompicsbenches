@@ -85,8 +85,8 @@ impl Actor for PartitioningActor {
     }
 
     fn receive_network(&mut self, msg: NetMessage) -> Handled {
-        match_deser! {msg; {
-            p: PartitioningActorMsg [PartitioningActorSer] => {
+        match_deser! {msg {
+            msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                 match p {
                     PartitioningActorMsg::InitAck(_) => {
                         self.init_ack_count += 1;
@@ -129,7 +129,8 @@ impl Actor for PartitioningActor {
                     e => error!(self.ctx.log(), "Got unexpected msg: {:?}", e),
                 }
             },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+            err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+            default(_) => unimplemented!(),
         }}
         Handled::Ok
     }

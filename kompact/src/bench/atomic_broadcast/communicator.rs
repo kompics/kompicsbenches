@@ -113,19 +113,20 @@ impl Actor for Communicator {
 
     fn receive_network(&mut self, m: NetMessage) -> Handled {
         let NetMessage { data, .. } = m;
-        match_deser! {data; {
-            r: RawRaftMsg [RawRaftSer] => {
+        match_deser! {data {
+            msg(r): RawRaftMsg [using RawRaftSer] => {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
             },
-            p: PaxosMsg<Ballot> [PaxosSer] => {
+            msg(p): PaxosMsg<Ballot> [using PaxosSer] => {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
             },
-            stop: NetStopMsg [StopMsgDeser] => {
+            msg(stop): NetStopMsg [using StopMsgDeser] => {
                 if let NetStopMsg::Peer(pid) = stop {
                     self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::StopMsg(pid));
                 }
             },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+            err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+            default(_) => unimplemented!("Should be either RawRaftMsg, PaxosMsg or NetStopMsg!")
         }
         }
         Handled::Ok

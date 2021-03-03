@@ -324,8 +324,8 @@ where
             }
             _ => {
                 let NetMessage { sender, data, .. } = m;
-                match_deser! {data; {
-                    p: PartitioningActorMsg [PartitioningActorSer] => {
+                match_deser! {data {
+                    msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
                                 info!(self.ctx.log(), "Raft got init, pid: {}", init.pid);
@@ -348,14 +348,15 @@ where
                             _ => {},
                         }
                     },
-                    client_stop: NetStopMsg [StopMsgDeser] => {
+                    msg(client_stop): NetStopMsg [using StopMsgDeser] => {
                         if let NetStopMsg::Client = client_stop {
                             // info!(self.ctx.log(), "Got client stop");
                             assert!(!self.stopped);
                             return self.stop_components();
                         }
                     },
-                    !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                    err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                    default(_) => unimplemented!("Expected either PartitioningActorMsg or NetStopMsg!"),
                 }
                 }
             }

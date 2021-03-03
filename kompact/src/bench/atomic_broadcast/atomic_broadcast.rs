@@ -1,29 +1,31 @@
 extern crate raft as tikv_raft;
 
-use super::super::*;
-use super::client::{Client, LocalClientMessage};
-use super::paxos::{PaxosComp, ReconfigurationPolicy as PaxosReconfigurationPolicy};
-use super::raft::{RaftComp, ReconfigurationPolicy as RaftReconfigurationPolicy};
-use super::storage::paxos::{MemorySequence, MemoryState};
+use super::{
+    super::*,
+    client::{Client, LocalClientMessage},
+    paxos::{PaxosComp, ReconfigurationPolicy as PaxosReconfigurationPolicy},
+    raft::{RaftComp, ReconfigurationPolicy as RaftReconfigurationPolicy},
+    storage::paxos::{MemorySequence, MemoryState},
+};
 use crate::partitioning_actor::IterationControlMsg;
 use benchmark_suite_shared::kompics_benchmarks::benchmarks::AtomicBroadcastRequest;
 use hashbrown::HashMap;
 use hdrhistogram::Histogram;
 use kompact::prelude::*;
 use partitioning_actor::PartitioningActor;
-use std::str::FromStr;
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use synchronoise::CountdownEvent;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
-use crate::bench::atomic_broadcast::paxos::PaxosCompMsg;
-use crate::bench::atomic_broadcast::raft::RaftCompMsg;
+use crate::bench::atomic_broadcast::{paxos::PaxosCompMsg, raft::RaftCompMsg};
 use hocon::HoconLoader;
 use kompact::net::buffers::BufferConfig;
-use std::fs::{create_dir_all, OpenOptions};
-use std::io::Write;
-use std::path::PathBuf;
+use std::{
+    fs::{create_dir_all, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
 use tikv_raft::storage::MemStorage;
 
 const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -842,8 +844,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use leaderpaxos::storage::SequenceTraits;
     use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
+    use leaderpaxos::storage::SequenceTraits;
 
     #[derive(Debug)]
     struct GetSequence(Ask<(), SequenceResp>);

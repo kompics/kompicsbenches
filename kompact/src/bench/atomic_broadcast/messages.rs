@@ -343,7 +343,7 @@ pub mod paxos {
                     return Err(SerError::InvalidType(
                         "Found unkown id but expected PaxosMsg".into(),
                     ));
-                },
+                }
             };
             Ok(msg)
         }

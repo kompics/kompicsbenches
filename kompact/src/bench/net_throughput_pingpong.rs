@@ -359,8 +359,8 @@ impl Actor for StaticPinger {
         Handled::Ok
     }
     fn receive_network(&mut self, msg: NetMessage) -> Handled {
-        match_deser! {msg; {
-            _pong: StaticPong [StaticPong] => {
+        match_deser! {msg {
+            msg(_pong): StaticPong [using StaticPong] => {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
@@ -371,7 +371,8 @@ impl Actor for StaticPinger {
                     self.latch.decrement().expect("Should decrement!");
                 }
             },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising StaticPong: {:?}", e),
+            err(e) => error!(self.ctx.log(), "Error deserialising StaticPong: {:?}", e),
+            default(_) => unimplemented!(),
         }}
         Handled::Ok
     }
@@ -410,11 +411,12 @@ impl Actor for StaticPonger {
     fn receive_network(&mut self, msg: NetMessage) -> Handled {
         let sender = msg.sender.clone();
 
-        match_deser! {msg; {
-            _ping: StaticPing [StaticPing] => {
+        match_deser! {msg {
+            msg(_ping): StaticPing [using StaticPing] => {
                 sender.tell_serialised(STATIC_PONG, self).expect("Should have serialised");
             },
-            !Err(e) =>error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
+            err(e) =>error!(self.ctx.log(), "Error deserialising StaticPing: {:?}", e),
+            default(_) => unimplemented!(),
         }}
         Handled::Ok
     }
@@ -471,8 +473,8 @@ impl Actor for Pinger {
         Handled::Ok
     }
     fn receive_network(&mut self, msg: NetMessage) -> Handled {
-        match_deser! {msg; {
-            _pong: Pong [Pong] => {
+        match_deser! {msg {
+            msg(_pong): Pong [using Pong] => {
                 self.recv_count += 1;
                 if self.recv_count < self.count {
                     if self.sent_count < self.count {
@@ -483,7 +485,8 @@ impl Actor for Pinger {
                     self.latch.decrement().expect("Should decrement!");
                 }
             },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising Pong: {:?}", e),
+            err(e) => error!(self.ctx.log(), "Error deserialising Pong: {:?}", e),
+            default(_) => unimplemented!(),
         }}
         Handled::Ok
     }
@@ -522,11 +525,12 @@ impl Actor for Ponger {
     fn receive_network(&mut self, msg: NetMessage) -> Handled {
         let sender = msg.sender.clone();
 
-        match_deser! {msg; {
-            ping: Ping [Ping] => {
+        match_deser! {msg {
+            msg(ping): Ping [using Ping] => {
                 sender.tell_serialised(Pong::new(ping.index), self).expect("Should have serialised");
             },
-            !Err(e) => error!(self.ctx.log(), "Error deserialising Ping: {:?}", e),
+            err(e) => error!(self.ctx.log(), "Error deserialising Ping: {:?}", e),
+            default(_) => unimplemented!(),
         }}
         Handled::Ok
     }

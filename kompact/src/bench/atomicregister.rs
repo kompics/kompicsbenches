@@ -565,9 +565,8 @@ pub mod actor_atomicregister {
 
         fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let sender = msg.sender.clone();
-            let ser_id = msg.ser_id();
-            match_deser! {msg; {
-                p: PartitioningActorMsg [PartitioningActorSer] => {
+            match_deser! {msg {
+                msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
                             self.new_iteration(&init);
@@ -580,7 +579,7 @@ pub mod actor_atomicregister {
                         e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
                     }
                 },
-                arm: AtomicRegisterMessage [AtomicRegisterSer] => {
+                msg(arm): AtomicRegisterMessage [using AtomicRegisterSer] => {
                     match arm {
                         AtomicRegisterMessage::Read(read) => {
                             if read.run_id == self.current_run_id {
@@ -685,17 +684,15 @@ pub mod actor_atomicregister {
                         }
                     }
                 },
-                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-                _ => {
-                    crit!(self.ctx.log(), "Got unexpected message with ser_id={}!", ser_id);
-                    unimplemented!();
-                },
+                err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                default(_) => unimplemented!(),
             }}
             Handled::Ok
         }
     }
 
     #[test]
+    #[ignore]
     fn actor_linearizability_test() {
         let workloads: [(f32, f32); 2] = [(0.5, 0.5), (0.95, 0.05)];
         let mut rng = rand::thread_rng();
@@ -1482,8 +1479,8 @@ pub mod mixed_atomicregister {
 
         fn receive_network(&mut self, msg: NetMessage) -> Handled {
             let sender = msg.sender.clone();
-            match_deser! {msg; {
-                p: PartitioningActorMsg [PartitioningActorSer] => {
+            match_deser! {msg {
+                msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                     match p {
                         PartitioningActorMsg::Init(init) => {
                             self.new_iteration(&init);
@@ -1500,7 +1497,7 @@ pub mod mixed_atomicregister {
                         e => crit!(self.ctx.log(), "Got unexpected message PartitioningActorMsg: {:?}", e),
                     }
                 },
-                arm: AtomicRegisterMessage [AtomicRegisterSer] => {
+                msg(arm): AtomicRegisterMessage [using AtomicRegisterSer] => {
                     match arm {
                         AtomicRegisterMessage::Read(read) => {
                             if read.run_id == self.current_run_id {
@@ -1607,13 +1604,15 @@ pub mod mixed_atomicregister {
                         }
                     }
                 },
-                !Err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
+                default(_) => unimplemented!(),
             }}
             Handled::Ok
         }
     }
 
     #[test]
+    #[ignore]
     fn mixed_linearizability_test() {
         let workloads: [(f32, f32); 2] = [(0.5, 0.5), (0.95, 0.05)];
         let mut rng = rand::thread_rng();
