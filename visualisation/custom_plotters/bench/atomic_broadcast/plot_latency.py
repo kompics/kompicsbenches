@@ -18,6 +18,13 @@ parser.add_argument('-sample', nargs='?', default=1, help='Sample every X datapo
 parser.add_argument('-keep', nargs='+', default=[0, sys.maxint], type=int, help='Interval of datapoints that must be kept')
 #parser.add_argument('-trim', nargs = '?', default=0, help='Remove the X first and X last datapoints')
 
+colors = {
+  "paxos": "royalblue",
+  "raft": "red",
+  "raft-replace-leader": "forestgreen",
+  "raft-replace-follower": "red"
+}
+
 all_plots = []
 
 args = parser.parse_args()
@@ -58,7 +65,7 @@ for filename in data_files :
 print("Plotting",len(all_plots),"series")
 fig = go.Figure()
 for (legend, x, y) in all_plots:
-    data = go.Scattergl(x = x, y = y, mode = 'markers', name = legend, hovertemplate ='(%{x:.d}, %{y:.d})')
+    data = go.Scattergl(x = x, y = y, mode = 'markers', name = legend, hovertemplate ='(%{x:.d}, %{y:.d})', marker = dict(color = colors[legend]))
     fig.add_trace(data)
 
 dir_name = os.path.basename(os.path.normpath(args.s))
