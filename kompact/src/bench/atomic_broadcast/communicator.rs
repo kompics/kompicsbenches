@@ -4,7 +4,7 @@ use crate::bench::atomic_broadcast::{
     messages::{
         paxos::{PaxosMsgWrapper, PaxosSer},
         raft::{RaftMsg, RawRaftSer},
-        AtomicBroadcastMsg, ProposalResp, StopMsg as NetStopMsg, StopMsgDeser,
+        AtomicBroadcastMsg, ProposalResp, ReconfigurationResp, StopMsg as NetStopMsg, StopMsgDeser,
     },
     paxos::ballot_leader_election::Ballot,
 };
@@ -25,6 +25,7 @@ pub enum CommunicatorMsg {
     RawRaftMsg(RawRaftMsg),
     RawPaxosMsg(PaxosMsg<Ballot>),
     ProposalResponse(ProposalResp),
+    ReconfigurationResponse(ReconfigurationResp),
     SendStop(u64, bool),
 }
 
@@ -39,8 +40,8 @@ impl Port for CommunicationPort {
 pub struct Communicator {
     ctx: ComponentContext<Communicator>,
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
-    peers: HashMap<u64, ActorPath>, // node id -> actorpath
-    client: ActorPath,              // cached client to send SequenceResp to
+    pub(crate) peers: HashMap<u64, ActorPath>, // node id -> actorpath
+    client: ActorPath,                         // cached client to send SequenceResp to
 }
 
 impl Communicator {
@@ -82,6 +83,13 @@ impl Provide<CommunicationPort> for Communicator {
             CommunicatorMsg::ProposalResponse(pr) => {
                 trace!(self.ctx.log(), "ProposalResp: {:?}", pr);
                 let am = AtomicBroadcastMsg::ProposalResp(pr);
+                self.client
+                    .tell_serialised(am, self)
+                    .expect("Should serialise ProposalResp");
+            }
+            CommunicatorMsg::ReconfigurationResponse(rr) => {
+                trace!(self.ctx.log(), "ReconfigurationResp: {:?}", rr);
+                let am = AtomicBroadcastMsg::ReconfigurationResp(rr);
                 self.client
                     .tell_serialised(am, self)
                     .expect("Should serialise ProposalResp");

@@ -1,5 +1,6 @@
 extern crate raft as tikv_raft;
 
+use self::tikv_raft::Configuration;
 use super::{
     messages::{StopMsg as NetStopMsg, StopMsgDeser, *},
     storage::raft::*,
@@ -8,7 +9,7 @@ use super::{
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 use crate::{
     bench::atomic_broadcast::{
-        atomic_broadcast::Done,
+        atomic_broadcast::{Done, ReconfigurationPolicy},
         communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
@@ -30,7 +31,7 @@ const DELAY: Duration = Duration::from_millis(0);
 #[derive(Debug)]
 pub enum RaftCompMsg {
     Leader(bool, u64),
-    ForwardReconfig(u64, (Vec<u64>, Vec<u64>)),
+    ForwardReconfig(u64, ReconfigurationProposal),
     KillComponents(Ask<(), Done>),
     #[cfg(test)]
     GetSequence(Ask<(), SequenceResp>),
@@ -52,14 +53,13 @@ where
     partitioning_actor: Option<ActorPath>,
     cached_client: Option<ActorPath>,
     current_leader: u64,
-    reconfig_policy: ReconfigurationPolicy,
 }
 
 impl<S> RaftComp<S>
 where
     S: RaftStorage + Send + Clone + 'static,
 {
-    pub fn with(initial_config: Vec<u64>, reconfig_policy: ReconfigurationPolicy) -> Self {
+    pub fn with(initial_config: Vec<u64>) -> Self {
         RaftComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
@@ -72,7 +72,6 @@ where
             partitioning_actor: None,
             cached_client: None,
             current_leader: 0,
-            reconfig_policy,
         }
     }
 
@@ -151,13 +150,7 @@ where
             .as_i64()
             .expect("Failed to load max_inflight") as usize;
         let (raft_replica, raft_f) = system.create_and_register(|| {
-            RaftReplica::with(
-                raw_raft,
-                self.actor_ref(),
-                self.reconfig_policy.clone(),
-                self.peers.len(),
-                max_inflight,
-            )
+            RaftReplica::with(raw_raft, self.actor_ref(), self.peers.len(), max_inflight)
         });
         let (communicator, comm_f) = system.create_and_register(|| {
             Communicator::with(
@@ -267,15 +260,12 @@ where
                 }
                 self.current_leader = pid
             }
-            RaftCompMsg::ForwardReconfig(leader_pid, reconfig) => {
+            RaftCompMsg::ForwardReconfig(leader_pid, rp) => {
                 self.current_leader = leader_pid;
-                let mut data: Vec<u8> = Vec::with_capacity(8);
-                data.put_u64(RECONFIG_ID);
-                let p = Proposal::reconfiguration(data, reconfig);
                 self.peers
                     .get(&leader_pid)
                     .expect("No actorpath to current leader")
-                    .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
+                    .tell_serialised(AtomicBroadcastMsg::ReconfigurationProposal(rp), self)
                     .expect("Should serialise")
             }
             RaftCompMsg::KillComponents(ask) => {
@@ -300,18 +290,29 @@ where
             ATOMICBCAST_ID => {
                 if !self.stopped {
                     if self.current_leader == self.pid || self.current_leader == 0 {
-                        // if no leader, let raftcomp hold back
-                        if let AtomicBroadcastMsg::Proposal(p) = m
-                            .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
-                            .expect("Should be AtomicBroadcastMsg!")
-                        {
-                            self.raft_replica
-                                .as_ref()
-                                .expect("No active RaftComp")
-                                .actor_ref()
-                                .tell(RaftReplicaMsg::Propose(p));
-                        }
+                        match_deser! {m {
+                            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+                                match am {
+                                    AtomicBroadcastMsg::Proposal(p) => {
+                                        self.raft_replica
+                                            .as_ref()
+                                            .expect("No active RaftComp")
+                                            .actor_ref()
+                                            .tell(RaftReplicaMsg::Propose(p));
+                                    }
+                                    AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
+                                        self.raft_replica
+                                            .as_ref()
+                                            .expect("No active RaftComp")
+                                            .actor_ref()
+                                            .tell(RaftReplicaMsg::ProposeReconfiguration(rp));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }}
                     } else if self.current_leader > 0 {
+                        // if no leader, let raftcomp hold back
                         let leader = self.peers.get(&self.current_leader).unwrap_or_else(|| {
                             panic!(
                                 "Could not get leader's actorpath. Pid: {}",
@@ -368,15 +369,10 @@ where
 #[derive(Debug)]
 pub enum RaftReplicaMsg {
     Propose(Proposal),
+    ProposeReconfiguration(ReconfigurationProposal),
     Stop(Ask<(), ()>),
     #[cfg(test)]
     SequenceReq(Ask<(), Vec<u64>>),
-}
-
-#[derive(Clone, Debug)]
-pub enum ReconfigurationPolicy {
-    ReplaceLeader,
-    ReplaceFollower,
 }
 
 #[derive(Debug, PartialEq)]
@@ -406,7 +402,6 @@ where
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
     reconfig_state: ReconfigurationState,
     current_leader: u64,
-    reconfig_policy: ReconfigurationPolicy,
     num_peers: usize,
     stopped: bool,
     stopped_peers: HashSet<u64>,
@@ -448,6 +443,11 @@ where
             RaftReplicaMsg::Propose(p) => {
                 if self.reconfig_state != ReconfigurationState::Removed {
                     self.propose(p);
+                }
+            }
+            RaftReplicaMsg::ProposeReconfiguration(pr) => {
+                if self.reconfig_state != ReconfigurationState::Removed {
+                    self.propose_reconfiguration(pr);
                 }
             }
             RaftReplicaMsg::Stop(ask) => {
@@ -533,7 +533,6 @@ where
     pub fn with(
         raw_raft: RawNode<S>,
         replica: ActorRef<RaftCompMsg>,
-        reconfig_policy: ReconfigurationPolicy,
         num_peers: usize,
         max_inflight: usize,
     ) -> RaftReplica<S> {
@@ -546,7 +545,6 @@ where
             timers: None,
             reconfig_state: ReconfigurationState::None,
             current_leader: 0,
-            reconfig_policy,
             stopped: false,
             stopped_peers: HashSet::new(),
             num_peers,
@@ -621,79 +619,40 @@ where
     fn propose(&mut self, proposal: Proposal) {
         if self.raw_raft.raft.leader_id == 0 {
             self.hb_proposals.push(proposal);
-            return;
+        } else {
+            let data = proposal.data;
+            self.raw_raft.propose(vec![], data).unwrap_or_else(|_| {
+                panic!(
+                    "Failed to propose. leader: {}, lead_transferee: {:?}",
+                    self.raw_raft.raft.leader_id, self.raw_raft.raft.lead_transferee
+                )
+            });
         }
-        match proposal.reconfig {
-            Some(mut reconfig) => {
-                if let ReconfigurationState::None = self.reconfig_state {
-                    let leader_pid = self.raw_raft.raft.leader_id;
-                    if leader_pid != self.raw_raft.raft.id {
-                        self.supervisor
-                            .tell(RaftCompMsg::ForwardReconfig(leader_pid, reconfig));
-                        return;
-                    }
-                    let mut current_config =
-                        self.raw_raft.raft.prs().configuration().voters().clone();
-                    match self.reconfig_policy {
-                        ReconfigurationPolicy::ReplaceLeader => {
-                            let mut add_nodes: Vec<u64> = reconfig
-                                .0
-                                .drain(..)
-                                .filter(|pid| !current_config.contains(pid))
-                                .collect();
-                            current_config.remove(&leader_pid);
-                            let mut new_voters = current_config.into_iter().collect::<Vec<u64>>();
-                            new_voters.append(&mut add_nodes);
-                            let new_config = (new_voters, vec![]);
-                            // info!(self.ctx.log(), "Joint consensus remove leader: my pid: {}, reconfig: {:?}", leader_pid, new_config);
-                            self.raw_raft
-                                .raft
-                                .propose_membership_change(new_config)
-                                .expect(
-                                "Failed to propose joint consensus reconfiguration (remove leader)",
-                            );
-                        }
-                        ReconfigurationPolicy::ReplaceFollower => {
-                            if !reconfig.0.contains(&leader_pid) {
-                                let my_pid = self.raw_raft.raft.id;
-                                let mut add_nodes: Vec<u64> = reconfig
-                                    .0
-                                    .drain(..)
-                                    .filter(|pid| !current_config.contains(pid))
-                                    .collect();
-                                let follower_pid: u64 = **(current_config
-                                    .iter()
-                                    .filter(|pid| *pid != &my_pid)
-                                    .collect::<Vec<&u64>>()
-                                    .first()
-                                    .expect("No followers found"));
-                                current_config.remove(&follower_pid);
-                                let mut new_voters =
-                                    current_config.into_iter().collect::<Vec<u64>>();
-                                new_voters.append(&mut add_nodes);
-                                let new_config = (new_voters, vec![]);
-                                // info!(self.ctx.log(), "Joint consensus remove follower: my pid: {}, reconfig: {:?}", leader_pid, new_config);
-                                self.raw_raft
-                                    .raft
-                                    .propose_membership_change(new_config)
-                                    .expect("Failed to propose joint consensus reconfiguration");
-                            } else {
-                                self.raw_raft.raft.propose_membership_change(reconfig).expect("Failed to propose joint consensus reconfiguration (remove follower)");
-                            }
-                        }
-                    }
-                    self.reconfig_state = ReconfigurationState::Pending;
-                }
-            }
-            None => {
-                // i.e normal operation
-                let data = proposal.data;
-                self.raw_raft.propose(vec![], data).unwrap_or_else(|_| {
-                    panic!(
-                        "Failed to propose. leader: {}, lead_transferee: {:?}",
-                        self.raw_raft.raft.leader_id, self.raw_raft.raft.lead_transferee
-                    )
-                });
+    }
+
+    fn propose_reconfiguration(&mut self, rp: ReconfigurationProposal) {
+        if let ReconfigurationState::None = self.reconfig_state {
+            let leader_pid = self.raw_raft.raft.leader_id;
+            if leader_pid != self.raw_raft.raft.id {
+                self.supervisor
+                    .tell(RaftCompMsg::ForwardReconfig(leader_pid, rp));
+            } else {
+                let current_config: Vec<u64> = self
+                    .raw_raft
+                    .raft
+                    .prs()
+                    .configuration()
+                    .voters()
+                    .iter()
+                    .copied()
+                    .collect();
+                let new_voters = rp.get_new_configuration(leader_pid, current_config);
+                let new_config = Configuration::new(new_voters, vec![]);
+                self.raw_raft
+                    .raft
+                    .propose_membership_change(new_config)
+                    .expect("Failed to propose joint consensus reconfiguration");
+                self.reconfig_state = ReconfigurationState::Pending;
             }
         }
     }
@@ -814,19 +773,13 @@ where
                                     );
                                 }
                             }
-                            let conf_len = current_voters.len();
-                            let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * conf_len);
-                            data.put_u64(RECONFIG_ID);
-                            data.put_u32(conf_len as u32);
-                            for pid in current_voters {
-                                data.put_u64(*pid);
-                            }
+                            let current_configuration =
+                                current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-
-                            let pr = ProposalResp::with(data, leader);
+                            let rr = ReconfigurationResp::with(leader, current_configuration);
                             self.communication_port
-                                .trigger(CommunicatorMsg::ProposalResponse(pr));
+                                .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
                         }
                         _ => unimplemented!(),
                     }

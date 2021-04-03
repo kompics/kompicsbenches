@@ -2,6 +2,9 @@ use super::messages::{
     AtomicBroadcastDeser, AtomicBroadcastMsg, Proposal, StopMsg as NetStopMsg, StopMsgDeser,
     RECONFIG_ID,
 };
+use crate::bench::atomic_broadcast::{
+    atomic_broadcast::ReconfigurationPolicy, messages::ReconfigurationProposal,
+};
 use hashbrown::HashMap;
 use kompact::prelude::*;
 #[cfg(feature = "track_timestamps")]
@@ -24,11 +27,6 @@ enum ExperimentState {
 pub enum LocalClientMessage {
     Run,
     Stop(Ask<(), MetaResults>), // (num_timed_out, latency)
-}
-
-enum Response {
-    Normal(u64),
-    Reconfiguration(Vec<u64>),
 }
 
 #[derive(Debug)]
@@ -74,7 +72,7 @@ pub struct Client {
     num_proposals: u64,
     num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
-    reconfig: Option<(Vec<u64>, Vec<u64>)>,
+    reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     latest_proposal_id: u64,
@@ -107,7 +105,7 @@ impl Client {
         num_proposals: u64,
         num_concurrent_proposals: u64,
         nodes: HashMap<u64, ActorPath>,
-        reconfig: Option<(Vec<u64>, Vec<u64>)>,
+        reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
         timeout: Duration,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
@@ -148,22 +146,23 @@ impl Client {
     fn propose_normal(&self, id: u64, node: &ActorPath) {
         let mut data: Vec<u8> = Vec::with_capacity(8);
         data.put_u64(id);
-        let p = Proposal::normal(data);
+        let p = Proposal::with(data);
         node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
             .expect("Should serialise Proposal");
     }
 
     fn propose_reconfiguration(&self, node: &ActorPath) {
-        let reconfig = self.reconfig.as_ref().unwrap();
-        debug!(
+        let (policy, reconfig) = self.reconfig.as_ref().unwrap();
+        info!(
             self.ctx.log(),
             "{}",
-            format!("Sending reconfiguration: {:?}", reconfig)
+            format!(
+                "Proposing reconfiguration: policy: {:?}, new nodes: {:?}",
+                policy, reconfig
+            )
         );
-        let mut data: Vec<u8> = Vec::with_capacity(8);
-        data.put_u64(RECONFIG_ID);
-        let p = Proposal::reconfiguration(data, reconfig.clone());
-        node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
+        let rp = ReconfigurationProposal::with(*policy, reconfig.clone());
+        node.tell_serialised(AtomicBroadcastMsg::ReconfigurationProposal(rp), self)
             .expect("Should serialise reconfig Proposal");
         #[cfg(feature = "track_timeouts")]
         {
@@ -297,20 +296,6 @@ impl Client {
         Handled::Ok
     }
 
-    fn deserialise_response(data: &mut dyn Buf) -> Response {
-        match data.get_u64() {
-            RECONFIG_ID => {
-                let len = data.get_u32();
-                let mut config = Vec::with_capacity(len as usize);
-                for _ in 0..len {
-                    config.push(data.get_u64());
-                }
-                Response::Reconfiguration(config)
-            }
-            n => Response::Normal(n),
-        }
-    }
-
     fn send_stop(&self) {
         for ap in self.nodes.values() {
             ap.tell_serialised(NetStopMsg::Client, self)
@@ -421,67 +406,65 @@ impl Actor for Client {
                             _ => {},
                         }
                     },
-                    AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return Handled::Ok; }
-                        let data = pr.data;
-                        let response = Self::deserialise_response(&mut data.as_slice());
-                        match response {
-                            Response::Normal(id) => {
-                                if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                                    let latency = match proposal_meta.start_time {
-                                        Some(start_time) => Some(start_time.elapsed().expect("Failed to get elapsed duration")),
-                                        _ => None,
-                                    };
-                                    self.cancel_timer(proposal_meta.timer);
-                                    if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.state != ExperimentState::ReconfigurationElection {
-                                        // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
-                                        self.current_leader = pr.latest_leader;
-                                        self.leader_changes.push(pr.latest_leader);
+                    AtomicBroadcastMsg::ReconfigurationResp(rr) => {
+                        if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
+                            let new_config = rr.current_configuration;
+                            self.cancel_timer(proposal_meta.timer);
+                            if self.responses.len() as u64 == self.num_proposals {
+                                self.state = ExperimentState::Finished;
+                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
+                                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+                            } else {
+                                self.reconfig = None;
+                                self.current_config = new_config;
+                                let leader_changed = self.current_leader != rr.latest_leader;
+                                info!(self.ctx.log(), "Reconfig OK, leader: {}, old: {}, current_config: {:?}", rr.latest_leader, self.current_leader, self.current_config);
+                                self.current_leader = rr.latest_leader;
+                                if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
+                                    self.state = ExperimentState::ReconfigurationElection;
+                                } else {    // Raft: continue if there is a leader
+                                    self.state = ExperimentState::Running;
+                                    self.send_concurrent_proposals();
+                                    if leader_changed {
+                                        self.leader_changes.push(rr.latest_leader);
                                         #[cfg(feature = "track_timestamps")] {
                                             self.leader_changes_t.push(self.clock.now());
                                         }
                                     }
-                                    self.handle_normal_response(id, latency);
-                                    if self.state != ExperimentState::ReconfigurationElection {
-                                        self.send_concurrent_proposals();
-                                    }
-                                }
-                                #[cfg(feature = "track_timeouts")] {
-                                    if self.timeouts.contains(&id) {
-                                        /*if self.late_responses.is_empty() {
-                                            info!(self.ctx.log(), "Got first late response: {}", id);
-                                        }*/
-                                        self.late_responses.push(id);
-                                    }
                                 }
                             }
-                            Response::Reconfiguration(new_config) => {
-                                if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
-                                    self.cancel_timer(proposal_meta.timer);
-                                    if self.responses.len() as u64 == self.num_proposals {
-                                        self.state = ExperimentState::Finished;
-                                        self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                        info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
-                                    } else {
-                                        self.reconfig = None;
-                                        self.current_config = new_config;
-                                        let leader_changed = self.current_leader != pr.latest_leader;
-                                        info!(self.ctx.log(), "Reconfig OK, leader: {}, old: {}, current_config: {:?}", pr.latest_leader, self.current_leader, self.current_config);
-                                        self.current_leader = pr.latest_leader;
-                                        if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
-                                            self.state = ExperimentState::ReconfigurationElection;
-                                        } else {    // Raft: continue if there is a leader
-                                            self.state = ExperimentState::Running;
-                                            self.send_concurrent_proposals();
-                                            if leader_changed {
-                                                self.leader_changes.push(pr.latest_leader);
-                                                #[cfg(feature = "track_timestamps")] {
-                                                    self.leader_changes_t.push(self.clock.now());
-                                                }
-                                            }
-                                        }
-                                    }
+                        }
+                    }
+                    AtomicBroadcastMsg::ProposalResp(pr) => {
+                        if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return Handled::Ok; }
+                        let data = pr.data;
+                        // let response = Self::deserialise_response(&mut data.as_slice());
+                        let id = data.as_slice().get_u64();
+                        if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
+                            let latency = match proposal_meta.start_time {
+                                Some(start_time) => Some(start_time.elapsed().expect("Failed to get elapsed duration")),
+                                _ => None,
+                            };
+                            self.cancel_timer(proposal_meta.timer);
+                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.state != ExperimentState::ReconfigurationElection {
+                                // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
+                                self.current_leader = pr.latest_leader;
+                                self.leader_changes.push(pr.latest_leader);
+                                #[cfg(feature = "track_timestamps")] {
+                                    self.leader_changes_t.push(self.clock.now());
                                 }
+                            }
+                            self.handle_normal_response(id, latency);
+                            if self.state != ExperimentState::ReconfigurationElection {
+                                self.send_concurrent_proposals();
+                            }
+                        }
+                        #[cfg(feature = "track_timeouts")] {
+                            if self.timeouts.contains(&id) {
+                                /*if self.late_responses.is_empty() {
+                                    info!(self.ctx.log(), "Got first late response: {}", id);
+                                }*/
+                                self.late_responses.push(id);
                             }
                         }
                     },

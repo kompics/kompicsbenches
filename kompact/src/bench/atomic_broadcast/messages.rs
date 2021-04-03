@@ -1,6 +1,6 @@
 extern crate raft as tikv_raft;
 
-use crate::serialiser_ids;
+use crate::{bench::atomic_broadcast::atomic_broadcast::ReconfigurationPolicy, serialiser_ids};
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
 
@@ -449,6 +449,15 @@ pub mod paxos {
         pub fn len(&self) -> usize {
             self.continued_nodes.len() + self.new_nodes.len()
         }
+
+        pub fn get_peers_of(&self, pid: u64) -> Vec<u64> {
+            self.continued_nodes
+                .iter()
+                .chain(self.new_nodes.iter())
+                .filter(|p| p != &&pid)
+                .copied()
+                .collect()
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -765,22 +774,48 @@ pub const RECONFIG_ID: u64 = 0;
 #[derive(Clone, Debug)]
 pub struct Proposal {
     pub data: Vec<u8>,
-    pub reconfig: Option<(Vec<u64>, Vec<u64>)>,
 }
 
 impl Proposal {
-    pub fn reconfiguration(data: Vec<u8>, reconfig: (Vec<u64>, Vec<u64>)) -> Proposal {
-        Proposal {
-            data,
-            reconfig: Some(reconfig),
-        }
+    pub fn with(data: Vec<u8>) -> Self {
+        Proposal { data }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ReconfigurationProposal {
+    pub policy: ReconfigurationPolicy,
+    pub new_nodes: Vec<u64>,
+}
+
+impl ReconfigurationProposal {
+    pub fn with(policy: ReconfigurationPolicy, new_nodes: Vec<u64>) -> Self {
+        ReconfigurationProposal { policy, new_nodes }
     }
 
-    pub fn normal(data: Vec<u8>) -> Proposal {
-        Proposal {
-            data,
-            reconfig: None,
+    pub fn get_new_configuration(
+        &self,
+        leader_pid: u64,
+        current_configuration: Vec<u64>,
+    ) -> Vec<u64> {
+        let mut nodes: Vec<u64> = current_configuration
+            .iter()
+            .filter(|pid| pid != &&leader_pid)
+            .copied()
+            .collect(); // get current followers
+        match self.policy {
+            ReconfigurationPolicy::ReplaceFollower => {
+                let trunc_idx = nodes.len() - self.new_nodes.len();
+                nodes.truncate(trunc_idx);
+                nodes.push(leader_pid); // insert leader
+            }
+            ReconfigurationPolicy::ReplaceLeader => {
+                let trunc_idx = nodes.len() - (self.new_nodes.len() - 1); // -1 as we already removed leader
+                nodes.truncate(trunc_idx);
+            }
         }
+        nodes.append(&mut self.new_nodes.clone()); // insert new nodes
+        nodes
     }
 }
 
@@ -800,17 +835,38 @@ impl ProposalResp {
 }
 
 #[derive(Clone, Debug)]
+pub struct ReconfigurationResp {
+    pub latest_leader: u64,
+    pub current_configuration: Vec<u64>,
+}
+
+impl ReconfigurationResp {
+    pub fn with(latest_leader: u64, current_configuration: Vec<u64>) -> Self {
+        ReconfigurationResp {
+            latest_leader,
+            current_configuration,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum AtomicBroadcastMsg {
     Proposal(Proposal),
+    ReconfigurationProposal(ReconfigurationProposal),
     ProposalResp(ProposalResp),
+    ReconfigurationResp(ReconfigurationResp),
     FirstLeader(u64),
-    PendingReconfiguration(Vec<u8>),
 }
 
 const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
 const FIRSTLEADER_ID: u8 = 3;
-const PENDINGRECONFIG_ID: u8 = 4;
+const RECONFIGPROP_ID: u8 = 4;
+const RECONFIGRESP_ID: u8 = 5;
+
+/// serialisation ids for ReconfigurationPolicy
+const REPLACELEADER_ID: u8 = 1;
+const REPLACEFOLLOWER_ID: u8 = 2;
 
 impl Serialisable for AtomicBroadcastMsg {
     fn ser_id(&self) -> u64 {
@@ -818,10 +874,10 @@ impl Serialisable for AtomicBroadcastMsg {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        let msg_size = match &self {
+        /*let msg_size = match &self {
             AtomicBroadcastMsg::Proposal(p) => {
                 let reconfig_len = match p.reconfig.as_ref() {
-                    Some((v, f)) => v.len() + f.len(),
+                    Some(r) => r.len(),
                     _ => 0,
                 };
                 13 + DATA_SIZE_HINT + reconfig_len * 8
@@ -830,7 +886,8 @@ impl Serialisable for AtomicBroadcastMsg {
             AtomicBroadcastMsg::PendingReconfiguration(_) => 5 + DATA_SIZE_HINT,
             AtomicBroadcastMsg::FirstLeader(_) => 9,
         };
-        Some(msg_size)
+        Some(msg_size)*/
+        None
     }
 
     fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -841,23 +898,16 @@ impl Serialisable for AtomicBroadcastMsg {
                 let data_len = data.len() as u32;
                 buf.put_u32(data_len);
                 buf.put_slice(data);
-                match &p.reconfig {
-                    Some((voters, followers)) => {
-                        let voters_len: u32 = voters.len() as u32;
-                        buf.put_u32(voters_len);
-                        for voter in voters.to_owned() {
-                            buf.put_u64(voter);
-                        }
-                        let followers_len: u32 = followers.len() as u32;
-                        buf.put_u32(followers_len);
-                        for follower in followers.to_owned() {
-                            buf.put_u64(follower);
-                        }
-                    }
-                    None => {
-                        buf.put_u32(0); // 0 voters len
-                        buf.put_u32(0); // 0 followers len
-                    }
+            }
+            AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
+                buf.put_u8(RECONFIGPROP_ID);
+                match rp.policy {
+                    ReconfigurationPolicy::ReplaceFollower => buf.put_u8(REPLACEFOLLOWER_ID),
+                    ReconfigurationPolicy::ReplaceLeader => buf.put_u8(REPLACELEADER_ID),
+                }
+                buf.put_u32(rp.new_nodes.len() as u32);
+                for node in &rp.new_nodes {
+                    buf.put_u64(*node);
                 }
             }
             AtomicBroadcastMsg::ProposalResp(pr) => {
@@ -868,15 +918,18 @@ impl Serialisable for AtomicBroadcastMsg {
                 buf.put_u32(data_len);
                 buf.put_slice(data);
             }
+            AtomicBroadcastMsg::ReconfigurationResp(rr) => {
+                buf.put_u8(RECONFIGRESP_ID);
+                buf.put_u64(rr.latest_leader);
+                let config_len: u32 = rr.current_configuration.len() as u32;
+                buf.put_u32(config_len);
+                for node in &rr.current_configuration {
+                    buf.put_u64(*node);
+                }
+            }
             AtomicBroadcastMsg::FirstLeader(pid) => {
                 buf.put_u8(FIRSTLEADER_ID);
                 buf.put_u64(*pid);
-            }
-            AtomicBroadcastMsg::PendingReconfiguration(data) => {
-                buf.put_u8(PENDINGRECONFIG_ID);
-                let d = data.as_slice();
-                buf.put_u32(d.len() as u32);
-                buf.put_slice(d);
             }
         }
         Ok(())
@@ -898,23 +951,27 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 let data_len = buf.get_u32() as usize;
                 let mut data = vec![0; data_len];
                 buf.copy_to_slice(&mut data);
-                let voters_len = buf.get_u32() as usize;
-                let mut voters = Vec::with_capacity(voters_len);
-                for _ in 0..voters_len {
-                    voters.push(buf.get_u64());
-                }
-                let followers_len = buf.get_u32() as usize;
-                let mut followers = Vec::with_capacity(followers_len);
-                for _ in 0..followers_len {
-                    followers.push(buf.get_u64());
-                }
-                let reconfig = if voters_len == 0 && followers_len == 0 {
-                    None
-                } else {
-                    Some((voters, followers))
-                };
-                let proposal = Proposal { data, reconfig };
+                let proposal = Proposal::with(data);
                 Ok(AtomicBroadcastMsg::Proposal(proposal))
+            }
+            RECONFIGPROP_ID => {
+                let policy = match buf.get_u8() {
+                    REPLACEFOLLOWER_ID => ReconfigurationPolicy::ReplaceFollower,
+                    REPLACELEADER_ID => ReconfigurationPolicy::ReplaceLeader,
+                    e => {
+                        return Err(SerError::InvalidType(format!(
+                            "Found unkown ReconfigurationPolicy id: {}, but expected {} or {}",
+                            e, REPLACELEADER_ID, REPLACELEADER_ID
+                        )))
+                    }
+                };
+                let new_nodes_len = buf.get_u32() as usize;
+                let mut new_nodes = Vec::with_capacity(new_nodes_len);
+                for _ in 0..new_nodes_len {
+                    new_nodes.push(buf.get_u64());
+                }
+                let rp = ReconfigurationProposal::with(policy, new_nodes);
+                Ok(AtomicBroadcastMsg::ReconfigurationProposal(rp))
             }
             PROPOSALRESP_ID => {
                 let latest_leader = buf.get_u64();
@@ -933,12 +990,15 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 let pid = buf.get_u64();
                 Ok(AtomicBroadcastMsg::FirstLeader(pid))
             }
-            PENDINGRECONFIG_ID => {
-                let data_len = buf.get_u32() as usize;
-                // println!("latest_leader: {}, data_len: {}, buf remaining: {}", latest_leader, data_len, buf.remaining());
-                let mut data = vec![0; data_len];
-                buf.copy_to_slice(&mut data);
-                Ok(AtomicBroadcastMsg::PendingReconfiguration(data))
+            RECONFIGRESP_ID => {
+                let latest_leader = buf.get_u64();
+                let config_len = buf.get_u32() as usize;
+                let mut current_config = Vec::with_capacity(config_len);
+                for _ in 0..config_len {
+                    current_config.push(buf.get_u64());
+                }
+                let rr = ReconfigurationResp::with(latest_leader, current_config);
+                Ok(AtomicBroadcastMsg::ReconfigurationResp(rr))
             }
             _ => Err(SerError::InvalidType(
                 "Found unkown id but expected RaftMsg, Proposal or ProposalResp".into(),

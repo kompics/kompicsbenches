@@ -3,8 +3,8 @@ extern crate raft as tikv_raft;
 use super::{
     super::*,
     client::{Client, LocalClientMessage},
-    paxos::{PaxosComp, ReconfigurationPolicy as PaxosReconfigurationPolicy},
-    raft::{RaftComp, ReconfigurationPolicy as RaftReconfigurationPolicy},
+    paxos::{PaxosComp, TransferPolicy as PaxosTransferPolicy},
+    raft::RaftComp,
     storage::paxos::{MemorySequence, MemoryState},
 };
 use crate::partitioning_actor::IterationControlMsg;
@@ -36,16 +36,14 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone)]
 pub struct ClientParams {
     algorithm: String,
-    last_node_id: u64,
-    reconfig_policy: String,
+    num_nodes: u64,
 }
 
 impl ClientParams {
-    fn with(algorithm: String, last_node_id: u64, reconfig_policy: String) -> ClientParams {
+    fn with(algorithm: String, num_nodes: u64) -> ClientParams {
         ClientParams {
             algorithm,
-            last_node_id,
-            reconfig_policy,
+            num_nodes,
         }
     }
 }
@@ -80,21 +78,20 @@ impl DistributedBenchmark for AtomicBroadcast {
 
     fn str_to_client_conf(s: String) -> Result<Self::ClientConf, BenchmarkError> {
         let split: Vec<_> = s.split(',').collect();
-        if split.len() != 3 {
+        if split.len() != 2 {
             Err(BenchmarkError::InvalidMessage(format!(
-                "String '{}' does not represent a client conf! Split length should be 3",
+                "String '{}' does not represent a client conf! Split length should be 2",
                 s
             )))
         } else {
             let algorithm = split[0].to_lowercase();
-            let last_node_id = split[1].parse::<u64>().map_err(|e| {
+            let num_nodes = split[1].parse::<u64>().map_err(|e| {
                 BenchmarkError::InvalidMessage(format!(
                     "String to ClientConf error: '{}' does not represent a node id: {:?}",
                     split[1], e
                 ))
             })?;
-            let reconfig_policy = split[2].to_lowercase();
-            Ok(ClientParams::with(algorithm, last_node_id, reconfig_policy))
+            Ok(ClientParams::with(algorithm, num_nodes))
         }
     }
 
@@ -106,7 +103,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn client_conf_to_str(c: Self::ClientConf) -> String {
-        format!("{},{},{}", c.algorithm, c.last_node_id, c.reconfig_policy)
+        format!("{},{}", c.algorithm, c.num_nodes)
     }
 
     fn client_data_to_str(d: Self::ClientData) -> String {
@@ -114,40 +111,14 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 }
 
-fn get_experiment_configs(last_node_id: u64) -> (Vec<u64>, Vec<u64>) {
-    if last_node_id % 2 == 0 {
-        let initial_config: Vec<_> = (1..last_node_id).collect();
-        let reconfig: Vec<_> = (2..=last_node_id).collect();
-        (initial_config, reconfig)
-    } else {
-        let initial_config: Vec<_> = (1..=last_node_id).collect();
-        (initial_config, vec![])
-    }
-}
-
-fn get_reconfig_data(
-    s: &str,
-    n: u64,
-) -> Result<(u64, Option<(Vec<u64>, Vec<u64>)>), BenchmarkError> {
+fn get_reconfig_nodes(s: &str, n: u64) -> Result<Option<Vec<u64>>, BenchmarkError> {
     match s.to_lowercase().as_ref() {
-        "off" => Ok((0, None)),
-        "single" => {
-            let reconfig: Vec<u64> = (2..=n + 1).collect();
-            let new_followers: Vec<u64> = vec![];
-            let reconfiguration = Some((reconfig, new_followers));
-            Ok((1, reconfiguration))
-        }
+        "off" => Ok(None),
+        "single" => Ok(Some(vec![n + 1])),
         "majority" => {
             let majority = n / 2 + 1;
-            let mut reconfig: Vec<u64> = (1..majority).collect(); // minority i.e. continued node ids
-            for i in 1..=majority {
-                let new_node_id = n + i;
-                reconfig.push(new_node_id);
-            }
-            assert_eq!(n, reconfig.len() as u64);
-            let new_followers: Vec<u64> = vec![];
-            let reconfiguration = Some((reconfig, new_followers));
-            Ok((majority, reconfiguration))
+            let new_nodes: Vec<u64> = (n + 1..n + 1 + majority).collect();
+            Ok(Some(new_nodes))
         }
         _ => Err(BenchmarkError::InvalidMessage(String::from(
             "Got unknown reconfiguration parameter",
@@ -210,11 +181,17 @@ impl ExperimentParams {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum ReconfigurationPolicy {
+    ReplaceLeader,
+    ReplaceFollower,
+}
+
 pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
-    reconfiguration: Option<(Vec<u64>, Vec<u64>)>,
+    reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
     system: Option<KompactSystem>,
     finished_latch: Option<Arc<CountdownEvent>>,
     iteration_id: u32,
@@ -280,13 +257,13 @@ impl AtomicBroadcastMaster {
         &self,
         nodes_id: HashMap<u64, ActorPath>,
         client_timeout: Duration,
-        reconfig: Option<(Vec<u64>, Vec<u64>)>,
         leader_election_latch: Arc<CountdownEvent>,
     ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
         let finished_latch = self.finished_latch.clone().unwrap();
         /*** Setup client ***/
         let initial_config: Vec<_> = (1..=self.num_nodes.unwrap()).map(|x| x as u64).collect();
+        let reconfig = self.reconfiguration.clone();
         let (client_comp, unique_reg_f) = system.create_and_register(|| {
             Client::with(
                 initial_config,
@@ -315,7 +292,6 @@ impl AtomicBroadcastMaster {
         c: &AtomicBroadcastRequest,
         num_clients: u32,
     ) -> Result<(), BenchmarkError> {
-        // TODO reconfiguration
         if c.concurrent_proposals > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(format!(
                 "Concurrent proposals: {} should be less or equal to number of proposals: {}",
@@ -323,77 +299,63 @@ impl AtomicBroadcastMaster {
             )));
         }
         match &c.algorithm.to_lowercase() {
-            paxos if paxos == "paxos" => match c.reconfiguration.to_lowercase().as_ref() {
-                "off" => {
-                    if c.reconfig_policy.to_lowercase() != "none" {
-                        return Err(BenchmarkError::InvalidTest(format!(
-                            "Reconfiguration is off, transfer policy should be none, but found: {}",
-                            &c.reconfig_policy
-                        )));
-                    }
-                }
-                s if s == "single" || s == "majority" => {
-                    let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
-                    if reconfig_policy != "eager" && reconfig_policy != "pull" {
-                        return Err(BenchmarkError::InvalidTest(format!(
-                            "Unimplemented Paxos transfer policy: {}",
-                            &c.reconfig_policy
-                        )));
-                    }
-                }
-                _ => {
-                    return Err(BenchmarkError::InvalidTest(format!(
-                        "Unimplemented Paxos reconfiguration: {}",
-                        &c.reconfiguration
-                    )));
-                }
-            },
-            raft if raft == "raft" => match c.reconfiguration.to_lowercase().as_ref() {
-                "off" => {
-                    if c.reconfig_policy.to_lowercase() != "none" {
-                        return Err(BenchmarkError::InvalidTest(format!(
-                            "Reconfiguration is off, transfer policy should be none, but found: {}",
-                            &c.reconfig_policy
-                        )));
-                    }
-                }
-                s if s == "single" || s == "majority" => {
-                    let reconfig_policy: &str = &c.reconfig_policy.to_lowercase();
-                    if reconfig_policy != "replace-leader" && reconfig_policy != "replace-follower"
-                    {
-                        return Err(BenchmarkError::InvalidTest(format!(
-                            "Unimplemented Raft transfer policy: {}",
-                            &c.reconfig_policy
-                        )));
-                    }
-                }
-                _ => {
-                    return Err(BenchmarkError::InvalidTest(format!(
-                        "Unimplemented Raft reconfiguration: {}",
-                        &c.reconfiguration
-                    )));
-                }
-            },
-            _ => {
+            a if a != "paxos" && a != "raft" => {
                 return Err(BenchmarkError::InvalidTest(format!(
                     "Unimplemented atomic broadcast algorithm: {}",
                     &c.algorithm
                 )));
             }
-        };
-        match get_reconfig_data(&c.reconfiguration, c.number_of_nodes) {
-            Ok((additional_n, reconfig)) => {
-                let n = c.number_of_nodes + additional_n;
-                if (num_clients as u64) < n {
+            _ => {}
+        }
+        match &c.reconfiguration.to_lowercase() {
+            off if off == "off" => {
+                self.num_nodes = Some(c.number_of_nodes);
+                if c.reconfig_policy.to_lowercase() != "none" {
                     return Err(BenchmarkError::InvalidTest(format!(
-                        "Not enough clients: {}, Required: {}",
-                        num_clients, n
+                        "Reconfiguration is off, transfer policy should be none, but found: {}",
+                        &c.reconfig_policy
                     )));
                 }
-                self.reconfiguration = reconfig;
-                self.num_nodes = Some(n);
             }
-            Err(e) => return Err(e),
+            s if s == "single" || s == "majority" => {
+                let policy = match c.reconfig_policy.to_lowercase().as_str() {
+                    "replace-follower" => ReconfigurationPolicy::ReplaceFollower,
+                    "replace-leader" => ReconfigurationPolicy::ReplaceLeader,
+                    _ => {
+                        return Err(BenchmarkError::InvalidTest(format!(
+                            "Unimplemented reconfiguration policy: {}",
+                            &c.reconfig_policy
+                        )));
+                    }
+                };
+                match get_reconfig_nodes(&c.reconfiguration, c.number_of_nodes) {
+                    Ok(reconfig) => {
+                        let additional_n = match &reconfig {
+                            Some(r) => r.len() as u64,
+                            None => 0,
+                        };
+                        let n = c.number_of_nodes + additional_n;
+                        if (num_clients as u64) < n {
+                            return Err(BenchmarkError::InvalidTest(format!(
+                                "Not enough clients: {}, Required: {}",
+                                num_clients, n
+                            )));
+                        }
+                        self.reconfiguration = match reconfig {
+                            Some(r) => Some((policy, r)),
+                            _ => None,
+                        };
+                        self.num_nodes = Some(n);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            _ => {
+                return Err(BenchmarkError::InvalidTest(format!(
+                    "Unimplemented reconfiguration: {}",
+                    &c.reconfiguration
+                )));
+            }
         }
         Ok(())
     }
@@ -600,12 +562,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
         self.system = Some(system);
-        let last_node_id = if self.reconfiguration.is_some() {
-            c.number_of_nodes + 1
-        } else {
-            c.number_of_nodes
-        };
-        let params = ClientParams::with(c.algorithm, last_node_id, c.reconfig_policy);
+        let params = ClientParams::with(c.algorithm, c.number_of_nodes);
         Ok(params)
     }
 
@@ -627,12 +584,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let (client_timeout, meta_path) = Self::load_benchmark_config(CONFIG_PATH);
         self.meta_results_path = meta_path;
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
-        let (client_comp, client_path) = self.create_client(
-            nodes_id,
-            client_timeout,
-            self.reconfiguration.clone(),
-            leader_election_latch.clone(),
-        );
+        let (client_comp, client_path) =
+            self.create_client(nodes_id, client_timeout, leader_election_latch.clone());
         let partitioning_actor = self.initialise_iteration(nodes, client_path);
         partitioning_actor
             .actor_ref()
@@ -740,22 +693,12 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
+        let initial_config: Vec<u64> = (1..=c.num_nodes).collect();
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
-                let experiment_configs = get_experiment_configs(c.last_node_id);
-                let reconfig_policy = match c.reconfig_policy.as_ref() {
-                    "none" => None,
-                    "eager" => Some(PaxosReconfigurationPolicy::Eager),
-                    "pull" => Some(PaxosReconfigurationPolicy::Pull),
-                    unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
-                };
                 let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
                 let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
-                    PaxosComp::with(
-                        experiment_configs,
-                        reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
-                        experiment_params,
-                    )
+                    PaxosComp::with(initial_config, PaxosTransferPolicy::Pull, experiment_params)
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
@@ -769,20 +712,9 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 self_path
             }
             "raft" => {
-                let voters = get_experiment_configs(c.last_node_id).0;
-                let reconfig_policy = match c.reconfig_policy.as_ref() {
-                    "none" => None,
-                    "replace-leader" => Some(RaftReconfigurationPolicy::ReplaceLeader),
-                    "replace-follower" => Some(RaftReconfigurationPolicy::ReplaceFollower),
-                    unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
-                };
                 /*** Setup RaftComp ***/
-                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                    RaftComp::<Storage>::with(
-                        voters,
-                        reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
-                    )
-                });
+                let (raft_comp, unique_reg_f) =
+                    system.create_and_register(|| RaftComp::<Storage>::with(initial_config));
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system
                     .register_by_alias(&raft_comp, RAFT_PATH)
@@ -909,15 +841,15 @@ pub mod tests {
                     let experiment_configs = get_experiment_configs(last_node_id);
                     let reconfig_policy = match reconfig_policy {
                         "none" => None,
-                        "eager" => Some(PaxosReconfigurationPolicy::Eager),
-                        "pull" => Some(PaxosReconfigurationPolicy::Pull),
+                        "eager" => Some(PaxosTransferPolicy::Eager),
+                        "pull" => Some(PaxosTransferPolicy::Pull),
                         unknown => panic!("Got unknown Paxos transfer policy: {}", unknown),
                     };
                     let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
                     let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
                         PaxosComp::<MemorySequence, MemoryState>::with(
                             experiment_configs,
-                            reconfig_policy.unwrap_or(PaxosReconfigurationPolicy::Pull),
+                            reconfig_policy.unwrap_or(PaxosTransferPolicy::Pull),
                             experiment_params,
                         )
                     });
@@ -941,12 +873,8 @@ pub mod tests {
                         unknown => panic!("Got unknown Raft transfer policy: {}", unknown),
                     };
                     /*** Setup RaftComp ***/
-                    let (raft_comp, unique_reg_f) = system.create_and_register(|| {
-                        RaftComp::<Storage>::with(
-                            voters,
-                            reconfig_policy.unwrap_or(RaftReconfigurationPolicy::ReplaceFollower),
-                        )
-                    });
+                    let (raft_comp, unique_reg_f) =
+                        system.create_and_register(|| RaftComp::<Storage>::with(voters));
                     unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                     let self_path = system
                         .register_by_alias(&raft_comp, RAFT_PATH)

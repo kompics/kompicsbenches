@@ -23,6 +23,7 @@ use kompact::prelude::*;
 use rand::Rng;
 use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
+use crate::bench::atomic_broadcast::atomic_broadcast::ReconfigurationPolicy;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 const BLE: &str = "ble";
@@ -61,6 +62,7 @@ where
 #[derive(Debug)]
 pub enum PaxosReplicaMsg {
     Propose(Proposal),
+    ProposeReconfiguration(ReconfigurationProposal),
     LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
     Stop(Ask<bool, ()>), // ack_client
     #[cfg(test)]
@@ -68,7 +70,7 @@ pub enum PaxosReplicaMsg {
 }
 
 #[derive(Clone, Debug)]
-pub enum ReconfigurationPolicy {
+pub enum TransferPolicy {
     Eager,
     Pull,
 }
@@ -93,7 +95,7 @@ impl ConfigMeta {
 #[derive(Default)]
 struct HoldBackProposals {
     pub deserialised: Vec<Proposal>,
-    pub serialised: Vec<NetMessage>
+    pub serialised: Vec<NetMessage>,
 }
 
 impl HoldBackProposals {
@@ -115,7 +117,7 @@ where
 {
     ctx: ComponentContext<Self>,
     pid: u64,
-    experiment_configurations: (Vec<u64>, Vec<u64>),
+    initial_configuration: Vec<u64>,
     paxos_replicas: Vec<Arc<Component<PaxosReplica<S, P>>>>,
     ble_comps: Vec<Arc<Component<BallotLeaderComp>>>,
     communicator_comps: Vec<Arc<Component<Communicator>>>,
@@ -124,7 +126,7 @@ where
     prev_sequences: HashMap<u32, Arc<S>>, // TODO vec
     stopped: bool,
     iteration_id: u32,
-    policy: ReconfigurationPolicy,
+    policy: TransferPolicy,
     next_config_id: Option<u32>,
     pending_seq_transfers: Vec<(Vec<u32>, Vec<Entry<Ballot>>)>, // (remaining_segments, entries)
     complete_sequences: Vec<u32>,
@@ -142,14 +144,14 @@ where
     P: StateTraits<Ballot>,
 {
     pub fn with(
-        experiment_configurations: (Vec<u64>, Vec<u64>),
-        policy: ReconfigurationPolicy,
+        initial_configuration: Vec<u64>,
+        policy: TransferPolicy,
         experiment_params: ExperimentParams,
     ) -> PaxosComp<S, P> {
         PaxosComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
-            experiment_configurations,
+            initial_configuration,
             paxos_replicas: vec![],
             ble_comps: vec![],
             communicator_comps: vec![],
@@ -223,13 +225,23 @@ where
     fn create_replica(
         &mut self,
         config_id: u32,
-        nodes: Vec<u64>,
+        initial_nodes: Option<Vec<u64>>,
         ble_quick_start: bool,
         skip_prepare_n: Option<Leader<Ballot>>,
     ) -> Vec<KFuture<RegistrationResult>> {
-        let mut peers = nodes;
-        peers.retain(|pid| pid != &self.pid);
+        let peers = match initial_nodes {
+            Some(nodes) => {
+                let peers: Vec<u64> = nodes
+                    .iter()
+                    .filter(|pid| pid != &&self.pid)
+                    .copied()
+                    .collect();
+                peers
+            }
+            _ => vec![],
+        };
         let (ble_peers, communicator_peers) = self.derive_actorpaths(config_id, &peers);
+        let raw_paxos_peers = if peers.is_empty() { None } else { Some(peers) };
         let system = self.ctx.system();
         /*** create and register Paxos ***/
         // let log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
@@ -237,7 +249,7 @@ where
         let (paxos, paxos_f) = system.create_and_register(|| {
             PaxosReplica::with(
                 self.ctx.actor_ref(),
-                peers,
+                raw_paxos_peers,
                 config_id,
                 self.pid,
                 // log,
@@ -298,6 +310,7 @@ where
         &mut self,
         config_id: u32,
         skip_prepare_use_leader: Option<Leader<Ballot>>,
+        peers: Vec<u64>,
     ) {
         let idx = (config_id - self.first_config_id) as usize;
         let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| {
@@ -307,8 +320,9 @@ where
                 self.paxos_replicas.len()
             )
         });
+        let (ble_peers, communicator_peers) = self.derive_actorpaths(config_id, &peers);
         paxos.on_definition(|p| {
-            let peers = p.peers.clone();
+            p.peers = peers.clone();
             let paxos_state = P::new();
             // let raw_paxos_log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
             let max_inflight = self.experiment_params.max_inflight;
@@ -324,15 +338,23 @@ where
                 Some(max_inflight),
             );
         });
-        if let Some(n) = skip_prepare_use_leader {
-            let ble = self
-                .ble_comps
-                .get(idx)
-                .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
-            ble.on_definition(|ble| {
+        let ble = self
+            .ble_comps
+            .get(idx)
+            .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
+        ble.on_definition(|ble| {
+            ble.peers = ble_peers;
+            if let Some(n) = skip_prepare_use_leader {
                 ble.set_initial_leader(n); // TODO Only new leader should call this
-            });
-        }
+            }
+        });
+        let communicator = self
+            .communicator_comps
+            .get(idx)
+            .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
+        communicator.on_definition(|comm| {
+            comm.peers = communicator_peers;
+        })
     }
 
     fn start_replica(&mut self, config_id: u32) {
@@ -461,13 +483,27 @@ where
         active_paxos.actor_ref().tell(PaxosReplicaMsg::Propose(p));
     }
 
+    fn propose_reconfiguration(&self, rp: ReconfigurationProposal) {
+        let idx = (self.active_config.id - self.first_config_id) as usize;
+        let active_paxos = self
+            .paxos_replicas
+            .get(idx)
+            .expect("Could not get PaxosComp actor ref despite being leader");
+        active_paxos
+            .actor_ref()
+            .tell(PaxosReplicaMsg::ProposeReconfiguration(rp));
+    }
+
     fn deserialise_and_propose(&self, m: NetMessage) {
-        if let AtomicBroadcastMsg::Proposal(p) = m
-            .try_deserialise_unchecked::<AtomicBroadcastMsg, AtomicBroadcastDeser>()
-            .expect("Should be AtomicBroadcastMsg!")
-        {
-            self.propose(p);
-        }
+        match_deser! {m {
+            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+                match am {
+                    AtomicBroadcastMsg::Proposal(p) => self.propose(p),
+                    AtomicBroadcastMsg::ReconfigurationProposal(rp) => self.propose_reconfiguration(rp),
+                    _ => {}
+                }
+            }
+        }}
     }
 
     fn pull_sequence(&mut self, config_id: u32, seq_len: u64, skip_tag: Option<usize>) {
@@ -807,7 +843,10 @@ where
                                 .expect("No cached client!")
                                 .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
                                 .expect("Should serialise FirstLeader");
-                            let HoldBackProposals{ serialised: ser_hb, deserialised: deser_hb } = hb_proposals;
+                            let HoldBackProposals {
+                                serialised: ser_hb,
+                                deserialised: deser_hb,
+                            } = hb_proposals;
                             for net_msg in ser_hb {
                                 self.deserialise_and_propose(net_msg);
                             }
@@ -822,12 +861,17 @@ where
                                     self.active_config.leader
                                 )
                             });
-                            let HoldBackProposals{ serialised: ser_hb, deserialised: deser_hb } = hb_proposals;
+                            let HoldBackProposals {
+                                serialised: ser_hb,
+                                deserialised: deser_hb,
+                            } = hb_proposals;
                             for net_msg in ser_hb {
                                 leader.forward_with_original_sender(net_msg, self);
                             }
                             for p in deser_hb {
-                                leader.tell_serialised(AtomicBroadcastMsg::Proposal(p), self).expect("Should serialise!");
+                                leader
+                                    .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
+                                    .expect("Should serialise!");
                             }
                         }
                     }
@@ -836,7 +880,7 @@ where
             }
             PaxosCompMsg::PendingReconfig(data) => {
                 self.active_config.pending_reconfig = true;
-                self.hb_proposals.deserialised.push(Proposal::normal(data));
+                self.hb_proposals.deserialised.push(Proposal::with(data));
             }
             PaxosCompMsg::Reconfig(r) => {
                 /*** ReconfigResponse to client ***/
@@ -844,19 +888,18 @@ where
                 let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
                 data.put_u64(RECONFIG_ID);
                 data.put_u32(new_config_len as u32);
-                let config = r
+                let config: Vec<u64> = r
                     .nodes
                     .continued_nodes
                     .iter()
-                    .chain(r.nodes.new_nodes.iter());
-                for pid in config {
-                    data.put_u64(*pid);
-                }
-                let pr = ProposalResp::with(data, 0); // let new leader notify client itself when it's ready
+                    .chain(r.nodes.new_nodes.iter())
+                    .copied()
+                    .collect();
+                let rr = ReconfigurationResp::with(0, config); // let new leader notify client itself when it's ready
                 self.cached_client
                     .as_ref()
                     .expect("No cached client!")
-                    .tell_serialised(AtomicBroadcastMsg::ProposalResp(pr), self)
+                    .tell_serialised(AtomicBroadcastMsg::ReconfigurationResp(rr), self)
                     .expect("Should serialise ReconfigResponse");
                 /*** handle final sequence and notify new nodes ***/
                 let prev_config_id = self.active_config.id;
@@ -894,10 +937,12 @@ where
                         .expect("Should serialise!");
                 }
                 /*** Start new replica if continued ***/
-                let continued_nodes = r.nodes.continued_nodes;
-                let new_nodes = r.nodes.new_nodes;
-                if continued_nodes.contains(&self.pid) {
-                    if let ReconfigurationPolicy::Eager = self.policy {
+                let continued = r.nodes.continued_nodes.contains(&self.pid);
+                if continued {
+                    let peers = r.nodes.get_peers_of(self.pid);
+                    let continued_nodes = r.nodes.continued_nodes;
+                    let new_nodes = r.nodes.new_nodes;
+                    if let TransferPolicy::Eager = self.policy {
                         let st =
                             self.create_eager_sequence_transfer(&continued_nodes, prev_config_id);
                         for pid in &new_nodes {
@@ -916,6 +961,7 @@ where
                     self.set_initial_replica_state_after_reconfig(
                         r.config_id,
                         r.skip_prepare_use_leader,
+                        peers,
                     );
                     self.start_replica(r.config_id);
                 }
@@ -982,12 +1028,11 @@ where
                 if !self.stopped {
                     if !self.active_config.pending_reconfig {
                         match self.active_config.leader {
-                            0 => {  // active config has no leader yet
+                            0 => {
+                                // active config has no leader yet
                                 self.hb_proposals.serialised.push(m);
-                            },
-                            my_pid if my_pid == self.pid => {
-                                self.deserialise_and_propose(m)
-                            },
+                            }
+                            my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
                             other => {
                                 let idx = other as usize - 1;
                                 let leader = self.nodes.get(idx).unwrap_or_else(|| {
@@ -1021,24 +1066,22 @@ where
                                     .expect("Failed to deserialise Client's actorpath");
                                 self.cached_client = Some(client);
 
-                                let (initial_configuration, reconfiguration) = self.experiment_configurations.clone();
+                                let initial_configuration= self.initial_configuration.clone();
                                 let handled = Handled::block_on(self, move |mut async_self| async move {
                                     if initial_configuration.contains(&async_self.pid) {
                                         async_self.next_config_id = Some(1);
-                                        let futures = async_self.create_replica(1, initial_configuration, true, None);
+                                        let futures = async_self.create_replica(1, Some(initial_configuration), true, None);
                                         for f in futures {
                                             f.await.unwrap().expect("Failed to register when creating replica 1");
                                         }
                                         async_self.first_config_id = 1;
                                     }
-                                    if reconfiguration.contains(&async_self.pid) {
-                                        let futures = async_self.create_replica(2, reconfiguration, false, None);
-                                        for f in futures {
-                                            f.await.unwrap().expect("Failed to register when creating replica 2");
-                                        }
-                                        if async_self.first_config_id != 1 {    // not in initial configuration
-                                            async_self.first_config_id = 2;
-                                        }
+                                    let futures = async_self.create_replica(2, None, false, None);
+                                    for f in futures {
+                                        f.await.unwrap().expect("Failed to register when creating replica 2");
+                                    }
+                                    if async_self.first_config_id != 1 {    // not in initial configuration
+                                        async_self.first_config_id = 2;
                                     }
                                     let resp = PartitioningActorMsg::InitAck(async_self.iteration_id);
                                     sender.tell_serialised(resp, async_self.deref_mut())
@@ -1078,7 +1121,8 @@ where
                                     None => {
                                         debug!(self.ctx.log(), "Got ReconfigInit for config_id: {} from node {}", r.config_id, r.from);
                                         self.next_config_id = Some(r.config_id);
-                                        self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_use_leader);
+                                        let peers = r.nodes.get_peers_of(self.pid);
+                                        self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_use_leader, peers);
                                         for pid in &r.nodes.continued_nodes {
                                             if pid == &r.from {
                                                 self.active_peers.0.push(*pid);
@@ -1108,10 +1152,10 @@ where
                                                 None
                                             };
                                             match self.policy {
-                                                ReconfigurationPolicy::Pull => {
+                                                TransferPolicy::Pull => {
                                                     self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_tag);
                                                 },
-                                                ReconfigurationPolicy::Eager => {
+                                                TransferPolicy::Eager => {
                                                     let config_id = r.seq_metadata.config_id;
                                                     let seq_len = r.seq_metadata.len;
                                                     let idx = (config_id - 1) as usize;
@@ -1193,7 +1237,7 @@ where
 {
     fn with(
         supervisor: ActorRef<PaxosCompMsg<S>>,
-        peers: Vec<u64>,
+        peers: Option<Vec<u64>>,
         config_id: u32,
         pid: u64,
         // raw_paxos_log: KompactLogger,
@@ -1203,10 +1247,11 @@ where
         let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
+        let raw_peers = peers.clone().unwrap_or(vec![1]);
         let paxos = Paxos::with(
             config_id,
             pid,
-            peers.clone(),
+            raw_peers,
             storage,
             // raw_paxos_log,
             skip_prepare_use_leader,
@@ -1217,8 +1262,8 @@ where
             supervisor,
             communication_port: RequiredPort::uninitialised(),
             ble_port: RequiredPort::uninitialised(),
-            stopped_peers: HashSet::with_capacity(peers.len()),
-            peers,
+            stopped_peers: HashSet::new(),
+            peers: peers.unwrap_or(vec![]),
             paxos,
             config_id,
             pid,
@@ -1323,17 +1368,16 @@ where
     }
 
     fn propose(&mut self, p: Proposal) -> Result<(), ProposeErr> {
-        match p.reconfig {
-            Some((reconfig, _)) => {
-                let n = self.ctx.config()["paxos"]["prio_start_round"]
-                    .as_i64()
-                    .expect("No prio start round in config!")
-                    as u64;
-                let prio_start_round = Ballot::with(n, 0);
-                self.paxos.propose_reconfiguration(reconfig, Some(prio_start_round))
-            }
-            None => self.paxos.propose_normal(p.data),
-        }
+        self.paxos.propose_normal(p.data)
+    }
+
+    fn propose_reconfiguration(&mut self, reconfig: Vec<u64>) -> Result<(), ProposeErr> {
+        let n = self.ctx.config()["paxos"]["prio_start_round"]
+            .as_i64()
+            .expect("No prio start round in config!") as u64;
+        let prio_start_round = Ballot::with(n, 0);
+        self.paxos
+            .propose_reconfiguration(reconfig, Some(prio_start_round))
     }
 }
 
@@ -1354,11 +1398,20 @@ where
                                 self.pending_reconfig = true;
                                 self.supervisor.tell(PaxosCompMsg::PendingReconfig(data))
                             }
-                            ProposeErr::Reconfiguration(new_config) => {
-                                panic!("Failed to propose new config: {:?}", new_config)
+                            ProposeErr::Reconfiguration(_) => {
+                                unreachable!()
                             }
                         }
                     }
+                }
+            }
+            PaxosReplicaMsg::ProposeReconfiguration(rp) => {
+                if !self.pending_reconfig {
+                    let mut current_config = self.peers.clone();
+                    current_config.push(self.pid);
+                    let new_config = rp.get_new_configuration(self.current_leader, current_config);
+                    self.propose_reconfiguration(new_config)
+                        .expect("Failed to propose reconfiguration")
                 }
             }
             PaxosReplicaMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
@@ -1521,7 +1574,7 @@ pub(crate) mod ballot_leader_election {
         ctx: ComponentContext<Self>,
         ble_port: ProvidedPort<BallotLeaderElection>,
         pid: u64,
-        peers: Vec<ActorPath>,
+        pub(crate) peers: Vec<ActorPath>,
         hb_round: u64,
         ballots: Vec<(Ballot, u64)>,
         current_ballot: Ballot, // (round, pid)
