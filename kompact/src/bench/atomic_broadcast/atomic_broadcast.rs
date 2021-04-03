@@ -3,7 +3,7 @@ extern crate raft as tikv_raft;
 use super::{
     super::*,
     client::{Client, LocalClientMessage},
-    paxos::{PaxosComp, TransferPolicy as PaxosTransferPolicy},
+    paxos::PaxosComp,
     raft::RaftComp,
     storage::paxos::{MemorySequence, MemoryState},
 };
@@ -697,9 +697,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
                 let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
-                let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
-                    PaxosComp::with(initial_config, PaxosTransferPolicy::Pull, experiment_params)
-                });
+                let (paxos_comp, unique_reg_f) = system
+                    .create_and_register(|| PaxosComp::with(initial_config, experiment_params));
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
                     .register_by_alias(&paxos_comp, PAXOS_PATH)

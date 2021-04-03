@@ -23,7 +23,6 @@ use kompact::prelude::*;
 use rand::Rng;
 use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
-use crate::bench::atomic_broadcast::atomic_broadcast::ReconfigurationPolicy;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 const BLE: &str = "ble";
@@ -67,12 +66,6 @@ pub enum PaxosReplicaMsg {
     Stop(Ask<bool, ()>), // ack_client
     #[cfg(test)]
     SequenceReq(Ask<(), Vec<Entry<Ballot>>>),
-}
-
-#[derive(Clone, Debug)]
-pub enum TransferPolicy {
-    Eager,
-    Pull,
 }
 
 #[derive(Clone, Debug)]
@@ -126,12 +119,12 @@ where
     prev_sequences: HashMap<u32, Arc<S>>, // TODO vec
     stopped: bool,
     iteration_id: u32,
-    policy: TransferPolicy,
     next_config_id: Option<u32>,
     pending_seq_transfers: Vec<(Vec<u32>, Vec<Entry<Ballot>>)>, // (remaining_segments, entries)
     complete_sequences: Vec<u32>,
-    active_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
+    active_config_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
     retry_transfer_timers: HashMap<u32, ScheduledTimer>,
+    handled_seq_requests: Vec<SequenceRequest>,
     cached_client: Option<ActorPath>,
     hb_proposals: HoldBackProposals,
     experiment_params: ExperimentParams,
@@ -145,7 +138,6 @@ where
 {
     pub fn with(
         initial_configuration: Vec<u64>,
-        policy: TransferPolicy,
         experiment_params: ExperimentParams,
     ) -> PaxosComp<S, P> {
         PaxosComp {
@@ -160,12 +152,12 @@ where
             prev_sequences: HashMap::new(),
             stopped: false,
             iteration_id: 0,
-            policy,
             next_config_id: None,
             pending_seq_transfers: vec![],
             complete_sequences: vec![],
-            active_peers: (vec![], vec![]),
+            active_config_peers: (vec![], vec![]),
             retry_transfer_timers: HashMap::new(),
+            handled_seq_requests: vec![],
             cached_client: None,
             hb_proposals: HoldBackProposals::default(),
             experiment_params,
@@ -507,8 +499,8 @@ where
     }
 
     fn pull_sequence(&mut self, config_id: u32, seq_len: u64, skip_tag: Option<usize>) {
-        let num_ready_peers = self.active_peers.0.len();
-        let num_unready_peers = self.active_peers.1.len();
+        let num_ready_peers = self.active_config_peers.0.len();
+        let num_unready_peers = self.active_config_peers.1.len();
         let num_continued_nodes = num_ready_peers + num_unready_peers;
         let idx = config_id as usize - 1;
         let rem_segments: Vec<_> = (1..=num_continued_nodes).map(|x| x as u32).collect();
@@ -517,7 +509,7 @@ where
         let offset = seq_len / num_continued_nodes as u64;
         // get segment from unready nodes (probably have early segments of final sequence)
         let skip = skip_tag.unwrap_or(0);
-        for (i, pid) in self.active_peers.1.iter().enumerate() {
+        for (i, pid) in self.active_config_peers.1.iter().enumerate() {
             let from_idx = i as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len {
                 seq_len
@@ -539,7 +531,7 @@ where
             }
         }
         // get segment from ready nodes (definitely has final sequence)
-        for (i, pid) in self.active_peers.0.iter().enumerate() {
+        for (i, pid) in self.active_config_peers.0.iter().enumerate() {
             let from_idx = (num_unready_peers + i) as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len {
                 seq_len
@@ -587,7 +579,7 @@ where
     ) -> Handled {
         if let Some((rem_segments, _)) = self.pending_seq_transfers.get(config_id as usize) {
             let offset = seq_len / total_segments;
-            let num_active = self.active_peers.0.len();
+            let num_active = self.active_config_peers.0.len();
             if num_active > 0 {
                 for tag in rem_segments {
                     let i = tag - 1;
@@ -595,21 +587,20 @@ where
                     let to_idx = from_idx + offset;
                     debug!(
                         self.ctx.log(),
-                        "Retrying timed out seq transfer: tag: {}, idx: {}-{}, policy: {:?}",
+                        "Retrying timed out seq transfer: tag: {}, idx: {}-{}",
                         tag,
                         from_idx,
                         to_idx,
-                        self.policy
                     );
                     let pid = self
-                        .active_peers
+                        .active_config_peers
                         .0
                         .get(i as usize % num_active)
                         .unwrap_or_else(|| {
                             panic!(
                                 "Failed to get active pid. idx: {}, len: {}",
                                 i,
-                                self.active_peers.0.len()
+                                self.active_config_peers.0.len()
                             )
                         });
                     self.request_sequence(*pid, config_id, from_idx, to_idx, *tag);
@@ -671,20 +662,9 @@ where
         SequenceSegment::with(from_idx, to_idx, entries)
     }
 
-    fn create_eager_sequence_transfer(
-        &self,
-        continued_nodes: &[u64],
-        config_id: u32,
-    ) -> SequenceTransfer {
-        let index = self.get_continued_idx(continued_nodes);
-        let tag = index as u32 + 1;
-        let segment = self.create_segment(continued_nodes, config_id);
-        let prev_seq_metadata = self.get_sequence_metadata(config_id - 1);
-        SequenceTransfer::with(config_id, tag, true, prev_seq_metadata, segment)
-    }
-
     fn handle_sequence_request(&mut self, sr: SequenceRequest, requestor: ActorPath) {
-        if self.active_config.leader == sr.requestor_pid {
+        if self.active_config.leader == sr.requestor_pid || self.handled_seq_requests.contains(&sr)
+        {
             return;
         }
         let (succeeded, entries) = match self.prev_sequences.get(&sr.config_id) {
@@ -693,7 +673,6 @@ where
                 (true, ents)
             }
             None => {
-                // (false, vec![])
                 if self.active_config.id == sr.config_id {
                     // we have not reached final sequence, but might still have requested elements. Outsource request to corresponding PaxosComp
                     let idx = (self.active_config.id - self.first_config_id) as usize;
@@ -724,6 +703,9 @@ where
         requestor
             .tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self)
             .expect("Should serialise!");
+        if succeeded {
+            self.handled_seq_requests.push(sr);
+        }
     }
 
     fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
@@ -779,12 +761,12 @@ where
                 "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx
             );
             // query someone we know have reached final seq
-            let num_active = self.active_peers.0.len();
+            let num_active = self.active_config_peers.0.len();
             if num_active > 0 {
                 // choose randomly
                 let mut rng = rand::thread_rng();
                 let rnd = rng.gen_range(0, num_active);
-                let pid = self.active_peers.0[rnd];
+                let pid = self.active_config_peers.0[rnd];
                 self.request_sequence(pid, config_id, from_idx, to_idx, tag);
             } // else let timeout handle it to retry
         }
@@ -793,7 +775,7 @@ where
     fn reset_state(&mut self) {
         self.stopped = false;
         self.active_config = ConfigMeta::new(0);
-        self.active_peers = (vec![], vec![]);
+        self.active_config_peers = (vec![], vec![]);
         self.complete_sequences.clear();
         self.first_config_id = 0;
         self.pending_seq_transfers.clear();
@@ -913,57 +895,47 @@ where
                 );
                 let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
                 self.prev_sequences.insert(prev_config_id, r.final_sequence);
-                let segment = if self.active_config.leader == self.pid {
-                    Some(self.create_segment(&r.nodes.continued_nodes, r.config_id - 1))
-                } else {
-                    None
-                };
-                let r_init = ReconfigurationMsg::Init(ReconfigInit::with(
-                    r.config_id,
-                    r.nodes.clone(),
-                    seq_metadata,
-                    self.pid,
-                    segment,
-                    r.skip_prepare_use_leader,
-                ));
-                for pid in &r.nodes.new_nodes {
-                    let idx = *pid as usize - 1;
-                    let actorpath = self
-                        .nodes
-                        .get(idx)
-                        .unwrap_or_else(|| panic!("No actorpath found for new node {}", pid));
-                    actorpath
-                        .tell_serialised(r_init.clone(), self)
-                        .expect("Should serialise!");
-                }
-                /*** Start new replica if continued ***/
                 let continued = r.nodes.continued_nodes.contains(&self.pid);
+                let prev_config_id = r.config_id - 1;
+                /*** Start new replica if continued ***/
                 if continued {
                     let peers = r.nodes.get_peers_of(self.pid);
-                    let continued_nodes = r.nodes.continued_nodes;
-                    let new_nodes = r.nodes.new_nodes;
-                    if let TransferPolicy::Eager = self.policy {
-                        let st =
-                            self.create_eager_sequence_transfer(&continued_nodes, prev_config_id);
-                        for pid in &new_nodes {
-                            let idx = *pid as usize - 1;
-                            let actorpath = self.nodes.get(idx).unwrap_or_else(|| {
-                                panic!("No actorpath found for new node {}", pid)
-                            });
-                            actorpath
-                                .tell_serialised(
-                                    ReconfigurationMsg::SequenceTransfer(st.clone()),
-                                    self,
-                                )
-                                .expect("Should serialise!");
-                        }
-                    }
                     self.set_initial_replica_state_after_reconfig(
                         r.config_id,
                         r.skip_prepare_use_leader,
                         peers,
                     );
                     self.start_replica(r.config_id);
+                    // transfer sequence to new nodes
+                    let continued_nodes = &r.nodes.continued_nodes;
+                    let segment = self.create_segment(continued_nodes, prev_config_id);
+                    for pid in &r.nodes.new_nodes {
+                        let eager_transfer =
+                            if !self.handled_seq_requests.iter().any(|sr| {
+                                sr.config_id == prev_config_id && sr.requestor_pid == *pid
+                            }) {
+                                // the continued node hasn't already requested us
+                                Some(segment.clone())
+                            } else {
+                                None
+                            };
+                        let r_init = ReconfigurationMsg::Init(ReconfigInit::with(
+                            r.config_id,
+                            r.nodes.clone(),
+                            seq_metadata.clone(),
+                            self.pid,
+                            eager_transfer,
+                            r.skip_prepare_use_leader,
+                        ));
+                        let idx = *pid as usize - 1;
+                        let actorpath = self
+                            .nodes
+                            .get(idx)
+                            .unwrap_or_else(|| panic!("No actorpath found for new node {}", pid));
+                        actorpath
+                            .tell_serialised(r_init, self)
+                            .expect("Should serialise!");
+                    }
                 }
             }
             PaxosCompMsg::KillComponents(ask) => {
@@ -1125,12 +1097,11 @@ where
                                         self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_use_leader, peers);
                                         for pid in &r.nodes.continued_nodes {
                                             if pid == &r.from {
-                                                self.active_peers.0.push(*pid);
+                                                self.active_config_peers.0.push(*pid);
                                             } else {
-                                                self.active_peers.1.push(*pid);
+                                                self.active_config_peers.1.push(*pid);
                                             }
                                         }
-                                        let num_expected_transfers = r.nodes.continued_nodes.len();
                                         let mut nodes = r.nodes.continued_nodes;
                                         let mut new_nodes = r.nodes.new_nodes;
                                         let from = r.from;
@@ -1144,28 +1115,14 @@ where
                                             self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
                                             let skip_tag = if r.segment.is_some() {
                                                 // check which tag this segment corresponds to
-                                                let index = self.active_peers.0.iter().position(|x| x == &from).unwrap();
-                                                let num_unready_peers = self.active_peers.1.len();
+                                                let index = self.active_config_peers.0.iter().position(|x| x == &from).unwrap();
+                                                let num_unready_peers = self.active_config_peers.1.len();
                                                 let tag = num_unready_peers + index + 1;
                                                 Some(tag)
                                             } else {
                                                 None
                                             };
-                                            match self.policy {
-                                                TransferPolicy::Pull => {
-                                                    self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_tag);
-                                                },
-                                                TransferPolicy::Eager => {
-                                                    let config_id = r.seq_metadata.config_id;
-                                                    let seq_len = r.seq_metadata.len;
-                                                    let idx = (config_id - 1) as usize;
-                                                    let rem_segments: Vec<_> = (1..=num_expected_transfers).map(|x| x as u32).collect();
-                                                    self.pending_seq_transfers[idx] = (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
-                                                    let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"].as_duration().expect("Failed to load get_decided_period");
-                                                    let timer = self.schedule_once(transfer_timeout, move |c, _| c.retry_request_sequence(config_id, seq_len, num_expected_transfers as u64));
-                                                    self.retry_transfer_timers.insert(config_id, timer);
-                                                },
-                                            }
+                                            self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_tag);
                                             if let Some(tag) = skip_tag {
                                                 let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
                                                 self.handle_sequence_transfer(st);
@@ -1175,8 +1132,15 @@ where
                                     Some(next_config_id) => {
                                         if next_config_id == r.config_id && r.nodes.continued_nodes.contains(&r.from) {
                                             // update who we know already decided final seq
-                                            self.active_peers.1.retain(|x| x == &r.from);
-                                            self.active_peers.0.push(r.from);
+                                            self.active_config_peers.1.retain(|x| x != &r.from);
+                                            self.active_config_peers.0.push(r.from);
+                                            // TODO remove
+                                            // check which tag this segment corresponds to
+                                            let index = self.active_config_peers.0.iter().position(|x| x == &r.from).unwrap();
+                                            let num_unready_peers = self.active_config_peers.1.len();
+                                            let tag = num_unready_peers + index + 1;
+                                            let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
+                                            self.handle_sequence_transfer(st)
                                         }
                                     }
                                 }
@@ -1415,6 +1379,7 @@ where
                 }
             }
             PaxosReplicaMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
+                // TODO convert to future and respond in PaxosComp?
                 let (succeeded, entries) = self
                     .paxos
                     .get_chosen_entries(seq_req.from_idx, seq_req.to_idx);
