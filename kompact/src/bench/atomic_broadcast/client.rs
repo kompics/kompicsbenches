@@ -15,6 +15,8 @@ use std::{
 };
 use synchronoise::{event::CountdownError, CountdownEvent};
 
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Debug, PartialEq)]
 enum ExperimentState {
     LeaderElection,
@@ -296,45 +298,51 @@ impl Client {
         Handled::Ok
     }
 
-    fn send_stop(&self) {
+    fn send_stop(&mut self) {
         for ap in self.nodes.values() {
             ap.tell_serialised(NetStopMsg::Client, self)
                 .expect("Failed to send Client stop");
         }
+        let _ = self.schedule_once(STOP_TIMEOUT, move |c, _| {
+            warn!(c.ctx.log(), "Client timed out stopping... Returning to BenchmarkMaster anyway who will force kill.");
+            c.reply_stop_ask();
+            Handled::Ok
+        });
     }
 
     fn reply_stop_ask(&mut self) {
-        let l = std::mem::take(&mut self.responses);
-        let mut v: Vec<_> = l
-            .into_iter()
-            .filter(|(_, latency)| latency.is_some())
-            .collect();
-        v.sort();
-        let latencies: Vec<Duration> = v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
-        let mut meta_results = MetaResults::with(self.num_timed_out, latencies, None);
-        #[cfg(feature = "track_timestamps")]
-        {
-            let mut ts: Vec<_> = std::mem::take(&mut self.timestamps).into_iter().collect();
-            ts.sort();
-            let start = self.start.expect("No cached start point");
-            let timestamps = ts
+        if let Some(stop_ask) = self.stop_ask.take() {
+            let l = std::mem::take(&mut self.responses);
+            let mut v: Vec<_> = l
                 .into_iter()
-                .map(|(_, timestamp)| timestamp.duration_since(start))
+                .filter(|(_, latency)| latency.is_some())
                 .collect();
-            let leader_changes_t = std::mem::take(&mut self.leader_changes_t);
-            let pid_ts = self
-                .leader_changes
-                .iter()
-                .zip(leader_changes_t)
-                .map(|(pid, ts)| (*pid, ts.duration_since(start)))
-                .collect();
-            meta_results.timestamps_leader_changes = Some((timestamps, pid_ts));
+            v.sort();
+            let latencies: Vec<Duration> =
+                v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
+            let mut meta_results = MetaResults::with(self.num_timed_out, latencies, None);
+            #[cfg(feature = "track_timestamps")]
+            {
+                let mut ts: Vec<_> = std::mem::take(&mut self.timestamps).into_iter().collect();
+                ts.sort();
+                let start = self.start.expect("No cached start point");
+                let timestamps = ts
+                    .into_iter()
+                    .map(|(_, timestamp)| timestamp.duration_since(start))
+                    .collect();
+                let leader_changes_t = std::mem::take(&mut self.leader_changes_t);
+                let pid_ts = self
+                    .leader_changes
+                    .iter()
+                    .zip(leader_changes_t)
+                    .map(|(pid, ts)| (*pid, ts.duration_since(start)))
+                    .collect();
+                meta_results.timestamps_leader_changes = Some((timestamps, pid_ts));
+            }
+            stop_ask
+                .reply(meta_results)
+                .expect("Failed to reply StopAsk!");
         }
-        self.stop_ask
-            .take()
-            .expect("No stop promise!")
-            .reply(meta_results)
-            .expect("Failed to reply write latency file!");
     }
 }
 
