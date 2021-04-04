@@ -349,20 +349,39 @@ pub mod paxos {
         }
     }
 
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub struct SegmentIndex {
+        pub from: u64,
+        pub to: u64,
+    }
+
+    impl SegmentIndex {
+        pub fn with(from: u64, to: u64) -> Self {
+            SegmentIndex { from, to }
+        }
+    }
+
     #[derive(Clone, Debug)]
     pub struct SequenceSegment {
-        pub from_idx: u64,
-        pub to_idx: u64,
+        idx: SegmentIndex,
         pub entries: Vec<Entry<Ballot>>,
     }
 
     impl SequenceSegment {
-        pub fn with(from_idx: u64, to_idx: u64, entries: Vec<Entry<Ballot>>) -> SequenceSegment {
-            SequenceSegment {
-                from_idx,
-                to_idx,
-                entries,
-            }
+        pub fn with(idx: SegmentIndex, entries: Vec<Entry<Ballot>>) -> SequenceSegment {
+            SequenceSegment { idx, entries }
+        }
+
+        pub fn get_index(&self) -> SegmentIndex {
+            self.idx
+        }
+
+        pub fn get_from_idx(&self) -> u64 {
+            self.idx.from
+        }
+
+        pub fn get_to_idx(&self) -> u64 {
+            self.idx.to
         }
     }
 
@@ -379,25 +398,22 @@ pub mod paxos {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SequenceTransfer {
+    pub struct SegmentTransfer {
         pub config_id: u32,
-        pub tag: u32,
         pub succeeded: bool,
         pub metadata: SequenceMetaData,
         pub segment: SequenceSegment,
     }
 
-    impl SequenceTransfer {
+    impl SegmentTransfer {
         pub fn with(
             config_id: u32,
-            tag: u32,
             succeeded: bool,
             metadata: SequenceMetaData,
             segment: SequenceSegment,
-        ) -> SequenceTransfer {
-            SequenceTransfer {
+        ) -> SegmentTransfer {
+            SegmentTransfer {
                 config_id,
-                tag,
                 succeeded,
                 metadata,
                 segment,
@@ -405,28 +421,18 @@ pub mod paxos {
         }
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-    pub struct SequenceRequest {
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct SegmentRequest {
         pub config_id: u32,
-        pub tag: u32, // keep track of which segment of the sequence this is
-        pub from_idx: u64,
-        pub to_idx: u64,
+        pub idx: SegmentIndex,
         pub requestor_pid: u64,
     }
 
-    impl SequenceRequest {
-        pub fn with(
-            config_id: u32,
-            tag: u32,
-            from_idx: u64,
-            to_idx: u64,
-            requestor_pid: u64,
-        ) -> SequenceRequest {
-            SequenceRequest {
+    impl SegmentRequest {
+        pub fn with(config_id: u32, idx: SegmentIndex, requestor_pid: u64) -> SegmentRequest {
+            SegmentRequest {
                 config_id,
-                tag,
-                from_idx,
-                to_idx,
+                idx,
                 requestor_pid,
             }
         }
@@ -463,8 +469,8 @@ pub mod paxos {
     #[derive(Clone, Debug)]
     pub enum ReconfigurationMsg {
         Init(ReconfigInit),
-        SequenceRequest(SequenceRequest),
-        SequenceTransfer(SequenceTransfer),
+        SegmentRequest(SegmentRequest),
+        SegmentTransfer(SegmentTransfer),
     }
 
     #[derive(Clone, Debug)]
@@ -511,8 +517,8 @@ pub mod paxos {
         fn size_hint(&self) -> Option<usize> {
             match self {
                 ReconfigurationMsg::Init(_) => Some(64),
-                ReconfigurationMsg::SequenceRequest(_) => Some(25),
-                ReconfigurationMsg::SequenceTransfer(_) => Some(1000),
+                ReconfigurationMsg::SegmentRequest(_) => Some(25),
+                ReconfigurationMsg::SegmentTransfer(_) => Some(1000),
             }
         }
 
@@ -534,8 +540,8 @@ pub mod paxos {
                     match &r.segment {
                         Some(segment) => {
                             buf.put_u8(1);
-                            buf.put_u64(segment.from_idx);
-                            buf.put_u64(segment.to_idx);
+                            buf.put_u64(segment.get_from_idx());
+                            buf.put_u64(segment.get_to_idx());
                             PaxosSer::serialise_entries(segment.entries.as_slice(), buf);
                         }
                         None => buf.put_u8(0),
@@ -549,22 +555,20 @@ pub mod paxos {
                         None => buf.put_u8(0),
                     }
                 }
-                ReconfigurationMsg::SequenceRequest(sr) => {
+                ReconfigurationMsg::SegmentRequest(sr) => {
                     buf.put_u8(SEQ_REQ_ID);
                     buf.put_u32(sr.config_id);
-                    buf.put_u32(sr.tag);
-                    buf.put_u64(sr.from_idx);
-                    buf.put_u64(sr.to_idx);
+                    buf.put_u64(sr.idx.from);
+                    buf.put_u64(sr.idx.to);
                     buf.put_u64(sr.requestor_pid);
                 }
-                ReconfigurationMsg::SequenceTransfer(st) => {
+                ReconfigurationMsg::SegmentTransfer(st) => {
                     buf.put_u8(SEQ_TRANSFER_ID);
                     buf.put_u32(st.config_id);
-                    buf.put_u32(st.tag);
                     let succeeded: u8 = if st.succeeded { 1 } else { 0 };
                     buf.put_u8(succeeded);
-                    buf.put_u64(st.segment.from_idx);
-                    buf.put_u64(st.segment.to_idx);
+                    buf.put_u64(st.segment.get_from_idx());
+                    buf.put_u64(st.segment.get_to_idx());
                     buf.put_u32(st.metadata.config_id);
                     buf.put_u64(st.metadata.len);
                     PaxosSer::serialise_entries(st.segment.entries.as_slice(), buf);
@@ -601,8 +605,9 @@ pub mod paxos {
                         1 => {
                             let from_idx = buf.get_u64();
                             let to_idx = buf.get_u64();
+                            let idx = SegmentIndex::with(from_idx, to_idx);
                             let entries = PaxosSer::deserialise_entries(buf);
-                            Some(SequenceSegment::with(from_idx, to_idx, entries))
+                            Some(SequenceSegment::with(idx, entries))
                         }
                         _ => None,
                     };
@@ -629,26 +634,26 @@ pub mod paxos {
                 }
                 SEQ_REQ_ID => {
                     let config_id = buf.get_u32();
-                    let tag = buf.get_u32();
                     let from_idx = buf.get_u64();
                     let to_idx = buf.get_u64();
+                    let idx = SegmentIndex::with(from_idx, to_idx);
                     let requestor_pid = buf.get_u64();
-                    let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx, requestor_pid);
-                    Ok(ReconfigurationMsg::SequenceRequest(sr))
+                    let sr = SegmentRequest::with(config_id, idx, requestor_pid);
+                    Ok(ReconfigurationMsg::SegmentRequest(sr))
                 }
                 SEQ_TRANSFER_ID => {
                     let config_id = buf.get_u32();
-                    let tag = buf.get_u32();
                     let succeeded = buf.get_u8() == 1;
                     let from_idx = buf.get_u64();
                     let to_idx = buf.get_u64();
+                    let idx = SegmentIndex::with(from_idx, to_idx);
                     let metadata_config_id = buf.get_u32();
                     let metadata_seq_len = buf.get_u64();
                     let entries = PaxosSer::deserialise_entries(buf);
                     let metadata = SequenceMetaData::with(metadata_config_id, metadata_seq_len);
-                    let segment = SequenceSegment::with(from_idx, to_idx, entries);
-                    let st = SequenceTransfer::with(config_id, tag, succeeded, metadata, segment);
-                    Ok(ReconfigurationMsg::SequenceTransfer(st))
+                    let segment = SequenceSegment::with(idx, entries);
+                    let st = SegmentTransfer::with(config_id, succeeded, metadata, segment);
+                    Ok(ReconfigurationMsg::SegmentTransfer(st))
                 }
                 _ => Err(SerError::InvalidType(
                     "Found unkown id but expected ReconfigurationMsg".into(),

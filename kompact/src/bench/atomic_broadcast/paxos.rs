@@ -3,8 +3,8 @@ use super::{
     communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     messages::{
         paxos::{
-            Reconfig, ReconfigInit, ReconfigSer, ReconfigurationMsg, SequenceMetaData,
-            SequenceRequest, SequenceSegment, SequenceTransfer,
+            Reconfig, ReconfigInit, ReconfigSer, ReconfigurationMsg, SegmentRequest,
+            SegmentTransfer, SequenceMetaData, SequenceSegment,
         },
         StopMsg as NetStopMsg, *,
     },
@@ -23,17 +23,20 @@ use kompact::prelude::*;
 use rand::Rng;
 use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
+use crate::bench::atomic_broadcast::messages::paxos::SegmentIndex;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
+
+type ConfigId = u32;
 
 #[derive(Debug)]
 pub struct FinalMsg<S>
 where
     S: SequenceTraits<Ballot>,
 {
-    pub config_id: u32,
+    pub config_id: ConfigId,
     pub nodes: Reconfig,
     pub final_sequence: Arc<S>,
     pub skip_prepare_use_leader: Option<Leader<Ballot>>,
@@ -44,7 +47,7 @@ where
     S: SequenceTraits<Ballot>,
 {
     pub fn with(
-        config_id: u32,
+        config_id: ConfigId,
         nodes: Reconfig,
         final_sequence: Arc<S>,
         skip_prepare_use_leader: Option<Leader<Ballot>>,
@@ -62,7 +65,7 @@ where
 pub enum PaxosReplicaMsg {
     Propose(Proposal),
     ProposeReconfiguration(ReconfigurationProposal),
-    LocalSequenceReq(ActorPath, SequenceRequest, SequenceMetaData),
+    LocalSequenceReq(ActorPath, SegmentRequest, SequenceMetaData),
     Stop(Ask<bool, ()>), // ack_client
     #[cfg(test)]
     SequenceReq(Ask<(), Vec<Entry<Ballot>>>),
@@ -70,13 +73,13 @@ pub enum PaxosReplicaMsg {
 
 #[derive(Clone, Debug)]
 struct ConfigMeta {
-    id: u32,
+    id: ConfigId,
     leader: u64,
     pending_reconfig: bool,
 }
 
 impl ConfigMeta {
-    fn new(id: u32) -> Self {
+    fn new(id: ConfigId) -> Self {
         ConfigMeta {
             id,
             leader: 0,
@@ -116,19 +119,19 @@ where
     communicator_comps: Vec<Arc<Component<Communicator>>>,
     active_config: ConfigMeta,
     nodes: Vec<ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
-    prev_sequences: HashMap<u32, Arc<S>>, // TODO vec
+    prev_sequences: HashMap<ConfigId, Arc<S>>, // TODO vec
     stopped: bool,
-    iteration_id: u32,
-    next_config_id: Option<u32>,
-    pending_seq_transfers: Vec<(Vec<u32>, Vec<Entry<Ballot>>)>, // (remaining_segments, entries)
-    complete_sequences: Vec<u32>,
+    iteration_id: ConfigId,
+    next_config_id: Option<ConfigId>,
+    pending_segments: HashMap<ConfigId, Vec<SegmentIndex>>,
+    received_segments: HashMap<ConfigId, Vec<SequenceSegment>>,
+    complete_sequences: Vec<ConfigId>,
     active_config_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
-    retry_transfer_timers: HashMap<u32, ScheduledTimer>,
-    handled_seq_requests: Vec<SequenceRequest>,
+    handled_seq_requests: Vec<SegmentRequest>,
     cached_client: Option<ActorPath>,
     hb_proposals: HoldBackProposals,
     experiment_params: ExperimentParams,
-    first_config_id: u32, // used to keep track of which idx in paxos_replicas corresponds to which config_id
+    first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -153,10 +156,10 @@ where
             stopped: false,
             iteration_id: 0,
             next_config_id: None,
-            pending_seq_transfers: vec![],
+            pending_segments: HashMap::new(),
+            received_segments: HashMap::new(),
             complete_sequences: vec![],
             active_config_peers: (vec![], vec![]),
-            retry_transfer_timers: HashMap::new(),
             handled_seq_requests: vec![],
             cached_client: None,
             hb_proposals: HoldBackProposals::default(),
@@ -167,7 +170,7 @@ where
 
     fn derive_actorpaths(
         &self,
-        config_id: u32,
+        config_id: ConfigId,
         peers: &[u64],
     ) -> (Vec<ActorPath>, HashMap<u64, ActorPath>) {
         let num_peers = peers.len();
@@ -216,7 +219,7 @@ where
 
     fn create_replica(
         &mut self,
-        config_id: u32,
+        config_id: ConfigId,
         initial_nodes: Option<Vec<u64>>,
         ble_quick_start: bool,
         skip_prepare_n: Option<Leader<Ballot>>,
@@ -300,7 +303,7 @@ where
 
     fn set_initial_replica_state_after_reconfig(
         &mut self,
-        config_id: u32,
+        config_id: ConfigId,
         skip_prepare_use_leader: Option<Leader<Ballot>>,
         peers: Vec<u64>,
     ) {
@@ -349,7 +352,7 @@ where
         })
     }
 
-    fn start_replica(&mut self, config_id: u32) {
+    fn start_replica(&mut self, config_id: ConfigId) {
         let idx = (config_id - self.first_config_id) as usize;
         let paxos = self.paxos_replicas.get(idx).unwrap_or_else(|| {
             panic!(
@@ -379,10 +382,6 @@ where
 
     fn stop_components(&mut self) -> Handled {
         self.stopped = true;
-        let retry_timers = std::mem::take(&mut self.retry_transfer_timers);
-        for (_, timer) in retry_timers {
-            self.cancel_timer(timer);
-        }
         let num_configs = self.paxos_replicas.len() as u32;
         let stopping_before_started = self.active_config.id < num_configs;
         let num_comps =
@@ -498,126 +497,94 @@ where
         }}
     }
 
-    fn pull_sequence(&mut self, config_id: u32, seq_len: u64, skip_tag: Option<usize>) {
-        let num_ready_peers = self.active_config_peers.0.len();
-        let num_unready_peers = self.active_config_peers.1.len();
-        let num_continued_nodes = num_ready_peers + num_unready_peers;
-        let idx = config_id as usize - 1;
-        let rem_segments: Vec<_> = (1..=num_continued_nodes).map(|x| x as u32).collect();
-        self.pending_seq_transfers[idx] =
-            (rem_segments, vec![Entry::Normal(vec![]); seq_len as usize]);
+    /// Calculates the `SegmentIndex` of each node
+    fn get_node_segment_idx(&self, seq_len: u64) -> Vec<(u64, SegmentIndex)> {
+        let ready_peers = &self.active_config_peers.0;
+        let unready_peers = &self.active_config_peers.1;
+        let num_continued_nodes = ready_peers.len() + unready_peers.len();
+
         let offset = seq_len / num_continued_nodes as u64;
-        // get segment from unready nodes (probably have early segments of final sequence)
-        let skip = skip_tag.unwrap_or(0);
-        for (i, pid) in self.active_config_peers.1.iter().enumerate() {
+        let unready_idx = unready_peers.iter().enumerate().map(|(i, pid)| {
             let from_idx = i as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len {
                 seq_len
             } else {
                 from_idx + offset
             };
-            let tag = i + 1;
-            if tag != skip {
-                debug!(
-                    self.ctx.log(),
-                    "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}",
-                    pid,
-                    config_id,
-                    tag,
-                    from_idx,
-                    to_idx - 1
-                );
-                self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
-            }
-        }
-        // get segment from ready nodes (definitely has final sequence)
-        for (i, pid) in self.active_config_peers.0.iter().enumerate() {
-            let from_idx = (num_unready_peers + i) as u64 * offset;
+            let idx = SegmentIndex::with(from_idx, to_idx);
+            (*pid, idx)
+        });
+        let ready_idx = ready_peers.iter().enumerate().map(|(i, pid)| {
+            let from_idx = i as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len {
                 seq_len
             } else {
                 from_idx + offset
             };
-            let tag = num_unready_peers + i + 1;
-            if tag != skip {
+            let idx = SegmentIndex::with(from_idx, to_idx);
+            (*pid, idx)
+        });
+        let pid_idx: Vec<(u64, SegmentIndex)> = unready_idx.chain(ready_idx).collect();
+        pid_idx
+    }
+
+    fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, skip_idx: Option<SegmentIndex>) {
+        let skip = skip_idx.unwrap_or(SegmentIndex::with(0, 0));
+        let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len);
+        for (pid, segment_idx) in &indices {
+            if segment_idx != &skip {
                 debug!(
                     self.ctx.log(),
-                    "Requesting segment from {}, config_id: {}, tag: {}, idx: {}-{}",
+                    "Requesting segment from {}, config_id: {}, idx: {:?}",
                     pid,
                     config_id,
-                    tag,
-                    from_idx,
-                    to_idx - 1
+                    segment_idx
                 );
-                self.request_sequence(*pid, config_id, from_idx, to_idx, tag as u32);
+                self.request_segment(*pid, config_id, *segment_idx);
             }
         }
         let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
             .as_duration()
             .expect("Failed to load get_decided_period");
-        let timer = self.schedule_once(transfer_timeout, move |c, _| {
-            c.retry_request_sequence(config_id, seq_len, num_continued_nodes as u64)
+        let _ = self.schedule_once(transfer_timeout, move |c, _| {
+            c.retry_pending_segments(config_id)
         });
-        self.retry_transfer_timers.insert(config_id, timer);
+        let pending_segments: Vec<SegmentIndex> = indices
+            .iter()
+            .map(|(_, segment_idx)| *segment_idx)
+            .collect();
+        self.pending_segments.insert(config_id, pending_segments);
     }
 
-    fn request_sequence(&self, pid: u64, config_id: u32, from_idx: u64, to_idx: u64, tag: u32) {
-        let sr = SequenceRequest::with(config_id, tag, from_idx, to_idx, self.pid);
+    fn request_segment(&self, pid: u64, config_id: ConfigId, segment_idx: SegmentIndex) {
+        let sr = SegmentRequest::with(config_id, segment_idx, self.pid);
         let idx = pid as usize - 1;
         self.nodes
             .get(idx)
             .unwrap_or_else(|| panic!("Failed to get Actorpath of node {}", pid))
-            .tell_serialised(ReconfigurationMsg::SequenceRequest(sr), self)
+            .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
             .expect("Should serialise!");
     }
 
-    fn retry_request_sequence(
-        &mut self,
-        config_id: u32,
-        seq_len: u64,
-        total_segments: u64,
-    ) -> Handled {
-        if let Some((rem_segments, _)) = self.pending_seq_transfers.get(config_id as usize) {
-            let offset = seq_len / total_segments;
-            let num_active = self.active_config_peers.0.len();
-            if num_active > 0 {
-                for tag in rem_segments {
-                    let i = tag - 1;
-                    let from_idx = i as u64 * offset;
-                    let to_idx = from_idx + offset;
-                    debug!(
-                        self.ctx.log(),
-                        "Retrying timed out seq transfer: tag: {}, idx: {}-{}",
-                        tag,
-                        from_idx,
-                        to_idx,
-                    );
-                    let pid = self
-                        .active_config_peers
-                        .0
-                        .get(i as usize % num_active)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "Failed to get active pid. idx: {}, len: {}",
-                                i,
-                                self.active_config_peers.0.len()
-                            )
-                        });
-                    self.request_sequence(*pid, config_id, from_idx, to_idx, *tag);
-                }
+    fn retry_pending_segments(&mut self, config_id: ConfigId) -> Handled {
+        if let Some(remaining) = self.pending_segments.get(&config_id) {
+            let active_config_peers = &self.active_config_peers.0;
+            let num_active_peers = active_config_peers.len();
+            for (i, segment_idx) in remaining.iter().enumerate() {
+                let pid = active_config_peers[i % num_active_peers];
+                self.request_segment(pid, config_id, *segment_idx);
             }
-            let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
-                .as_duration()
-                .expect("Failed to load get_decided_period");
-            let timer = self.schedule_once(transfer_timeout, move |c, _| {
-                c.retry_request_sequence(config_id, seq_len, total_segments)
-            });
-            self.retry_transfer_timers.insert(config_id, timer);
         }
+        let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
+            .as_duration()
+            .expect("Failed to load get_decided_period");
+        let _ = self.schedule_once(transfer_timeout, move |c, _| {
+            c.retry_pending_segments(config_id)
+        });
         Handled::Ok
     }
 
-    fn get_sequence_metadata(&self, config_id: u32) -> SequenceMetaData {
+    fn get_sequence_metadata(&self, config_id: ConfigId) -> SequenceMetaData {
         let seq_len = match self.prev_sequences.get(&config_id) {
             Some(prev_seq) => prev_seq.get_sequence_len(),
             None => 0,
@@ -625,19 +592,48 @@ where
         SequenceMetaData::with(config_id, seq_len)
     }
 
-    fn append_transferred_segment(&mut self, st: SequenceTransfer) {
-        let (rem_transfers, sequence) = self
-            .pending_seq_transfers
-            .get_mut(st.config_id as usize - 1)
-            .expect("Should have initialised pending sequence");
-        let tag = st.tag;
-        let segment = st.segment;
-        let offset = segment.from_idx as usize;
-        for (i, entry) in segment.entries.into_iter().enumerate() {
-            sequence[offset + i] = entry;
+    fn handle_segment(&mut self, config_id: ConfigId, s: SequenceSegment) {
+        let config_id = config_id;
+        let first_received = !self.received_segments.contains_key(&config_id);
+        if first_received {
+            self.received_segments.insert(config_id, vec![]);
         }
-        // PaxosSer::deserialise_entries_into(&mut st.entries.as_slice(), sequence, offset);
-        rem_transfers.retain(|t| t != &tag);
+        let segment_idx = s.get_index();
+        let segments = self
+            .received_segments
+            .get_mut(&config_id)
+            .expect("No received segments");
+        segments.push(s);
+        self.pending_segments
+            .get_mut(&config_id)
+            .expect("No entry in pending segments with config_id")
+            .retain(|idx| idx != &segment_idx);
+    }
+
+    fn handle_completed_sequence_transfer(&mut self, config_id: ConfigId) {
+        let mut all_segments = self
+            .received_segments
+            .remove(&config_id)
+            .expect("Should have all segments!");
+        all_segments.sort_by(|s1, s2| s1.get_from_idx().cmp(&s2.get_from_idx()));
+        let len = all_segments.last().unwrap().get_to_idx() as usize;
+        let mut sequence = Vec::with_capacity(len);
+        for mut segment in all_segments {
+            sequence.append(&mut segment.entries);
+        }
+        self.complete_sequences.push(config_id); // TODO remove complete_sequence? Can check prev_sequences instead
+        self.prev_sequences
+            .insert(config_id, Arc::new(S::new_with_sequence(sequence)));
+
+        let next_config_id = self
+            .next_config_id
+            .expect("Got all sequence transfer but no next config id!");
+        if self.complete_sequences.len() + 1 == next_config_id as usize {
+            // got all sequence transfers
+            self.complete_sequences.clear();
+            debug!(self.ctx.log(), "Got all previous sequences!");
+            self.start_replica(next_config_id);
+        }
     }
 
     fn get_continued_idx(&self, continued_nodes: &[u64]) -> usize {
@@ -647,7 +643,7 @@ where
             .expect("Could not find my pid in continued_nodes")
     }
 
-    fn create_segment(&self, continued_nodes: &[u64], config_id: u32) -> SequenceSegment {
+    fn create_segment(&self, continued_nodes: &[u64], config_id: ConfigId) -> SequenceSegment {
         let index = self.get_continued_idx(continued_nodes);
         let n_continued = continued_nodes.len();
         let final_seq = self
@@ -658,18 +654,19 @@ where
         let offset = seq_len / n_continued as u64;
         let from_idx = index as u64 * offset;
         let to_idx = from_idx + offset;
+        let idx = SegmentIndex::with(from_idx, to_idx);
         let entries = final_seq.get_entries(from_idx, to_idx).to_vec();
-        SequenceSegment::with(from_idx, to_idx, entries)
+        SequenceSegment::with(idx, entries)
     }
 
-    fn handle_sequence_request(&mut self, sr: SequenceRequest, requestor: ActorPath) {
+    fn handle_segment_request(&mut self, sr: SegmentRequest, requestor: ActorPath) {
         if self.active_config.leader == sr.requestor_pid || self.handled_seq_requests.contains(&sr)
         {
             return;
         }
         let (succeeded, entries) = match self.prev_sequences.get(&sr.config_id) {
             Some(seq) => {
-                let ents = seq.get_entries(sr.from_idx, sr.to_idx).to_vec();
+                let ents = seq.get_entries(sr.idx.from, sr.idx.to).to_vec();
                 (true, ents)
             }
             None => {
@@ -690,75 +687,70 @@ where
             }
         };
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id - 1);
-        let segment = SequenceSegment::with(sr.from_idx, sr.to_idx, entries);
-        let st =
-            SequenceTransfer::with(sr.config_id, sr.tag, succeeded, prev_seq_metadata, segment);
-        debug!(
-            self.ctx.log(),
-            "Replying seq transfer: tag: {}, idx: {}-{}",
-            st.tag,
-            st.segment.from_idx,
-            st.segment.to_idx
-        );
+        let segment = SequenceSegment::with(sr.idx, entries);
+        let st = SegmentTransfer::with(sr.config_id, succeeded, prev_seq_metadata, segment);
+        debug!(self.ctx.log(), "Replying seq transfer: idx: {:?}", sr.idx);
         requestor
-            .tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self)
+            .tell_serialised(ReconfigurationMsg::SegmentTransfer(st), self)
             .expect("Should serialise!");
         if succeeded {
             self.handled_seq_requests.push(sr);
         }
     }
 
-    fn handle_sequence_transfer(&mut self, st: SequenceTransfer) {
-        if self.active_config.id > st.config_id
-            || self.complete_sequences.contains(&st.config_id)
-            || self.next_config_id.unwrap_or(0) <= st.config_id
+    fn has_handled_segment(&self, config_id: ConfigId, idx: SegmentIndex) -> bool {
+        let already_handled = match self.received_segments.get(&config_id) {
+            Some(segments) => segments.iter().any(|s| s.get_index() == idx),
+            None => false,
+        };
+        if already_handled
+            || self.active_config.id > config_id
+            || self.complete_sequences.contains(&config_id)
+        // || self.next_config_id.unwrap_or(0) <= st.config_id
         {
-            return; // ignore late sequence transfers
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_segment_transfer(&mut self, st: SegmentTransfer) {
+        if self.has_handled_segment(st.config_id, st.segment.get_index()) {
+            return;
         }
         let prev_config_id = st.metadata.config_id;
         let prev_seq_len = st.metadata.len;
         // pull previous sequence if exists and not already started
-        if prev_config_id != 0 && !self.complete_sequences.contains(&prev_config_id) {
-            let idx = prev_config_id as usize - 1;
-            if let Some((rem_segments, _)) = self.pending_seq_transfers.get(idx) {
-                if rem_segments.is_empty() {
-                    self.pull_sequence(prev_config_id, prev_seq_len, None);
-                }
-            }
+        if prev_config_id != 0
+            && !self.complete_sequences.contains(&prev_config_id)
+            && !self.pending_segments.contains_key(&prev_config_id)
+        {
+            self.pull_sequence(prev_config_id, prev_seq_len, None);
         }
         if st.succeeded {
-            let idx = st.config_id as usize - 1;
             let config_id = st.config_id;
-            self.append_transferred_segment(st);
-            let got_all_segments = self.pending_seq_transfers[idx].0.is_empty();
+            self.handle_segment(config_id, st.segment);
+            let got_all_segments = self
+                .pending_segments
+                .get(&config_id)
+                .unwrap()
+                // .unwrap_or_else(
+                //     panic!(format!(
+                //         "No entry in pending segments with config_id: {}",
+                //         config_id
+                //     ))
+                // )
+                .is_empty();
             if got_all_segments {
-                self.complete_sequences.push(config_id);
-                let mut c = (vec![], vec![]);
-                std::mem::swap(&mut c, &mut self.pending_seq_transfers[idx]);
-                self.prev_sequences
-                    .insert(config_id, Arc::new(S::new_with_sequence(c.1)));
-                if let Some(timer) = self.retry_transfer_timers.remove(&config_id) {
-                    self.cancel_timer(timer);
-                }
-                let config_id = self
-                    .next_config_id
-                    .expect("Got all sequence transfer but no next config id!");
-                if self.complete_sequences.len() + 1 == config_id as usize {
-                    // got all sequence transfers
-                    self.complete_sequences.clear();
-                    debug!(self.ctx.log(), "Got all previous sequences!");
-                    self.start_replica(config_id);
-                }
+                self.handle_completed_sequence_transfer(config_id);
             }
         } else {
             // failed sequence transfer i.e. not reached final seq yet
             let config_id = st.config_id;
-            let tag = st.tag;
-            let from_idx = st.segment.from_idx;
-            let to_idx = st.segment.to_idx;
             debug!(
                 self.ctx.log(),
-                "Got failed seq transfer: tag: {}, idx: {}-{}", tag, from_idx, to_idx
+                "Got failed seq transfer: idx: {:?}",
+                st.segment.get_index()
             );
             // query someone we know have reached final seq
             let num_active = self.active_config_peers.0.len();
@@ -767,7 +759,7 @@ where
                 let mut rng = rand::thread_rng();
                 let rnd = rng.gen_range(0, num_active);
                 let pid = self.active_config_peers.0[rnd];
-                self.request_sequence(pid, config_id, from_idx, to_idx, tag);
+                self.request_segment(pid, config_id, st.segment.get_index());
             } // else let timeout handle it to retry
         }
     }
@@ -778,7 +770,8 @@ where
         self.active_config_peers = (vec![], vec![]);
         self.complete_sequences.clear();
         self.first_config_id = 0;
-        self.pending_seq_transfers.clear();
+        self.pending_segments.clear();
+        self.received_segments.clear();
         self.prev_sequences.clear();
         self.hb_proposals.clear();
         self.next_config_id = None;
@@ -790,7 +783,7 @@ pub enum PaxosCompMsg<S>
 where
     S: SequenceTraits<Ballot>,
 {
-    Leader(u32, u64),
+    Leader(ConfigId, u64),
     PendingReconfig(Vec<u8>),
     Reconfig(FinalMsg<S>),
     KillComponents(Ask<(), Done>),
@@ -1104,7 +1097,6 @@ where
                                         }
                                         let mut nodes = r.nodes.continued_nodes;
                                         let mut new_nodes = r.nodes.new_nodes;
-                                        let from = r.from;
                                         nodes.append(&mut new_nodes);
                                         if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                             // only SS in final sequence and no other prev sequences -> start directly
@@ -1112,20 +1104,14 @@ where
                                             self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
                                             self.start_replica(r.config_id);
                                         } else {
-                                            self.pending_seq_transfers = vec![(vec![], vec![]); r.config_id as usize];
-                                            let skip_tag = if r.segment.is_some() {
-                                                // check which tag this segment corresponds to
-                                                let index = self.active_config_peers.0.iter().position(|x| x == &from).unwrap();
-                                                let num_unready_peers = self.active_config_peers.1.len();
-                                                let tag = num_unready_peers + index + 1;
-                                                Some(tag)
-                                            } else {
-                                                None
+                                            let skip_idx = match &r.segment {
+                                                Some(segment) => Some(segment.get_index()),
+                                                None => None,
                                             };
-                                            self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_tag);
-                                            if let Some(tag) = skip_tag {
-                                                let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
-                                                self.handle_sequence_transfer(st);
+                                            self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_idx);
+                                            if skip_idx.is_some() {
+                                                let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
+                                                self.handle_segment_transfer(st);
                                             }
                                         }
                                     },
@@ -1134,25 +1120,23 @@ where
                                             // update who we know already decided final seq
                                             self.active_config_peers.1.retain(|x| x != &r.from);
                                             self.active_config_peers.0.push(r.from);
-                                            // TODO remove
-                                            // check which tag this segment corresponds to
-                                            let index = self.active_config_peers.0.iter().position(|x| x == &r.from).unwrap();
-                                            let num_unready_peers = self.active_config_peers.1.len();
-                                            let tag = num_unready_peers + index + 1;
-                                            let st = SequenceTransfer::with(r.seq_metadata.config_id, tag as u32, true, r.seq_metadata, r.segment.unwrap());
-                                            self.handle_sequence_transfer(st)
+                                            let eager_segment_transfer = r.segment.is_some();
+                                            if eager_segment_transfer {
+                                                let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
+                                                self.handle_segment_transfer(st);
+                                            }
                                         }
                                     }
                                 }
                             },
-                            ReconfigurationMsg::SequenceRequest(sr) => {
+                            ReconfigurationMsg::SegmentRequest(sr) => {
                                 if !self.stopped {
-                                    self.handle_sequence_request(sr, sender);
+                                    self.handle_segment_request(sr, sender);
                                 }
                             },
-                            ReconfigurationMsg::SequenceTransfer(st) => {
+                            ReconfigurationMsg::SegmentTransfer(st) => {
                                 if !self.stopped {
-                                    self.handle_sequence_transfer(st);
+                                    self.handle_segment_transfer(st);
                                 }
                             }
                         }
@@ -1184,11 +1168,10 @@ where
     ble_port: RequiredPort<BallotLeaderElection>,
     peers: Vec<u64>,
     paxos: Paxos<Ballot, S, P>,
-    config_id: u32,
+    config_id: ConfigId,
     pid: u64,
     current_leader: u64,
     timers: Option<(ScheduledTimer, ScheduledTimer)>,
-    pending_reconfig: bool,
     stopped: bool,
     stopped_peers: HashSet<u64>,
     stop_ask: Option<Ask<bool, ()>>,
@@ -1202,7 +1185,7 @@ where
     fn with(
         supervisor: ActorRef<PaxosCompMsg<S>>,
         peers: Option<Vec<u64>>,
-        config_id: u32,
+        config_id: ConfigId,
         pid: u64,
         // raw_paxos_log: KompactLogger,
         skip_prepare_use_leader: Option<Leader<Ballot>>,
@@ -1233,7 +1216,6 @@ where
             pid,
             current_leader: 0,
             timers: None,
-            pending_reconfig: false,
             stopped: false,
             stop_ask: None,
         }
@@ -1355,44 +1337,35 @@ where
     fn receive_local(&mut self, msg: PaxosReplicaMsg) -> Handled {
         match msg {
             PaxosReplicaMsg::Propose(p) => {
-                if !self.pending_reconfig {
-                    if let Err(propose_err) = self.propose(p) {
-                        match propose_err {
-                            ProposeErr::Normal(data) => {
-                                self.pending_reconfig = true;
-                                self.supervisor.tell(PaxosCompMsg::PendingReconfig(data))
-                            }
-                            ProposeErr::Reconfiguration(_) => {
-                                unreachable!()
-                            }
+                if let Err(propose_err) = self.propose(p) {
+                    match propose_err {
+                        ProposeErr::Normal(data) => {
+                            self.supervisor.tell(PaxosCompMsg::PendingReconfig(data))
+                        }
+                        ProposeErr::Reconfiguration(_) => {
+                            unreachable!()
                         }
                     }
                 }
             }
             PaxosReplicaMsg::ProposeReconfiguration(rp) => {
-                if !self.pending_reconfig {
-                    let mut current_config = self.peers.clone();
-                    current_config.push(self.pid);
-                    let new_config = rp.get_new_configuration(self.current_leader, current_config);
-                    self.propose_reconfiguration(new_config)
-                        .expect("Failed to propose reconfiguration")
-                }
+                let mut current_config = self.peers.clone();
+                current_config.push(self.pid);
+                let new_config = rp.get_new_configuration(self.current_leader, current_config);
+                self.propose_reconfiguration(new_config)
+                    .expect("Failed to propose reconfiguration")
             }
             PaxosReplicaMsg::LocalSequenceReq(requestor, seq_req, prev_seq_metadata) => {
                 // TODO convert to future and respond in PaxosComp?
+                let segment_idx = seq_req.idx;
                 let (succeeded, entries) = self
                     .paxos
-                    .get_chosen_entries(seq_req.from_idx, seq_req.to_idx);
-                let segment = SequenceSegment::with(seq_req.from_idx, seq_req.to_idx, entries);
-                let st = SequenceTransfer::with(
-                    seq_req.config_id,
-                    seq_req.tag,
-                    succeeded,
-                    prev_seq_metadata,
-                    segment,
-                );
+                    .get_chosen_entries(segment_idx.from, segment_idx.to);
+                let segment = SequenceSegment::with(segment_idx, entries);
+                let st =
+                    SegmentTransfer::with(seq_req.config_id, succeeded, prev_seq_metadata, segment);
                 requestor
-                    .tell_serialised(ReconfigurationMsg::SequenceTransfer(st), self)
+                    .tell_serialised(ReconfigurationMsg::SegmentTransfer(st), self)
                     .expect("Should serialise!");
             }
             PaxosReplicaMsg::Stop(ask) => {
