@@ -168,6 +168,13 @@ where
         }
     }
 
+    fn get_actorpath(&self, pid: u64) -> &ActorPath {
+        let idx = pid as usize - 1;
+        self.nodes
+            .get(idx)
+            .unwrap_or_else(|| panic!("Could not get actorpath of pid: {}", pid))
+    }
+
     fn derive_actorpaths(
         &self,
         config_id: ConfigId,
@@ -177,8 +184,7 @@ where
         let mut communicator_peers = HashMap::with_capacity(num_peers);
         let mut ble_peers = Vec::with_capacity(num_peers);
         for pid in peers {
-            let idx = *pid as usize - 1;
-            let actorpath = self.nodes.get(idx).expect("No actorpath found");
+            let actorpath = self.get_actorpath(*pid);
             match actorpath {
                 ActorPath::Named(n) => {
                     // derive paxos and ble actorpath of peers from replica actorpath
@@ -497,6 +503,37 @@ where
         }}
     }
 
+    fn propose_hb_proposals(&mut self) {
+        let hb_proposals = std::mem::take(&mut self.hb_proposals);
+        let HoldBackProposals {
+            serialised: ser_hb,
+            deserialised: deser_hb,
+        } = hb_proposals;
+        for net_msg in ser_hb {
+            self.deserialise_and_propose(net_msg);
+        }
+        for p in deser_hb {
+            self.propose(p);
+        }
+    }
+
+    fn forward_hb_proposals(&mut self, pid: u64) {
+        let hb_proposals = std::mem::take(&mut self.hb_proposals);
+        let HoldBackProposals {
+            serialised: ser_hb,
+            deserialised: deser_hb,
+        } = hb_proposals;
+        let receiver = self.get_actorpath(pid);
+        for net_msg in ser_hb {
+            receiver.forward_with_original_sender(net_msg, self);
+        }
+        for p in deser_hb {
+            receiver
+                .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
+                .expect("Should serialise!");
+        }
+    }
+
     /// Calculates the `SegmentIndex` of each node
     fn get_node_segment_idx(&self, seq_len: u64) -> Vec<(u64, SegmentIndex)> {
         let ready_peers = &self.active_config_peers.0;
@@ -809,7 +846,9 @@ where
         match msg {
             PaxosCompMsg::Leader(config_id, pid) => {
                 if self.active_config.id == config_id {
-                    if self.active_config.leader == 0 {
+                    let prev_leader = self.active_config.leader;
+                    self.active_config.leader = pid;
+                    if prev_leader == 0 {
                         let hb_proposals = std::mem::take(&mut self.hb_proposals);
                         if pid == self.pid {
                             // notify client if no leader before
@@ -818,39 +857,11 @@ where
                                 .expect("No cached client!")
                                 .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
                                 .expect("Should serialise FirstLeader");
-                            let HoldBackProposals {
-                                serialised: ser_hb,
-                                deserialised: deser_hb,
-                            } = hb_proposals;
-                            for net_msg in ser_hb {
-                                self.deserialise_and_propose(net_msg);
-                            }
-                            for p in deser_hb {
-                                self.propose(p);
-                            }
+                            self.propose_hb_proposals();
                         } else if !hb_proposals.is_empty() {
-                            let idx = pid as usize - 1;
-                            let leader = self.nodes.get(idx).unwrap_or_else(|| {
-                                panic!(
-                                    "Could not get leader's actorpath. Pid: {}",
-                                    self.active_config.leader
-                                )
-                            });
-                            let HoldBackProposals {
-                                serialised: ser_hb,
-                                deserialised: deser_hb,
-                            } = hb_proposals;
-                            for net_msg in ser_hb {
-                                leader.forward_with_original_sender(net_msg, self);
-                            }
-                            for p in deser_hb {
-                                leader
-                                    .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
-                                    .expect("Should serialise!");
-                            }
+                            self.forward_hb_proposals(self.active_config.leader);
                         }
                     }
-                    self.active_config.leader = pid;
                 }
             }
             PaxosCompMsg::PendingReconfig(data) => {
@@ -920,15 +931,24 @@ where
                             eager_transfer,
                             r.skip_prepare_use_leader,
                         ));
-                        let idx = *pid as usize - 1;
-                        let actorpath = self
-                            .nodes
-                            .get(idx)
-                            .unwrap_or_else(|| panic!("No actorpath found for new node {}", pid));
+                        let actorpath = self.get_actorpath(*pid);
                         actorpath
                             .tell_serialised(r_init, self)
                             .expect("Should serialise!");
                     }
+                } else if !self.hb_proposals.is_empty() {
+                    let receiver = match r.skip_prepare_use_leader {
+                        Some(Leader { pid, .. }) => pid,
+                        None => match r.nodes.continued_nodes.first() {
+                            Some(pid) => *pid,
+                            None => *r
+                                .nodes
+                                .new_nodes
+                                .first()
+                                .expect("No nodes in continued or new nodes!?"),
+                        },
+                    };
+                    self.forward_hb_proposals(receiver);
                 }
             }
             PaxosCompMsg::KillComponents(ask) => {
@@ -1171,7 +1191,7 @@ where
     config_id: ConfigId,
     pid: u64,
     current_leader: u64,
-    timers: Option<(ScheduledTimer, ScheduledTimer)>,
+    timer: Option<ScheduledTimer>,
     stopped: bool,
     stopped_peers: HashSet<u64>,
     stop_ask: Option<Ask<bool, ()>>,
@@ -1215,35 +1235,28 @@ where
             config_id,
             pid,
             current_leader: 0,
-            timers: None,
+            timer: None,
             stopped: false,
             stop_ask: None,
         }
     }
 
-    fn start_timers(&mut self) {
+    fn start_timer(&mut self) {
         let config = self.ctx.config();
-        let get_decided_period = config["paxos"]["get_decided_period"]
-            .as_duration()
-            .expect("Failed to load get_decided_period");
         let outgoing_period = config["experiment"]["outgoing_period"]
             .as_duration()
             .expect("Failed to load outgoing_period");
-        let decided_timer =
-            self.schedule_periodic(Duration::from_millis(1), get_decided_period, move |c, _| {
-                c.get_decided()
+        let timer =
+            self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |c, _| {
+                c.get_decided();
+                c.send_outgoing()
             });
-        let outgoing_timer =
-            self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |p, _| {
-                p.send_outgoing()
-            });
-        self.timers = Some((decided_timer, outgoing_timer));
+        self.timer = Some(timer);
     }
 
-    fn stop_timers(&mut self) {
-        if let Some(timers) = self.timers.take() {
-            self.cancel_timer(timers.0);
-            self.cancel_timer(timers.1);
+    fn stop_timer(&mut self) {
+        if let Some(timer) = self.timer.take() {
+            self.cancel_timer(timer);
         }
     }
 
@@ -1372,7 +1385,7 @@ where
                 let ack_client = *ask.request();
                 self.communication_port
                     .trigger(CommunicatorMsg::SendStop(self.pid, ack_client));
-                self.stop_timers();
+                self.stop_timer();
                 self.stopped = true;
                 if self.stopped_peers.len() == self.peers.len() {
                     ask.reply(()).expect("Failed to reply stop ask");
@@ -1405,12 +1418,12 @@ where
     fn on_start(&mut self) -> Handled {
         let bc = BufferConfig::default();
         self.ctx.borrow().init_buffers(Some(bc), None);
-        self.start_timers();
+        self.start_timer();
         Handled::Ok
     }
 
     fn on_kill(&mut self) -> Handled {
-        self.stop_timers();
+        self.stop_timer();
         Handled::Ok
     }
 }
