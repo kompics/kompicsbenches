@@ -3,6 +3,7 @@ extern crate raft as tikv_raft;
 use crate::{bench::atomic_broadcast::atomic_broadcast::ReconfigurationPolicy, serialiser_ids};
 use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
+use rand::Rng;
 
 pub const DATA_SIZE_HINT: usize = 8; // TODO
 
@@ -808,18 +809,21 @@ impl ReconfigurationProposal {
             .filter(|pid| pid != &&leader_pid)
             .copied()
             .collect(); // get current followers
-        match self.policy {
-            ReconfigurationPolicy::ReplaceFollower => {
-                let trunc_idx = nodes.len() - self.new_nodes.len();
-                nodes.truncate(trunc_idx);
-                nodes.push(leader_pid); // insert leader
-            }
-            ReconfigurationPolicy::ReplaceLeader => {
-                let trunc_idx = nodes.len() - (self.new_nodes.len() - 1); // -1 as we already removed leader
-                nodes.truncate(trunc_idx);
-            }
+        let num_remove = match self.policy {
+            ReconfigurationPolicy::ReplaceFollower => self.new_nodes.len(),
+            ReconfigurationPolicy::ReplaceLeader => self.new_nodes.len() - 1,    // -1 as we will remove leader
+        };
+        // choose randomly which nodes to remove
+        let mut rng = rand::thread_rng();
+        for _ in 0..num_remove {
+            let num_current_followers = nodes.len();
+            let rnd = rng.gen_range(0, num_current_followers);
+            nodes.remove(rnd);
         }
         nodes.append(&mut self.new_nodes.clone()); // insert new nodes
+        if let ReconfigurationPolicy::ReplaceFollower = self.policy {
+            nodes.push(leader_pid);
+        }
         nodes
     }
 }
