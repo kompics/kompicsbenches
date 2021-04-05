@@ -784,7 +784,7 @@ where
         } else {
             // failed sequence transfer i.e. not reached final seq yet
             let config_id = st.config_id;
-            debug!(
+            warn!(
                 self.ctx.log(),
                 "Got failed seq transfer: idx: {:?}",
                 st.segment.get_index()
@@ -880,7 +880,11 @@ where
                     .chain(r.nodes.new_nodes.iter())
                     .copied()
                     .collect();
-                let rr = ReconfigurationResp::with(0, config); // let new leader notify client itself when it's ready
+                let leader = match r.skip_prepare_use_leader {
+                    Some(l) => l.pid,
+                    None => 0,
+                };
+                let rr = ReconfigurationResp::with(leader, config);
                 self.cached_client
                     .as_ref()
                     .expect("No cached client!")
