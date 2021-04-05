@@ -346,7 +346,7 @@ where
         ble.on_definition(|ble| {
             ble.peers = ble_peers;
             if let Some(n) = skip_prepare_use_leader {
-                ble.set_initial_leader(n); // TODO Only new leader should call this
+                ble.set_initial_leader(n);
             }
         });
         let communicator = self
@@ -741,7 +741,7 @@ where
             None => false,
         };
         if already_handled
-            || self.active_config.id > config_id
+            || self.active_config.id >= config_id
             || self.complete_sequences.contains(&config_id)
         // || self.next_config_id.unwrap_or(0) <= st.config_id
         {
@@ -849,7 +849,6 @@ where
                     let prev_leader = self.active_config.leader;
                     self.active_config.leader = pid;
                     if prev_leader == 0 {
-                        let hb_proposals = std::mem::take(&mut self.hb_proposals);
                         if pid == self.pid {
                             // notify client if no leader before
                             self.cached_client
@@ -858,7 +857,7 @@ where
                                 .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
                                 .expect("Should serialise FirstLeader");
                             self.propose_hb_proposals();
-                        } else if !hb_proposals.is_empty() {
+                        } else if !self.hb_proposals.is_empty() {
                             self.forward_hb_proposals(self.active_config.leader);
                         }
                     }
@@ -1249,7 +1248,8 @@ where
         let timer =
             self.schedule_periodic(Duration::from_millis(0), outgoing_period, move |c, _| {
                 c.get_decided();
-                c.send_outgoing()
+                c.send_outgoing();
+                Handled::Ok
             });
         self.timer = Some(timer);
     }
@@ -1260,12 +1260,11 @@ where
         }
     }
 
-    fn send_outgoing(&mut self) -> Handled {
+    fn send_outgoing(&mut self) {
         for out_msg in self.paxos.get_outgoing_msgs() {
             self.communication_port
                 .trigger(CommunicatorMsg::RawPaxosMsg(out_msg));
         }
-        Handled::Ok
     }
 
     fn handle_stopsign(&mut self, ss: &StopSign<Ballot>) {
@@ -1290,7 +1289,7 @@ where
         self.supervisor.tell(PaxosCompMsg::Reconfig(r));
     }
 
-    fn get_decided(&mut self) -> Handled {
+    fn get_decided(&mut self) {
         let leader = self.paxos.get_current_leader();
         if self.current_leader != leader {
             self.current_leader = leader;
@@ -1323,7 +1322,6 @@ where
                 self.handle_stopsign(&ss);
             }
         }
-        Handled::Ok
     }
 
     fn propose(&mut self, p: Proposal) -> Result<(), ProposeErr> {
@@ -1601,6 +1599,7 @@ pub(crate) mod ballot_leader_election {
             };
             self.max_ballot = l.round;
             self.quick_timeout = false;
+            self.ble_port.trigger(Leader::with(l.pid, l.round));
         }
 
         fn check_leader(&mut self) {
