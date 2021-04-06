@@ -333,6 +333,7 @@ impl Client {
             v.sort();
             let latencies: Vec<Duration> =
                 v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
+            #[allow(unused_mut)]    // TODO remove
             let mut meta_results = MetaResults::with(self.num_timed_out, latencies, None);
             #[cfg(feature = "track_timestamps")]
             {

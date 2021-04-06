@@ -156,8 +156,6 @@ pub mod raft {
 
     struct DiskStorageCore {
         dir: String,
-        pending_conf_state: Option<ConfState>,
-        pending_conf_state_start_index: Option<u64>,
         conf_state: ConfState,
         hard_state: MmapMut,
         log: FileMmap,
@@ -166,6 +164,10 @@ pub mod raft {
         // TODO: Persist these as well?
         num_entries: u64,
         snapshot_metadata: SnapshotMetadata,
+        #[allow(dead_code)] // no implementation for reconfiguration on disk
+        pending_conf_state: Option<ConfState>,
+        #[allow(dead_code)]
+        pending_conf_state_start_index: Option<u64>,
     }
 
     impl DiskStorageCore {
