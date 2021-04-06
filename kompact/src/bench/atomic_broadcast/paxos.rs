@@ -121,7 +121,7 @@ where
     nodes: Vec<ActorPath>, // derive actorpaths of peers' ble and paxos replicas from these
     prev_sequences: HashMap<ConfigId, Arc<S>>, // TODO vec
     stopped: bool,
-    iteration_id: ConfigId,
+    iteration_id: u32,
     next_config_id: Option<ConfigId>,
     pending_segments: HashMap<ConfigId, Vec<SegmentIndex>>,
     received_segments: HashMap<ConfigId, Vec<SequenceSegment>>,
@@ -132,6 +132,7 @@ where
     hb_proposals: HoldBackProposals,
     experiment_params: ExperimentParams,
     first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
+    removed: bool,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -165,6 +166,7 @@ where
             hb_proposals: HoldBackProposals::default(),
             experiment_params,
             first_config_id: 0,
+            removed: false,
         }
     }
 
@@ -802,16 +804,26 @@ where
     }
 
     fn reset_state(&mut self) {
-        self.stopped = false;
+        self.pid = 0;
         self.active_config = ConfigMeta::new(0);
-        self.active_config_peers = (vec![], vec![]);
-        self.complete_sequences.clear();
-        self.first_config_id = 0;
+        self.nodes.clear();
+        self.prev_sequences.clear();
+        self.stopped = false;
+        self.iteration_id = 0;
+        self.next_config_id = None;
         self.pending_segments.clear();
         self.received_segments.clear();
-        self.prev_sequences.clear();
+        self.complete_sequences.clear();
+        self.handled_seq_requests.clear();
+        self.cached_client = None;
         self.hb_proposals.clear();
-        self.next_config_id = None;
+        self.active_config_peers = (vec![], vec![]);
+        self.first_config_id = 0;
+        self.removed = false;
+
+        self.paxos_replicas.clear();
+        self.ble_comps.clear();
+        self.communicator_comps.clear();
     }
 }
 
@@ -939,7 +951,10 @@ where
                             .tell_serialised(r_init, self)
                             .expect("Should serialise!");
                     }
-                } else if !self.hb_proposals.is_empty() {
+                } else {
+                    self.removed = true;
+                }
+                if !self.hb_proposals.is_empty() {
                     let receiver = match r.skip_prepare_use_leader {
                         Some(Leader { pid, .. }) => pid,
                         None => match r.nodes.continued_nodes.first() {
@@ -1014,26 +1029,27 @@ where
         match m.data.ser_id {
             ATOMICBCAST_ID => {
                 if !self.stopped {
-                    if !self.active_config.pending_reconfig {
-                        match self.active_config.leader {
-                            0 => {
-                                // active config has no leader yet
-                                self.hb_proposals.serialised.push(m);
-                            }
-                            my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
-                            other => {
-                                let idx = other as usize - 1;
-                                let leader = self.nodes.get(idx).unwrap_or_else(|| {
-                                    panic!(
-                                        "Could not get leader's actorpath. Pid: {}",
-                                        self.active_config.leader
-                                    )
-                                });
-                                leader.forward_with_original_sender(m, self);
+                    if self.removed {
+                        self.cached_client
+                            .as_ref()
+                            .expect("No cached client!")
+                            .forward_with_original_sender(m, self);
+                    } else {
+                        if self.active_config.pending_reconfig {
+                            self.hb_proposals.serialised.push(m);
+                        } else {
+                            match self.active_config.leader {
+                                0 => {
+                                    // active config has no leader yet
+                                    self.hb_proposals.serialised.push(m);
+                                }
+                                my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
+                                other => {
+                                    let leader = self.get_actorpath(other);
+                                    leader.forward_with_original_sender(m, self);
+                                }
                             }
                         }
-                    } else {
-                        self.hb_proposals.serialised.push(m);
                     }
                 }
             }

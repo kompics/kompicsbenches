@@ -811,7 +811,7 @@ impl ReconfigurationProposal {
             .collect(); // get current followers
         let num_remove = match self.policy {
             ReconfigurationPolicy::ReplaceFollower => self.new_nodes.len(),
-            ReconfigurationPolicy::ReplaceLeader => self.new_nodes.len() - 1,    // -1 as we will remove leader
+            ReconfigurationPolicy::ReplaceLeader => self.new_nodes.len() - 1, // -1 as we will remove leader
         };
         // choose randomly which nodes to remove
         let mut rng = rand::thread_rng();

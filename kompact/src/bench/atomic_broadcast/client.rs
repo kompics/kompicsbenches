@@ -80,6 +80,7 @@ pub struct Client {
     latest_proposal_id: u64,
     responses: HashMap<u64, Option<Duration>>,
     pending_proposals: HashMap<u64, ProposalMetaData>,
+    retry_proposals: Vec<u64>,
     timeout: Duration,
     current_leader: u64,
     state: ExperimentState,
@@ -123,6 +124,7 @@ impl Client {
             latest_proposal_id: 0,
             responses: HashMap::with_capacity(num_proposals as usize),
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
+            retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
             state: ExperimentState::LeaderElection,
@@ -145,11 +147,13 @@ impl Client {
         }
     }
 
-    fn propose_normal(&self, id: u64, node: &ActorPath) {
+    fn propose_normal(&self, id: u64) {
+        let leader = self.nodes.get(&self.current_leader).unwrap();
         let mut data: Vec<u8> = Vec::with_capacity(8);
         data.put_u64(id);
         let p = Proposal::with(data);
-        node.tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
+        leader
+            .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
             .expect("Should serialise Proposal");
     }
 
@@ -173,14 +177,23 @@ impl Client {
         }
     }
 
+    fn send_retry_proposals(&mut self) {
+        let retry_proposals: Vec<u64> = std::mem::take(&mut self.retry_proposals);
+        for id in retry_proposals {
+            self.propose_normal(id);
+        }
+    }
+
     fn send_concurrent_proposals(&mut self) {
         let num_inflight = self.pending_proposals.len() as u64;
         assert!(num_inflight <= self.num_concurrent_proposals);
+        if !self.retry_proposals.is_empty() {
+            self.send_retry_proposals();
+        }
         let available_n = self.num_concurrent_proposals - num_inflight;
         if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
-        let leader = self.nodes.get(&self.current_leader).unwrap().clone();
         let from = self.latest_proposal_id + 1;
         let i = self.latest_proposal_id + available_n;
         let to = if i > self.num_proposals {
@@ -198,7 +211,7 @@ impl Client {
                 true => Some(SystemTime::now()),
                 _ => None,
             };
-            self.propose_normal(id, &leader);
+            self.propose_normal(id);
             let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
             let proposal_meta = ProposalMetaData::with(current_time, timer);
             self.pending_proposals.insert(id, proposal_meta);
@@ -428,9 +441,9 @@ impl Actor for Client {
                                 let leader_changed = self.current_leader != rr.latest_leader;
                                 info!(self.ctx.log(), "Reconfig OK, leader: {}, old: {}, current_config: {:?}", rr.latest_leader, self.current_leader, self.current_config);
                                 self.current_leader = rr.latest_leader;
-                                if self.current_leader == 0 {   // Paxos or Raft-remove-leader: wait for leader in new config
+                                if self.current_leader == 0 {   // Wait for leader in new config
                                     self.state = ExperimentState::ReconfigurationElection;
-                                } else {    // Raft: continue if there is a leader
+                                } else {    // Continue if there is a leader
                                     self.state = ExperimentState::Running;
                                     self.send_concurrent_proposals();
                                     if leader_changed {
@@ -476,7 +489,14 @@ impl Actor for Client {
                             }
                         }
                     },
-                    _ => error!(self.ctx.log(), "Client received unexpected msg"),
+                    AtomicBroadcastMsg::Proposal(p) => {    // node piggybacked proposal i.e. proposal failed
+                        let id = p.data.as_slice().get_u64();
+                        self.retry_proposals.push(id);
+                        if self.state != ExperimentState::ReconfigurationElection {
+                            self.send_concurrent_proposals();
+                        }
+                    }
+                    e => error!(self.ctx.log(), "Client received unexpected msg: {:?}", e),
                 }
             },
             msg(stop): NetStopMsg [using StopMsgDeser] => {

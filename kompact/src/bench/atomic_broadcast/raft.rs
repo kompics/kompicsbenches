@@ -9,7 +9,7 @@ use super::{
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 use crate::{
     bench::atomic_broadcast::{
-        atomic_broadcast::{Done, ReconfigurationPolicy},
+        atomic_broadcast::Done,
         communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
@@ -31,6 +31,7 @@ const DELAY: Duration = Duration::from_millis(0);
 #[derive(Debug)]
 pub enum RaftCompMsg {
     Leader(bool, u64),
+    Removed,
     ForwardReconfig(u64, ReconfigurationProposal),
     KillComponents(Ask<(), Done>),
     #[cfg(test)]
@@ -48,6 +49,7 @@ where
     raft_replica: Option<Arc<Component<RaftReplica<S>>>>,
     communicator: Option<Arc<Component<Communicator>>>,
     peers: HashMap<u64, ActorPath>,
+    removed: bool,
     iteration_id: u32,
     stopped: bool,
     partitioning_actor: Option<ActorPath>,
@@ -67,6 +69,7 @@ where
             raft_replica: None,
             communicator: None,
             peers: HashMap::new(),
+            removed: false,
             iteration_id: 0,
             stopped: false,
             partitioning_actor: None,
@@ -116,6 +119,20 @@ where
         };
         assert!(c.validate().is_ok(), "Invalid RawRaft config");
         c
+    }
+
+    fn reset_state(&mut self) {
+        self.pid = 0;
+        self.peers.clear();
+        self.removed = false;
+        self.iteration_id = 0;
+        self.stopped = false;
+        self.current_leader = 0;
+        self.cached_client = None;
+        self.partitioning_actor = None;
+
+        self.raft_replica = None;
+        self.communicator = None;
     }
 
     fn create_components(&mut self) -> Handled {
@@ -260,6 +277,9 @@ where
                 }
                 self.current_leader = pid
             }
+            RaftCompMsg::Removed => {
+                self.removed = true;
+            }
             RaftCompMsg::ForwardReconfig(leader_pid, rp) => {
                 self.current_leader = leader_pid;
                 self.peers
@@ -289,37 +309,45 @@ where
         match m.data.ser_id {
             ATOMICBCAST_ID => {
                 if !self.stopped {
-                    if self.current_leader == self.pid || self.current_leader == 0 {
-                        match_deser! {m {
-                            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
-                                match am {
-                                    AtomicBroadcastMsg::Proposal(p) => {
-                                        self.raft_replica
-                                            .as_ref()
-                                            .expect("No active RaftComp")
-                                            .actor_ref()
-                                            .tell(RaftReplicaMsg::Propose(p));
+                    if self.removed {
+                        self.cached_client
+                            .as_ref()
+                            .expect("No cached client!")
+                            .forward_with_original_sender(m, self);
+                    } else {
+                        if self.current_leader == self.pid || self.current_leader == 0 {
+                            // if no leader, raftcomp will hold back
+                            match_deser! {m {
+                                msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+                                    match am {
+                                        AtomicBroadcastMsg::Proposal(p) => {
+                                            self.raft_replica
+                                                .as_ref()
+                                                .expect("No active RaftComp")
+                                                .actor_ref()
+                                                .tell(RaftReplicaMsg::Propose(p));
+                                        }
+                                        AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
+                                            self.raft_replica
+                                                .as_ref()
+                                                .expect("No active RaftComp")
+                                                .actor_ref()
+                                                .tell(RaftReplicaMsg::ProposeReconfiguration(rp));
+                                        }
+                                        _ => {}
                                     }
-                                    AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
-                                        self.raft_replica
-                                            .as_ref()
-                                            .expect("No active RaftComp")
-                                            .actor_ref()
-                                            .tell(RaftReplicaMsg::ProposeReconfiguration(rp));
-                                    }
-                                    _ => {}
                                 }
-                            }
-                        }}
-                    } else if self.current_leader > 0 {
-                        // if no leader, let raftcomp hold back
-                        let leader = self.peers.get(&self.current_leader).unwrap_or_else(|| {
-                            panic!(
-                                "Could not get leader's actorpath. Pid: {}",
-                                self.current_leader
-                            )
-                        });
-                        leader.forward_with_original_sender(m, self);
+                            }}
+                        } else if self.current_leader > 0 {
+                            let leader =
+                                self.peers.get(&self.current_leader).unwrap_or_else(|| {
+                                    panic!(
+                                        "Could not get leader's actorpath. Pid: {}",
+                                        self.current_leader
+                                    )
+                                });
+                            leader.forward_with_original_sender(m, self);
+                        }
                     }
                 }
             }
@@ -329,8 +357,8 @@ where
                     msg(p): PartitioningActorMsg [using PartitioningActorSer] => {
                         match p {
                             PartitioningActorMsg::Init(init) => {
+                                self.reset_state();
                                 info!(self.ctx.log(), "Raft got init, pid: {}", init.pid);
-                                self.current_leader = 0;
                                 self.iteration_id = init.init_id;
                                 let my_pid = init.pid as u64;
                                 let ser_client = init.init_data.expect("Init should include ClientComp's actorpath");
@@ -441,14 +469,10 @@ where
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
             RaftReplicaMsg::Propose(p) => {
-                if self.reconfig_state != ReconfigurationState::Removed {
-                    self.propose(p);
-                }
+                self.propose(p);
             }
             RaftReplicaMsg::ProposeReconfiguration(pr) => {
-                if self.reconfig_state != ReconfigurationState::Removed {
-                    self.propose_reconfiguration(pr);
-                }
+                self.propose_reconfiguration(pr);
             }
             RaftReplicaMsg::Stop(ask) => {
                 self.communication_port
@@ -735,8 +759,9 @@ where
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
                             let current_voters = current_conf.voters();
                             if !current_voters.contains(&self.raw_raft.raft.id) {
-                                self.stop_timers();
                                 self.reconfig_state = ReconfigurationState::Removed;
+                                self.stop_timers();
+                                self.supervisor.tell(RaftCompMsg::Removed);
                             } else {
                                 self.reconfig_state = ReconfigurationState::Finished;
                             }
