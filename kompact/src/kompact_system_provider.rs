@@ -46,10 +46,10 @@ impl KompactSystemProvider {
     ) -> KompactSystem {
         let s = name.into();
         let mut conf = KompactConfig::default();
-        conf.label(s);
-        conf.threads(threads);
+        conf.set_config_value(&kompact::config_keys::system::LABEL, s);
+        conf.set_config_value(&kompact::config_keys::system::THREADS, threads);
         Self::set_executor_for_threads(threads, &mut conf);
-        conf.throughput(50);
+        conf.set_config_value(&kompact::config_keys::system::THROUGHPUT, 50);
         let system = conf.build().expect("KompactSystem");
         system
     }
@@ -66,10 +66,10 @@ impl KompactSystemProvider {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
         let mut conf = KompactConfig::default();
-        conf.label(s);
-        conf.threads(threads);
+        conf.set_config_value(&kompact::config_keys::system::LABEL, s);
+        conf.set_config_value(&kompact::config_keys::system::THREADS, threads);
         Self::set_executor_for_threads(threads, &mut conf);
-        conf.throughput(50);
+        conf.set_config_value(&kompact::config_keys::system::THROUGHPUT, 50);
         conf.system_components(DeadletterBox::new, NetworkConfig::new(addr).build());
         let system = conf.build().expect("KompactSystem");
         system
@@ -85,10 +85,10 @@ impl KompactSystemProvider {
     ) -> KompactSystem {
         let s = name.into();
         let addr = SocketAddr::new(self.get_public_if(), 0);
-        conf.label(s);
-        conf.threads(threads);
+        conf.set_config_value(&kompact::config_keys::system::LABEL, s);
+        conf.set_config_value(&kompact::config_keys::system::THREADS, threads);
         Self::set_executor_for_threads(threads, &mut conf);
-        conf.throughput(50);
+        conf.set_config_value(&kompact::config_keys::system::THROUGHPUT, 50);
         let mut nc = NetworkConfig::with_buffer_config(addr, buf_conf);
         nc.set_tcp_nodelay(tcp_no_delay);
         conf.system_components(DeadletterBox::new, nc.build());
