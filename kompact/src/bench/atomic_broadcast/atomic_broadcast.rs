@@ -18,7 +18,7 @@ use synchronoise::CountdownEvent;
 
 #[allow(unused_imports)]
 use super::storage::raft::DiskStorage;
-use crate::bench::atomic_broadcast::{paxos::PaxosCompMsg, raft::RaftCompMsg};
+use crate::bench::atomic_broadcast::{client::MetaResults, paxos::PaxosCompMsg, raft::RaftCompMsg};
 use hocon::HoconLoader;
 use kompact::net::buffers::BufferConfig;
 use std::{
@@ -383,10 +383,7 @@ impl AtomicBroadcastMaster {
         timestamps: &[Duration],
         leader_changes_t: &[(u64, Duration)],
     ) {
-        let meta_path = self
-            .meta_results_path
-            .as_ref()
-            .expect("No meta results path!");
+        let meta_path = self.get_meta_results_path();
         let timestamps_dir = format!("{}/timestamps/", meta_path);
         create_dir_all(&timestamps_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &timestamps_dir));
@@ -416,10 +413,7 @@ impl AtomicBroadcastMaster {
     }
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
-        let meta_path = self
-            .meta_results_path
-            .as_ref()
-            .expect("No meta results path!");
+        let meta_path = self.get_meta_results_path();
         let latency_dir = format!("{}/latency/", meta_path);
         create_dir_all(&latency_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
@@ -435,7 +429,7 @@ impl AtomicBroadcastMaster {
 
         let histo = self.latency_hist.as_mut().unwrap();
         for l in latencies {
-            let latency = l.as_nanos() as u64;
+            let latency = l.as_micros() as u64;
             writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
             histo.record(latency).expect("Failed to record histogram");
         }
@@ -444,11 +438,40 @@ impl AtomicBroadcastMaster {
             .expect("Failed to flush raw latency file");
     }
 
-    fn persist_latency_summary(&mut self) {
-        let meta_path = self
-            .meta_results_path
+    fn get_meta_results_path(&self) -> &String {
+        self.meta_results_path
             .as_ref()
-            .expect("No meta results path!");
+            .expect("No meta results path!")
+    }
+
+    fn persist_reconfig_latency_results(&mut self, latency: Duration) {
+        let meta_path = self.get_meta_results_path();
+        let reconfig_latency_dir = format!("{}/reconfig_latency/", meta_path);
+        create_dir_all(&reconfig_latency_dir).unwrap_or_else(|_| {
+            panic!(
+                "Failed to create given directory: {}",
+                &reconfig_latency_dir
+            )
+        });
+        let mut reconfig_latency_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}raw_{}.data",
+                &reconfig_latency_dir,
+                self.experiment_str.as_ref().unwrap()
+            ))
+            .expect("Failed to open latency file");
+
+        writeln!(reconfig_latency_file, "{}", latency.as_millis() as u64)
+            .expect("Failed to write reconfig latency");
+        reconfig_latency_file
+            .flush()
+            .expect("Failed to flush raw latency file");
+    }
+
+    fn persist_latency_summary(&mut self) {
+        let meta_path = self.get_meta_results_path();
         let dir = format!("{}/latency/", meta_path);
         create_dir_all(&dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
@@ -614,13 +637,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         );
         let system = self.system.take().unwrap();
         let client = self.client_comp.take().unwrap();
-        let meta_results = client
+        let meta_results: MetaResults = client
             .actor_ref()
             .ask_with(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
             self.persist_latency_results(&meta_results.latencies);
+        }
+        if let Some(reconfig_latency) = meta_results.reconfig_latency {
+            self.persist_reconfig_latency_results(reconfig_latency);
         }
         #[cfg(feature = "track_timestamps")]
         {

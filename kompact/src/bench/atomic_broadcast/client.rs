@@ -3,7 +3,8 @@ use super::messages::{
     RECONFIG_ID,
 };
 use crate::bench::atomic_broadcast::{
-    atomic_broadcast::ReconfigurationPolicy, messages::ReconfigurationProposal,
+    atomic_broadcast::ReconfigurationPolicy,
+    messages::{ReconfigurationProposal, ReconfigurationResp},
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
@@ -51,6 +52,7 @@ impl ProposalMetaData {
 pub struct MetaResults {
     pub num_timed_out: u64,
     pub latencies: Vec<Duration>,
+    pub reconfig_latency: Option<Duration>,
     pub timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
 }
 
@@ -58,11 +60,13 @@ impl MetaResults {
     pub fn with(
         num_timed_out: u64,
         latencies: Vec<Duration>,
+        reconfig_latency: Option<Duration>,
         timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
     ) -> Self {
         MetaResults {
             num_timed_out,
             latencies,
+            reconfig_latency,
             timestamps_leader_changes,
         }
     }
@@ -75,6 +79,7 @@ pub struct Client {
     num_concurrent_proposals: u64,
     nodes: HashMap<u64, ActorPath>,
     reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
+    reconfig_latency: Option<Duration>,
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     latest_proposal_id: u64,
@@ -119,6 +124,7 @@ impl Client {
             num_concurrent_proposals,
             nodes,
             reconfig,
+            reconfig_latency: None,
             leader_election_latch,
             finished_latch,
             latest_proposal_id: 0,
@@ -260,13 +266,63 @@ impl Client {
                 );
             }
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
-            if let Some(leader) = self.nodes.get(&self.current_leader) {
-                self.propose_reconfiguration(&leader);
-            }
+            let leader = self
+                .nodes
+                .get(&self.current_leader)
+                .expect("No leader to propose reconfiguration to!");
+            self.propose_reconfiguration(&leader);
+            let start_time = Some(SystemTime::now());
             let timer =
                 self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
-            let proposal_meta = ProposalMetaData::with(None, timer);
+            let proposal_meta = ProposalMetaData::with(start_time, timer);
             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
+        }
+    }
+
+    fn handle_reconfig_response(&mut self, rr: ReconfigurationResp) {
+        if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
+            let latency = proposal_meta
+                .start_time
+                .expect("No reconfiguration start time")
+                .elapsed()
+                .expect("Could not get reconfiguration duration!");
+            self.reconfig_latency = Some(latency);
+            let new_config = rr.current_configuration;
+            self.cancel_timer(proposal_meta.timer);
+            if self.responses.len() as u64 == self.num_proposals {
+                self.state = ExperimentState::Finished;
+                self.finished_latch
+                    .decrement()
+                    .expect("Failed to countdown finished latch");
+                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+            } else {
+                self.reconfig = None;
+                self.current_config = new_config;
+                let leader_changed = self.current_leader != rr.latest_leader;
+                info!(
+                    self.ctx.log(),
+                    "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
+                    rr.latest_leader,
+                    self.current_leader,
+                    self.current_config
+                );
+                self.current_leader = rr.latest_leader;
+                if self.current_leader == 0 {
+                    // Wait for leader in new config
+                    self.state = ExperimentState::ReconfigurationElection;
+                } else {
+                    // Continue if there is a leader
+                    self.state = ExperimentState::Running;
+                    self.send_concurrent_proposals();
+                    if leader_changed {
+                        self.leader_changes.push(rr.latest_leader);
+                        #[cfg(feature = "track_timestamps")]
+                        {
+                            self.leader_changes_t.push(self.clock.now());
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -333,8 +389,13 @@ impl Client {
             v.sort();
             let latencies: Vec<Duration> =
                 v.into_iter().map(|(_, latency)| latency.unwrap()).collect();
-            #[allow(unused_mut)]    // TODO remove
-            let mut meta_results = MetaResults::with(self.num_timed_out, latencies, None);
+            #[allow(unused_mut)] // TODO remove
+            let mut meta_results = MetaResults::with(
+                self.num_timed_out,
+                latencies,
+                self.reconfig_latency.take(),
+                None,
+            );
             #[cfg(feature = "track_timestamps")]
             {
                 let mut ts: Vec<_> = std::mem::take(&mut self.timestamps).into_iter().collect();
@@ -429,33 +490,7 @@ impl Actor for Client {
                         }
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
-                        if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
-                            let new_config = rr.current_configuration;
-                            self.cancel_timer(proposal_meta.timer);
-                            if self.responses.len() as u64 == self.num_proposals {
-                                self.state = ExperimentState::Finished;
-                                self.finished_latch.decrement().expect("Failed to countdown finished latch");
-                                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
-                            } else {
-                                self.reconfig = None;
-                                self.current_config = new_config;
-                                let leader_changed = self.current_leader != rr.latest_leader;
-                                info!(self.ctx.log(), "Reconfig OK, leader: {}, old: {}, current_config: {:?}", rr.latest_leader, self.current_leader, self.current_config);
-                                self.current_leader = rr.latest_leader;
-                                if self.current_leader == 0 {   // Wait for leader in new config
-                                    self.state = ExperimentState::ReconfigurationElection;
-                                } else {    // Continue if there is a leader
-                                    self.state = ExperimentState::Running;
-                                    self.send_concurrent_proposals();
-                                    if leader_changed {
-                                        self.leader_changes.push(rr.latest_leader);
-                                        #[cfg(feature = "track_timestamps")] {
-                                            self.leader_changes_t.push(self.clock.now());
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        self.handle_reconfig_response(rr);
                     }
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return Handled::Ok; }
