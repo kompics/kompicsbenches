@@ -284,7 +284,9 @@ where
                 self.current_leader = leader_pid;
                 self.peers
                     .get(&leader_pid)
-                    .expect("No actorpath to current leader")
+                    .unwrap_or_else(|| {
+                        panic!("No actorpath to current leader: {}", self.current_leader)
+                    })
                     .tell_serialised(AtomicBroadcastMsg::ReconfigurationProposal(rp), self)
                     .expect("Should serialise")
             }
@@ -434,6 +436,7 @@ where
     stopped: bool,
     stopped_peers: HashSet<u64>,
     hb_proposals: Vec<Proposal>,
+    hb_reconfig: Option<ReconfigurationProposal>,
     max_inflight: usize,
     stop_ask: Option<Ask<(), ()>>,
 }
@@ -573,6 +576,7 @@ where
             stopped_peers: HashSet::new(),
             num_peers,
             hb_proposals: vec![],
+            hb_reconfig: None,
             max_inflight,
             stop_ask: None,
         }
@@ -614,6 +618,9 @@ where
         self.raw_raft.tick();
         let leader = self.raw_raft.raft.leader_id;
         if leader != 0 {
+            if let Some(rp) = self.hb_reconfig.take() {
+                self.propose_reconfiguration(rp);
+            }
             if !self.hb_proposals.is_empty() {
                 let proposals = std::mem::take(&mut self.hb_proposals);
                 for proposal in proposals {
@@ -657,26 +664,32 @@ where
     fn propose_reconfiguration(&mut self, rp: ReconfigurationProposal) {
         if let ReconfigurationState::None = self.reconfig_state {
             let leader_pid = self.raw_raft.raft.leader_id;
-            if leader_pid != self.raw_raft.raft.id {
-                self.supervisor
-                    .tell(RaftCompMsg::ForwardReconfig(leader_pid, rp));
-            } else {
-                let current_config: Vec<u64> = self
-                    .raw_raft
-                    .raft
-                    .prs()
-                    .configuration()
-                    .voters()
-                    .iter()
-                    .copied()
-                    .collect();
-                let new_voters = rp.get_new_configuration(leader_pid, current_config);
-                let new_config = Configuration::new(new_voters, vec![]);
-                self.raw_raft
-                    .raft
-                    .propose_membership_change(new_config)
-                    .expect("Failed to propose joint consensus reconfiguration");
-                self.reconfig_state = ReconfigurationState::Pending;
+            match leader_pid {
+                0 => {
+                    self.hb_reconfig = Some(rp);
+                }
+                my_pid if my_pid == self.raw_raft.raft.id => {
+                    let current_config: Vec<u64> = self
+                        .raw_raft
+                        .raft
+                        .prs()
+                        .configuration()
+                        .voters()
+                        .iter()
+                        .copied()
+                        .collect();
+                    let new_voters = rp.get_new_configuration(leader_pid, current_config);
+                    let new_config = Configuration::new(new_voters, vec![]);
+                    self.raw_raft
+                        .raft
+                        .propose_membership_change(new_config)
+                        .expect("Failed to propose joint consensus reconfiguration");
+                    self.reconfig_state = ReconfigurationState::Pending;
+                }
+                _ => {
+                    self.supervisor
+                        .tell(RaftCompMsg::ForwardReconfig(leader_pid, rp));
+                }
             }
         }
     }
