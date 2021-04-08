@@ -54,6 +54,7 @@ pub struct MetaResults {
     pub latencies: Vec<Duration>,
     pub reconfig_latency: Option<Duration>,
     pub timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
+    pub timestamps_reconfig: Option<(Duration, Duration)>,
 }
 
 impl MetaResults {
@@ -62,12 +63,14 @@ impl MetaResults {
         latencies: Vec<Duration>,
         reconfig_latency: Option<Duration>,
         timestamps_leader_changes: Option<(Vec<Duration>, Vec<(u64, Duration)>)>,
+        timestamps_reconfig: Option<(Duration, Duration)>,
     ) -> Self {
         MetaResults {
             num_timed_out,
             latencies,
             reconfig_latency,
             timestamps_leader_changes,
+            timestamps_reconfig,
         }
     }
 }
@@ -105,6 +108,10 @@ pub struct Client {
     timestamps: HashMap<u64, Instant>,
     #[cfg(feature = "track_timestamps")]
     leader_changes_t: Vec<Instant>,
+    #[cfg(feature = "track_timestamps")]
+    reconfig_start_ts: Option<Instant>,
+    #[cfg(feature = "track_timestamps")]
+    reconfig_end_ts: Option<Instant>,
 }
 
 impl Client {
@@ -150,6 +157,10 @@ impl Client {
             timestamps: HashMap::with_capacity(num_proposals as usize),
             #[cfg(feature = "track_timestamps")]
             leader_changes_t: vec![],
+            #[cfg(feature = "track_timestamps")]
+            reconfig_start_ts: None,
+            #[cfg(feature = "track_timestamps")]
+            reconfig_end_ts: None,
         }
     }
 
@@ -272,6 +283,10 @@ impl Client {
                 .expect("No leader to propose reconfiguration to!");
             self.propose_reconfiguration(&leader);
             let start_time = Some(SystemTime::now());
+            #[cfg(feature = "track_timestamps")]
+            {
+                self.reconfig_start_ts = Some(self.clock.now());
+            }
             let timer =
                 self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
             let proposal_meta = ProposalMetaData::with(start_time, timer);
@@ -286,6 +301,10 @@ impl Client {
                 .expect("No reconfiguration start time")
                 .elapsed()
                 .expect("Could not get reconfiguration duration!");
+            #[cfg(feature = "track_timestamps")]
+            {
+                self.reconfig_end_ts = Some(self.clock.now());
+            }
             self.reconfig_latency = Some(latency);
             let new_config = rr.current_configuration;
             self.cancel_timer(proposal_meta.timer);
@@ -395,6 +414,7 @@ impl Client {
                 latencies,
                 self.reconfig_latency.take(),
                 None,
+                None,
             );
             #[cfg(feature = "track_timestamps")]
             {
@@ -413,6 +433,15 @@ impl Client {
                     .map(|(pid, ts)| (*pid, ts.duration_since(start)))
                     .collect();
                 meta_results.timestamps_leader_changes = Some((timestamps, pid_ts));
+
+                if let Some(rs) = self.reconfig_start_ts.take() {
+                    let reconfig_start = rs.duration_since(start);
+                    let reconfig_end = self
+                        .reconfig_end_ts
+                        .expect("No reconfig end!")
+                        .duration_since(start);
+                    meta_results.timestamps_reconfig = Some((reconfig_start, reconfig_end));
+                }
             }
             stop_ask
                 .reply(meta_results)

@@ -382,6 +382,7 @@ impl AtomicBroadcastMaster {
         &mut self,
         timestamps: &[Duration],
         leader_changes_t: &[(u64, Duration)],
+        reconfig_ts: Option<(Duration, Duration)>,
     ) {
         let meta_path = self.get_meta_results_path();
         let timestamps_dir = format!("{}/timestamps/", meta_path);
@@ -396,12 +397,18 @@ impl AtomicBroadcastMaster {
                 self.experiment_str.as_ref().unwrap()
             ))
             .expect("Failed to open timestamps file");
+
+        if let Some((reconfig_start, reconfig_end)) = reconfig_ts {
+            let start_ts = reconfig_start.as_micros() as u64;
+            let end_ts = reconfig_end.as_micros() as u64;
+            writeln!(timestamps_file, "r,{},{} ", start_ts, end_ts)
+                .expect("Failed to write reconfig timestamps to timestamps file");
+        }
         for (pid, leader_change_ts) in leader_changes_t {
             let ts = leader_change_ts.as_micros() as u64;
-            write!(timestamps_file, "{},{} ", pid, ts)
+            writeln!(timestamps_file, "l,{},{} ", pid, ts)
                 .expect("Failed to write leader changes to timestamps file");
         }
-        writeln!(timestamps_file, "").expect("Failed to write raw timestamps file");
         for ts in timestamps {
             let timestamp = ts.as_micros() as u64;
             writeln!(timestamps_file, "{}", timestamp)
@@ -653,7 +660,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             let (timestamps, leader_changes_t) = meta_results
                 .timestamps_leader_changes
                 .expect("No timestamps results!");
-            self.persist_timestamp_results(&timestamps, &leader_changes_t);
+            let reconfig_ts = meta_results.timestamps_reconfig;
+            self.persist_timestamp_results(&timestamps, &leader_changes_t, reconfig_ts);
         }
 
         let kill_client_f = system.kill_notify(client);
