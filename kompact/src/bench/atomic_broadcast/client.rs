@@ -244,36 +244,43 @@ impl Client {
         }
         self.responses.insert(id, latency_res);
         let received_count = self.responses.len() as u64;
-        if received_count == self.num_proposals && self.reconfig.is_none() {
-            self.state = ExperimentState::Finished;
-            self.finished_latch
-                .decrement()
-                .expect("Failed to countdown finished latch");
-            if self.num_timed_out > 0 {
-                info!(self.ctx.log(), "Got all responses with {} timeouts, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
-                #[cfg(feature = "track_timeouts")]
-                {
-                    let min = self.timeouts.iter().min();
-                    let max = self.timeouts.iter().max();
-                    let late_min = self.late_responses.iter().min();
-                    let late_max = self.late_responses.iter().max();
+        if received_count == self.num_proposals {
+            if self.reconfig.is_none() {
+                self.state = ExperimentState::Finished;
+                self.finished_latch
+                    .decrement()
+                    .expect("Failed to countdown finished latch");
+                if self.num_timed_out > 0 {
+                    info!(self.ctx.log(), "Got all responses with {} timeouts, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+                    #[cfg(feature = "track_timeouts")]
+                    {
+                        let min = self.timeouts.iter().min();
+                        let max = self.timeouts.iter().max();
+                        let late_min = self.late_responses.iter().min();
+                        let late_max = self.late_responses.iter().max();
+                        info!(
+                                self.ctx.log(),
+                                "Timed out: Min: {:?}, Max: {:?}. Late responses: {}, min: {:?}, max: {:?}",
+                                min,
+                                max,
+                                self.late_responses.len(),
+                                late_min,
+                                late_max
+                            );
+                    }
+                } else {
                     info!(
                         self.ctx.log(),
-                        "Timed out: Min: {:?}, Max: {:?}. Late responses: {}, min: {:?}, max: {:?}",
-                        min,
-                        max,
-                        self.late_responses.len(),
-                        late_min,
-                        late_max
+                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}",
+                        self.leader_changes.len(),
+                        self.leader_changes,
+                        self.current_leader
                     );
                 }
             } else {
-                info!(
+                warn!(
                     self.ctx.log(),
-                    "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}",
-                    self.leader_changes.len(),
-                    self.leader_changes,
-                    self.current_leader
+                    "Got all normal responses but still pending reconfiguration"
                 );
             }
         } else if received_count == self.num_proposals / 2 && self.reconfig.is_some() {
@@ -287,8 +294,7 @@ impl Client {
             {
                 self.reconfig_start_ts = Some(self.clock.now());
             }
-            let timer =
-                self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(RECONFIG_ID));
+            let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
             let proposal_meta = ProposalMetaData::with(start_time, timer);
             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
         }
@@ -346,43 +352,44 @@ impl Client {
     }
 
     fn proposal_timeout(&mut self, id: u64) -> Handled {
-        if self.responses.contains_key(&id)
-            || self.state == ExperimentState::ReconfigurationElection
-        {
+        if self.responses.contains_key(&id) {
             return Handled::Ok;
         }
         // info!(self.ctx.log(), "Timed out proposal {}", id);
-        if id == RECONFIG_ID {
-            if let Some(leader) = self.nodes.get(&self.current_leader) {
-                self.propose_reconfiguration(leader);
-            }
-            let timer = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
-            let proposal_meta = self.pending_proposals.get_mut(&id).expect(&format!(
-                "Could not find pending proposal id {}, latest_proposal_id: {}",
-                id, self.latest_proposal_id
-            ));
-            proposal_meta.set_timer(timer);
-        } else {
-            self.num_timed_out += 1;
-            let proposal_meta = self
-                .pending_proposals
-                .remove(&id)
-                .expect("Timed out on proposal not in pending proposals");
-            let latency = match proposal_meta.start_time {
-                Some(start_time) => Some(
-                    start_time
-                        .elapsed()
-                        .expect("Failed to get elapsed duration"),
-                ),
-                _ => None,
-            };
-            self.handle_normal_response(id, latency);
-            self.send_concurrent_proposals();
-            #[cfg(feature = "track_timeouts")]
-            {
-                self.timeouts.push(id);
-            }
+        self.num_timed_out += 1;
+        let proposal_meta = self
+            .pending_proposals
+            .remove(&id)
+            .expect("Timed out on proposal not in pending proposals");
+        let latency = match proposal_meta.start_time {
+            Some(start_time) => Some(
+                start_time
+                    .elapsed()
+                    .expect("Failed to get elapsed duration"),
+            ),
+            _ => None,
+        };
+        self.handle_normal_response(id, latency);
+        self.send_concurrent_proposals();
+        #[cfg(feature = "track_timeouts")]
+        {
+            self.timeouts.push(id);
         }
+        Handled::Ok
+    }
+
+    fn reconfig_timeout(&mut self) -> Handled {
+        let leader = self
+            .nodes
+            .get(&self.current_leader)
+            .expect("No leader to propose reconfiguration to!");
+        self.propose_reconfiguration(leader);
+        let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
+        let proposal_meta = self
+            .pending_proposals
+            .get_mut(&RECONFIG_ID)
+            .expect("Could not find MetaData for Reconfiguration in pending_proposals");
+        proposal_meta.set_timer(timer);
         Handled::Ok
     }
 
