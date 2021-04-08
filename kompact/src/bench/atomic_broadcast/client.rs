@@ -22,7 +22,6 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 enum ExperimentState {
     LeaderElection,
     Running,
-    ReconfigurationElection,
     Finished,
 }
 
@@ -323,7 +322,14 @@ impl Client {
             } else {
                 self.reconfig = None;
                 self.current_config = new_config;
-                let leader_changed = self.current_leader != rr.latest_leader;
+                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader {
+                    self.current_leader = rr.latest_leader;
+                    self.leader_changes.push(rr.latest_leader);
+                    #[cfg(feature = "track_timestamps")]
+                    {
+                        self.leader_changes_t.push(self.clock.now());
+                    }
+                }
                 info!(
                     self.ctx.log(),
                     "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
@@ -331,22 +337,7 @@ impl Client {
                     self.current_leader,
                     self.current_config
                 );
-                self.current_leader = rr.latest_leader;
-                if self.current_leader == 0 {
-                    // Wait for leader in new config
-                    self.state = ExperimentState::ReconfigurationElection;
-                } else {
-                    // Continue if there is a leader
-                    self.state = ExperimentState::Running;
-                    self.send_concurrent_proposals();
-                    if leader_changed {
-                        self.leader_changes.push(rr.latest_leader);
-                        #[cfg(feature = "track_timestamps")]
-                        {
-                            self.leader_changes_t.push(self.clock.now());
-                        }
-                    }
-                }
+                self.send_concurrent_proposals();
             }
         }
     }
@@ -502,6 +493,7 @@ impl Actor for Client {
                         if !self.current_config.contains(&pid) { return Handled::Ok; }
                         match self.state {
                             ExperimentState::LeaderElection => {
+                                assert!(pid > 0);
                                 self.current_leader = pid;
                                 match self.leader_election_latch.decrement() {
                                     Ok(_) => info!(self.ctx.log(), "Got first leader: {}", pid),
@@ -509,18 +501,6 @@ impl Actor for Client {
                                         panic!("Failed to decrement election latch: {:?}", e);
                                     }
                                 }
-                            },
-                            ExperimentState::ReconfigurationElection => {
-                                if self.current_leader != pid {
-                                    // info!(self.ctx.log(), "Got leader in ReconfigElection: {}. old: {}", pid, self.current_leader);
-                                    self.current_leader = pid;
-                                    self.leader_changes.push(pid);
-                                    #[cfg(feature = "track_timestamps")] {
-                                        self.leader_changes_t.push(self.clock.now());
-                                    }
-                                }
-                                self.state = ExperimentState::Running;
-                                self.send_concurrent_proposals();
                             },
                             _ => {},
                         }
@@ -539,7 +519,7 @@ impl Actor for Client {
                                 _ => None,
                             };
                             self.cancel_timer(proposal_meta.timer);
-                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.state != ExperimentState::ReconfigurationElection {
+                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                 self.current_leader = pr.latest_leader;
                                 self.leader_changes.push(pr.latest_leader);
@@ -548,9 +528,7 @@ impl Actor for Client {
                                 }
                             }
                             self.handle_normal_response(id, latency);
-                            if self.state != ExperimentState::ReconfigurationElection {
-                                self.send_concurrent_proposals();
-                            }
+                            self.send_concurrent_proposals();
                         }
                         #[cfg(feature = "track_timeouts")] {
                             if self.timeouts.contains(&id) {
@@ -564,9 +542,7 @@ impl Actor for Client {
                     AtomicBroadcastMsg::Proposal(p) => {    // node piggybacked proposal i.e. proposal failed
                         let id = p.data.as_slice().get_u64();
                         self.retry_proposals.push(id);
-                        if self.state != ExperimentState::ReconfigurationElection {
-                            self.send_concurrent_proposals();
-                        }
+                        self.send_concurrent_proposals();
                     }
                     e => error!(self.ctx.log(), "Client received unexpected msg: {:?}", e),
                 }
