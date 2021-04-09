@@ -189,6 +189,7 @@ pub enum ReconfigurationPolicy {
 
 pub struct AtomicBroadcastMaster {
     num_nodes: Option<u64>,
+    num_nodes_needed: Option<u64>,
     num_proposals: Option<u64>,
     concurrent_proposals: Option<u64>,
     reconfiguration: Option<(ReconfigurationPolicy, Vec<u64>)>,
@@ -207,6 +208,7 @@ impl AtomicBroadcastMaster {
     fn new() -> AtomicBroadcastMaster {
         AtomicBroadcastMaster {
             num_nodes: None,
+            num_nodes_needed: None,
             num_proposals: None,
             concurrent_proposals: None,
             reconfiguration: None,
@@ -309,7 +311,7 @@ impl AtomicBroadcastMaster {
         }
         match &c.reconfiguration.to_lowercase() {
             off if off == "off" => {
-                self.num_nodes = Some(c.number_of_nodes);
+                self.num_nodes_needed = Some(c.number_of_nodes);
                 if c.reconfig_policy.to_lowercase() != "none" {
                     return Err(BenchmarkError::InvalidTest(format!(
                         "Reconfiguration is off, transfer policy should be none, but found: {}",
@@ -345,7 +347,7 @@ impl AtomicBroadcastMaster {
                             Some(r) => Some((policy, r)),
                             _ => None,
                         };
-                        self.num_nodes = Some(n);
+                        self.num_nodes_needed = Some(n);
                     }
                     Err(e) => return Err(e),
                 }
@@ -377,6 +379,18 @@ impl AtomicBroadcastMaster {
         (client_timeout, meta_results_path)
     }
 
+    fn get_meta_results_path(&self) -> &String {
+        self.meta_results_path
+            .as_ref()
+            .expect("No meta results path!")
+    }
+
+    fn get_meta_results_sub_dir(&self) -> String {
+        let num_nodes = self.num_nodes.unwrap();
+        let cp = self.concurrent_proposals.unwrap();
+        format!("{}-{}k", num_nodes, cp/1000)
+    }
+
     #[cfg(feature = "track_timestamps")]
     fn persist_timestamp_results(
         &mut self,
@@ -385,7 +399,8 @@ impl AtomicBroadcastMaster {
         reconfig_ts: Option<(Duration, Duration)>,
     ) {
         let meta_path = self.get_meta_results_path();
-        let timestamps_dir = format!("{}/timestamps/", meta_path);
+        let sub_dir = self.get_meta_results_sub_dir();
+        let timestamps_dir = format!("{}/timestamps/{}/", meta_path, sub_dir);
         create_dir_all(&timestamps_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &timestamps_dir));
         let mut timestamps_file = OpenOptions::new()
@@ -421,7 +436,8 @@ impl AtomicBroadcastMaster {
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
         let meta_path = self.get_meta_results_path();
-        let latency_dir = format!("{}/latency/", meta_path);
+        let sub_dir = self.get_meta_results_sub_dir();
+        let latency_dir = format!("{}/latency/{}/", meta_path, sub_dir);
         create_dir_all(&latency_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
         let mut latency_file = OpenOptions::new()
@@ -445,15 +461,10 @@ impl AtomicBroadcastMaster {
             .expect("Failed to flush raw latency file");
     }
 
-    fn get_meta_results_path(&self) -> &String {
-        self.meta_results_path
-            .as_ref()
-            .expect("No meta results path!")
-    }
-
     fn persist_reconfig_latency_results(&mut self, latency: Duration) {
         let meta_path = self.get_meta_results_path();
-        let reconfig_latency_dir = format!("{}/reconfig_latency/", meta_path);
+        let sub_dir = self.get_meta_results_sub_dir();
+        let reconfig_latency_dir = format!("{}/reconfig_latency/{}/", meta_path, sub_dir);
         create_dir_all(&reconfig_latency_dir).unwrap_or_else(|_| {
             panic!(
                 "Failed to create given directory: {}",
@@ -575,6 +586,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             c.reconfiguration,
             c.reconfig_policy
         );
+        self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
@@ -605,7 +617,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.finished_latch = Some(finished_latch);
         self.iteration_id += 1;
         let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
-        let num_nodes_needed = self.num_nodes.expect("No cached num_nodes") as usize;
+        let num_nodes_needed = self.num_nodes_needed.expect("No cached num_nodes") as usize;
         let mut nodes = d;
         nodes.truncate(num_nodes_needed);
         for (id, ap) in nodes.iter().enumerate() {
@@ -683,6 +695,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 self.persist_latency_summary();
             }
             self.num_nodes = None;
+            self.num_nodes_needed = None;
             self.reconfiguration = None;
             self.concurrent_proposals = None;
             self.num_proposals = None;
