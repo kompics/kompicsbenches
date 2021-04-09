@@ -202,6 +202,7 @@ pub struct AtomicBroadcastMaster {
     num_timed_out: Vec<u64>,
     experiment_str: Option<String>,
     meta_results_path: Option<String>,
+    meta_results_sub_dir: Option<String>
 }
 
 impl AtomicBroadcastMaster {
@@ -221,6 +222,7 @@ impl AtomicBroadcastMaster {
             num_timed_out: vec![],
             experiment_str: None,
             meta_results_path: None,
+            meta_results_sub_dir: None,
         }
     }
 
@@ -385,10 +387,10 @@ impl AtomicBroadcastMaster {
             .expect("No meta results path!")
     }
 
-    fn get_meta_results_sub_dir(&self) -> String {
-        let num_nodes = self.num_nodes.unwrap();
-        let cp = self.concurrent_proposals.unwrap();
-        format!("{}-{}k", num_nodes, cp/1000)
+    fn get_meta_results_sub_dir(&self) -> &String {
+        self.meta_results_sub_dir
+            .as_ref()
+            .expect("No meta results sub dir path!")
     }
 
     #[cfg(feature = "track_timestamps")]
@@ -583,13 +585,14 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             c.number_of_nodes,
             c.concurrent_proposals,
             c.number_of_proposals,
-            c.reconfiguration,
+            c.reconfiguration.clone(),
             c.reconfig_policy
         );
         self.num_nodes = Some(c.number_of_nodes);
         self.experiment_str = Some(experiment_str);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
+        self.meta_results_sub_dir = Some(format!("{}-{}k-{}", c.number_of_nodes, c.concurrent_proposals/1000, c.reconfiguration));
         if c.concurrent_proposals == 1
             || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
@@ -700,6 +703,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             self.concurrent_proposals = None;
             self.num_proposals = None;
             self.experiment_str = None;
+            self.meta_results_sub_dir = None;
             self.num_timed_out.clear();
             self.iteration_id = 0;
             system
@@ -818,6 +822,36 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         }
     }
 }
+
+#[cfg(feature = "measure_io")]
+#[derive(Default, Debug, Eq, PartialEq)]
+pub struct IOMetaData {
+    msgs_sent: usize,
+    bytes_sent: usize,
+    msgs_received: usize,
+    bytes_received: usize,
+}
+
+#[cfg(feature = "measure_io")]
+impl IOMetaData {
+    pub fn update_received<T>(&mut self, msg: &T) {
+        let size = std::mem::size_of_val(msg);
+        self.bytes_received += size;
+        self.msgs_received += 1;
+    }
+
+    pub fn update_sent<T>(&mut self, msg: &T) {
+        let size = std::mem::size_of_val(msg);
+        self.bytes_sent += size;
+        self.msgs_sent += 1;
+    }
+
+    pub fn update_sent_with_size(&mut self, size: usize) {
+        self.bytes_sent += size;
+        self.msgs_sent += 1;
+    }
+}
+
 
 #[cfg(test)]
 pub mod tests {

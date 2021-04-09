@@ -5,8 +5,8 @@ authors = ["Lars Kroll <lkroll@kth.se>", "Harald Ng <hng@kth.se>"]
 edition = "2018"
 
 [dependencies]
-kompact 				= { git = "https://github.com/kompics/kompact"}
-#kompact 				= { git = "https://github.com/kompics/kompact", rev = "0f9abc3" }
+#kompact 				= { git = "https://github.com/kompics/kompact"}
+kompact 				= { git = "https://github.com/kompics/kompact", rev = "94956af" }
 #kompact 				= { path = "../../kompact/core/" }
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
@@ -40,6 +40,7 @@ travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
 track_timeouts = [] # client keep tracks of which proposals timed out
 track_latency = [] # measure latency for proposals
 track_timestamps = ["quanta"]
+measure_io = []
 
 #default = []
 

@@ -496,7 +496,7 @@ impl Actor for Client {
                                 assert!(pid > 0);
                                 self.current_leader = pid;
                                 match self.leader_election_latch.decrement() {
-                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}", pid),
+                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}", pid, self.current_config),
                                     Err(e) => if e != CountdownError::AlreadySet {
                                         panic!("Failed to decrement election latch: {:?}", e);
                                     }

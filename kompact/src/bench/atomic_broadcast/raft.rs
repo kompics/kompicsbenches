@@ -669,6 +669,9 @@ where
                     self.hb_reconfig = Some(rp);
                 }
                 my_pid if my_pid == self.raw_raft.raft.id => {
+                    #[cfg(feature = "measure_io")] {
+                        self.communication_port.trigger(CommunicatorMsg::StartReconfigMeasurement);
+                    }
                     let current_config: Vec<u64> = self
                         .raw_raft
                         .raft
@@ -740,6 +743,9 @@ where
                     {
                         continue;
                     }
+                    #[cfg(feature = "measure_io")] {
+                        self.communication_port.trigger(CommunicatorMsg::StartReconfigMeasurement);
+                    }
                     // For conf change messages, make them effective.
                     let mut cc = ConfChange::default();
                     cc.merge_from_bytes(&entry.data).unwrap();
@@ -760,7 +766,6 @@ where
                                 .raft
                                 .begin_membership_change(&cc)
                                 .expect("Failed to begin reconfiguration");
-
                             assert!(self.raw_raft.raft.is_in_membership_change());
                         }
                         ConfChangeType::FinalizeMembershipChange => {
@@ -818,6 +823,9 @@ where
                             let rr = ReconfigurationResp::with(leader, current_configuration);
                             self.communication_port
                                 .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
+                            #[cfg(feature = "measure_io")] {
+                                self.communication_port.trigger(CommunicatorMsg::StopReconfigMeasurement);
+                            }
                         }
                         _ => unimplemented!(),
                     }
