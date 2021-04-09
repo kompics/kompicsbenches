@@ -78,11 +78,11 @@ def client(name: String, master: AddressArg, runid: String, publicif: String, cl
 
 @arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
-def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, runName: String = ""): Unit = {
 	val nodes = readNodes(withNodes);
 	val masters = runnersForImpl(impls, _.remoteRunner(runnerAddr, masterAddr, nodes.size));
 	val totalStart = System.currentTimeMillis();
-	val runId = s"run-${totalStart}";
+	val runId = if (runName.isEmpty) s"run-${totalStart}" else runName;
 	val logdir = logs / runId;
 	mkdir! logdir;
 	val resultsdir = results / runId;
@@ -120,7 +120,7 @@ def remote(withNodes: Path = defaultNodesFile, testing: Boolean = false, impls: 
 
 @arg(doc ="Run benchmarks using a cluster of nodes.")
 @main
-def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir()): Unit = {
+def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, remoteDir: os.Path = tmp.dir(), runName: String = ""): Unit = {
 	val alwaysCopyFiles = List[Path](relp("bench.sc"), relp("benchmarks.sc"), relp("build.sc"), relp("client.sh"));
 	val masterBenches = runnersForImpl(impls, identity);
 	val (copyFiles: List[RelPath], copyDirectories: List[RelPath]) = masterBenches.map(_.mustCopy).flatten.distinct.partition(_.isFile) match {
@@ -128,7 +128,7 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 	};
 	println(s"Going to copy files=${copyFiles.mkString("[", ",", "]")} and folders==${copyDirectories.mkString("[", ",", "]")}.");
 	val totalStart = System.currentTimeMillis();
-	val runId = s"run-${totalStart}";
+	val runId = if (runName.isEmpty) s"run-${totalStart}" else runName;
 	val nodes = (0 until withClients).map(45700 + _).map { p =>
 		val ip = "127.0.0.1";
 		val addr = s"${ip}:${p}";
@@ -185,10 +185,10 @@ def fakeRemote(withClients: Int = 1, testing: Boolean = false, impls: Seq[String
 
 @arg(doc ="Run local benchmarks only.")
 @main
-def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty): Unit = {
+def local(testing: Boolean = false, impls: Seq[String] = Seq.empty, benchmarks: Seq[String] = Seq.empty, runName: String = ""): Unit = {
 	val runners = runnersForImpl(impls, _.localRunner(runnerAddr));
 	val totalStart = System.currentTimeMillis();
-	val runId = s"run-${totalStart}";
+	val runId = if (runName.isEmpty) s"run-${totalStart}" else runName;
 	val logdir = logs / runId;
 	mkdir! logdir;
 	val resultsdir = results / runId;
