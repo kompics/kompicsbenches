@@ -263,7 +263,7 @@ where
                 config_id,
                 self.pid,
                 // log,
-                skip_prepare_n.clone(),
+                skip_prepare_n,
                 max_inflight,
             )
         });
@@ -376,10 +376,6 @@ where
                 self.paxos_replicas.len()
             )
         });
-        info!(
-            self.ctx.log(),
-            "Starting replica pid: {}, config_id: {}", self.pid, config_id
-        );
         self.active_config = ConfigMeta::new(config_id);
         let ble = self
             .ble_comps
@@ -580,7 +576,7 @@ where
     }
 
     fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, skip_idx: Option<SegmentIndex>) {
-        let skip = skip_idx.unwrap_or(SegmentIndex::with(0, 0));
+        let skip = skip_idx.unwrap_or_else(|| SegmentIndex::with(0, 0));
         let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len);
         for (pid, segment_idx) in &indices {
             if segment_idx != &skip {
@@ -667,7 +663,7 @@ where
             .received_segments
             .remove(&config_id)
             .expect("Should have all segments!");
-        all_segments.sort_by(|s1, s2| s1.get_from_idx().cmp(&s2.get_from_idx()));
+        all_segments.sort_by_key(|s1| s1.get_from_idx());
         let len = all_segments.last().unwrap().get_to_idx() as usize;
         let mut sequence = Vec::with_capacity(len);
         for mut segment in all_segments {
@@ -758,15 +754,7 @@ where
             Some(segments) => segments.iter().any(|s| s.get_index() == idx),
             None => false,
         };
-        if already_handled
-            || self.active_config.id >= config_id
-            || self.complete_sequences.contains(&config_id)
-        // || self.next_config_id.unwrap_or(0) <= st.config_id
-        {
-            true
-        } else {
-            false
-        }
+        already_handled  || self.active_config.id >= config_id || self.complete_sequences.contains(&config_id)
     }
 
     fn handle_segment_transfer(&mut self, st: SegmentTransfer) {
@@ -1181,10 +1169,7 @@ where
                                                 self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
                                                 self.start_replica(r.config_id);
                                             } else {
-                                                let skip_idx = match &r.segment {
-                                                    Some(segment) => Some(segment.get_index()),
-                                                    None => None,
-                                                };
+                                                let skip_idx = r.segment.as_ref().map(|segment| segment.get_index());
                                                 self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_idx);
                                                 if skip_idx.is_some() {
                                                     let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
@@ -1278,7 +1263,7 @@ where
         let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
         let paxos_state = P::new();
         let storage = Storage::with(seq, paxos_state);
-        let raw_peers = peers.clone().unwrap_or(vec![1]);
+        let raw_peers = peers.clone().unwrap_or_else(|| vec![1]);
         let paxos = Paxos::with(
             config_id,
             pid,
@@ -1294,7 +1279,7 @@ where
             communication_port: RequiredPort::uninitialised(),
             ble_port: RequiredPort::uninitialised(),
             stopped_peers: HashSet::new(),
-            peers: peers.unwrap_or(vec![]),
+            peers: peers.unwrap_or_default(),
             paxos,
             config_id,
             pid,
@@ -1490,7 +1475,13 @@ where
     fn on_start(&mut self) -> Handled {
         let bc = BufferConfig::default();
         self.ctx.borrow().init_buffers(Some(bc), None);
-        self.start_timer();
+        if !self.peers.is_empty() {
+            info!(
+                self.ctx.log(),
+                "Starting replica pid: {}, config_id: {}", self.pid, self.config_id
+            );
+            self.start_timer();
+        }
         Handled::Ok
     }
 

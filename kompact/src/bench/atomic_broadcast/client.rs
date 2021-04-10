@@ -352,14 +352,7 @@ impl Client {
             .pending_proposals
             .remove(&id)
             .expect("Timed out on proposal not in pending proposals");
-        let latency = match proposal_meta.start_time {
-            Some(start_time) => Some(
-                start_time
-                    .elapsed()
-                    .expect("Failed to get elapsed duration"),
-            ),
-            _ => None,
-        };
+        let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
         self.handle_normal_response(id, latency);
         self.send_concurrent_proposals();
         #[cfg(feature = "track_timeouts")]
@@ -491,18 +484,15 @@ impl Actor for Client {
                 match am {
                     AtomicBroadcastMsg::FirstLeader(pid) => {
                         if !self.current_config.contains(&pid) { return Handled::Ok; }
-                        match self.state {
-                            ExperimentState::LeaderElection => {
-                                assert!(pid > 0);
-                                self.current_leader = pid;
-                                match self.leader_election_latch.decrement() {
-                                    Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}", pid, self.current_config),
-                                    Err(e) => if e != CountdownError::AlreadySet {
-                                        panic!("Failed to decrement election latch: {:?}", e);
-                                    }
+                        if self.state == ExperimentState::LeaderElection {
+                            assert!(pid > 0);
+                            self.current_leader = pid;
+                            match self.leader_election_latch.decrement() {
+                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}", pid, self.current_config),
+                                Err(e) => if e != CountdownError::AlreadySet {
+                                    panic!("Failed to decrement election latch: {:?}", e);
                                 }
-                            },
-                            _ => {},
+                            }
                         }
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
@@ -514,10 +504,7 @@ impl Actor for Client {
                         // let response = Self::deserialise_response(&mut data.as_slice());
                         let id = data.as_slice().get_u64();
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                            let latency = match proposal_meta.start_time {
-                                Some(start_time) => Some(start_time.elapsed().expect("Failed to get elapsed duration")),
-                                _ => None,
-                            };
+                            let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
                             self.cancel_timer(proposal_meta.timer);
                             if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);

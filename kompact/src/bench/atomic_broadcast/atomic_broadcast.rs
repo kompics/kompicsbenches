@@ -28,6 +28,12 @@ use std::{
 };
 use tikv_raft::storage::MemStorage;
 
+#[cfg(feature = "measure_io")]
+use std::fmt;
+#[cfg(feature = "measure_io")]
+use pretty_bytes::converter::convert;
+
+const TCP_NODELAY: bool = true;
 const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
 const RAFT_PATH: &str = "raft_replica";
@@ -345,10 +351,7 @@ impl AtomicBroadcastMaster {
                                 num_clients, n
                             )));
                         }
-                        self.reconfiguration = match reconfig {
-                            Some(r) => Some((policy, r)),
-                            _ => None,
-                        };
+                        self.reconfiguration = reconfig.map(|r| (policy, r));
                         self.num_nodes_needed = Some(n);
                     }
                     Err(e) => return Err(e),
@@ -603,9 +606,8 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         conf.load_config_file(CONFIG_PATH);
         let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
-        let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
-            .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
+            .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, TCP_NODELAY);
         self.system = Some(system);
         let params = ClientParams::with(c.algorithm, c.number_of_nodes);
         Ok(params)
@@ -741,9 +743,8 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         conf.load_config_file(CONFIG_PATH);
         let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
-        let tcp_no_delay = true;
         let system = crate::kompact_system_provider::global()
-            .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, tcp_no_delay);
+            .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, TCP_NODELAY);
         let initial_config: Vec<u64> = (1..=c.num_nodes).collect();
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
@@ -824,7 +825,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 }
 
 #[cfg(feature = "measure_io")]
-#[derive(Default, Debug, Eq, PartialEq)]
+#[derive(Default, Eq, PartialEq)]
 pub struct IOMetaData {
     msgs_sent: usize,
     bytes_sent: usize,
@@ -849,6 +850,18 @@ impl IOMetaData {
     pub fn update_sent_with_size(&mut self, size: usize) {
         self.bytes_sent += size;
         self.msgs_sent += 1;
+    }
+}
+
+#[cfg(feature = "measure_io")]
+impl fmt::Debug for IOMetaData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IOMetaData")
+            .field("msgs_sent", &self.msgs_sent)
+            .field("bytes_sent", &convert(self.bytes_sent as f64))
+            .field("msgs_received", &self.msgs_received)
+            .field("bytes_received", &convert(self.bytes_received as f64))
+            .finish()
     }
 }
 
@@ -906,7 +919,6 @@ pub mod tests {
         conf.load_config_file(CONFIG_PATH);
         let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
-        let tcp_no_delay = true;
         for i in 1..=n {
             let system = kompact_benchmarks::kompact_system_provider::global()
                 .new_remote_system_with_threads_config(
@@ -914,7 +926,7 @@ pub mod tests {
                     4,
                     conf.clone(),
                     bc.clone(),
-                    tcp_no_delay,
+                    TCP_NODELAY,
                 );
             let (actor_path, actor_ref) = match algorithm {
                 "paxos" => {
