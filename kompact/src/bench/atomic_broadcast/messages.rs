@@ -99,7 +99,7 @@ pub mod paxos {
 
     impl PaxosSer {
         fn serialise_ballot(ballot: &Ballot, buf: &mut dyn BufMut) {
-            buf.put_u64(ballot.n);
+            buf.put_u32(ballot.n);
             buf.put_u64(ballot.pid);
         }
 
@@ -136,7 +136,7 @@ pub mod paxos {
         }
 
         fn deserialise_ballot(buf: &mut dyn Buf) -> Ballot {
-            let n = buf.get_u64();
+            let n = buf.get_u32();
             let pid = buf.get_u64();
             Ballot::with(n, pid)
         }
@@ -675,12 +675,12 @@ pub mod paxos {
 
         #[derive(Clone, Debug)]
         pub struct HeartbeatRequest {
-            pub round: u64,
+            pub round: u32,
             pub max_ballot: Ballot,
         }
 
         impl HeartbeatRequest {
-            pub fn with(round: u64, max_ballot: Ballot) -> HeartbeatRequest {
+            pub fn with(round: u32, max_ballot: Ballot) -> HeartbeatRequest {
                 HeartbeatRequest { round, max_ballot }
             }
         }
@@ -688,12 +688,12 @@ pub mod paxos {
         #[derive(Clone, Debug)]
         pub struct HeartbeatReply {
             pub sender_pid: u64,
-            pub round: u64,
+            pub round: u32,
             pub max_ballot: Ballot,
         }
 
         impl HeartbeatReply {
-            pub fn with(sender_pid: u64, round: u64, max_ballot: Ballot) -> HeartbeatReply {
+            pub fn with(sender_pid: u64, round: u32, max_ballot: Ballot) -> HeartbeatReply {
                 HeartbeatReply {
                     sender_pid,
                     round,
@@ -720,15 +720,15 @@ pub mod paxos {
                 match self {
                     HeartbeatMsg::Request(req) => {
                         buf.put_u8(HB_REQ_ID);
-                        buf.put_u64(req.round);
-                        buf.put_u64(req.max_ballot.n);
+                        buf.put_u32(req.round);
+                        buf.put_u32(req.max_ballot.n);
                         buf.put_u64(req.max_ballot.pid);
                     }
                     HeartbeatMsg::Reply(rep) => {
                         buf.put_u8(HB_REP_ID);
                         buf.put_u64(rep.sender_pid);
-                        buf.put_u64(rep.round);
-                        buf.put_u64(rep.max_ballot.n);
+                        buf.put_u32(rep.round);
+                        buf.put_u32(rep.max_ballot.n);
                         buf.put_u64(rep.max_ballot.pid);
                     }
                 }
@@ -746,8 +746,8 @@ pub mod paxos {
             fn deserialise(buf: &mut dyn Buf) -> Result<HeartbeatMsg, SerError> {
                 match buf.get_u8() {
                     HB_REQ_ID => {
-                        let round = buf.get_u64();
-                        let n = buf.get_u64();
+                        let round = buf.get_u32();
+                        let n = buf.get_u32();
                         let pid = buf.get_u64();
                         let max_ballot = Ballot::with(n, pid);
                         let hb_req = HeartbeatRequest::with(round, max_ballot);
@@ -755,8 +755,8 @@ pub mod paxos {
                     }
                     HB_REP_ID => {
                         let sender_pid = buf.get_u64();
-                        let round = buf.get_u64();
-                        let n = buf.get_u64();
+                        let round = buf.get_u32();
+                        let n = buf.get_u32();
                         let pid = buf.get_u64();
                         let max_ballot = Ballot::with(n, pid);
                         let hb_rep = HeartbeatReply::with(sender_pid, round, max_ballot);

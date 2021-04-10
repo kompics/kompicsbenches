@@ -1387,7 +1387,7 @@ where
         }
         let n = self.ctx.config()["paxos"]["prio_start_round"]
             .as_i64()
-            .expect("No prio start round in config!") as u64;
+            .expect("No prio start round in config!") as u32;
         let prio_start_round = Ballot::with(n, 0);
         self.paxos
             .propose_reconfiguration(reconfig, Some(prio_start_round))
@@ -1487,6 +1487,12 @@ where
 
     fn on_kill(&mut self) -> Handled {
         self.stop_timer();
+        #[cfg(feature = "measure_io")] {
+            if !self.peers.is_empty() {
+                let final_seq = self.paxos.get_sequence();
+                info!(self.ctx.log(), "Final Sequence in config_id: {}, len: {}", self.config_id, final_seq.len());
+            }
+        }
         Handled::Ok
     }
 }
@@ -1560,12 +1566,12 @@ pub(crate) mod ballot_leader_election {
 
     #[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
     pub struct Ballot {
-        pub n: u64,
+        pub n: u32,
         pub pid: u64,
     }
 
     impl Ballot {
-        pub fn with(n: u64, pid: u64) -> Ballot {
+        pub fn with(n: u32, pid: u64) -> Ballot {
             Ballot { n, pid }
         }
     }
@@ -1589,7 +1595,7 @@ pub(crate) mod ballot_leader_election {
         ble_port: ProvidedPort<BallotLeaderElection>,
         pid: u64,
         pub(crate) peers: Vec<ActorPath>,
-        hb_round: u64,
+        hb_round: u32,
         ballots: Vec<(Ballot, u64)>,
         current_ballot: Ballot, // (round, pid)
         leader: Option<(Ballot, u64)>,
