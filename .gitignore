@@ -5,6 +5,7 @@
 /remote_logs/
 /latency_results/
 /meta_results/
+/zipped/
 
 bin/
 
