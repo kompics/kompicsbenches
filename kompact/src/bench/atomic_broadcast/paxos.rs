@@ -137,7 +137,7 @@ where
     first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
     removed: bool,
     #[cfg(feature = "measure_io")]
-    reconfig_io_metadata: IOMetaData
+    reconfig_io_metadata: IOMetaData,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -392,9 +392,13 @@ where
     }
 
     fn stop_components(&mut self) -> Handled {
-        #[cfg(feature = "measure_io")] {
+        #[cfg(feature = "measure_io")]
+        {
             if self.reconfig_io_metadata != IOMetaData::default() {
-                info!(self.ctx.log(), "PaxosComp Reconfiguration {:?}", self.reconfig_io_metadata);
+                info!(
+                    self.ctx.log(),
+                    "PaxosComp Reconfiguration {:?}", self.reconfig_io_metadata
+                );
             }
         }
         self.stopped = true;
@@ -589,11 +593,14 @@ where
                 );
 
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
-                #[cfg(feature = "measure_io")] {
+                #[cfg(feature = "measure_io")]
+                {
                     self.reconfig_io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(*pid);
-                receiver.tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self).expect("Should serialise!");
+                receiver
+                    .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
+                    .expect("Should serialise!");
             }
         }
         let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
@@ -616,11 +623,14 @@ where
             for (i, segment_idx) in remaining.iter().enumerate() {
                 let pid = active_config_peers[i % num_active_peers];
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
-                #[cfg(feature = "measure_io")] {
+                #[cfg(feature = "measure_io")]
+                {
                     self.reconfig_io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(pid);
-                receiver.tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self).expect("Should serialise!");
+                receiver
+                    .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
+                    .expect("Should serialise!");
             }
         }
         let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
@@ -737,8 +747,11 @@ where
         let prev_seq_metadata = self.get_sequence_metadata(sr.config_id - 1);
         let segment = SequenceSegment::with(sr.idx, entries);
         let st = SegmentTransfer::with(sr.config_id, succeeded, prev_seq_metadata, segment);
-        #[cfg(feature = "measure_io")] {
-            self.reconfig_io_metadata.update_sent(&st);
+        #[cfg(feature = "measure_io")]
+        {
+            let est_segment_size = Self::estimate_segment_size(&st.segment);
+            let est_size = std::mem::size_of_val(&st) + est_segment_size;
+            self.reconfig_io_metadata.update_sent_with_size(est_size);
         }
         debug!(self.ctx.log(), "Replying seq transfer: idx: {:?}", sr.idx);
         requestor
@@ -754,7 +767,9 @@ where
             Some(segments) => segments.iter().any(|s| s.get_index() == idx),
             None => false,
         };
-        already_handled  || self.active_config.id >= config_id || self.complete_sequences.contains(&config_id)
+        already_handled
+            || self.active_config.id >= config_id
+            || self.complete_sequences.contains(&config_id)
     }
 
     fn handle_segment_transfer(&mut self, st: SegmentTransfer) {
@@ -803,11 +818,14 @@ where
                 let rnd = rng.gen_range(0, num_active);
                 let pid = self.active_config_peers.0[rnd];
                 let sr = SegmentRequest::with(config_id, st.segment.get_index(), self.pid);
-                #[cfg(feature = "measure_io")] {
+                #[cfg(feature = "measure_io")]
+                {
                     self.reconfig_io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(pid);
-                receiver.tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self).expect("Should serialise!");
+                receiver
+                    .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
+                    .expect("Should serialise!");
             } // else let timeout handle it to retry
         }
     }
@@ -833,10 +851,16 @@ where
         self.paxos_replicas.clear();
         self.ble_comps.clear();
         self.communicator_comps.clear();
-        #[cfg(feature = "measure_io")] {
+        #[cfg(feature = "measure_io")]
+        {
             self.reconfig_io_metadata = IOMetaData::default();
         }
+    }
 
+    #[cfg(feature = "measure_io")]
+    fn estimate_segment_size(s: &SequenceSegment) -> usize {
+        let num_entries = s.entries.len();
+        num_entries * DATA_SIZE_HINT
     }
 }
 
@@ -852,7 +876,7 @@ where
     #[cfg(test)]
     GetSequence(Ask<(), SequenceResp>),
     #[cfg(feature = "measure_io")]
-    LocalSegmentTransferMeta(usize)
+    LocalSegmentTransferMeta(usize),
 }
 
 impl<S, P> ComponentLifecycle for PaxosComp<S, P>
@@ -953,17 +977,23 @@ where
                             } else {
                                 None
                             };
-                        let r_init = ReconfigurationMsg::Init(ReconfigInit::with(
+                        let r = ReconfigInit::with(
                             r.config_id,
                             r.nodes.clone(),
                             seq_metadata.clone(),
                             self.pid,
                             eager_transfer,
                             r.skip_prepare_use_leader,
-                        ));
+                        );
                         #[cfg(feature = "measure_io")] {
-                            self.reconfig_io_metadata.update_sent(&r_init);
+                            let est_segment_size = match &r.segment {
+                                Some(s) => Self::estimate_segment_size(s),
+                                None => 0
+                            };
+                            let est_size = std::mem::size_of_val(&r) + est_segment_size;
+                            self.reconfig_io_metadata.update_sent_with_size(est_size);
                         }
+                        let r_init = ReconfigurationMsg::Init(r);
                         let actorpath = self.get_actorpath(*pid);
                         actorpath
                             .tell_serialised(r_init, self)
@@ -1142,7 +1172,12 @@ where
                                     return Handled::Ok;
                                 } else {
                                     #[cfg(feature = "measure_io")] {
-                                        self.reconfig_io_metadata.update_received(&r);
+                                        let est_segment_size = match &r.segment {
+                                            Some(s) => Self::estimate_segment_size(s),
+                                            None => 0
+                                        };
+                                        let est_size = std::mem::size_of_val(&r) + est_segment_size;
+                                        self.reconfig_io_metadata.update_received_with_size(est_size);
                                     }
                                     if self.active_config.id >= r.config_id {
                                         return Handled::Ok;
@@ -1194,17 +1229,19 @@ where
                             },
                             ReconfigurationMsg::SegmentRequest(sr) => {
                                 if !self.stopped {
-                                #[cfg(feature = "measure_io")] {
-                                    self.reconfig_io_metadata.update_received(&sr);
-                                }
+                                    #[cfg(feature = "measure_io")] {
+                                        self.reconfig_io_metadata.update_received(&sr);
+                                    }
                                     self.handle_segment_request(sr, sender);
                                 }
                             },
                             ReconfigurationMsg::SegmentTransfer(st) => {
                                 if !self.stopped {
-                                #[cfg(feature = "measure_io")] {
-                                    self.reconfig_io_metadata.update_received(&st);
-                                }
+                                    #[cfg(feature = "measure_io")] {
+                                        let est_segment_size = Self::estimate_segment_size(&st.segment);
+                                        let est_size = std::mem::size_of_val(&st) + est_segment_size;
+                                        self.reconfig_io_metadata.update_received_with_size(est_size);
+                                    }
                                     self.handle_segment_transfer(st);
                                 }
                             }
@@ -1370,8 +1407,10 @@ where
             // follower: just handle a possible reconfiguration
             if let Some(Entry::StopSign(ss)) = self.paxos.get_decided_entries().last().cloned() {
                 self.handle_stopsign(&ss);
-                #[cfg(feature = "measure_io")] {
-                    self.communication_port.trigger(CommunicatorMsg::StopReconfigMeasurement);
+                #[cfg(feature = "measure_io")]
+                {
+                    self.communication_port
+                        .trigger(CommunicatorMsg::StopReconfigMeasurement);
                 }
             }
         }
@@ -1382,8 +1421,10 @@ where
     }
 
     fn propose_reconfiguration(&mut self, reconfig: Vec<u64>) -> Result<(), ProposeErr> {
-        #[cfg(feature = "measure_io")] {
-            self.communication_port.trigger(CommunicatorMsg::StartReconfigMeasurement);
+        #[cfg(feature = "measure_io")]
+        {
+            self.communication_port
+                .trigger(CommunicatorMsg::StartReconfigMeasurement);
         }
         let n = self.ctx.config()["paxos"]["prio_start_round"]
             .as_i64()
@@ -1430,9 +1471,11 @@ where
                 let segment = SequenceSegment::with(segment_idx, entries);
                 let st =
                     SegmentTransfer::with(seq_req.config_id, succeeded, prev_seq_metadata, segment);
-                #[cfg(feature = "measure_io")] {
+                #[cfg(feature = "measure_io")]
+                {
                     let size = std::mem::size_of_val(&st);
-                    self.supervisor.tell(PaxosCompMsg::LocalSegmentTransferMeta(size));
+                    self.supervisor
+                        .tell(PaxosCompMsg::LocalSegmentTransferMeta(size));
                 }
                 requestor
                     .tell_serialised(ReconfigurationMsg::SegmentTransfer(st), self)
@@ -1487,10 +1530,16 @@ where
 
     fn on_kill(&mut self) -> Handled {
         self.stop_timer();
-        #[cfg(feature = "measure_io")] {
+        #[cfg(feature = "measure_io")]
+        {
             if !self.peers.is_empty() {
                 let final_seq = self.paxos.get_sequence();
-                info!(self.ctx.log(), "Final Sequence in config_id: {}, len: {}", self.config_id, final_seq.len());
+                info!(
+                    self.ctx.log(),
+                    "Final Sequence in config_id: {}, len: {}",
+                    self.config_id,
+                    final_seq.len()
+                );
             }
         }
         Handled::Ok

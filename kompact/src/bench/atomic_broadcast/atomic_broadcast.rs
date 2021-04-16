@@ -29,9 +29,9 @@ use std::{
 use tikv_raft::storage::MemStorage;
 
 #[cfg(feature = "measure_io")]
-use std::fmt;
-#[cfg(feature = "measure_io")]
 use pretty_bytes::converter::convert;
+#[cfg(feature = "measure_io")]
+use std::fmt;
 
 const TCP_NODELAY: bool = true;
 const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -208,7 +208,7 @@ pub struct AtomicBroadcastMaster {
     num_timed_out: Vec<u64>,
     experiment_str: Option<String>,
     meta_results_path: Option<String>,
-    meta_results_sub_dir: Option<String>
+    meta_results_sub_dir: Option<String>,
 }
 
 impl AtomicBroadcastMaster {
@@ -595,7 +595,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         self.experiment_str = Some(experiment_str);
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
-        self.meta_results_sub_dir = Some(format!("{}-{}k-{}", c.number_of_nodes, c.concurrent_proposals/1000, c.reconfiguration));
+        self.meta_results_sub_dir = Some(format!(
+            "{}-{}k-{}",
+            c.number_of_nodes,
+            c.concurrent_proposals / 1000,
+            c.reconfiguration
+        ));
         if c.concurrent_proposals == 1
             || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
         {
@@ -744,7 +749,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let bc = BufferConfig::from_config_file(CONFIG_PATH);
         bc.validate();
         let system = crate::kompact_system_provider::global()
-            .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, TCP_NODELAY);
+            .new_remote_system_with_threads_config("atomicbroadcast", 8, conf, bc, TCP_NODELAY);
         let initial_config: Vec<u64> = (1..=c.num_nodes).collect();
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
@@ -851,6 +856,11 @@ impl IOMetaData {
         self.bytes_sent += size;
         self.msgs_sent += 1;
     }
+
+    pub fn update_received_with_size(&mut self, size: usize) {
+        self.bytes_received += size;
+        self.msgs_received += 1;
+    }
 }
 
 #[cfg(feature = "measure_io")]
@@ -864,7 +874,6 @@ impl fmt::Debug for IOMetaData {
             .finish()
     }
 }
-
 
 #[cfg(test)]
 pub mod tests {
