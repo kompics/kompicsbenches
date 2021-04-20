@@ -22,6 +22,7 @@ pub mod raft {
             pending_membership_change: Option<(ConfState, u64)>,
         );
         fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error>;
+        fn new_with_entries_and_conf_state(_dir: Option<&str>, entries: &[tikv_raft::eraftpb::Entry], conf_state: (Vec<u64>, Vec<u64>)) -> Self;
         fn new_with_conf_state(dir: Option<&str>, conf_state: (Vec<u64>, Vec<u64>)) -> Self;
         fn clear(&mut self) -> Result<(), IOError>;
     }
@@ -43,6 +44,12 @@ pub mod raft {
             self.wl().mut_hard_state().commit = commit;
             self.wl().mut_hard_state().term = term;
             Ok(())
+        }
+
+        fn new_with_entries_and_conf_state(_dir: Option<&str>, entries: &[tikv_raft::eraftpb::Entry], conf_state: (Vec<u64>, Vec<u64>)) -> Self {
+            let mem_storage = MemStorage::new_with_conf_state(conf_state);
+            mem_storage.wl().append(entries).expect("Failed to preload MemStorage with entries");
+            mem_storage
         }
 
         fn new_with_conf_state(_dir: Option<&str>, conf_state: (Vec<u64>, Vec<u64>)) -> Self {
@@ -112,6 +119,10 @@ pub mod raft {
 
         fn set_hard_state(&mut self, commit: u64, term: u64) -> Result<(), Error> {
             self.wl().set_hard_state(commit, term)
+        }
+
+        fn new_with_entries_and_conf_state(_dir: Option<&str>, _entries: &[Entry], _conf_state: (Vec<u64>, Vec<u64>)) -> Self {
+            unimplemented!()
         }
 
         fn new_with_conf_state(dir: Option<&str>, conf_state: (Vec<u64>, Vec<u64>)) -> Self {

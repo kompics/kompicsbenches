@@ -46,4 +46,4 @@ measure_io = ["pretty-bytes"]
 #default = []
 
 [profile.release]
-lto = true
+lto = true  

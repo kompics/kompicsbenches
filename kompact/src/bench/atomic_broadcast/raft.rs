@@ -724,13 +724,6 @@ where
             unimplemented!("Should not be any snapshots to handle!");
         }
 
-        // Send out the messages come from the node.
-        let mut ready_msgs = Vec::with_capacity(self.max_inflight);
-        std::mem::swap(&mut ready.messages, &mut ready_msgs);
-        for msg in ready_msgs {
-            self.communication_port
-                .trigger(CommunicatorMsg::RawRaftMsg(msg));
-        }
         // let mut next_conf_change: Option<ConfChangeType> = None;
         // Apply all committed proposals.
         if let Some(committed_entries) = ready.committed_entries.take() {
@@ -851,6 +844,15 @@ where
                     .expect("Failed to set hardstate");
             }
         }
+
+        // Send out the messages come from the node.
+        let mut ready_msgs = Vec::with_capacity(self.max_inflight);
+        std::mem::swap(&mut ready.messages, &mut ready_msgs);
+        for msg in ready_msgs {
+            self.communication_port
+                .trigger(CommunicatorMsg::RawRaftMsg(msg));
+        }
+
         // Call `RawNode::advance` interface to update position flags in the raft.
         self.raw_raft.advance(ready);
         Handled::Ok
