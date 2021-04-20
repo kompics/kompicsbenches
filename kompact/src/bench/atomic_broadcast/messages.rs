@@ -24,8 +24,7 @@ pub mod raft {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            let num_entries = self.0.entries.len();
-            Some(60 + num_entries * DATA_SIZE_HINT) // TODO
+            None
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -64,9 +63,7 @@ pub mod raft {
 
 pub mod paxos {
     use crate::{
-        bench::atomic_broadcast::{
-            messages::DATA_SIZE_HINT, paxos::ballot_leader_election::Ballot,
-        },
+        bench::atomic_broadcast::paxos::ballot_leader_election::Ballot,
         serialiser_ids,
     };
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
@@ -198,17 +195,7 @@ pub mod paxos {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            let overhead = 16;
-            let msg_size = match &self.msg {
-                PaxosMsg::Prepare(_) => 41,
-                PaxosMsg::Promise(p) => 41 + p.sfx.len() * DATA_SIZE_HINT,
-                PaxosMsg::AcceptSync(a) => 26 + a.entries.len() * DATA_SIZE_HINT,
-                PaxosMsg::FirstAccept(_) => 17 + DATA_SIZE_HINT,
-                PaxosMsg::AcceptDecide(a) => 25 + a.entries.len() * DATA_SIZE_HINT,
-                PaxosMsg::ProposalForward(pf) => 1 + pf.len() * DATA_SIZE_HINT,
-                _ => 25,
-            };
-            Some(overhead + msg_size)
+            None
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
@@ -516,11 +503,7 @@ pub mod paxos {
         }
 
         fn size_hint(&self) -> Option<usize> {
-            match self {
-                ReconfigurationMsg::Init(_) => Some(64),
-                ReconfigurationMsg::SegmentRequest(_) => Some(25),
-                ReconfigurationMsg::SegmentTransfer(_) => Some(1000),
-            }
+            None
         }
 
         fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
