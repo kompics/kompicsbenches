@@ -669,11 +669,6 @@ where
                     self.hb_reconfig = Some(rp);
                 }
                 my_pid if my_pid == self.raw_raft.raft.id => {
-                    #[cfg(feature = "measure_io")]
-                    {
-                        self.communication_port
-                            .trigger(CommunicatorMsg::StartReconfigMeasurement);
-                    }
                     let current_config: Vec<u64> = self
                         .raw_raft
                         .raft
@@ -737,11 +732,6 @@ where
                         || self.reconfig_state == ReconfigurationState::Finished
                     {
                         continue;
-                    }
-                    #[cfg(feature = "measure_io")]
-                    {
-                        self.communication_port
-                            .trigger(CommunicatorMsg::StartReconfigMeasurement);
                     }
                     // For conf change messages, make them effective.
                     let mut cc = ConfChange::default();
@@ -820,11 +810,6 @@ where
                             let rr = ReconfigurationResp::with(leader, current_configuration);
                             self.communication_port
                                 .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
-                            #[cfg(feature = "measure_io")]
-                            {
-                                self.communication_port
-                                    .trigger(CommunicatorMsg::StopReconfigMeasurement);
-                            }
                         }
                         _ => unimplemented!(),
                     }

@@ -4,7 +4,8 @@ use super::messages::{
 };
 use crate::bench::atomic_broadcast::{
     atomic_broadcast::ReconfigurationPolicy,
-    messages::{ReconfigurationProposal, ReconfigurationResp, DATA_SIZE_HINT},
+    exp_params::DATA_SIZE,
+    messages::{ReconfigurationProposal, ReconfigurationResp},
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
@@ -17,7 +18,8 @@ use std::{
 use synchronoise::{event::CountdownError, CountdownEvent};
 
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
-const PAYLOAD: [u8; DATA_SIZE_HINT] = [0; DATA_SIZE_HINT];
+const PROPOSAL_ID_SIZE: usize = 8; // size of u64
+const PAYLOAD: [u8; DATA_SIZE - PROPOSAL_ID_SIZE] = [0; DATA_SIZE - PROPOSAL_ID_SIZE];
 #[derive(Debug, PartialEq)]
 enum ExperimentState {
     LeaderElection,
@@ -165,7 +167,7 @@ impl Client {
 
     fn propose_normal(&self, id: u64) {
         let leader = self.nodes.get(&self.current_leader).unwrap();
-        let mut data: Vec<u8> = Vec::with_capacity(8 + DATA_SIZE_HINT);
+        let mut data: Vec<u8> = Vec::with_capacity(DATA_SIZE - PROPOSAL_ID_SIZE);
         data.put_u64(id);
         data.put_slice(&PAYLOAD);
         let p = Proposal::with(data);
@@ -353,7 +355,11 @@ impl Client {
             .pending_proposals
             .remove(&id)
             .expect("Timed out on proposal not in pending proposals");
-        let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
+        let latency = proposal_meta.start_time.map(|start_time| {
+            start_time
+                .elapsed()
+                .expect("Failed to get elapsed duration")
+        });
         self.handle_normal_response(id, latency);
         self.send_concurrent_proposals();
         #[cfg(feature = "track_timeouts")]
@@ -489,7 +495,7 @@ impl Actor for Client {
                             assert!(pid > 0);
                             self.current_leader = pid;
                             match self.leader_election_latch.decrement() {
-                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE_HINT),
+                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
                                 Err(e) => if e != CountdownError::AlreadySet {
                                     panic!("Failed to decrement election latch: {:?}", e);
                                 }

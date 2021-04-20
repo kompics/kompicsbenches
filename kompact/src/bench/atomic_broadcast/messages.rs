@@ -5,8 +5,6 @@ use kompact::prelude::*;
 use protobuf::{parse_from_bytes, Message};
 use rand::Rng;
 
-pub const DATA_SIZE_HINT: usize = 8; // TODO
-
 pub mod raft {
     extern crate raft as tikv_raft;
     use super::*;
@@ -62,10 +60,7 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::{
-        bench::atomic_broadcast::paxos::ballot_leader_election::Ballot,
-        serialiser_ids,
-    };
+    use crate::{bench::atomic_broadcast::ble::Ballot, serialiser_ids};
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
     use leaderpaxos::{
         leader_election::Leader,
@@ -648,7 +643,7 @@ pub mod paxos {
 
     pub mod ballot_leader_election {
         use super::super::*;
-        use crate::bench::atomic_broadcast::paxos::ballot_leader_election::Ballot;
+        use crate::bench::atomic_broadcast::ble::Ballot;
 
         #[derive(Clone, Debug)]
         pub enum HeartbeatMsg {

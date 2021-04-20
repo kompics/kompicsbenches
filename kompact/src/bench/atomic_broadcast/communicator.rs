@@ -3,20 +3,22 @@ extern crate raft as tikv_raft;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::atomic_broadcast::IOMetaData;
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::messages::DATA_SIZE_HINT;
+use crate::bench::atomic_broadcast::exp_params::*;
 use crate::bench::atomic_broadcast::{
+    ble::Ballot,
     messages::{
         paxos::{PaxosMsgWrapper, PaxosSer},
         raft::{RaftMsg, RawRaftSer},
         AtomicBroadcastMsg, ProposalResp, ReconfigurationResp, StopMsg as NetStopMsg, StopMsgDeser,
     },
-    paxos::ballot_leader_election::Ballot,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
 use leaderpaxos::messages::Message as RawPaxosMsg;
 #[cfg(feature = "measure_io")]
 use leaderpaxos::messages::PaxosMsg;
+#[cfg(feature = "measure_io")]
+use std::time::Duration;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -33,10 +35,6 @@ pub enum CommunicatorMsg {
     ProposalResponse(ProposalResp),
     ReconfigurationResponse(ReconfigurationResp),
     SendStop(u64, bool),
-    #[cfg(feature = "measure_io")]
-    StartReconfigMeasurement,
-    #[cfg(feature = "measure_io")]
-    StopReconfigMeasurement,
 }
 
 pub struct CommunicationPort;
@@ -55,9 +53,7 @@ pub struct Communicator {
     #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
-    measure_reconfig_io: bool,
-    #[cfg(feature = "measure_io")]
-    reconfig_io_metadata: IOMetaData,
+    log_io_timer: Option<ScheduledTimer>,
 }
 
 impl Communicator {
@@ -70,9 +66,7 @@ impl Communicator {
             #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
-            measure_reconfig_io: false,
-            #[cfg(feature = "measure_io")]
-            reconfig_io_metadata: IOMetaData::default(),
+            log_io_timer: None,
         }
     }
 
@@ -91,19 +85,11 @@ impl Communicator {
         match msg {
             CommunicatorMsg::RawRaftMsg(rm) => {
                 let est_size = Self::estimate_raft_msg_size(rm);
-                if self.measure_reconfig_io {
-                    self.reconfig_io_metadata.update_sent_with_size(est_size);
-                } else {
-                    self.io_metadata.update_sent_with_size(est_size);
-                }
+                self.io_metadata.update_sent_with_size(est_size);
             }
             CommunicatorMsg::RawPaxosMsg(pm) => {
                 let est_size = Self::estimate_paxos_msg_size(pm);
-                if self.measure_reconfig_io {
-                    self.reconfig_io_metadata.update_sent_with_size(est_size);
-                } else {
-                    self.io_metadata.update_sent_with_size(est_size);
-                }
+                self.io_metadata.update_sent_with_size(est_size);
             }
             _ => {}
         }
@@ -118,29 +104,37 @@ impl Communicator {
             PaxosMsg::AcceptDecide(a) => a.entries.len(),
             _ => 0, // rest of the messages doesn't send entries
         };
-        num_entries * DATA_SIZE_HINT + std::mem::size_of_val(pm)
+        num_entries * DATA_SIZE + std::mem::size_of_val(pm)
     }
 
     #[cfg(feature = "measure_io")]
     fn estimate_raft_msg_size(rm: &RawRaftMsg) -> usize {
         let num_entries = rm.entries.len();
-        num_entries * DATA_SIZE_HINT + std::mem::size_of_val(rm)
+        num_entries * DATA_SIZE + std::mem::size_of_val(rm)
     }
 }
 
 impl ComponentLifecycle for Communicator {
+    fn on_start(&mut self) -> Handled {
+        #[cfg(feature = "measure_io")]
+        {
+            let timer = self.schedule_periodic(LOG_IO_PERIOD, LOG_IO_PERIOD, move |c, _| {
+                info!(c.ctx.log(), "{:?}", c.io_metadata);
+                Handled::Ok
+            });
+            self.log_io_timer = Some(timer);
+        }
+        Handled::Ok
+    }
+
     fn on_kill(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            let d = IOMetaData::default();
-            if self.io_metadata != d {
-                info!(self.ctx.log(), "{:?}", self.io_metadata);
+            if let Some(timer) = self.log_io_timer.take() {
+                self.cancel_timer(timer);
             }
-            if self.reconfig_io_metadata != d {
-                info!(
-                    self.ctx.log(),
-                    "Reconfiguration {:?}", self.reconfig_io_metadata
-                );
+            if self.io_metadata != IOMetaData::default() {
+                info!(self.ctx.log(), "{:?}", self.io_metadata);
             }
         }
         Handled::Ok
@@ -191,10 +185,6 @@ impl Provide<CommunicationPort> for Communicator {
                         .expect("Should serialise StopMsg")
                 }
             }
-            #[cfg(feature = "measure_io")]
-            CommunicatorMsg::StartReconfigMeasurement => self.measure_reconfig_io = true,
-            #[cfg(feature = "measure_io")]
-            CommunicatorMsg::StopReconfigMeasurement => self.measure_reconfig_io = false,
         }
         Handled::Ok
     }
@@ -214,22 +204,14 @@ impl Actor for Communicator {
             msg(r): RawRaftMsg [using RawRaftSer] => {
                 #[cfg(feature = "measure_io")] {
                     let est_size = Self::estimate_raft_msg_size(&r);
-                    if self.measure_reconfig_io {
-                        self.reconfig_io_metadata.update_received_with_size(est_size);
-                    } else {
-                        self.io_metadata.update_received_with_size(est_size);
-                    }
+                    self.io_metadata.update_received_with_size(est_size);
                 }
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
             },
             msg(p): RawPaxosMsg<Ballot> [using PaxosSer] => {
                 #[cfg(feature = "measure_io")] {
                     let est_size = Self::estimate_paxos_msg_size(&p);
-                    if self.measure_reconfig_io {
-                        self.reconfig_io_metadata.update_received_with_size(est_size);
-                    } else {
-                        self.io_metadata.update_received_with_size(est_size);
-                    }
+                    self.io_metadata.update_received_with_size(est_size);
                 }
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawPaxosMsg(p));
             },

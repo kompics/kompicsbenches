@@ -12,22 +12,24 @@ use super::{
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 use crate::{
-    bench::atomic_broadcast::{atomic_broadcast::Done, paxos::ballot_leader_election::Ballot},
+    bench::atomic_broadcast::{
+        atomic_broadcast::Done,
+        ble::{Ballot, BallotLeaderComp, BallotLeaderElection, Stop as BLEStop},
+    },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
     serialiser_ids::ATOMICBCAST_ID,
 };
-use ballot_leader_election::{BallotLeaderComp, BallotLeaderElection, Stop as BLEStop};
 use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
 // use kompact::KompactLogger;
 use rand::Rng;
-use std::{borrow::Borrow, fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
+use std::{fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
 use crate::bench::atomic_broadcast::messages::paxos::SegmentIndex;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::atomic_broadcast::IOMetaData;
+use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::*};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -137,7 +139,9 @@ where
     first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
     removed: bool,
     #[cfg(feature = "measure_io")]
-    reconfig_io_metadata: IOMetaData,
+    io_metadata: IOMetaData,
+    #[cfg(feature = "measure_io")]
+    log_io_timer: Option<ScheduledTimer>,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -173,7 +177,9 @@ where
             first_config_id: 0,
             removed: false,
             #[cfg(feature = "measure_io")]
-            reconfig_io_metadata: IOMetaData::default(),
+            io_metadata: IOMetaData::default(),
+            #[cfg(feature = "measure_io")]
+            log_io_timer: None,
         }
     }
 
@@ -385,6 +391,11 @@ where
             .communicator_comps
             .get(idx)
             .unwrap_or_else(|| panic!("Could not find Communicator with config_id: {}", config_id));
+        info!(
+            self.ctx.log(),
+            "Starting replica pid: {}, config_id: {}. PaxosReplica: {:?}, Communicator: {:?}, BLE: {:?}",
+            self.pid, config_id, paxos.id(), communicator.id(), ble.id()
+        );
         self.ctx.system().start(paxos);
         self.ctx.system().start(ble);
         self.ctx.system().start(communicator);
@@ -394,11 +405,11 @@ where
     fn stop_components(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            if self.reconfig_io_metadata != IOMetaData::default() {
-                info!(
-                    self.ctx.log(),
-                    "PaxosComp Reconfiguration {:?}", self.reconfig_io_metadata
-                );
+            if let Some(timer) = self.log_io_timer.take() {
+                self.cancel_timer(timer);
+            }
+            if self.io_metadata != IOMetaData::default() {
+                info!(self.ctx.log(), "PaxosComp {:?}", self.io_metadata);
             }
         }
         self.stopped = true;
@@ -595,7 +606,7 @@ where
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
                 #[cfg(feature = "measure_io")]
                 {
-                    self.reconfig_io_metadata.update_sent(&sr);
+                    self.io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(*pid);
                 receiver
@@ -625,7 +636,7 @@ where
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
                 #[cfg(feature = "measure_io")]
                 {
-                    self.reconfig_io_metadata.update_sent(&sr);
+                    self.io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(pid);
                 receiver
@@ -751,7 +762,7 @@ where
         {
             let est_segment_size = Self::estimate_segment_size(&st.segment);
             let est_size = std::mem::size_of_val(&st) + est_segment_size;
-            self.reconfig_io_metadata.update_sent_with_size(est_size);
+            self.io_metadata.update_sent_with_size(est_size);
         }
         debug!(self.ctx.log(), "Replying seq transfer: idx: {:?}", sr.idx);
         requestor
@@ -820,7 +831,7 @@ where
                 let sr = SegmentRequest::with(config_id, st.segment.get_index(), self.pid);
                 #[cfg(feature = "measure_io")]
                 {
-                    self.reconfig_io_metadata.update_sent(&sr);
+                    self.io_metadata.update_sent(&sr);
                 }
                 let receiver = self.get_actorpath(pid);
                 receiver
@@ -853,14 +864,14 @@ where
         self.communicator_comps.clear();
         #[cfg(feature = "measure_io")]
         {
-            self.reconfig_io_metadata = IOMetaData::default();
+            self.io_metadata = IOMetaData::default();
         }
     }
 
     #[cfg(feature = "measure_io")]
     fn estimate_segment_size(s: &SequenceSegment) -> usize {
         let num_entries = s.entries.len();
-        num_entries * DATA_SIZE_HINT
+        num_entries * DATA_SIZE
     }
 }
 
@@ -985,13 +996,14 @@ where
                             eager_transfer,
                             r.skip_prepare_use_leader,
                         );
-                        #[cfg(feature = "measure_io")] {
+                        #[cfg(feature = "measure_io")]
+                        {
                             let est_segment_size = match &r.segment {
                                 Some(s) => Self::estimate_segment_size(s),
-                                None => 0
+                                None => 0,
                             };
                             let est_size = std::mem::size_of_val(&r) + est_segment_size;
-                            self.reconfig_io_metadata.update_sent_with_size(est_size);
+                            self.io_metadata.update_sent_with_size(est_size);
                         }
                         let r_init = ReconfigurationMsg::Init(r);
                         let actorpath = self.get_actorpath(*pid);
@@ -1023,7 +1035,7 @@ where
             }
             #[cfg(feature = "measure_io")]
             PaxosCompMsg::LocalSegmentTransferMeta(size) => {
-                self.reconfig_io_metadata.update_sent_with_size(size);
+                self.io_metadata.update_sent_with_size(size);
             }
             #[cfg(test)]
             PaxosCompMsg::GetSequence(ask) => {
@@ -1121,6 +1133,15 @@ where
                                 let client = ActorPath::deserialise(&mut ser_client.as_slice())
                                     .expect("Failed to deserialise Client's actorpath");
                                 self.cached_client = Some(client);
+                                #[cfg(feature = "measure_io")] {
+                                    let timer = self.schedule_periodic(LOG_IO_PERIOD, LOG_IO_PERIOD, move |c, _| {
+                                        if c.io_metadata != IOMetaData::default() {
+                                            info!(c.ctx.log(), "PaxosComp {:?}", c.io_metadata);
+                                        }
+                                        Handled::Ok
+                                    });
+                                    self.log_io_timer = Some(timer);
+                                }
 
                                 let initial_configuration= self.initial_configuration.clone();
                                 let handled = Handled::block_on(self, move |mut async_self| async move {
@@ -1177,7 +1198,7 @@ where
                                             None => 0
                                         };
                                         let est_size = std::mem::size_of_val(&r) + est_segment_size;
-                                        self.reconfig_io_metadata.update_received_with_size(est_size);
+                                        self.io_metadata.update_received_with_size(est_size);
                                     }
                                     if self.active_config.id >= r.config_id {
                                         return Handled::Ok;
@@ -1230,7 +1251,7 @@ where
                             ReconfigurationMsg::SegmentRequest(sr) => {
                                 if !self.stopped {
                                     #[cfg(feature = "measure_io")] {
-                                        self.reconfig_io_metadata.update_received(&sr);
+                                        self.io_metadata.update_received(&sr);
                                     }
                                     self.handle_segment_request(sr, sender);
                                 }
@@ -1240,7 +1261,7 @@ where
                                     #[cfg(feature = "measure_io")] {
                                         let est_segment_size = Self::estimate_segment_size(&st.segment);
                                         let est_size = std::mem::size_of_val(&st) + est_segment_size;
-                                        self.reconfig_io_metadata.update_received_with_size(est_size);
+                                        self.io_metadata.update_received_with_size(est_size);
                                     }
                                     self.handle_segment_transfer(st);
                                 }
@@ -1407,11 +1428,6 @@ where
             // follower: just handle a possible reconfiguration
             if let Some(Entry::StopSign(ss)) = self.paxos.get_decided_entries().last().cloned() {
                 self.handle_stopsign(&ss);
-                #[cfg(feature = "measure_io")]
-                {
-                    self.communication_port
-                        .trigger(CommunicatorMsg::StopReconfigMeasurement);
-                }
             }
         }
     }
@@ -1421,11 +1437,6 @@ where
     }
 
     fn propose_reconfiguration(&mut self, reconfig: Vec<u64>) -> Result<(), ProposeErr> {
-        #[cfg(feature = "measure_io")]
-        {
-            self.communication_port
-                .trigger(CommunicatorMsg::StartReconfigMeasurement);
-        }
         let n = self.ctx.config()["paxos"]["prio_start_round"]
             .as_i64()
             .expect("No prio start round in config!") as u32;
@@ -1517,12 +1528,8 @@ where
 {
     fn on_start(&mut self) -> Handled {
         let bc = BufferConfig::default();
-        self.ctx.borrow().init_buffers(Some(bc), None);
+        self.ctx.init_buffers(Some(bc), None);
         if !self.peers.is_empty() {
-            info!(
-                self.ctx.log(),
-                "Starting replica pid: {}, config_id: {}", self.pid, self.config_id
-            );
             self.start_timer();
         }
         Handled::Ok
@@ -1602,272 +1609,5 @@ where
                 .tell(PaxosCompMsg::Leader(self.config_id, l.pid));
         }
         Handled::Ok
-    }
-}
-
-pub(crate) mod ballot_leader_election {
-    use super::{
-        super::messages::{paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser},
-        *,
-    };
-    use leaderpaxos::leader_election::Round;
-    use std::time::Duration;
-
-    #[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
-    pub struct Ballot {
-        pub n: u32,
-        pub pid: u64,
-    }
-
-    impl Ballot {
-        pub fn with(n: u32, pid: u64) -> Ballot {
-            Ballot { n, pid }
-        }
-    }
-
-    impl Round for Ballot {}
-
-    #[derive(Debug)]
-    pub struct Stop(pub Ask<u64, ()>); // pid
-
-    pub struct BallotLeaderElection;
-
-    impl Port for BallotLeaderElection {
-        type Indication = Leader<Ballot>;
-        type Request = ();
-    }
-
-    #[derive(ComponentDefinition)]
-    pub struct BallotLeaderComp {
-        // TODO decouple from kompact, similar style to tikv_raft with tick() replacing timers
-        ctx: ComponentContext<Self>,
-        ble_port: ProvidedPort<BallotLeaderElection>,
-        pid: u64,
-        pub(crate) peers: Vec<ActorPath>,
-        hb_round: u32,
-        ballots: Vec<(Ballot, u64)>,
-        current_ballot: Ballot, // (round, pid)
-        leader: Option<(Ballot, u64)>,
-        max_ballot: Ballot,
-        hb_delay: u64,
-        delta: u64,
-        majority: usize,
-        timer: Option<ScheduledTimer>,
-        stopped: bool,
-        stopped_peers: HashSet<u64>,
-        stop_ask: Option<Ask<u64, ()>>,
-        quick_timeout: bool,
-        initial_election_factor: u64,
-    }
-
-    impl BallotLeaderComp {
-        pub fn with(
-            peers: Vec<ActorPath>,
-            pid: u64,
-            hb_delay: u64,
-            delta: u64,
-            quick_timeout: bool,
-            initial_leader: Option<Leader<Ballot>>,
-            initial_election_factor: u64,
-        ) -> BallotLeaderComp {
-            let n = &peers.len() + 1;
-            let (leader, initial_ballot, max_ballot) = match initial_leader {
-                Some(l) => {
-                    let leader = Some((l.round, l.pid));
-                    let initial_ballot = if l.pid == pid {
-                        l.round
-                    } else {
-                        Ballot::with(0, pid)
-                    };
-                    (leader, initial_ballot, l.round)
-                }
-                None => {
-                    let initial_ballot = Ballot::with(0, pid);
-                    (None, initial_ballot, initial_ballot)
-                }
-            };
-            BallotLeaderComp {
-                ctx: ComponentContext::uninitialised(),
-                ble_port: ProvidedPort::uninitialised(),
-                pid,
-                majority: n / 2 + 1, // +1 because peers is exclusive ourselves
-                peers,
-                hb_round: 0,
-                ballots: Vec::with_capacity(n),
-                current_ballot: initial_ballot,
-                leader,
-                max_ballot,
-                hb_delay,
-                delta,
-                timer: None,
-                stopped: false,
-                stopped_peers: HashSet::with_capacity(n),
-                stop_ask: None,
-                quick_timeout,
-                initial_election_factor,
-            }
-        }
-
-        /// Sets initial state after creation. Should only be used before being started.
-        pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
-            // TODO make sure not already started
-            self.leader = Some((l.round, l.pid));
-            self.current_ballot = if l.pid == self.pid {
-                l.round
-            } else {
-                Ballot::with(0, self.pid)
-            };
-            self.max_ballot = l.round;
-            self.quick_timeout = false;
-            self.ble_port.trigger(Leader::with(l.pid, l.round));
-        }
-
-        fn check_leader(&mut self) {
-            let mut ballots = Vec::with_capacity(self.peers.len());
-            std::mem::swap(&mut self.ballots, &mut ballots);
-            let (top_ballot, top_pid) = ballots.into_iter().max().unwrap();
-            if top_ballot < self.max_ballot {
-                // did not get HB from leader
-                self.current_ballot.n = self.max_ballot.n + 1;
-                self.leader = None;
-            } else if self.leader != Some((top_ballot, top_pid)) {
-                // got a new leader with greater ballot
-                self.quick_timeout = false;
-                self.max_ballot = top_ballot;
-                self.leader = Some((top_ballot, top_pid));
-                self.ble_port.trigger(Leader::with(top_pid, top_ballot));
-            }
-        }
-
-        fn hb_timeout(&mut self) -> Handled {
-            if self.ballots.len() + 1 >= self.majority {
-                self.ballots.push((self.current_ballot, self.pid));
-                self.check_leader();
-            } else {
-                self.ballots.clear();
-            }
-            let delay = if self.quick_timeout {
-                // use short timeout if still no first leader
-                self.hb_delay / self.initial_election_factor
-            } else {
-                self.hb_delay
-            };
-            self.hb_round += 1;
-            for peer in &self.peers {
-                let hb_request = HeartbeatRequest::with(self.hb_round, self.max_ballot);
-                peer.tell_serialised(HeartbeatMsg::Request(hb_request), self)
-                    .expect("HBRequest should serialise!");
-            }
-            self.start_timer(delay);
-            Handled::Ok
-        }
-
-        fn start_timer(&mut self, t: u64) {
-            let timer = self.schedule_once(Duration::from_millis(t), move |c, _| c.hb_timeout());
-            self.timer = Some(timer);
-        }
-
-        fn stop_timer(&mut self) {
-            if let Some(timer) = self.timer.take() {
-                self.cancel_timer(timer);
-            }
-        }
-    }
-
-    impl ComponentLifecycle for BallotLeaderComp {
-        fn on_start(&mut self) -> Handled {
-            debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, max_ballot: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.max_ballot);
-            let bc = BufferConfig::default();
-            self.ctx.borrow().init_buffers(Some(bc), None);
-            for peer in &self.peers {
-                let hb_request = HeartbeatRequest::with(self.hb_round, self.max_ballot);
-                peer.tell_serialised(HeartbeatMsg::Request(hb_request), self)
-                    .expect("HBRequest should serialise!");
-            }
-            let delay = if self.quick_timeout {
-                // use short timeout if still no first leader
-                self.hb_delay / self.initial_election_factor
-            } else {
-                self.hb_delay
-            };
-            self.start_timer(delay);
-            Handled::Ok
-        }
-
-        fn on_kill(&mut self) -> Handled {
-            self.stop_timer();
-            Handled::Ok
-        }
-    }
-
-    impl Provide<BallotLeaderElection> for BallotLeaderComp {
-        fn handle(&mut self, _: <BallotLeaderElection as Port>::Request) -> Handled {
-            unimplemented!()
-        }
-    }
-
-    impl Actor for BallotLeaderComp {
-        type Message = Stop;
-
-        fn receive_local(&mut self, stop: Stop) -> Handled {
-            let pid = *stop.0.request();
-            self.stop_timer();
-            for peer in &self.peers {
-                peer.tell_serialised(NetStopMsg::Peer(pid), self)
-                    .expect("NetStopMsg should serialise!");
-            }
-            self.stopped = true;
-            if self.stopped_peers.len() == self.peers.len() {
-                stop.0.reply(()).expect("Failed to reply to stop ask!");
-            } else {
-                self.stop_ask = Some(stop.0);
-            }
-            Handled::Ok
-        }
-
-        fn receive_network(&mut self, m: NetMessage) -> Handled {
-            let NetMessage { sender, data, .. } = m;
-            match_deser! {data {
-                msg(hb): HeartbeatMsg [using BallotLeaderSer] => {
-                    match hb {
-                        HeartbeatMsg::Request(req) if !self.stopped => {
-                            if req.max_ballot > self.max_ballot {
-                                self.max_ballot = req.max_ballot;
-                            }
-                            let hb_reply = HeartbeatReply::with(self.pid, req.round, self.current_ballot);
-                            sender.tell_serialised(HeartbeatMsg::Reply(hb_reply), self).expect("HBReply should serialise!");
-                        },
-                        HeartbeatMsg::Reply(rep) if !self.stopped => {
-                            if rep.round == self.hb_round {
-                                self.ballots.push((rep.max_ballot, rep.sender_pid));
-                            } else {
-                                trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
-                                self.hb_delay += self.delta;
-                            }
-                        },
-                        _ => {},
-                    }
-                },
-                msg(stop): NetStopMsg [using StopMsgDeser] => {
-                    if let NetStopMsg::Peer(pid) = stop {
-                        assert!(self.stopped_peers.insert(pid), "BLE got duplicate stop from peer {}", pid);
-                        debug!(self.ctx.log(), "BLE got stopped from peer {}", pid);
-                        if self.stopped && self.stopped_peers.len() == self.peers.len() {
-                            debug!(self.ctx.log(), "BLE got stopped from all peers");
-                            self.stop_ask
-                                .take()
-                                .expect("No stop ask!")
-                                .reply(())
-                                .expect("Failed to reply ask");
-                        }
-                    }
-
-                },
-                err(e) => error!(self.ctx.log(), "Error deserialising msg: {:?}", e),
-                default(_) => unimplemented!("Should be either HeartbeatMsg or NetStopMsg!"),
-            }
-            }
-            Handled::Ok
-        }
     }
 }
