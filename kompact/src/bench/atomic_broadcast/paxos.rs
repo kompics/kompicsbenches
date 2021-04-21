@@ -30,6 +30,8 @@ use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::*};
+#[cfg(feature = "measure_io")]
+use quanta::{Clock, Instant};
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -139,9 +141,13 @@ where
     first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
     removed: bool,
     #[cfg(feature = "measure_io")]
+    clock: Clock,
+    #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
-    log_io_timer: Option<ScheduledTimer>,
+    io_timer: Option<ScheduledTimer>,
+    #[cfg(feature = "measure_io")]
+    io_windows: Vec<(Instant, IOMetaData)>,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -177,9 +183,13 @@ where
             first_config_id: 0,
             removed: false,
             #[cfg(feature = "measure_io")]
+            clock: Clock::new(),
+            #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
-            log_io_timer: None,
+            io_timer: None,
+            #[cfg(feature = "measure_io")]
+            io_windows: vec![],
         }
     }
 
@@ -405,12 +415,15 @@ where
     fn stop_components(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            if let Some(timer) = self.log_io_timer.take() {
+            if let Some(timer) = self.io_timer.take() {
                 self.cancel_timer(timer);
             }
-            if self.io_metadata != IOMetaData::default() {
-                info!(self.ctx.log(), "PaxosComp {:?}", self.io_metadata);
+            self.io_windows.push((self.clock.now(), self.io_metadata));
+            let mut str = String::new();
+            for (ts, io_meta) in &self.io_windows {
+                str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
             }
+            info!(self.ctx.log(), "PaxosComp IO:\n{}", str);
         }
         self.stopped = true;
         let num_configs = self.paxos_replicas.len() as u32;
@@ -1134,13 +1147,14 @@ where
                                     .expect("Failed to deserialise Client's actorpath");
                                 self.cached_client = Some(client);
                                 #[cfg(feature = "measure_io")] {
-                                    let timer = self.schedule_periodic(LOG_IO_PERIOD, LOG_IO_PERIOD, move |c, _| {
-                                        if c.io_metadata != IOMetaData::default() {
-                                            info!(c.ctx.log(), "PaxosComp {:?}", c.io_metadata);
+                                    let timer = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                                        if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
+                                            c.io_windows.push((c.clock.now(), c.io_metadata));
+                                            c.io_metadata.reset();
                                         }
                                         Handled::Ok
                                     });
-                                    self.log_io_timer = Some(timer);
+                                    self.io_timer = Some(timer);
                                 }
 
                                 let initial_configuration= self.initial_configuration.clone();

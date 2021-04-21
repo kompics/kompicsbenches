@@ -830,7 +830,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
 }
 
 #[cfg(feature = "measure_io")]
-#[derive(Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct IOMetaData {
     msgs_sent: usize,
     bytes_sent: usize,
@@ -861,17 +861,25 @@ impl IOMetaData {
         self.bytes_received += size;
         self.msgs_received += 1;
     }
+
+    pub fn reset(&mut self) {
+        self.msgs_received = 0;
+        self.bytes_received = 0;
+        self.msgs_sent = 0;
+        self.bytes_sent = 0;
+    }
 }
 
 #[cfg(feature = "measure_io")]
 impl fmt::Debug for IOMetaData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("IOMetaData")
-            .field("msgs_sent", &self.msgs_sent)
-            .field("bytes_sent", &convert(self.bytes_sent as f64))
-            .field("msgs_received", &self.msgs_received)
-            .field("bytes_received", &convert(self.bytes_received as f64))
-            .finish()
+        f.write_fmt(format_args!(
+            "Sent: ({}, {:?}), Received: ({}, {:?})",
+            self.msgs_sent,
+            &convert(self.bytes_sent as f64),
+            self.msgs_received,
+            &convert(self.bytes_received as f64)
+        ))
     }
 }
 

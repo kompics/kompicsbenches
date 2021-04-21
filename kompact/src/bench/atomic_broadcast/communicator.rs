@@ -18,7 +18,7 @@ use leaderpaxos::messages::Message as RawPaxosMsg;
 #[cfg(feature = "measure_io")]
 use leaderpaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
-use std::time::Duration;
+use quanta::{Clock, Instant};
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -51,9 +51,13 @@ pub struct Communicator {
     pub(crate) peers: HashMap<u64, ActorPath>, // node id -> actorpath
     client: ActorPath,                         // cached client to send SequenceResp to
     #[cfg(feature = "measure_io")]
+    clock: Clock,
+    #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
-    log_io_timer: Option<ScheduledTimer>,
+    io_timer: Option<ScheduledTimer>,
+    #[cfg(feature = "measure_io")]
+    io_windows: Vec<(Instant, IOMetaData)>,
 }
 
 impl Communicator {
@@ -64,9 +68,13 @@ impl Communicator {
             peers,
             client,
             #[cfg(feature = "measure_io")]
+            clock: Clock::new(),
+            #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
-            log_io_timer: None,
+            io_timer: None,
+            #[cfg(feature = "measure_io")]
+            io_windows: vec![],
         }
     }
 
@@ -118,11 +126,14 @@ impl ComponentLifecycle for Communicator {
     fn on_start(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            let timer = self.schedule_periodic(LOG_IO_PERIOD, LOG_IO_PERIOD, move |c, _| {
-                info!(c.ctx.log(), "{:?}", c.io_metadata);
+            let timer = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
+                    c.io_windows.push((c.clock.now(), c.io_metadata));
+                    c.io_metadata.reset();
+                }
                 Handled::Ok
             });
-            self.log_io_timer = Some(timer);
+            self.io_timer = Some(timer);
         }
         Handled::Ok
     }
@@ -130,11 +141,16 @@ impl ComponentLifecycle for Communicator {
     fn on_kill(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            if let Some(timer) = self.log_io_timer.take() {
+            if let Some(timer) = self.io_timer.take() {
                 self.cancel_timer(timer);
             }
             if self.io_metadata != IOMetaData::default() {
-                info!(self.ctx.log(), "{:?}", self.io_metadata);
+                self.io_windows.push((self.clock.now(), self.io_metadata));
+                let mut str = String::new();
+                for (ts, io_meta) in &self.io_windows {
+                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                }
+                info!(self.ctx.log(), "Communicator IO:\n{}", str);
             }
         }
         Handled::Ok

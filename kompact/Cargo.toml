@@ -29,7 +29,7 @@ hashbrown               = "0.8.0"
 indexmap                = "1.4.0"
 hdrhistogram            = "6.0"
 hocon 					= {version = "0.3.6", default-features = false}
-quanta                  = {version = "0.6.5", optional = true}
+quanta                  = "0.7.2"
 pretty-bytes            = {version = "0.2.2", optional = true}
 
 [dev-dependencies]
@@ -40,10 +40,10 @@ travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
 
 track_timeouts = [] # client keep tracks of which proposals timed out
 track_latency = [] # measure latency for proposals
-track_timestamps = ["quanta"]
+track_timestamps = []
 measure_io = ["pretty-bytes"]
 
-#default = []
+#default = ["measure_io"]
 
 [profile.release]
 lto = true  
