@@ -842,12 +842,12 @@ pub enum AtomicBroadcastMsg {
     ReconfigurationProposal(ReconfigurationProposal),
     ProposalResp(ProposalResp),
     ReconfigurationResp(ReconfigurationResp),
-    FirstLeader(u64),
+    Leader(u64),
 }
 
 const PROPOSAL_ID: u8 = 1;
 const PROPOSALRESP_ID: u8 = 2;
-const FIRSTLEADER_ID: u8 = 3;
+const LEADER_ID: u8 = 3;
 const RECONFIGPROP_ID: u8 = 4;
 const RECONFIGRESP_ID: u8 = 5;
 
@@ -914,8 +914,8 @@ impl Serialisable for AtomicBroadcastMsg {
                     buf.put_u64(*node);
                 }
             }
-            AtomicBroadcastMsg::FirstLeader(pid) => {
-                buf.put_u8(FIRSTLEADER_ID);
+            AtomicBroadcastMsg::Leader(pid) => {
+                buf.put_u8(LEADER_ID);
                 buf.put_u64(*pid);
             }
         }
@@ -973,9 +973,9 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 // print!(" deser ok");
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             }
-            FIRSTLEADER_ID => {
+            LEADER_ID => {
                 let pid = buf.get_u64();
-                Ok(AtomicBroadcastMsg::FirstLeader(pid))
+                Ok(AtomicBroadcastMsg::Leader(pid))
             }
             RECONFIGRESP_ID => {
                 let latest_leader = buf.get_u64();

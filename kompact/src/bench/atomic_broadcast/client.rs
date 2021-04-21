@@ -21,7 +21,7 @@ const PROPOSAL_ID_SIZE: usize = 8; // size of u64
 const PAYLOAD: [u8; DATA_SIZE - PROPOSAL_ID_SIZE] = [0; DATA_SIZE - PROPOSAL_ID_SIZE];
 #[derive(Debug, PartialEq)]
 enum ExperimentState {
-    LeaderElection,
+    Setup,
     Running,
     Finished,
 }
@@ -86,6 +86,7 @@ pub struct Client {
     leader_election_latch: Arc<CountdownEvent>,
     finished_latch: Arc<CountdownEvent>,
     latest_proposal_id: u64,
+    max_proposal_id: u64,
     responses: HashMap<u64, Option<Duration>>,
     pending_proposals: HashMap<u64, ProposalMetaData>,
     retry_proposals: Vec<u64>,
@@ -111,6 +112,10 @@ pub struct Client {
     start: Instant,
     #[cfg(feature = "track_timestamps")]
     timestamps: HashMap<u64, Instant>,
+    #[cfg(feature = "preloaded_log")]
+    num_preloaded_proposals: u64,
+    #[cfg(feature = "preloaded_log")]
+    rem_preloaded_proposals: u64,
 }
 
 impl Client {
@@ -121,6 +126,7 @@ impl Client {
         nodes: HashMap<u64, ActorPath>,
         reconfig: Option<(ReconfigurationPolicy, Vec<u64>)>,
         timeout: Duration,
+        preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
@@ -134,13 +140,14 @@ impl Client {
             reconfig_latency: None,
             leader_election_latch,
             finished_latch,
-            latest_proposal_id: 0,
+            latest_proposal_id: preloaded_log_size,
+            max_proposal_id: num_proposals + preloaded_log_size,
             responses: HashMap::with_capacity(num_proposals as usize),
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
-            state: ExperimentState::LeaderElection,
+            state: ExperimentState::Setup,
             current_config: initial_config,
             num_timed_out: 0,
             leader_changes: vec![],
@@ -159,14 +166,16 @@ impl Client {
             timestamps: HashMap::with_capacity(num_proposals as usize),
             #[cfg(feature = "track_timeouts")]
             late_responses: vec![],
+            #[cfg(feature = "preloaded_log")]
+            num_preloaded_proposals: preloaded_log_size,
+            #[cfg(feature = "preloaded_log")]
+            rem_preloaded_proposals: preloaded_log_size,
         }
     }
 
     fn propose_normal(&self, id: u64) {
         let leader = self.nodes.get(&self.current_leader).unwrap();
-        let mut data: Vec<u8> = Vec::with_capacity(DATA_SIZE - PROPOSAL_ID_SIZE);
-        data.put_u64(id);
-        data.put_slice(&PAYLOAD);
+        let data = create_raw_proposal(id);
         let p = Proposal::with(data);
         leader
             .tell_serialised(AtomicBroadcastMsg::Proposal(p), self)
@@ -212,8 +221,8 @@ impl Client {
         }
         let from = self.latest_proposal_id + 1;
         let i = self.latest_proposal_id + available_n;
-        let to = if i > self.num_proposals {
-            self.num_proposals
+        let to = if i > self.max_proposal_id {
+            self.max_proposal_id
         } else {
             i
         };
@@ -519,16 +528,16 @@ impl Actor for Client {
             msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
-                    AtomicBroadcastMsg::FirstLeader(pid) => {
-                        if !self.current_config.contains(&pid) { return Handled::Ok; }
-                        if self.state == ExperimentState::LeaderElection {
-                            assert!(pid > 0);
-                            self.current_leader = pid;
-                            match self.leader_election_latch.decrement() {
-                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
-                                Err(e) => if e != CountdownError::AlreadySet {
-                                    panic!("Failed to decrement election latch: {:?}", e);
-                                }
+                    AtomicBroadcastMsg::Leader(pid) => {
+                        assert!(pid > 0);
+                        self.current_leader = pid;
+                        if cfg!(feature = "preloaded_log") && self.state == ExperimentState::Setup {   // wait until all preloaded responses before decrementing leader latch
+                            return Handled::Ok;
+                        }
+                        match self.leader_election_latch.decrement() {
+                            Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
+                            Err(e) => if e != CountdownError::AlreadySet {
+                                panic!("Failed to decrement election latch: {:?}", e);
                             }
                         }
                     },
@@ -536,7 +545,7 @@ impl Actor for Client {
                         self.handle_reconfig_response(rr);
                     }
                     AtomicBroadcastMsg::ProposalResp(pr) => {
-                        if self.state == ExperimentState::Finished || self.state == ExperimentState::LeaderElection { return Handled::Ok; }
+                        if self.state == ExperimentState::Finished { return Handled::Ok; }
                         let data = pr.data;
                         // let response = Self::deserialise_response(&mut data.as_slice());
                         let id = data.as_slice().get_u64();
@@ -553,13 +562,28 @@ impl Actor for Client {
                             }
                             self.handle_normal_response(id, latency);
                             self.send_concurrent_proposals();
-                        }
-                        #[cfg(feature = "track_timeouts")] {
-                            if self.timeouts.contains(&id) {
-                                /*if self.late_responses.is_empty() {
-                                    info!(self.ctx.log(), "Got first late response: {}", id);
-                                }*/
-                                self.late_responses.push(id);
+                        } else {
+                            #[cfg(feature = "preloaded_log")] {
+                                if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup{
+                                    self.current_leader = pr.latest_leader;
+                                    self.rem_preloaded_proposals -= 1;
+                                    if self.rem_preloaded_proposals == 0 {
+                                        match self.leader_election_latch.decrement() {
+                                            Ok(_) => info!(self.ctx.log(), "Got all preloaded responses. Decrementing leader latch. pid: {}. Current config: {:?}. Payload size: {:?}", self.current_leader, self.current_config, DATA_SIZE),
+                                            Err(e) => if e != CountdownError::AlreadySet {
+                                                panic!("Failed to decrement election latch: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            #[cfg(feature = "track_timeouts")] {
+                                if self.timeouts.contains(&id) {
+                                    /*if self.late_responses.is_empty() {
+                                        info!(self.ctx.log(), "Got first late response: {}", id);
+                                    }*/
+                                    self.late_responses.push(id);
+                                }
                             }
                         }
                     },
@@ -585,4 +609,11 @@ impl Actor for Client {
         }
         Handled::Ok
     }
+}
+
+pub fn create_raw_proposal(id: u64) -> Vec<u8> {
+    let mut data: Vec<u8> = Vec::with_capacity(DATA_SIZE - PROPOSAL_ID_SIZE);
+    data.put_u64(id);
+    data.put_slice(&PAYLOAD);
+    data
 }

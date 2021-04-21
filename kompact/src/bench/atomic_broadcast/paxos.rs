@@ -28,6 +28,7 @@ use std::{fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 use crate::bench::atomic_broadcast::messages::paxos::SegmentIndex;
 use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
+use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::*};
 #[cfg(feature = "measure_io")]
@@ -248,6 +249,39 @@ where
         (ble_peers, communicator_peers)
     }
 
+    fn create_raw_paxos(
+        &self,
+        config_id: ConfigId,
+        raw_peers: Option<Vec<u64>>,
+        skip_prepare_use_leader: Option<Leader<Ballot>>,
+    ) -> Paxos<Ballot, S, P> {
+        let reconfig_replica = raw_peers.is_none(); // replica to be used after reconfiguration
+        let max_inflight = self.experiment_params.max_inflight;
+        let initial_log = if cfg!(feature = "preloaded_log") && !reconfig_replica {
+            let size: u64 = self.experiment_params.preloaded_log_size;
+            let mut preloaded_log = Vec::with_capacity(size as usize);
+            for id in 1..=size {
+                let data = create_raw_proposal(id);
+                let entry = Entry::Normal(data);
+                preloaded_log.push(entry);
+            }
+            preloaded_log
+        } else {
+            Vec::with_capacity(max_inflight)
+        };
+        let seq = S::new_with_sequence(initial_log);
+        let paxos_state = P::new();
+        let storage = Storage::with(seq, paxos_state);
+        Paxos::with(
+            config_id,
+            self.pid,
+            raw_peers.unwrap_or(vec![1]),
+            storage,
+            skip_prepare_use_leader,
+            Some(max_inflight),
+        )
+    }
+
     fn create_replica(
         &mut self,
         config_id: ConfigId,
@@ -268,19 +302,16 @@ where
         };
         let (ble_peers, communicator_peers) = self.derive_actorpaths(config_id, &peers);
         let raw_paxos_peers = if peers.is_empty() { None } else { Some(peers) };
+        let raw_paxos = self.create_raw_paxos(config_id, raw_paxos_peers.clone(), skip_prepare_n);
         let system = self.ctx.system();
         /*** create and register Paxos ***/
-        // let log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
-        let max_inflight = self.experiment_params.max_inflight;
         let (paxos, paxos_f) = system.create_and_register(|| {
             PaxosReplica::with(
                 self.ctx.actor_ref(),
                 raw_paxos_peers,
                 config_id,
                 self.pid,
-                // log,
-                skip_prepare_n,
-                max_inflight,
+                raw_paxos,
             )
         });
         /*** create and register Communicator ***/
@@ -418,12 +449,15 @@ where
             if let Some(timer) = self.io_timer.take() {
                 self.cancel_timer(timer);
             }
-            self.io_windows.push((self.clock.now(), self.io_metadata));
-            let mut str = String::new();
-            for (ts, io_meta) in &self.io_windows {
-                str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
+                self.io_windows.push((self.clock.now(), self.io_metadata));
+                self.io_metadata.reset();
+                let mut str = String::new();
+                for (ts, io_meta) in &self.io_windows {
+                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                }
+                info!(self.ctx.log(), "PaxosComp IO:\n{}", str);
             }
-            info!(self.ctx.log(), "PaxosComp IO:\n{}", str);
         }
         self.stopped = true;
         let num_configs = self.paxos_replicas.len() as u32;
@@ -878,6 +912,7 @@ where
         #[cfg(feature = "measure_io")]
         {
             self.io_metadata = IOMetaData::default();
+            self.io_windows.clear();
         }
     }
 
@@ -929,7 +964,7 @@ where
                             self.cached_client
                                 .as_ref()
                                 .expect("No cached client!")
-                                .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                                .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
                                 .expect("Should serialise FirstLeader");
                             self.propose_hb_proposals();
                         } else if !self.hb_proposals.is_empty() {
@@ -1328,23 +1363,8 @@ where
         peers: Option<Vec<u64>>,
         config_id: ConfigId,
         pid: u64,
-        // raw_paxos_log: KompactLogger,
-        skip_prepare_use_leader: Option<Leader<Ballot>>,
-        max_inflight: usize,
+        paxos: Paxos<Ballot, S, P>,
     ) -> PaxosReplica<S, P> {
-        let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
-        let paxos_state = P::new();
-        let storage = Storage::with(seq, paxos_state);
-        let raw_peers = peers.clone().unwrap_or_else(|| vec![1]);
-        let paxos = Paxos::with(
-            config_id,
-            pid,
-            raw_peers,
-            storage,
-            // raw_paxos_log,
-            skip_prepare_use_leader,
-            Some(max_inflight),
-        );
         PaxosReplica {
             ctx: ComponentContext::uninitialised(),
             supervisor,

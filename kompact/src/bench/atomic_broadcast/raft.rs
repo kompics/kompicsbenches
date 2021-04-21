@@ -10,6 +10,7 @@ use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 use crate::{
     bench::atomic_broadcast::{
         atomic_broadcast::Done,
+        client::create_raw_proposal,
         communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     },
     partitioning_actor::{PartitioningActorMsg, PartitioningActorSer},
@@ -21,7 +22,7 @@ use protobuf::Message as PbMessage;
 use rand::Rng;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
 use tikv_raft::{
-    prelude::{Message as TikvRaftMsg, *},
+    prelude::{Entry, Message as TikvRaftMsg, *},
     StateRole,
 };
 
@@ -158,9 +159,23 @@ where
         }
 
         let system = self.ctx.system();
-        let dir = &format!("./diskstorage_node{}", self.pid);
         let conf_state: (Vec<u64>, Vec<u64>) = (self.initial_config.clone(), vec![]);
-        let store = S::new_with_conf_state(Some(dir), conf_state);
+        let store = if cfg!(feature = "preloaded_log") && self.initial_config.contains(&self.pid) {
+            let size = self.ctx.config()["experiment"]["preloaded_log_size"]
+                .as_i64()
+                .expect("Failed to load preloaded_log_size") as u64;
+            let mut preloaded_log = Vec::with_capacity(size as usize);
+            for id in 1..=size {
+                let mut entry = Entry::default();
+                let data = create_raw_proposal(id);
+                entry.data = data;
+                entry.index = id + 1;
+                preloaded_log.push(entry);
+            }
+            S::new_with_entries_and_conf_state(None, preloaded_log.as_slice(), conf_state)
+        } else {
+            S::new_with_conf_state(None, conf_state)
+        };
         let raw_raft =
             RawNode::new(&self.create_rawraft_config(), store).expect("Failed to create tikv Raft");
         let max_inflight = self.ctx.config()["experiment"]["max_inflight"]
@@ -272,7 +287,7 @@ where
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
-                        .tell_serialised(AtomicBroadcastMsg::FirstLeader(pid), self)
+                        .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
                         .expect("Should serialise FirstLeader");
                 }
                 self.current_leader = pid

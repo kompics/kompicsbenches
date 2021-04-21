@@ -218,12 +218,15 @@ impl ComponentLifecycle for BallotLeaderComp {
             if let Some(timer) = self.io_timer.take() {
                 self.cancel_timer(timer);
             }
-            self.io_windows.push((self.clock.now(), self.io_metadata));
-            let mut str = String::new();
-            for (ts, io_meta) in &self.io_windows {
-                str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
+                self.io_windows.push((self.clock.now(), self.io_metadata));
+                self.io_metadata.reset();
+                let mut str = String::new();
+                for (ts, io_meta) in &self.io_windows {
+                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                }
+                info!(self.ctx.log(), "BLE IO:\n{}", str);
             }
-            info!(self.ctx.log(), "BLE IO:\n{}", str);
         }
         Handled::Ok
     }

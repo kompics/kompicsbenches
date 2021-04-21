@@ -42,8 +42,9 @@ track_timeouts = [] # client keep tracks of which proposals timed out
 track_latency = [] # measure latency for proposals
 track_timestamps = []
 measure_io = ["pretty-bytes"]
+preloaded_log = []
 
-#default = ["measure_io"]
+#default = ["measure_io", "preloaded_log"]
 
 [profile.release]
 lto = true  

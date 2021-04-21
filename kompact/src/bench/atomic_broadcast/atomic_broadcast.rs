@@ -138,6 +138,7 @@ pub struct ExperimentParams {
     pub outgoing_period: Duration,
     pub max_inflight: usize,
     pub initial_election_factor: u64,
+    pub preloaded_log_size: u64,
 }
 
 impl ExperimentParams {
@@ -146,12 +147,14 @@ impl ExperimentParams {
         outgoing_period: Duration,
         max_inflight: usize,
         initial_election_factor: u64,
+        preloaded_log_size: u64,
     ) -> ExperimentParams {
         ExperimentParams {
             election_timeout,
             outgoing_period,
             max_inflight,
             initial_election_factor,
+            preloaded_log_size,
         }
     }
 
@@ -178,11 +181,15 @@ impl ExperimentParams {
             .as_i64()
             .expect("Failed to load initial_election_factor")
             as u64;
+        let preloaded_log_size = config["experiment"]["preloaded_log_size"]
+            .as_i64()
+            .expect("Failed to load preloaded_log_size") as u64;
         ExperimentParams::new(
             election_timeout,
             outgoing_period,
             max_inflight,
             initial_election_factor,
+            preloaded_log_size,
         )
     }
 }
@@ -267,6 +274,7 @@ impl AtomicBroadcastMaster {
         &self,
         nodes_id: HashMap<u64, ActorPath>,
         client_timeout: Duration,
+        preloaded_log_size: u64,
         leader_election_latch: Arc<CountdownEvent>,
     ) -> (Arc<Component<Client>>, ActorPath) {
         let system = self.system.as_ref().unwrap();
@@ -282,6 +290,7 @@ impl AtomicBroadcastMaster {
                 nodes_id,
                 reconfig,
                 client_timeout,
+                preloaded_log_size,
                 leader_election_latch,
                 finished_latch,
             )
@@ -367,7 +376,8 @@ impl AtomicBroadcastMaster {
         Ok(())
     }
 
-    pub fn load_benchmark_config<P>(path: P) -> (Duration, Option<String>)
+    /// reads hocon config file and returns (timeout, meta_results path, size of preloaded_log)
+    pub fn load_benchmark_config<P>(path: P) -> (Duration, Option<String>, u64)
     where
         P: Into<PathBuf>,
     {
@@ -381,7 +391,14 @@ impl AtomicBroadcastMaster {
             .as_duration()
             .expect("Failed to load client timeout");
         let meta_results_path = config["experiment"]["meta_results_path"].as_string();
-        (client_timeout, meta_results_path)
+        let preloaded_log_size = if cfg!(feature = "preloaded_log") {
+            config["experiment"]["preloaded_log_size"]
+                .as_i64()
+                .expect("Failed to load preloaded_log_size") as u64
+        } else {
+            0
+        };
+        (client_timeout, meta_results_path, preloaded_log_size)
     }
 
     fn get_meta_results_path(&self) -> &String {
@@ -633,11 +650,16 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         for (id, ap) in nodes.iter().enumerate() {
             nodes_id.insert(id as u64 + 1, ap.clone());
         }
-        let (client_timeout, meta_path) = Self::load_benchmark_config(CONFIG_PATH);
+        let (client_timeout, meta_path, preloaded_log_size) =
+            Self::load_benchmark_config(CONFIG_PATH);
         self.meta_results_path = meta_path;
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
-        let (client_comp, client_path) =
-            self.create_client(nodes_id, client_timeout, leader_election_latch.clone());
+        let (client_comp, client_path) = self.create_client(
+            nodes_id,
+            client_timeout,
+            preloaded_log_size,
+            leader_election_latch.clone(),
+        );
         let partitioning_actor = self.initialise_iteration(nodes, client_path);
         partitioning_actor
             .actor_ref()
