@@ -654,12 +654,11 @@ pub mod paxos {
         #[derive(Clone, Debug)]
         pub struct HeartbeatRequest {
             pub round: u32,
-            pub max_ballot: Ballot,
         }
 
         impl HeartbeatRequest {
-            pub fn with(round: u32, max_ballot: Ballot) -> HeartbeatRequest {
-                HeartbeatRequest { round, max_ballot }
+            pub fn with(round: u32) -> HeartbeatRequest {
+                HeartbeatRequest { round }
             }
         }
 
@@ -667,15 +666,15 @@ pub mod paxos {
         pub struct HeartbeatReply {
             pub sender_pid: u64,
             pub round: u32,
-            pub max_ballot: Ballot,
+            pub ballot: Ballot,
         }
 
         impl HeartbeatReply {
-            pub fn with(sender_pid: u64, round: u32, max_ballot: Ballot) -> HeartbeatReply {
+            pub fn with(sender_pid: u64, round: u32, ballot: Ballot) -> HeartbeatReply {
                 HeartbeatReply {
                     sender_pid,
                     round,
-                    max_ballot,
+                    ballot,
                 }
             }
         }
@@ -699,15 +698,13 @@ pub mod paxos {
                     HeartbeatMsg::Request(req) => {
                         buf.put_u8(HB_REQ_ID);
                         buf.put_u32(req.round);
-                        buf.put_u32(req.max_ballot.n);
-                        buf.put_u64(req.max_ballot.pid);
                     }
                     HeartbeatMsg::Reply(rep) => {
                         buf.put_u8(HB_REP_ID);
                         buf.put_u64(rep.sender_pid);
                         buf.put_u32(rep.round);
-                        buf.put_u32(rep.max_ballot.n);
-                        buf.put_u64(rep.max_ballot.pid);
+                        buf.put_u32(rep.ballot.n);
+                        buf.put_u64(rep.ballot.pid);
                     }
                 }
                 Ok(())
@@ -725,10 +722,7 @@ pub mod paxos {
                 match buf.get_u8() {
                     HB_REQ_ID => {
                         let round = buf.get_u32();
-                        let n = buf.get_u32();
-                        let pid = buf.get_u64();
-                        let max_ballot = Ballot::with(n, pid);
-                        let hb_req = HeartbeatRequest::with(round, max_ballot);
+                        let hb_req = HeartbeatRequest::with(round);
                         Ok(HeartbeatMsg::Request(hb_req))
                     }
                     HB_REP_ID => {
@@ -736,8 +730,8 @@ pub mod paxos {
                         let round = buf.get_u32();
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
-                        let max_ballot = Ballot::with(n, pid);
-                        let hb_rep = HeartbeatReply::with(sender_pid, round, max_ballot);
+                        let ballot = Ballot::with(n, pid);
+                        let hb_rep = HeartbeatReply::with(sender_pid, round, ballot);
                         Ok(HeartbeatMsg::Reply(hb_rep))
                     }
                     _ => Err(SerError::InvalidType(

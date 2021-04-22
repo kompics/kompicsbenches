@@ -168,7 +168,7 @@ impl BallotLeaderComp {
         };
         self.hb_round += 1;
         for peer in &self.peers {
-            let hb_request = HeartbeatRequest::with(self.hb_round, self.max_ballot);
+            let hb_request = HeartbeatRequest::with(self.hb_round);
             #[cfg(feature = "measure_io")]
             {
                 self.io_metadata.update_sent(&hb_request);
@@ -266,9 +266,6 @@ impl Actor for BallotLeaderComp {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&req);
                         }
-                        if req.max_ballot > self.max_ballot {
-                            self.max_ballot = req.max_ballot;
-                        }
                         let hb_reply = HeartbeatReply::with(self.pid, req.round, self.current_ballot);
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_sent(&hb_reply);
@@ -280,7 +277,7 @@ impl Actor for BallotLeaderComp {
                             self.io_metadata.update_received(&rep);
                         }
                         if rep.round == self.hb_round {
-                            self.ballots.push((rep.max_ballot, rep.sender_pid));
+                            self.ballots.push((rep.ballot, rep.sender_pid));
                         } else {
                             trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                             self.hb_delay += self.delta;
