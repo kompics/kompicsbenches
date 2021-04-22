@@ -715,6 +715,14 @@ where
         // Get the `Ready` with `RawNode::ready` interface.
         let mut ready = self.raw_raft.ready();
 
+        // Send out the messages come from the node.
+        let mut ready_msgs = Vec::with_capacity(self.max_inflight);
+        std::mem::swap(&mut ready.messages, &mut ready_msgs);
+        for msg in ready_msgs {
+            self.communication_port
+                .trigger(CommunicatorMsg::RawRaftMsg(msg));
+        }
+
         // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
         // raft logs to the latest position.
         if let Err(e) = store.append_log(ready.entries()) {
@@ -724,11 +732,6 @@ where
                 format!("persist raft log fail: {:?}, need to retry or panic", e)
             );
             return Handled::Ok;
-        }
-
-        // Apply the snapshot. It's necessary because in `RawNode::advance` we stabilize the snapshot.
-        if *ready.snapshot() != Snapshot::default() {
-            unimplemented!("Should not be any snapshots to handle!");
         }
 
         // let mut next_conf_change: Option<ConfChangeType> = None;
@@ -841,15 +844,6 @@ where
                     .expect("Failed to set hardstate");
             }
         }
-
-        // Send out the messages come from the node.
-        let mut ready_msgs = Vec::with_capacity(self.max_inflight);
-        std::mem::swap(&mut ready.messages, &mut ready_msgs);
-        for msg in ready_msgs {
-            self.communication_port
-                .trigger(CommunicatorMsg::RawRaftMsg(msg));
-        }
-
         // Call `RawNode::advance` interface to update position flags in the raft.
         self.raw_raft.advance(ready);
         Handled::Ok
