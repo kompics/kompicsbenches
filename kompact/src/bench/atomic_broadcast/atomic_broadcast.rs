@@ -43,13 +43,15 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ClientParams {
     algorithm: String,
     num_nodes: u64,
+    is_reconfig_exp: bool,
 }
 
 impl ClientParams {
-    fn with(algorithm: String, num_nodes: u64) -> ClientParams {
+    fn with(algorithm: String, num_nodes: u64, is_reconfig_exp: bool) -> ClientParams {
         ClientParams {
             algorithm,
             num_nodes,
+            is_reconfig_exp,
         }
     }
 }
@@ -84,7 +86,7 @@ impl DistributedBenchmark for AtomicBroadcast {
 
     fn str_to_client_conf(s: String) -> Result<Self::ClientConf, BenchmarkError> {
         let split: Vec<_> = s.split(',').collect();
-        if split.len() != 2 {
+        if split.len() != 3 {
             Err(BenchmarkError::InvalidMessage(format!(
                 "String '{}' does not represent a client conf! Split length should be 2",
                 s
@@ -97,7 +99,14 @@ impl DistributedBenchmark for AtomicBroadcast {
                     split[1], e
                 ))
             })?;
-            Ok(ClientParams::with(algorithm, num_nodes))
+            let r = split[2].parse::<u8>().map_err(|e| {
+                BenchmarkError::InvalidMessage(format!(
+                    "String to ClientConf error: '{}' should be 0 or 1: {:?}",
+                    split[2], e
+                ))
+            })?;
+            let is_reconfig_exp = r == 1;
+            Ok(ClientParams::with(algorithm, num_nodes, is_reconfig_exp))
         }
     }
 
@@ -109,7 +118,8 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn client_conf_to_str(c: Self::ClientConf) -> String {
-        format!("{},{}", c.algorithm, c.num_nodes)
+        let r: u8 = if c.is_reconfig_exp { 1 } else { 0 };
+        format!("{},{},{}", c.algorithm, c.num_nodes, r)
     }
 
     fn client_data_to_str(d: Self::ClientData) -> String {
@@ -430,7 +440,7 @@ impl AtomicBroadcastMaster {
             let addr_str = ap.address().to_string();
             let pid = config["deployment"][addr_str.as_str()]
                 .as_i64()
-                .expect(&format!("Failed to load pid map of {}", addr_str))
+                .unwrap_or_else(|| panic!("Failed to load pid map of {}", addr_str))
                 as u32;
             pid_map.insert(ap.clone(), pid);
         }
@@ -667,7 +677,11 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, TCP_NODELAY);
         self.system = Some(system);
-        let params = ClientParams::with(c.algorithm, c.number_of_nodes);
+        let params = ClientParams::with(
+            c.algorithm,
+            c.number_of_nodes,
+            self.reconfiguration.is_some(),
+        );
         Ok(params)
     }
 
@@ -826,8 +840,9 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         let named_path = match c.algorithm.as_ref() {
             "paxos" => {
                 let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
-                let (paxos_comp, unique_reg_f) = system
-                    .create_and_register(|| PaxosComp::with(initial_config, experiment_params));
+                let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
+                    PaxosComp::with(initial_config, c.is_reconfig_exp, experiment_params)
+                });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
                     .register_by_alias(&paxos_comp, PAXOS_PATH)

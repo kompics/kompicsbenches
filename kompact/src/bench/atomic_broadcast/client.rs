@@ -211,14 +211,13 @@ impl Client {
 
     fn send_concurrent_proposals(&mut self) {
         let num_inflight = self.pending_proposals.len() as u64;
-        assert!(num_inflight <= self.num_concurrent_proposals);
         if !self.retry_proposals.is_empty() {
             self.send_retry_proposals();
         }
-        let available_n = self.num_concurrent_proposals - num_inflight;
         if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
+        let available_n = self.num_concurrent_proposals - num_inflight;
         let from = self.latest_proposal_id + 1;
         let i = self.latest_proposal_id + available_n;
         let to = if i > self.max_proposal_id {
@@ -265,7 +264,6 @@ impl Client {
                     .expect("Failed to countdown finished latch");
                 if self.num_timed_out > 0 {
                     info!(self.ctx.log(), "Got all responses with {} timeouts, Number of leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
-                    self.log_timed_results();
                     #[cfg(feature = "track_timeouts")]
                     {
                         let min = self.timeouts.iter().min();
@@ -290,8 +288,8 @@ impl Client {
                         self.leader_changes,
                         self.current_leader
                     );
-                    self.log_timed_results();
                 }
+                self.log_timed_results();
             } else {
                 warn!(
                     self.ctx.log(),
@@ -328,7 +326,7 @@ impl Client {
                 .iter()
                 .zip(self.leader_changes_ts.iter())
                 .for_each(|(pid, ts)| str.push_str(&format!("{},{} ", ts.as_u64(), pid)));
-            str.push_str("\n");
+            str.push('\n');
         }
         str.push_str("Decisions: ");
         let mut prev_n = 0;

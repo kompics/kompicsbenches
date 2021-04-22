@@ -331,40 +331,37 @@ where
                             .as_ref()
                             .expect("No cached client!")
                             .forward_with_original_sender(m, self);
-                    } else {
-                        if self.current_leader == self.pid || self.current_leader == 0 {
-                            // if no leader, raftcomp will hold back
-                            match_deser! {m {
-                                msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
-                                    match am {
-                                        AtomicBroadcastMsg::Proposal(p) => {
-                                            self.raft_replica
-                                                .as_ref()
-                                                .expect("No active RaftComp")
-                                                .actor_ref()
-                                                .tell(RaftReplicaMsg::Propose(p));
-                                        }
-                                        AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
-                                            self.raft_replica
-                                                .as_ref()
-                                                .expect("No active RaftComp")
-                                                .actor_ref()
-                                                .tell(RaftReplicaMsg::ProposeReconfiguration(rp));
-                                        }
-                                        _ => {}
+                    } else if self.current_leader == self.pid || self.current_leader == 0 {
+                        // if no leader, raftcomp will hold back
+                        match_deser! {m {
+                            msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
+                                match am {
+                                    AtomicBroadcastMsg::Proposal(p) => {
+                                        self.raft_replica
+                                            .as_ref()
+                                            .expect("No active RaftComp")
+                                            .actor_ref()
+                                            .tell(RaftReplicaMsg::Propose(p));
                                     }
+                                    AtomicBroadcastMsg::ReconfigurationProposal(rp) => {
+                                        self.raft_replica
+                                            .as_ref()
+                                            .expect("No active RaftComp")
+                                            .actor_ref()
+                                            .tell(RaftReplicaMsg::ProposeReconfiguration(rp));
+                                    }
+                                    _ => {}
                                 }
-                            }}
-                        } else if self.current_leader > 0 {
-                            let leader =
-                                self.peers.get(&self.current_leader).unwrap_or_else(|| {
-                                    panic!(
-                                        "Could not get leader's actorpath. Pid: {}",
-                                        self.current_leader
-                                    )
-                                });
-                            leader.forward_with_original_sender(m, self);
-                        }
+                            }
+                        }}
+                    } else if self.current_leader > 0 {
+                        let leader = self.peers.get(&self.current_leader).unwrap_or_else(|| {
+                            panic!(
+                                "Could not get leader's actorpath. Pid: {}",
+                                self.current_leader
+                            )
+                        });
+                        leader.forward_with_original_sender(m, self);
                     }
                 }
             }

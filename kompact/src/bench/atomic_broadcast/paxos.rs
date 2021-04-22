@@ -122,6 +122,7 @@ where
     ctx: ComponentContext<Self>,
     pid: u64,
     initial_configuration: Vec<u64>,
+    is_reconfig_exp: bool,
     paxos_replicas: Vec<Arc<Component<PaxosReplica<S, P>>>>,
     ble_comps: Vec<Arc<Component<BallotLeaderComp>>>,
     communicator_comps: Vec<Arc<Component<Communicator>>>,
@@ -158,12 +159,14 @@ where
 {
     pub fn with(
         initial_configuration: Vec<u64>,
+        is_reconfig_exp: bool,
         experiment_params: ExperimentParams,
     ) -> PaxosComp<S, P> {
         PaxosComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
             initial_configuration,
+            is_reconfig_exp,
             paxos_replicas: vec![],
             ble_comps: vec![],
             communicator_comps: vec![],
@@ -958,18 +961,18 @@ where
                 if self.active_config.id == config_id {
                     let prev_leader = self.active_config.leader;
                     self.active_config.leader = pid;
-                    if prev_leader == 0 {
-                        if pid == self.pid {
+                    if pid == self.pid {
+                        if prev_leader == 0 {
                             // notify client if no leader before
                             self.cached_client
                                 .as_ref()
                                 .expect("No cached client!")
                                 .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
                                 .expect("Should serialise FirstLeader");
-                            self.propose_hb_proposals();
-                        } else if !self.hb_proposals.is_empty() {
-                            self.forward_hb_proposals(self.active_config.leader);
                         }
+                        self.propose_hb_proposals();
+                    } else if !self.hb_proposals.is_empty() {
+                        self.forward_hb_proposals(self.active_config.leader);
                     }
                 }
             }
@@ -1146,20 +1149,18 @@ where
                             .as_ref()
                             .expect("No cached client!")
                             .forward_with_original_sender(m, self);
+                    } else if self.active_config.pending_reconfig {
+                        self.hb_proposals.serialised.push(m);
                     } else {
-                        if self.active_config.pending_reconfig {
-                            self.hb_proposals.serialised.push(m);
-                        } else {
-                            match self.active_config.leader {
-                                0 => {
-                                    // active config has no leader yet
-                                    self.hb_proposals.serialised.push(m);
-                                }
-                                my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
-                                other => {
-                                    let leader = self.get_actorpath(other);
-                                    leader.forward_with_original_sender(m, self);
-                                }
+                        match self.active_config.leader {
+                            0 => {
+                                // active config has no leader yet
+                                self.hb_proposals.serialised.push(m);
+                            }
+                            my_pid if my_pid == self.pid => self.deserialise_and_propose(m),
+                            other => {
+                                let leader = self.get_actorpath(other);
+                                leader.forward_with_original_sender(m, self);
                             }
                         }
                     }
@@ -1191,7 +1192,6 @@ where
                                     });
                                     self.io_timer = Some(timer);
                                 }
-
                                 let initial_configuration= self.initial_configuration.clone();
                                 let handled = Handled::block_on(self, move |mut async_self| async move {
                                     if initial_configuration.contains(&async_self.pid) {
@@ -1202,12 +1202,14 @@ where
                                         }
                                         async_self.first_config_id = 1;
                                     }
-                                    let futures = async_self.create_replica(2, None, false, None);
-                                    for f in futures {
-                                        f.await.unwrap().expect("Failed to register when creating replica 2");
-                                    }
-                                    if async_self.first_config_id != 1 {    // not in initial configuration
-                                        async_self.first_config_id = 2;
+                                    if async_self.is_reconfig_exp {
+                                        let futures = async_self.create_replica(2, None, false, None);
+                                        for f in futures {
+                                            f.await.unwrap().expect("Failed to register when creating replica 2");
+                                        }
+                                        if async_self.first_config_id != 1 {    // not in initial configuration
+                                            async_self.first_config_id = 2;
+                                        }
                                     }
                                     let resp = PartitioningActorMsg::InitAck(async_self.iteration_id);
                                     sender.tell_serialised(resp, async_self.deref_mut())
