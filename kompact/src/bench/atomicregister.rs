@@ -223,6 +223,7 @@ pub mod actor_atomicregister {
                             self.init_id,
                             nodes,
                             None,
+                            None,
                         )
                     });
                     unique_reg_f.wait_expect(
@@ -752,7 +753,7 @@ pub mod actor_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, None, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),
@@ -997,6 +998,7 @@ pub mod mixed_atomicregister {
                             Some(finished_latch.clone()),
                             self.init_id,
                             nodes,
+                            None,
                             None,
                         )
                     });
@@ -1690,7 +1692,7 @@ pub mod mixed_atomicregister {
             let prepare_latch = Arc::new(CountdownEvent::new(1));
             let (p, f) = promise::<Vec<KVTimestamp>>();
             let (partitioning_actor, unique_reg_f) = systems[0].create_and_register(|| {
-                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, Some(p))
+                PartitioningActor::with(prepare_latch.clone(), None, 1, nodes, None, Some(p))
             });
             unique_reg_f.wait_expect(
                 Duration::from_millis(1000),

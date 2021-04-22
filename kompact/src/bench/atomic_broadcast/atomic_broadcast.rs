@@ -34,7 +34,7 @@ use pretty_bytes::converter::convert;
 use std::fmt;
 
 const TCP_NODELAY: bool = true;
-const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
+pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
 const RAFT_PATH: &str = "raft_replica";
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -243,12 +243,20 @@ impl AtomicBroadcastMaster {
         &self,
         nodes: Vec<ActorPath>,
         client: ActorPath,
+        pid_map: Option<HashMap<ActorPath, u32>>,
     ) -> Arc<Component<PartitioningActor>> {
         let system = self.system.as_ref().unwrap();
         let prepare_latch = Arc::new(CountdownEvent::new(1));
         /*** Setup partitioning actor ***/
         let (partitioning_actor, unique_reg_f) = system.create_and_register(|| {
-            PartitioningActor::with(prepare_latch.clone(), None, self.iteration_id, nodes, None)
+            PartitioningActor::with(
+                prepare_latch.clone(),
+                None,
+                self.iteration_id,
+                nodes,
+                pid_map,
+                None,
+            )
         });
         unique_reg_f.wait_expect(
             Duration::from_millis(1000),
@@ -311,6 +319,12 @@ impl AtomicBroadcastMaster {
         c: &AtomicBroadcastRequest,
         num_clients: u32,
     ) -> Result<(), BenchmarkError> {
+        if (num_clients as u64) < c.number_of_nodes {
+            return Err(BenchmarkError::InvalidTest(format!(
+                "Not enough clients: {}, Required: {}",
+                num_clients, c.number_of_nodes
+            )));
+        }
         if c.concurrent_proposals > c.number_of_proposals {
             return Err(BenchmarkError::InvalidTest(format!(
                 "Concurrent proposals: {} should be less or equal to number of proposals: {}",
@@ -399,6 +413,28 @@ impl AtomicBroadcastMaster {
             0
         };
         (client_timeout, meta_results_path, preloaded_log_size)
+    }
+
+    pub fn load_pid_map<P>(path: P, nodes: &Vec<ActorPath>) -> HashMap<ActorPath, u32>
+    where
+        P: Into<PathBuf>,
+    {
+        let p: PathBuf = path.into();
+        let config = HoconLoader::new()
+            .load_file(p)
+            .expect("Failed to load file")
+            .hocon()
+            .expect("Failed to load as HOCON");
+        let mut pid_map = HashMap::with_capacity(nodes.len());
+        for ap in nodes {
+            let addr_str = ap.address().to_string();
+            let pid = config["deployment"][addr_str.as_str()]
+                .as_i64()
+                .expect(&format!("Failed to load pid map of {}", addr_str))
+                as u32;
+            pid_map.insert(ap.clone(), pid);
+        }
+        pid_map
     }
 
     fn get_meta_results_path(&self) -> &String {
@@ -643,16 +679,30 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let finished_latch = Arc::new(CountdownEvent::new(1));
         self.finished_latch = Some(finished_latch);
         self.iteration_id += 1;
-        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
         let num_nodes_needed = self.num_nodes_needed.expect("No cached num_nodes") as usize;
         let mut nodes = d;
         nodes.truncate(num_nodes_needed);
-        for (id, ap) in nodes.iter().enumerate() {
-            nodes_id.insert(id as u64 + 1, ap.clone());
-        }
         let (client_timeout, meta_path, preloaded_log_size) =
             Self::load_benchmark_config(CONFIG_PATH);
+        let pid_map: Option<HashMap<ActorPath, u32>> = if cfg!(feature = "use_pid_map") {
+            Some(Self::load_pid_map(CONFIG_PATH, &nodes))
+        } else {
+            None
+        };
         self.meta_results_path = meta_path;
+        let mut nodes_id: HashMap<u64, ActorPath> = HashMap::new();
+        match &pid_map {
+            Some(pm) => {
+                for (ap, pid) in pm {
+                    nodes_id.insert(*pid as u64, ap.clone());
+                }
+            }
+            None => {
+                for (id, ap) in nodes.iter().enumerate() {
+                    nodes_id.insert(id as u64 + 1, ap.clone());
+                }
+            }
+        }
         let leader_election_latch = Arc::new(CountdownEvent::new(1));
         let (client_comp, client_path) = self.create_client(
             nodes_id,
@@ -660,7 +710,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             preloaded_log_size,
             leader_election_latch.clone(),
         );
-        let partitioning_actor = self.initialise_iteration(nodes, client_path);
+        let partitioning_actor = self.initialise_iteration(nodes, client_path, pid_map);
         partitioning_actor
             .actor_ref()
             .tell(IterationControlMsg::Run);

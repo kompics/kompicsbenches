@@ -1,5 +1,6 @@
 use super::*;
 use benchmark_suite_shared::test_utils::{KVOperation, KVTimestamp};
+use hashbrown::HashMap;
 use kompact::prelude::*;
 use std::sync::Arc;
 use synchronoise::CountdownEvent;
@@ -17,6 +18,7 @@ pub struct PartitioningActor {
     nodes: Vec<ActorPath>,
     init_ack_count: u32,
     done_count: u32,
+    pid_map: Option<HashMap<ActorPath, u32>>,
     test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     test_results: Vec<KVTimestamp>,
 }
@@ -27,6 +29,7 @@ impl PartitioningActor {
         finished_latch: Option<Arc<CountdownEvent>>,
         init_id: u32,
         nodes: Vec<ActorPath>,
+        pid_map: Option<HashMap<ActorPath, u32>>,
         test_promise: Option<KPromise<Vec<KVTimestamp>>>,
     ) -> PartitioningActor {
         PartitioningActor {
@@ -40,6 +43,7 @@ impl PartitioningActor {
             nodes,
             init_ack_count: 0,
             done_count: 0,
+            pid_map,
             test_promise,
             test_results: Vec::new(),
         }
@@ -54,16 +58,32 @@ impl Actor for PartitioningActor {
         match msg {
             IterationControlMsg::Prepare(init_data) => {
                 self.n = self.nodes.len() as u32;
-                for (r, node) in (&self.nodes).iter().enumerate() {
-                    let pid = r as u32 + 1;
-                    let init = Init {
-                        pid,
-                        init_id: self.init_id,
-                        nodes: self.nodes.clone(),
-                        init_data: init_data.clone(),
-                    };
-                    node.tell_serialised(PartitioningActorMsg::Init(init), self)
-                        .expect("Should serialise");
+                match &self.pid_map {
+                    Some(pid_map) => {
+                        for (node, pid) in pid_map {
+                            let init = Init {
+                                pid: *pid,
+                                init_id: self.init_id,
+                                nodes: self.nodes.clone(),
+                                init_data: init_data.clone(),
+                            };
+                            node.tell_serialised(PartitioningActorMsg::Init(init), self)
+                                .expect("Should serialise");
+                        }
+                    }
+                    None => {
+                        for (r, node) in (&self.nodes).iter().enumerate() {
+                            let pid = r as u32 + 1;
+                            let init = Init {
+                                pid,
+                                init_id: self.init_id,
+                                nodes: self.nodes.clone(),
+                                init_data: init_data.clone(),
+                            };
+                            node.tell_serialised(PartitioningActorMsg::Init(init), self)
+                                .expect("Should serialise");
+                        }
+                    }
                 }
             }
             IterationControlMsg::Run => {

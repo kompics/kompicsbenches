@@ -35,6 +35,9 @@ pretty-bytes            = {version = "0.2.2", optional = true}
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }
 
+[profile.release]
+lto = true
+
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
 
@@ -43,8 +46,6 @@ track_latency = [] # measure latency for proposals
 track_timestamps = []
 measure_io = ["pretty-bytes"]
 preloaded_log = []
+use_pid_map = [] # assign nodes to specific process ids
 
-#default = ["measure_io", "preloaded_log"]
-
-[profile.release]
-lto = true  
+#default = []

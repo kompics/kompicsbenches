@@ -16,6 +16,8 @@ if [ -z "$1" ]
 		echo $config_file;
 		cat $config_file; 
 	done
+	echo $'\n---------- Experiment Feature Flags ----------\n'
+	tail -n 1 kompact/Cargo.toml
 else
 	file=$1/experimental_setup.out
 	touch $file
@@ -27,4 +29,7 @@ else
 		echo $config_file >> $file;
 		cat $config_file >> $file; 
 	done
+	echo $'\n---------- Experiment Feature Flags ----------\n' >> $file
+	tail -n 1 kompact/Cargo.toml >> $file
+
 fi

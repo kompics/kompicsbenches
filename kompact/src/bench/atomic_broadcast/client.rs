@@ -556,9 +556,7 @@ impl Actor for Client {
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                 self.current_leader = pr.latest_leader;
                                 self.leader_changes.push(pr.latest_leader);
-                                #[cfg(feature = "track_timestamps")] {
-                                    self.leader_changes_ts.push(self.clock.now());
-                                }
+                                self.leader_changes_ts.push(self.clock.now());
                             }
                             self.handle_normal_response(id, latency);
                             self.send_concurrent_proposals();
