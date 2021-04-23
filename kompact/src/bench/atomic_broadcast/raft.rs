@@ -169,6 +169,7 @@ where
                 let mut entry = Entry::default();
                 let data = create_raw_proposal(id);
                 entry.data = data;
+                entry.term = 1;
                 entry.index = id + 1;
                 preloaded_log.push(entry);
             }
