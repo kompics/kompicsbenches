@@ -132,7 +132,7 @@ impl BallotLeaderComp {
         } else {
             Ballot::with(0, self.pid)
         };
-        self.max_ballot = l.round;
+        self.max_ballot = leader_ballot;
         self.quick_timeout = false;
         self.ble_port.trigger(Leader::with(l.pid, l.round));
     }
