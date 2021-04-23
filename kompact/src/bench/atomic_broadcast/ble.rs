@@ -43,10 +43,9 @@ pub struct BallotLeaderComp {
     pid: u64,
     pub(crate) peers: Vec<ActorPath>,
     hb_round: u32,
-    ballots: Vec<(Ballot, u64)>,
+    ballots: Vec<Ballot>,
     current_ballot: Ballot, // (round, pid)
-    leader: Option<(Ballot, u64)>,
-    max_ballot: Ballot,
+    leader: Option<Ballot>,
     hb_delay: u64,
     delta: u64,
     pub majority: usize,
@@ -77,19 +76,19 @@ impl BallotLeaderComp {
         initial_election_factor: u64,
     ) -> BallotLeaderComp {
         let n = &peers.len() + 1;
-        let (leader, initial_ballot, max_ballot) = match initial_leader {
+        let (leader, initial_ballot) = match initial_leader {
             Some(l) => {
-                let leader = Some((l.round, l.pid));
+                let leader_ballot = Ballot::with(l.round.n, l.pid);
                 let initial_ballot = if l.pid == pid {
-                    l.round
+                    leader_ballot
                 } else {
                     Ballot::with(0, pid)
                 };
-                (leader, initial_ballot, l.round)
+                (Some(leader_ballot), initial_ballot)
             }
             None => {
                 let initial_ballot = Ballot::with(0, pid);
-                (None, initial_ballot, initial_ballot)
+                (None, initial_ballot)
             }
         };
         BallotLeaderComp {
@@ -102,7 +101,6 @@ impl BallotLeaderComp {
             ballots: Vec::with_capacity(n),
             current_ballot: initial_ballot,
             leader,
-            max_ballot,
             hb_delay,
             delta,
             timer: None,
@@ -126,13 +124,12 @@ impl BallotLeaderComp {
     pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
         assert!(self.leader.is_none());
         let leader_ballot = Ballot::with(l.round.n, l.pid);
-        self.leader = Some((leader_ballot, l.pid));
+        self.leader = Some(leader_ballot);
         self.current_ballot = if l.pid == self.pid {
-            l.round
+            leader_ballot
         } else {
             Ballot::with(0, self.pid)
         };
-        self.max_ballot = leader_ballot;
         self.quick_timeout = false;
         self.ble_port.trigger(Leader::with(l.pid, leader_ballot));
     }
@@ -140,23 +137,28 @@ impl BallotLeaderComp {
     fn check_leader(&mut self) {
         let mut ballots = Vec::with_capacity(self.peers.len());
         std::mem::swap(&mut self.ballots, &mut ballots);
-        let (top_ballot, top_pid) = ballots.into_iter().max().unwrap();
-        if top_ballot < self.max_ballot {
+        info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
+        let top_ballot = ballots.into_iter().max().unwrap();
+        if top_ballot < self.leader.unwrap_or_default() {
             // did not get HB from leader
-            self.current_ballot.n = self.max_ballot.n + 1;
+            info!(
+                self.ctx.log(),
+                "Did not get hb from leader. top: {:?}, leader: {:?}", top_ballot, self.leader
+            );
+            self.current_ballot.n = self.leader.unwrap_or_default().n + 1;
             self.leader = None;
-        } else if self.leader != Some((top_ballot, top_pid)) {
+        } else if self.leader != Some(top_ballot) {
             // got a new leader with greater ballot
             self.quick_timeout = false;
-            self.max_ballot = top_ballot;
-            self.leader = Some((top_ballot, top_pid));
+            self.leader = Some(top_ballot);
+            let top_pid = top_ballot.pid;
             self.ble_port.trigger(Leader::with(top_pid, top_ballot));
         }
     }
 
     fn hb_timeout(&mut self) -> Handled {
         if self.ballots.len() + 1 >= self.majority {
-            self.ballots.push((self.current_ballot, self.pid));
+            self.ballots.push(self.current_ballot);
             self.check_leader();
         } else {
             self.ballots.clear();
@@ -195,7 +197,7 @@ impl BallotLeaderComp {
 
 impl ComponentLifecycle for BallotLeaderComp {
     fn on_start(&mut self) -> Handled {
-        debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, max_ballot: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.max_ballot);
+        debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, leader: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.leader);
         let bc = BufferConfig::default();
         self.ctx.init_buffers(Some(bc), None);
         #[cfg(feature = "measure_io")]
@@ -267,7 +269,7 @@ impl Actor for BallotLeaderComp {
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_received(&req);
                         }
-                        let hb_reply = HeartbeatReply::with(self.pid, req.round, self.current_ballot);
+                        let hb_reply = HeartbeatReply::with(req.round, self.current_ballot);
                         #[cfg(feature = "measure_io")] {
                             self.io_metadata.update_sent(&hb_reply);
                         }
@@ -278,7 +280,7 @@ impl Actor for BallotLeaderComp {
                             self.io_metadata.update_received(&rep);
                         }
                         if rep.round == self.hb_round {
-                            self.ballots.push((rep.ballot, rep.sender_pid));
+                            self.ballots.push(rep.ballot);
                         } else {
                             trace!(self.ctx.log(), "Got late hb reply. HB delay: {}", self.hb_delay);
                             self.hb_delay += self.delta;
