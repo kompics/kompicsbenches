@@ -210,10 +210,10 @@ impl Client {
     }
 
     fn send_concurrent_proposals(&mut self) {
-        let num_inflight = self.pending_proposals.len() as u64;
         if !self.retry_proposals.is_empty() {
             self.send_retry_proposals();
         }
+        let num_inflight = self.pending_proposals.len() as u64;
         if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
         }
@@ -383,17 +383,7 @@ impl Client {
         }
         // info!(self.ctx.log(), "Timed out proposal {}", id);
         self.num_timed_out += 1;
-        let proposal_meta = self
-            .pending_proposals
-            .remove(&id)
-            .expect("Timed out on proposal not in pending proposals");
-        let latency = proposal_meta.start_time.map(|start_time| {
-            start_time
-                .elapsed()
-                .expect("Failed to get elapsed duration")
-        });
-        self.handle_normal_response(id, latency);
-        self.send_concurrent_proposals();
+        self.propose_normal(id);
         #[cfg(feature = "track_timeouts")]
         {
             self.timeouts.push(id);
