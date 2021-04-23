@@ -124,8 +124,9 @@ impl BallotLeaderComp {
 
     /// Sets initial state after creation. Should only be used before being started.
     pub fn set_initial_leader(&mut self, l: Leader<Ballot>) {
-        // TODO make sure not already started
-        self.leader = Some((l.round, l.pid));
+        assert!(self.leader.is_none());
+        let leader_ballot = Ballot::with(l.round.n, l.pid);
+        self.leader = Some((leader_ballot, l.pid));
         self.current_ballot = if l.pid == self.pid {
             l.round
         } else {
