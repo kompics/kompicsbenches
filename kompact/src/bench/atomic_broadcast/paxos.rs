@@ -403,6 +403,7 @@ where
             .get(idx)
             .unwrap_or_else(|| panic!("Could not find BLE config_id: {}", config_id));
         ble.on_definition(|ble| {
+            ble.majority = ble_peers.len() / 2 + 1;
             ble.peers = ble_peers;
             if let Some(n) = skip_prepare_use_leader {
                 ble.set_initial_leader(n);

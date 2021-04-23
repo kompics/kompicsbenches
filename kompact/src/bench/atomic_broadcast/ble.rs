@@ -49,7 +49,7 @@ pub struct BallotLeaderComp {
     max_ballot: Ballot,
     hb_delay: u64,
     delta: u64,
-    majority: usize,
+    pub majority: usize,
     timer: Option<ScheduledTimer>,
     stopped: bool,
     stopped_peers: HashSet<u64>,
@@ -134,7 +134,7 @@ impl BallotLeaderComp {
         };
         self.max_ballot = leader_ballot;
         self.quick_timeout = false;
-        self.ble_port.trigger(Leader::with(l.pid, l.round));
+        self.ble_port.trigger(Leader::with(l.pid, leader_ballot));
     }
 
     fn check_leader(&mut self) {
