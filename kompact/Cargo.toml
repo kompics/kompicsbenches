@@ -47,5 +47,6 @@ track_timestamps = []
 measure_io = ["pretty-bytes"]
 preloaded_log = []
 use_pid_map = [] # assign nodes to specific process ids
+periodic_client_logging = []
 
 #default = []

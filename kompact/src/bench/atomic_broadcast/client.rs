@@ -496,6 +496,13 @@ impl Actor for Client {
                     self.leader_changes.push(self.current_leader);
                     self.leader_changes_ts.push(now);
                 }
+                #[cfg(feature = "periodic_client_logging")]
+                {
+                    self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                        info!(c.ctx.log(), "Num responses: {}", c.responses.len());
+                        Handled::Ok
+                    });
+                }
                 let timer =
                     self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
                         c.windows.push((c.clock.now(), c.responses.len()));
@@ -529,8 +536,10 @@ impl Actor for Client {
                     AtomicBroadcastMsg::Leader(pid) => {
                         assert!(pid > 0);
                         self.current_leader = pid;
-                        if cfg!(feature = "preloaded_log") && self.state == ExperimentState::Setup {   // wait until all preloaded responses before decrementing leader latch
-                            return Handled::Ok;
+                        #[cfg(feature = "preloaded_log")] {
+                            if self.state == ExperimentState::Setup { // wait until all preloaded responses before decrementing leader latch
+                                return Handled::Ok;
+                            }
                         }
                         match self.leader_election_latch.decrement() {
                             Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
@@ -545,7 +554,6 @@ impl Actor for Client {
                     AtomicBroadcastMsg::ProposalResp(pr) => {
                         if self.state == ExperimentState::Finished { return Handled::Ok; }
                         let data = pr.data;
-                        // let response = Self::deserialise_response(&mut data.as_slice());
                         let id = data.as_slice().get_u64();
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                             let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
