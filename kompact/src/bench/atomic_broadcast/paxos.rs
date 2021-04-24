@@ -281,7 +281,7 @@ where
         Paxos::with(
             config_id,
             self.pid,
-            raw_peers.unwrap_or(vec![1]),
+            raw_peers.unwrap_or_else(|| vec![1]),   // if peers is empty then we will set it later upon reconfiguration, hence initialise with vec![1] for now
             storage,
             skip_prepare_use_leader,
             Some(max_inflight),
@@ -460,10 +460,14 @@ where
                 self.io_windows.push((self.clock.now(), self.io_metadata));
                 self.io_metadata.reset();
                 let mut str = String::new();
-                for (ts, io_meta) in &self.io_windows {
-                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                }
-                info!(self.ctx.log(), "PaxosComp IO:\n{}", str);
+                let total =
+                    self.io_windows
+                        .iter()
+                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                            sum + (*io_meta)
+                        });
+                info!(self.ctx.log(), "Total PaxosComp IO: {:?}\n{}", total, str);
             }
         }
         self.stopped = true;
@@ -1436,7 +1440,7 @@ where
         }
     }
 
-    fn handle_stopsign(&mut self, ss: &StopSign<Ballot>) {
+    fn handle_stopsign(&mut self, ss: StopSign<Ballot>) {
         let final_seq = self.paxos.stop_and_get_sequence();
         let new_config_len = ss.nodes.len();
         let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
@@ -1465,35 +1469,28 @@ where
             self.supervisor
                 .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader));
         }
+        let decided_entries = self.paxos.get_decided_entries();
+        #[cfg(feature = "periodic_replica_logging")]
+        {
+            self.num_decided += decided_entries.len();
+        }
         if self.current_leader == self.pid {
-            // Only leader responds to client. This is fine for benchmarking. In real-life, each replica probably caches clients and responds to them.
-            // leader: check reconfiguration and send responses to client
-            let decided_entries = self.paxos.get_decided_entries().to_vec();
-            let last = decided_entries.last();
-            if let Some(Entry::StopSign(ss)) = last {
-                self.handle_stopsign(&ss);
-            }
-            let latest_leader = if self.paxos.stopped() {
-                0 // if we are/have reconfigured don't call ourselves leader
-            } else {
-                self.pid
-            };
-            for decided in decided_entries {
-                if let Entry::Normal(data) = decided {
-                    let pr = ProposalResp::with(data, latest_leader);
-                    self.communication_port
-                        .trigger(CommunicatorMsg::ProposalResponse(pr));
+            for decided in decided_entries.to_vec() {
+                match decided {
+                    Entry::Normal(data) => {
+                        let pr = ProposalResp::with(data, self.pid);
+                        self.communication_port
+                            .trigger(CommunicatorMsg::ProposalResponse(pr));
+                    }
+                    Entry::StopSign(ss) => {
+                        self.handle_stopsign(ss);
+                    }
                 }
             }
         } else {
-            // follower: just handle a possible reconfiguration
-            let decided_entries = self.paxos.get_decided_entries();
-            #[cfg(feature = "periodic_replica_logging")]
-            {
-                self.num_decided += decided_entries.len();
-            }
-            if let Some(Entry::StopSign(ss)) = decided_entries.last().cloned() {
-                self.handle_stopsign(&ss);
+            let last = decided_entries.last().cloned();
+            if let Some(Entry::StopSign(ss)) = last {
+                self.handle_stopsign(ss);
             }
         }
     }

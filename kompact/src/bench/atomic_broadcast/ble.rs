@@ -1,15 +1,12 @@
+#[cfg(feature = "measure_io")]
+use crate::bench::atomic_broadcast::atomic_broadcast::IOMetaData;
 use crate::bench::atomic_broadcast::messages::{
     paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
 };
-#[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::WINDOW_DURATION};
 use hashbrown::HashSet;
 use kompact::prelude::*;
 use leaderpaxos::leader_election::{Leader, Round};
 use std::time::Duration;
-
-#[cfg(feature = "measure_io")]
-use quanta::{Clock, Instant};
 
 #[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
 pub struct Ballot {
@@ -56,13 +53,7 @@ pub struct BallotLeaderComp {
     quick_timeout: bool,
     initial_election_factor: u64,
     #[cfg(feature = "measure_io")]
-    clock: Clock,
-    #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
-    #[cfg(feature = "measure_io")]
-    io_timer: Option<ScheduledTimer>,
-    #[cfg(feature = "measure_io")]
-    io_windows: Vec<(Instant, IOMetaData)>,
 }
 
 impl BallotLeaderComp {
@@ -110,13 +101,7 @@ impl BallotLeaderComp {
             quick_timeout,
             initial_election_factor,
             #[cfg(feature = "measure_io")]
-            clock: Clock::new(),
-            #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
-            #[cfg(feature = "measure_io")]
-            io_timer: None,
-            #[cfg(feature = "measure_io")]
-            io_windows: vec![],
         }
     }
 
@@ -200,17 +185,6 @@ impl ComponentLifecycle for BallotLeaderComp {
         debug!(self.ctx.log(), "Started BLE with params: current_ballot: {:?}, quick timeout: {}, hb_round: {}, leader: {:?}", self.current_ballot, self.quick_timeout, self.hb_round, self.leader);
         let bc = BufferConfig::default();
         self.ctx.init_buffers(Some(bc), None);
-        #[cfg(feature = "measure_io")]
-        {
-            let timer = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
-                    c.io_windows.push((c.clock.now(), c.io_metadata));
-                    c.io_metadata.reset();
-                }
-                Handled::Ok
-            });
-            self.io_timer = Some(timer);
-        }
         self.hb_timeout()
     }
 
@@ -218,17 +192,8 @@ impl ComponentLifecycle for BallotLeaderComp {
         self.stop_timer();
         #[cfg(feature = "measure_io")]
         {
-            if let Some(timer) = self.io_timer.take() {
-                self.cancel_timer(timer);
-            }
-            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-                self.io_windows.push((self.clock.now(), self.io_metadata));
-                self.io_metadata.reset();
-                let mut str = String::new();
-                for (ts, io_meta) in &self.io_windows {
-                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                }
-                info!(self.ctx.log(), "BLE IO:\n{}", str);
+            if self.io_metadata != IOMetaData::default() {
+                info!(self.ctx.log(), "BLE IO: {:?}", self.io_metadata);
             }
         }
         Handled::Ok

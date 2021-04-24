@@ -55,8 +55,6 @@ pub struct Communicator {
     #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
-    io_timer: Option<ScheduledTimer>,
-    #[cfg(feature = "measure_io")]
     io_windows: Vec<(Instant, IOMetaData)>,
 }
 
@@ -71,8 +69,6 @@ impl Communicator {
             clock: Clock::new(),
             #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
-            #[cfg(feature = "measure_io")]
-            io_timer: None,
             #[cfg(feature = "measure_io")]
             io_windows: vec![],
         }
@@ -126,14 +122,13 @@ impl ComponentLifecycle for Communicator {
     fn on_start(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            let timer = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+            let _ = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
                 if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
                     c.io_windows.push((c.clock.now(), c.io_metadata));
                     c.io_metadata.reset();
                 }
                 Handled::Ok
             });
-            self.io_timer = Some(timer);
         }
         Handled::Ok
     }
@@ -141,16 +136,21 @@ impl ComponentLifecycle for Communicator {
     fn on_kill(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            if let Some(timer) = self.io_timer.take() {
-                self.cancel_timer(timer);
-            }
-            if self.io_metadata != IOMetaData::default() {
+            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
                 self.io_windows.push((self.clock.now(), self.io_metadata));
+                self.io_metadata.reset();
                 let mut str = String::new();
-                for (ts, io_meta) in &self.io_windows {
-                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                }
-                info!(self.ctx.log(), "Communicator IO:\n{}", str);
+                let total =
+                    self.io_windows
+                        .iter()
+                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                            sum + *io_meta
+                        });
+                info!(
+                    self.ctx.log(),
+                    "Total Communicator IO: {:?}\n{}", total, str
+                );
             }
         }
         Handled::Ok

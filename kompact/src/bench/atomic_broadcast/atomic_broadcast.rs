@@ -30,8 +30,9 @@ use tikv_raft::storage::MemStorage;
 
 #[cfg(feature = "measure_io")]
 use pretty_bytes::converter::convert;
+use quanta::Instant;
 #[cfg(feature = "measure_io")]
-use std::fmt;
+use std::{fmt, ops::Add};
 
 const TCP_NODELAY: bool = true;
 pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -425,7 +426,7 @@ impl AtomicBroadcastMaster {
         (client_timeout, meta_results_path, preloaded_log_size)
     }
 
-    pub fn load_pid_map<P>(path: P, nodes: &Vec<ActorPath>) -> HashMap<ActorPath, u32>
+    pub fn load_pid_map<P>(path: P, nodes: &[ActorPath]) -> HashMap<ActorPath, u32>
     where
         P: Into<PathBuf>,
     {
@@ -462,9 +463,9 @@ impl AtomicBroadcastMaster {
     #[cfg(feature = "track_timestamps")]
     fn persist_timestamp_results(
         &mut self,
-        timestamps: &[Duration],
-        leader_changes_t: &[(u64, Duration)],
-        reconfig_ts: Option<(Duration, Duration)>,
+        timestamps: Vec<Instant>,
+        leader_changes: Vec<(Instant, u64)>,
+        reconfig_ts: Option<(Instant, Instant)>,
     ) {
         let meta_path = self.get_meta_results_path();
         let sub_dir = self.get_meta_results_sub_dir();
@@ -482,24 +483,50 @@ impl AtomicBroadcastMaster {
             .expect("Failed to open timestamps file");
 
         if let Some((reconfig_start, reconfig_end)) = reconfig_ts {
-            let start_ts = reconfig_start.as_micros() as u64;
-            let end_ts = reconfig_end.as_micros() as u64;
+            let start_ts = reconfig_start.as_u64();
+            let end_ts = reconfig_end.as_u64();
             writeln!(timestamps_file, "r,{},{} ", start_ts, end_ts)
                 .expect("Failed to write reconfig timestamps to timestamps file");
         }
-        for (pid, leader_change_ts) in leader_changes_t {
-            let ts = leader_change_ts.as_micros() as u64;
+        for (leader_change_ts, pid) in leader_changes {
+            let ts = leader_change_ts.as_u64();
             writeln!(timestamps_file, "l,{},{} ", pid, ts)
                 .expect("Failed to write leader changes to timestamps file");
         }
         for ts in timestamps {
-            let timestamp = ts.as_micros() as u64;
+            let timestamp = ts.as_u64();
             writeln!(timestamps_file, "{}", timestamp)
                 .expect("Failed to write raw timestamps file");
         }
         timestamps_file
             .flush()
             .expect("Failed to flush raw timestamps file");
+    }
+
+    fn persist_windowed_results(&mut self, windowed_res: Vec<usize>) {
+        let meta_path = self.get_meta_results_path();
+        let sub_dir = self.get_meta_results_sub_dir();
+        let windowed_dir = format!("{}/windowed/{}/", meta_path, sub_dir);
+        create_dir_all(&windowed_dir)
+            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &windowed_dir));
+        let mut windowed_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}{}.data",
+                &windowed_dir,
+                self.experiment_str.as_ref().unwrap()
+            ))
+            .expect("Failed to open windowed file");
+        let mut prev_n = 0;
+        for n in windowed_res {
+            write!(windowed_file, "{},", n - prev_n).expect("Failed to write windowed file");
+            prev_n = n;
+        }
+        writeln!(windowed_file).expect("Failed to write windowed file");
+        windowed_file
+            .flush()
+            .expect("Failed to flush windowed file");
     }
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
@@ -520,7 +547,7 @@ impl AtomicBroadcastMaster {
 
         let histo = self.latency_hist.as_mut().unwrap();
         for l in latencies {
-            let latency = l.as_micros() as u64;
+            let latency = l.as_millis() as u64;
             writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
             histo.record(latency).expect("Failed to record histogram");
         }
@@ -529,31 +556,32 @@ impl AtomicBroadcastMaster {
             .expect("Failed to flush raw latency file");
     }
 
-    fn persist_reconfig_latency_results(&mut self, latency: Duration) {
+    fn persist_reconfig_ts(&mut self, reconfig_ts: (Instant, Instant)) {
         let meta_path = self.get_meta_results_path();
         let sub_dir = self.get_meta_results_sub_dir();
-        let reconfig_latency_dir = format!("{}/reconfig_latency/{}/", meta_path, sub_dir);
-        create_dir_all(&reconfig_latency_dir).unwrap_or_else(|_| {
-            panic!(
-                "Failed to create given directory: {}",
-                &reconfig_latency_dir
-            )
-        });
+        let reconfig_ts_dir = format!("{}/reconfig_ts/{}/", meta_path, sub_dir);
+        create_dir_all(&reconfig_ts_dir)
+            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &reconfig_ts_dir));
         let mut reconfig_latency_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(format!(
-                "{}raw_{}.data",
-                &reconfig_latency_dir,
+                "{}{}.data",
+                &reconfig_ts_dir,
                 self.experiment_str.as_ref().unwrap()
             ))
-            .expect("Failed to open latency file");
+            .expect("Failed to open reconfig ts file");
 
-        writeln!(reconfig_latency_file, "{}", latency.as_millis() as u64)
-            .expect("Failed to write reconfig latency");
+        writeln!(
+            reconfig_latency_file,
+            "{},{}",
+            reconfig_ts.0.as_u64(),
+            reconfig_ts.1.as_u64()
+        )
+        .expect("Failed to write reconfig ts");
         reconfig_latency_file
             .flush()
-            .expect("Failed to flush raw latency file");
+            .expect("Failed to flush reconfig ts file");
     }
 
     fn persist_latency_summary(&mut self) {
@@ -664,9 +692,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             c.concurrent_proposals / 1000,
             c.reconfiguration
         ));
-        if c.concurrent_proposals == 1
-            || (self.reconfiguration.is_some() && cfg!(feature = "track_latency"))
-        {
+        if c.concurrent_proposals == 1 || cfg!(feature = "track_latency") {
             self.latency_hist =
                 Some(Histogram::<u64>::new(4).expect("Failed to create latency histogram"));
         }
@@ -699,7 +725,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let (client_timeout, meta_path, preloaded_log_size) =
             Self::load_benchmark_config(CONFIG_PATH);
         let pid_map: Option<HashMap<ActorPath, u32>> = if cfg!(feature = "use_pid_map") {
-            Some(Self::load_pid_map(CONFIG_PATH, &nodes))
+            Some(Self::load_pid_map(CONFIG_PATH, nodes.as_slice()))
         } else {
             None
         };
@@ -757,19 +783,20 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .ask_with(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
+        self.persist_windowed_results(meta_results.windowed_results);
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
             self.persist_latency_results(&meta_results.latencies);
         }
-        if let Some(reconfig_latency) = meta_results.reconfig_latency {
-            self.persist_reconfig_latency_results(reconfig_latency);
-        }
         #[cfg(feature = "track_timestamps")]
         {
-            let (timestamps, leader_changes_t) = meta_results
-                .timestamps_leader_changes
-                .expect("No timestamps results!");
-            let reconfig_ts = meta_results.timestamps_reconfig;
-            self.persist_timestamp_results(&timestamps, &leader_changes_t, reconfig_ts);
+            self.persist_timestamp_results(
+                meta_results.timestamps,
+                meta_results.leader_changes,
+                meta_results.reconfig_ts,
+            );
+        }
+        if let Some(reconfig_ts) = meta_results.reconfig_ts {
+            self.persist_reconfig_ts(reconfig_ts);
         }
 
         let kill_client_f = system.kill_notify(client);
@@ -967,6 +994,20 @@ impl fmt::Debug for IOMetaData {
             self.msgs_received,
             &convert(self.bytes_received as f64)
         ))
+    }
+}
+
+#[cfg(feature = "measure_io")]
+impl Add for IOMetaData {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            msgs_received: self.msgs_received + other.msgs_received,
+            bytes_received: self.bytes_received + other.bytes_received,
+            msgs_sent: self.msgs_sent + other.msgs_sent,
+            bytes_sent: self.bytes_sent + other.bytes_sent,
+        }
     }
 }
 
