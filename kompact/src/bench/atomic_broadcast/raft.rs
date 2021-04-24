@@ -800,17 +800,15 @@ where
                             let current_conf = self.raw_raft.raft.prs().configuration().clone();
                             let current_voters = current_conf.voters();
                             if !current_voters.contains(&self.raw_raft.raft.id) {
+                                assert!(!current_conf.contains(self.raw_raft.raft.id));
                                 self.reconfig_state = ReconfigurationState::Removed;
                                 self.stop_timers();
                                 self.supervisor.tell(RaftCompMsg::Removed);
                             } else {
                                 self.reconfig_state = ReconfigurationState::Finished;
-                            }
-                            let leader = self.raw_raft.raft.leader_id;
-                            if leader == 0 {
-                                // leader was removed
-                                self.state = State::Election; // reset leader so it can notify client when new leader emerges
-                                if self.reconfig_state != ReconfigurationState::Removed {
+                                if self.raw_raft.raft.leader_id == 0 {
+                                    // leader was removed
+                                    self.state = State::Election; // reset leader so it can notify client when new leader emerges
                                     // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
                                     let config = self.ctx.config();
@@ -831,7 +829,7 @@ where
                                     let intial_timeout_ticks =
                                         (election_timeout / initial_election_factor) / tick_period;
                                     let rnd = rng
-                                        .gen_range(intial_timeout_ticks, 2 * intial_timeout_ticks);
+                                        .gen_range(intial_timeout_ticks, 10 * intial_timeout_ticks);
                                     let timeout = rnd * tick_period;
                                     self.schedule_once(
                                         Duration::from_millis(timeout as u64),
@@ -839,6 +837,7 @@ where
                                     );
                                 }
                             }
+                            let leader = self.raw_raft.raft.leader_id;
                             let current_configuration =
                                 current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);
