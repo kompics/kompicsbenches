@@ -618,7 +618,7 @@ where
         #[cfg(feature = "periodic_replica_logging")]
         {
             self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                info!(c.ctx.log(), "Decided: {}", c.num_decided);
+                info!(c.ctx.log(), "Decided: {}, current_leader: {}, state: {:?}, reconfig_state; {:?}", c.num_decided, c.raw_raft.raft.leader_id, c.state, c.reconfig_state);
                 Handled::Ok
             });
         }
@@ -776,13 +776,10 @@ where
                         ConfChangeType::BeginMembershipChange => {
                             let reconfig = cc.get_configuration();
                             let start_index = cc.get_start_index();
-                            debug!(
+                            info!(
                                 self.ctx.log(),
-                                "{}",
-                                format!(
-                                    "Beginning reconfiguration to: {:?}, start_index: {}",
-                                    reconfig, start_index
-                                )
+                                "Beginning reconfiguration to: {:?}, start_index: {}",
+                                reconfig, start_index
                             );
                             self.raw_raft
                                 .raft
@@ -838,6 +835,7 @@ where
                                 }
                             }
                             let leader = self.raw_raft.raft.leader_id;
+                            info!(self.ctx.log(), "Finalized membership change: {:?}, current leader: {}, state: {:?}, reconfig_state: {:?}", current_conf, leader, self.state, self.reconfig_state);
                             let current_configuration =
                                 current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);

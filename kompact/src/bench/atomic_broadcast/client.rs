@@ -259,7 +259,7 @@ impl Client {
                 self.finished_latch
                     .decrement()
                     .expect("Failed to countdown finished latch");
-                let leader_changes_pid = self.leader_changes.iter().map(|(_ts, pid)| pid);
+                let leader_changes_pid: Vec<&u64> = self.leader_changes.iter().map(|(_ts, pid)| pid).collect();
                 if self.num_timed_out > 0 {
                     info!(self.ctx.log(), "Got all responses with {} timeouts. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}", self.num_timed_out, self.leader_changes.len(), leader_changes_pid, self.current_leader, self.start_ts.as_u64());
                     #[cfg(feature = "track_timeouts")]
