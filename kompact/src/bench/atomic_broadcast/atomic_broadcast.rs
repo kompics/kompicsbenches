@@ -224,6 +224,7 @@ pub struct AtomicBroadcastMaster {
     partitioning_actor: Option<Arc<Component<PartitioningActor>>>,
     latency_hist: Option<Histogram<u64>>,
     num_timed_out: Vec<u64>,
+    num_retried: Vec<u64>,
     experiment_str: Option<String>,
     meta_results_path: Option<String>,
     meta_results_sub_dir: Option<String>,
@@ -244,6 +245,7 @@ impl AtomicBroadcastMaster {
             partitioning_actor: None,
             latency_hist: None,
             num_timed_out: vec![],
+            num_retried: vec![],
             experiment_str: None,
             meta_results_path: None,
             meta_results_sub_dir: None,
@@ -625,9 +627,10 @@ impl AtomicBroadcastMaster {
         file.flush().expect("Failed to flush histogram file");
     }
 
-    fn persist_timeouts_summary(&mut self) {
-        let sum: u64 = self.num_timed_out.iter().sum();
-        if sum > 0 {
+    fn persist_timeouts_retried_summary(&mut self) {
+        let timed_out_sum: u64 = self.num_timed_out.iter().sum();
+        let retried_sum: u64 = self.num_retried.iter().sum();
+        if timed_out_sum > 0 || retried_sum > 0 {
             let meta_path = self
                 .meta_results_path
                 .as_ref()
@@ -641,21 +644,39 @@ impl AtomicBroadcastMaster {
                 .append(true)
                 .open(summary_file_path)
                 .expect("Failed to open meta summary file");
-            let len = self.num_timed_out.len();
-            let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
-            self.num_timed_out.sort_unstable();
-            let min = self.num_timed_out.first().unwrap();
-            let max = self.num_timed_out.last().unwrap();
-            let avg = sum / (self.iteration_id as u64);
-            let median = self.num_timed_out[len / 2];
-            let summary_str = format!(
-                "{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}",
-                timed_out_len, len, sum, avg, median, min, max
-            );
             writeln!(summary_file, "{}", self.experiment_str.as_ref().unwrap())
                 .expect("Failed to write meta summary file");
-            writeln!(summary_file, "{}", summary_str)
-                .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", summary_str));
+
+            if timed_out_sum > 0 {
+                let len = self.num_timed_out.len();
+                let timed_out_len = self.num_timed_out.iter().filter(|x| **x > 0).count();
+                self.num_timed_out.sort();
+                let min = self.num_timed_out.first().unwrap();
+                let max = self.num_timed_out.last().unwrap();
+                let avg = timed_out_sum / (self.iteration_id as u64);
+                let median = self.num_timed_out[len / 2];
+                let timed_out_summary_str = format!(
+                    "{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}",
+                    timed_out_len, len, timed_out_sum, avg, median, min, max
+                );
+                writeln!(summary_file, "{}", timed_out_summary_str)
+                    .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", timed_out_summary_str));
+            }
+            if retried_sum > 0 {
+                let len = self.num_retried.len();
+                let retried_len = self.num_retried.iter().filter(|x| **x > 0).count();
+                self.num_retried.sort();
+                let min = self.num_retried.first().unwrap();
+                let max = self.num_retried.last().unwrap();
+                let avg = retried_sum / (self.iteration_id as u64);
+                let median = self.num_timed_out[len / 2];
+                let retried_summary_str = format!(
+                    "{}/{} runs had retries. sum: {}, avg: {}, med: {}, min: {}, max: {}",
+                    retried_len, len, retried_sum, avg, median, min, max
+                );
+                writeln!(summary_file, "{}", retried_summary_str)
+                    .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", retried_summary_str));
+            }
             summary_file.flush().expect("Failed to flush meta file");
         }
     }
@@ -783,6 +804,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
             .ask_with(|promise| LocalClientMessage::Stop(Ask::new(promise, ())))
             .wait();
         self.num_timed_out.push(meta_results.num_timed_out);
+        self.num_retried.push(meta_results.num_retried);
         self.persist_windowed_results(meta_results.windowed_results);
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
             self.persist_latency_results(&meta_results.latencies);
@@ -813,7 +835,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
 
         if last_iteration {
             println!("Cleaning up last iteration");
-            self.persist_timeouts_summary();
+            self.persist_timeouts_retried_summary();
             if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
                 self.persist_latency_summary();
             }

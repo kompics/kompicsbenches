@@ -51,6 +51,7 @@ impl ProposalMetaData {
 #[derive(Debug)]
 pub struct MetaResults {
     pub num_timed_out: u64,
+    pub num_retried: u64,
     pub latencies: Vec<Duration>,
     pub leader_changes: Vec<(Instant, u64)>,
     pub windowed_results: Vec<usize>,
@@ -61,6 +62,7 @@ pub struct MetaResults {
 impl MetaResults {
     pub fn with(
         num_timed_out: u64,
+        num_retried: u64,
         latencies: Vec<Duration>,
         leader_changes: Vec<(Instant, u64)>,
         windowed_results: Vec<usize>,
@@ -69,6 +71,7 @@ impl MetaResults {
     ) -> Self {
         MetaResults {
             num_timed_out,
+            num_retried,
             latencies,
             leader_changes,
             windowed_results,
@@ -97,6 +100,7 @@ pub struct Client {
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
+    num_retried: usize,
     leader_changes: Vec<(Instant, u64)>,
     stop_ask: Option<Ask<(), MetaResults>>,
     window_timer: Option<ScheduledTimer>,
@@ -150,6 +154,7 @@ impl Client {
             state: ExperimentState::Setup,
             current_config: initial_config,
             num_timed_out: 0,
+            num_retried: 0,
             leader_changes: vec![],
             stop_ask: None,
             window_timer: None,
@@ -202,6 +207,7 @@ impl Client {
 
     fn send_retry_proposals(&mut self) {
         let retry_proposals: Vec<u64> = std::mem::take(&mut self.retry_proposals);
+        self.num_retried += retry_proposals.len();
         for id in retry_proposals {
             self.propose_normal(id);
         }
@@ -260,8 +266,8 @@ impl Client {
                     .decrement()
                     .expect("Failed to countdown finished latch");
                 let leader_changes_pid: Vec<&u64> = self.leader_changes.iter().map(|(_ts, pid)| pid).collect();
-                if self.num_timed_out > 0 {
-                    info!(self.ctx.log(), "Got all responses with {} timeouts. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}", self.num_timed_out, self.leader_changes.len(), leader_changes_pid, self.current_leader, self.start_ts.as_u64());
+                if self.num_timed_out > 0 || self.num_retried > 0 {
+                    info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes_pid, self.current_leader, self.start_ts.as_u64());
                     #[cfg(feature = "track_timeouts")]
                     {
                         let min = self.timeouts.iter().min();
@@ -345,6 +351,7 @@ impl Client {
         // info!(self.ctx.log(), "Timed out proposal {}", id);
         self.num_timed_out += 1;
         self.propose_normal(id);
+        let _ = self.schedule_once(self.timeout, move |c, _| c.proposal_timeout(id));
         #[cfg(feature = "track_timeouts")]
         {
             self.timeouts.push(id);
@@ -396,6 +403,7 @@ impl Client {
             #[allow(unused_mut)] // TODO remove
             let mut meta_results = MetaResults::with(
                 self.num_timed_out,
+                self.num_retried as u64,
                 latencies,
                 std::mem::take(&mut self.leader_changes),
                 std::mem::take(&mut self.windows),

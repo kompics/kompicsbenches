@@ -454,8 +454,7 @@ where
     hb_reconfig: Option<ReconfigurationProposal>,
     max_inflight: usize,
     stop_ask: Option<Ask<(), ()>>,
-    #[cfg(feature = "periodic_replica_logging")]
-    num_decided: usize,
+
 }
 
 impl<S> ComponentLifecycle for RaftReplica<S>
@@ -596,8 +595,6 @@ where
             hb_reconfig: None,
             max_inflight,
             stop_ask: None,
-            #[cfg(feature = "periodic_replica_logging")]
-            num_decided: 0,
         }
     }
 
@@ -618,7 +615,7 @@ where
         #[cfg(feature = "periodic_replica_logging")]
         {
             self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                info!(c.ctx.log(), "Decided: {}, current_leader: {}, state: {:?}, reconfig_state; {:?}", c.num_decided, c.raw_raft.raft.leader_id, c.state, c.reconfig_state);
+                info!(c.ctx.log(), "Committed: {}, current_leader: {}, state: {:?}, reconfig_state: {:?}", c.raw_raft.raft.raft_log.committed, c.raw_raft.raft.leader_id, c.state, c.reconfig_state);
                 Handled::Ok
             });
         }
@@ -633,7 +630,7 @@ where
         {
             info!(
                 self.ctx.log(),
-                "Stopped timers. Decided: {}", self.num_decided
+                "Stopped timers. Committed: {}", self.raw_raft.raft.raft_log.committed
             );
         }
     }
@@ -753,10 +750,6 @@ where
         // let mut next_conf_change: Option<ConfChangeType> = None;
         // Apply all committed proposals.
         if let Some(committed_entries) = ready.committed_entries.take() {
-            #[cfg(feature = "periodic_replica_logging")]
-            {
-                self.num_decided += committed_entries.len();
-            }
             for entry in &committed_entries {
                 if entry.data.is_empty() {
                     // From new elected leaders.
