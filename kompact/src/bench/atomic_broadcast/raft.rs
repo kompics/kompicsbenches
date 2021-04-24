@@ -7,6 +7,8 @@ use super::{
 };
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
+#[cfg(feature = "periodic_replica_logging")]
+use crate::bench::atomic_broadcast::exp_params::WINDOW_DURATION;
 use crate::{
     bench::atomic_broadcast::{
         atomic_broadcast::Done,
@@ -452,6 +454,8 @@ where
     hb_reconfig: Option<ReconfigurationProposal>,
     max_inflight: usize,
     stop_ask: Option<Ask<(), ()>>,
+    #[cfg(feature = "periodic_replica_logging")]
+    num_decided: usize,
 }
 
 impl<S> ComponentLifecycle for RaftReplica<S>
@@ -592,6 +596,8 @@ where
             hb_reconfig: None,
             max_inflight,
             stop_ask: None,
+            #[cfg(feature = "periodic_replica_logging")]
+            num_decided: 0,
         }
     }
 
@@ -609,12 +615,26 @@ where
                 rc.tick()
             });
         self.timers = Some((ready_timer, tick_timer));
+        #[cfg(feature = "periodic_replica_logging")]
+        {
+            self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                info!(c.ctx.log(), "Decided: {}", c.num_decided);
+                Handled::Ok
+            });
+        }
     }
 
     fn stop_timers(&mut self) {
         if let Some(timers) = self.timers.take() {
             self.cancel_timer(timers.0);
             self.cancel_timer(timers.1);
+        }
+        #[cfg(feature = "periodic_replica_logging")]
+        {
+            info!(
+                self.ctx.log(),
+                "Stopped timers. Decided: {}", self.num_decided
+            );
         }
     }
 
@@ -726,18 +746,17 @@ where
 
         // Persistent raft logs. It's necessary because in `RawNode::advance` we stabilize
         // raft logs to the latest position.
-        if let Err(e) = store.append_log(ready.entries()) {
-            error!(
-                self.ctx.log(),
-                "{}",
-                format!("persist raft log fail: {:?}, need to retry or panic", e)
-            );
-            return Handled::Ok;
-        }
+        store
+            .append_log(ready.entries())
+            .expect("Failed to append entries to raft storage log");
 
         // let mut next_conf_change: Option<ConfChangeType> = None;
         // Apply all committed proposals.
         if let Some(committed_entries) = ready.committed_entries.take() {
+            #[cfg(feature = "periodic_replica_logging")]
+            {
+                self.num_decided += committed_entries.len();
+            }
             for entry in &committed_entries {
                 if entry.data.is_empty() {
                     // From new elected leaders.
@@ -770,6 +789,7 @@ where
                                 .begin_membership_change(&cc)
                                 .expect("Failed to begin reconfiguration");
                             assert!(self.raw_raft.raft.is_in_membership_change());
+                            self.reconfig_state = ReconfigurationState::Pending;
                         }
                         ConfChangeType::FinalizeMembershipChange => {
                             self.raw_raft

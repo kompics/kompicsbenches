@@ -34,6 +34,9 @@ use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::*
 #[cfg(feature = "measure_io")]
 use quanta::{Clock, Instant};
 
+#[cfg(feature = "periodic_replica_logging")]
+use crate::bench::atomic_broadcast::exp_params::WINDOW_DURATION;
+
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
 
@@ -1354,6 +1357,8 @@ where
     stopped: bool,
     stopped_peers: HashSet<u64>,
     stop_ask: Option<Ask<bool, ()>>,
+    #[cfg(feature = "periodic_replica_logging")]
+    num_decided: usize,
 }
 
 impl<S, P> PaxosReplica<S, P>
@@ -1382,6 +1387,8 @@ where
             timer: None,
             stopped: false,
             stop_ask: None,
+            #[cfg(feature = "periodic_replica_logging")]
+            num_decided: 0,
         }
     }
 
@@ -1397,11 +1404,28 @@ where
                 Handled::Ok
             });
         self.timer = Some(timer);
+        #[cfg(feature = "periodic_replica_logging")]
+        {
+            self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
+                info!(
+                    c.ctx.log(),
+                    "Decided: {} in config_id: {}", c.num_decided, c.config_id
+                );
+                Handled::Ok
+            });
+        }
     }
 
     fn stop_timer(&mut self) {
         if let Some(timer) = self.timer.take() {
             self.cancel_timer(timer);
+        }
+        #[cfg(feature = "periodic_replica_logging")]
+        {
+            info!(
+                self.ctx.log(),
+                "Stopped timers. Decided: {} in config_id: {}", self.num_decided, self.config_id
+            );
         }
     }
 
@@ -1463,7 +1487,12 @@ where
             }
         } else {
             // follower: just handle a possible reconfiguration
-            if let Some(Entry::StopSign(ss)) = self.paxos.get_decided_entries().last().cloned() {
+            let decided_entries = self.paxos.get_decided_entries();
+            #[cfg(feature = "periodic_replica_logging")]
+            {
+                self.num_decided += decided_entries.len();
+            }
+            if let Some(Entry::StopSign(ss)) = decided_entries.last().cloned() {
                 self.handle_stopsign(&ss);
             }
         }

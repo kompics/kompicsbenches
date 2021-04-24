@@ -137,11 +137,11 @@ impl BallotLeaderComp {
     fn check_leader(&mut self) {
         let mut ballots = Vec::with_capacity(self.peers.len());
         std::mem::swap(&mut self.ballots, &mut ballots);
-        info!(self.ctx.log(), "check leader ballots: {:?}", ballots);
+        debug!(self.ctx.log(), "check leader ballots: {:?}", ballots);
         let top_ballot = ballots.into_iter().max().unwrap();
         if top_ballot < self.leader.unwrap_or_default() {
             // did not get HB from leader
-            info!(
+            debug!(
                 self.ctx.log(),
                 "Did not get hb from leader. top: {:?}, leader: {:?}", top_ballot, self.leader
             );
