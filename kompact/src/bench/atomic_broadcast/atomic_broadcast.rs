@@ -28,11 +28,7 @@ use std::{
 };
 use tikv_raft::storage::MemStorage;
 
-#[cfg(feature = "measure_io")]
-use pretty_bytes::converter::convert;
 use quanta::Instant;
-#[cfg(feature = "measure_io")]
-use std::{fmt, ops::Add};
 
 const TCP_NODELAY: bool = true;
 pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -462,7 +458,6 @@ impl AtomicBroadcastMaster {
             .expect("No meta results sub dir path!")
     }
 
-    #[cfg(feature = "track_timestamps")]
     fn persist_timestamp_results(
         &mut self,
         timestamps: Vec<Instant>,
@@ -558,34 +553,6 @@ impl AtomicBroadcastMaster {
             .expect("Failed to flush raw latency file");
     }
 
-    fn persist_reconfig_ts(&mut self, reconfig_ts: (Instant, Instant)) {
-        let meta_path = self.get_meta_results_path();
-        let sub_dir = self.get_meta_results_sub_dir();
-        let reconfig_ts_dir = format!("{}/reconfig_ts/{}/", meta_path, sub_dir);
-        create_dir_all(&reconfig_ts_dir)
-            .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &reconfig_ts_dir));
-        let mut reconfig_latency_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(format!(
-                "{}{}.data",
-                &reconfig_ts_dir,
-                self.experiment_str.as_ref().unwrap()
-            ))
-            .expect("Failed to open reconfig ts file");
-
-        writeln!(
-            reconfig_latency_file,
-            "{},{}",
-            reconfig_ts.0.as_u64(),
-            reconfig_ts.1.as_u64()
-        )
-        .expect("Failed to write reconfig ts");
-        reconfig_latency_file
-            .flush()
-            .expect("Failed to flush reconfig ts file");
-    }
-
     fn persist_latency_summary(&mut self) {
         let meta_path = self.get_meta_results_path();
         let dir = format!("{}/latency/", meta_path);
@@ -659,8 +626,12 @@ impl AtomicBroadcastMaster {
                     "{}/{} runs had timeouts. sum: {}, avg: {}, med: {}, min: {}, max: {}",
                     timed_out_len, len, timed_out_sum, avg, median, min, max
                 );
-                writeln!(summary_file, "{}", timed_out_summary_str)
-                    .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", timed_out_summary_str));
+                writeln!(summary_file, "{}", timed_out_summary_str).unwrap_or_else(|_| {
+                    panic!(
+                        "Failed to write meta summary file: {}",
+                        timed_out_summary_str
+                    )
+                });
             }
             if retried_sum > 0 {
                 let len = self.num_retried.len();
@@ -674,8 +645,9 @@ impl AtomicBroadcastMaster {
                     "{}/{} runs had retries. sum: {}, avg: {}, med: {}, min: {}, max: {}",
                     retried_len, len, retried_sum, avg, median, min, max
                 );
-                writeln!(summary_file, "{}", retried_summary_str)
-                    .unwrap_or_else(|_| panic!("Failed to write meta summary file: {}", retried_summary_str));
+                writeln!(summary_file, "{}", retried_summary_str).unwrap_or_else(|_| {
+                    panic!("Failed to write meta summary file: {}", retried_summary_str)
+                });
             }
             summary_file.flush().expect("Failed to flush meta file");
         }
@@ -809,16 +781,12 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         if self.concurrent_proposals == Some(1) || cfg!(feature = "track_latency") {
             self.persist_latency_results(&meta_results.latencies);
         }
-        #[cfg(feature = "track_timestamps")]
-        {
+        if meta_results.reconfig_ts.is_some() || !meta_results.leader_changes.is_empty() {
             self.persist_timestamp_results(
                 meta_results.timestamps,
                 meta_results.leader_changes,
                 meta_results.reconfig_ts,
             );
-        }
-        if let Some(reconfig_ts) = meta_results.reconfig_ts {
-            self.persist_reconfig_ts(reconfig_ts);
         }
 
         let kill_client_f = system.kill_notify(client);
@@ -961,74 +929,6 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             system
                 .shutdown()
                 .expect("Kompact didn't shut down properly");
-        }
-    }
-}
-
-#[cfg(feature = "measure_io")]
-#[derive(Copy, Clone, Default, Eq, PartialEq)]
-pub struct IOMetaData {
-    msgs_sent: usize,
-    bytes_sent: usize,
-    msgs_received: usize,
-    bytes_received: usize,
-}
-
-#[cfg(feature = "measure_io")]
-impl IOMetaData {
-    pub fn update_received<T>(&mut self, msg: &T) {
-        let size = std::mem::size_of_val(msg);
-        self.bytes_received += size;
-        self.msgs_received += 1;
-    }
-
-    pub fn update_sent<T>(&mut self, msg: &T) {
-        let size = std::mem::size_of_val(msg);
-        self.bytes_sent += size;
-        self.msgs_sent += 1;
-    }
-
-    pub fn update_sent_with_size(&mut self, size: usize) {
-        self.bytes_sent += size;
-        self.msgs_sent += 1;
-    }
-
-    pub fn update_received_with_size(&mut self, size: usize) {
-        self.bytes_received += size;
-        self.msgs_received += 1;
-    }
-
-    pub fn reset(&mut self) {
-        self.msgs_received = 0;
-        self.bytes_received = 0;
-        self.msgs_sent = 0;
-        self.bytes_sent = 0;
-    }
-}
-
-#[cfg(feature = "measure_io")]
-impl fmt::Debug for IOMetaData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!(
-            "Sent: ({}, {:?}), Received: ({}, {:?})",
-            self.msgs_sent,
-            &convert(self.bytes_sent as f64),
-            self.msgs_received,
-            &convert(self.bytes_received as f64)
-        ))
-    }
-}
-
-#[cfg(feature = "measure_io")]
-impl Add for IOMetaData {
-    type Output = Self;
-
-    fn add(self, other: Self) -> Self {
-        Self {
-            msgs_received: self.msgs_received + other.msgs_received,
-            bytes_received: self.bytes_received + other.bytes_received,
-            msgs_sent: self.msgs_sent + other.msgs_sent,
-            bytes_sent: self.bytes_sent + other.bytes_sent,
         }
     }
 }

@@ -1,8 +1,8 @@
-#[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::atomic_broadcast::IOMetaData;
 use crate::bench::atomic_broadcast::messages::{
     paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
 };
+#[cfg(feature = "measure_io")]
+use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use hashbrown::HashSet;
 use kompact::prelude::*;
 use leaderpaxos::leader_election::{Leader, Round};

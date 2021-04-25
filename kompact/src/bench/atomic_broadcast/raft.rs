@@ -8,7 +8,7 @@ use super::{
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 #[cfg(feature = "periodic_replica_logging")]
-use crate::bench::atomic_broadcast::exp_params::WINDOW_DURATION;
+use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
 use crate::{
     bench::atomic_broadcast::{
         atomic_broadcast::Done,
@@ -454,7 +454,6 @@ where
     hb_reconfig: Option<ReconfigurationProposal>,
     max_inflight: usize,
     stop_ask: Option<Ask<(), ()>>,
-
 }
 
 impl<S> ComponentLifecycle for RaftReplica<S>
@@ -615,7 +614,14 @@ where
         #[cfg(feature = "periodic_replica_logging")]
         {
             self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                info!(c.ctx.log(), "Committed: {}, current_leader: {}, state: {:?}, reconfig_state: {:?}", c.raw_raft.raft.raft_log.committed, c.raw_raft.raft.leader_id, c.state, c.reconfig_state);
+                info!(
+                    c.ctx.log(),
+                    "Committed: {}, current_leader: {}, state: {:?}, reconfig_state: {:?}",
+                    c.raw_raft.raft.raft_log.committed,
+                    c.raw_raft.raft.leader_id,
+                    c.state,
+                    c.reconfig_state
+                );
                 Handled::Ok
             });
         }
@@ -772,7 +778,8 @@ where
                             info!(
                                 self.ctx.log(),
                                 "Beginning reconfiguration to: {:?}, start_index: {}",
-                                reconfig, start_index
+                                reconfig,
+                                start_index
                             );
                             self.raw_raft
                                 .raft
@@ -799,7 +806,7 @@ where
                                 if self.raw_raft.raft.leader_id == 0 {
                                     // leader was removed
                                     self.state = State::Election; // reset leader so it can notify client when new leader emerges
-                                    // campaign later if we are not removed
+                                                                  // campaign later if we are not removed
                                     let mut rng = rand::thread_rng();
                                     let config = self.ctx.config();
                                     let tick_period = config["raft"]["tick_period"]

@@ -30,12 +30,12 @@ use leaderpaxos::{leader_election::*, paxos::*, storage::*};
 
 use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::{atomic_broadcast::IOMetaData, exp_params::*};
+use crate::bench::atomic_broadcast::{util::exp_params::*, util::io_metadata::IOMetaData};
 #[cfg(feature = "measure_io")]
 use quanta::{Clock, Instant};
 
 #[cfg(feature = "periodic_replica_logging")]
-use crate::bench::atomic_broadcast::exp_params::WINDOW_DURATION;
+use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -281,7 +281,7 @@ where
         Paxos::with(
             config_id,
             self.pid,
-            raw_peers.unwrap_or_else(|| vec![1]),   // if peers is empty then we will set it later upon reconfiguration, hence initialise with vec![1] for now
+            raw_peers.unwrap_or_else(|| vec![1]), // if peers is empty then we will set it later upon reconfiguration, hence initialise with vec![1] for now
             storage,
             skip_prepare_use_leader,
             Some(max_inflight),

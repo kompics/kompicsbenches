@@ -1,9 +1,9 @@
 extern crate raft as tikv_raft;
 
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::atomic_broadcast::IOMetaData;
+use crate::bench::atomic_broadcast::util::exp_params::*;
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::exp_params::*;
+use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 use crate::bench::atomic_broadcast::{
     ble::Ballot,
     messages::{

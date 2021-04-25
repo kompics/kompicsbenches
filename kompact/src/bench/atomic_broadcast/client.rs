@@ -4,8 +4,8 @@ use super::messages::{
 };
 use crate::bench::atomic_broadcast::{
     atomic_broadcast::ReconfigurationPolicy,
-    exp_params::*,
     messages::{ReconfigurationProposal, ReconfigurationResp},
+    util::exp_params::*,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
@@ -265,7 +265,8 @@ impl Client {
                 self.finished_latch
                     .decrement()
                     .expect("Failed to countdown finished latch");
-                let leader_changes_pid: Vec<&u64> = self.leader_changes.iter().map(|(_ts, pid)| pid).collect();
+                let leader_changes_pid: Vec<&u64> =
+                    self.leader_changes.iter().map(|(_ts, pid)| pid).collect();
                 if self.num_timed_out > 0 || self.num_retried > 0 {
                     info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes_pid, self.current_leader, self.start_ts.as_u64());
                     #[cfg(feature = "track_timeouts")]
@@ -327,11 +328,6 @@ impl Client {
             } else {
                 self.reconfig = None;
                 self.current_config = new_config;
-                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader {
-                    self.current_leader = rr.latest_leader;
-                    self.leader_changes
-                        .push((self.clock.now(), rr.latest_leader));
-                }
                 info!(
                     self.ctx.log(),
                     "Reconfig OK, leader: {}, old: {}, current_config: {:?}",
@@ -339,6 +335,11 @@ impl Client {
                     self.current_leader,
                     self.current_config
                 );
+                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader {
+                    self.current_leader = rr.latest_leader;
+                    self.leader_changes
+                        .push((self.clock.now(), rr.latest_leader));
+                }
                 self.send_concurrent_proposals();
             }
         }
@@ -516,7 +517,7 @@ impl Actor for Client {
                                     self.rem_preloaded_proposals -= 1;
                                     if self.rem_preloaded_proposals == 0 {
                                         match self.leader_election_latch.decrement() {
-                                            Ok(_) => info!(self.ctx.log(), "Got all preloaded responses. Decrementing leader latch. pid: {}. Current config: {:?}. Payload size: {:?}", self.current_leader, self.current_config, DATA_SIZE),
+                                            Ok(_) => info!(self.ctx.log(), "Got all preloaded responses. Decrementing leader latch. leader: {}. Current config: {:?}. Payload size: {:?}", self.current_leader, self.current_config, DATA_SIZE),
                                             Err(e) => if e != CountdownError::AlreadySet {
                                                 panic!("Failed to decrement election latch: {:?}", e);
                                             }
