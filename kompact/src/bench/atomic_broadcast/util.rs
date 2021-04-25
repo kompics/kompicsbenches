@@ -4,10 +4,15 @@ pub mod exp_params {
     pub const DATA_SIZE: usize = 8;
 }
 
-#[cfg(feature = "measure_io")]
 pub mod io_metadata {
+    #[cfg(feature = "measure_io")]
     use pretty_bytes::converter::convert;
+    #[cfg(feature = "measure_io")]
     use std::{fmt, ops::Add};
+    use std::{
+        fs::File,
+        sync::{Arc, Mutex},
+    };
 
     #[derive(Copy, Clone, Default, Eq, PartialEq)]
     pub struct IOMetaData {
@@ -17,6 +22,7 @@ pub mod io_metadata {
         bytes_received: usize,
     }
 
+    #[cfg(feature = "measure_io")]
     impl IOMetaData {
         pub fn update_received<T>(&mut self, msg: &T) {
             let size = std::mem::size_of_val(msg);
@@ -48,6 +54,7 @@ pub mod io_metadata {
         }
     }
 
+    #[cfg(feature = "measure_io")]
     impl fmt::Debug for IOMetaData {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.write_fmt(format_args!(
@@ -60,6 +67,7 @@ pub mod io_metadata {
         }
     }
 
+    #[cfg(feature = "measure_io")]
     impl Add for IOMetaData {
         type Output = Self;
 
@@ -70,6 +78,18 @@ pub mod io_metadata {
                 msgs_sent: self.msgs_sent + other.msgs_sent,
                 bytes_sent: self.bytes_sent + other.bytes_sent,
             }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct LogIOMetaData {
+        pub file: Arc<Mutex<File>>,
+    }
+
+    #[cfg(feature = "measure_io")]
+    impl LogIOMetaData {
+        pub fn with(file: Arc<Mutex<File>>) -> Self {
+            Self { file }
         }
     }
 }

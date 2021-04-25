@@ -11,14 +11,18 @@ use crate::bench::atomic_broadcast::{
         raft::{RaftMsg, RawRaftSer},
         AtomicBroadcastMsg, ProposalResp, ReconfigurationResp, StopMsg as NetStopMsg, StopMsgDeser,
     },
+    util::io_metadata::LogIOMetaData,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
 use leaderpaxos::messages::Message as RawPaxosMsg;
+
 #[cfg(feature = "measure_io")]
 use leaderpaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
 use quanta::{Clock, Instant};
+#[cfg(feature = "measure_io")]
+use std::io::Write;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -132,29 +136,6 @@ impl ComponentLifecycle for Communicator {
         }
         Handled::Ok
     }
-
-    fn on_kill(&mut self) -> Handled {
-        #[cfg(feature = "measure_io")]
-        {
-            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-                self.io_windows.push((self.clock.now(), self.io_metadata));
-                self.io_metadata.reset();
-                let mut str = String::new();
-                let total =
-                    self.io_windows
-                        .iter()
-                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                            sum + *io_meta
-                        });
-                info!(
-                    self.ctx.log(),
-                    "Total Communicator IO: {:?}\n{}", total, str
-                );
-            }
-        }
-        Handled::Ok
-    }
 }
 
 impl Provide<CommunicationPort> for Communicator {
@@ -207,10 +188,37 @@ impl Provide<CommunicationPort> for Communicator {
 }
 
 impl Actor for Communicator {
-    type Message = ();
+    type Message = LogIOMetaData;
 
-    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
-        // ignore
+    #[allow(unused_variables)]
+    fn receive_local(&mut self, log_io: LogIOMetaData) -> Handled {
+        #[cfg(feature = "measure_io")]
+        {
+            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
+                self.io_windows.push((self.clock.now(), self.io_metadata));
+                self.io_metadata.reset();
+                let mut str = String::new();
+                let total =
+                    self.io_windows
+                        .iter()
+                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                            sum + *io_meta
+                        });
+
+                let mut file = log_io.file.lock().unwrap();
+                writeln!(
+                    file,
+                    "Total Communicator IO: {:?}, cid: {:?}\n{}",
+                    total,
+                    self.ctx.id().to_hyphenated_ref().to_string(),
+                    str
+                )
+                .expect("Failed to write IO results file");
+                file.flush().expect("Failed to flush IO results file");
+                drop(file); // drop just to be sure
+            }
+        }
         Handled::Ok
     }
 

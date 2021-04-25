@@ -29,32 +29,14 @@ use std::{
 use tikv_raft::storage::MemStorage;
 
 use quanta::Instant;
+#[cfg(feature = "measure_io")]
+use std::fs::File;
 
 const TCP_NODELAY: bool = true;
 pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
 const PAXOS_PATH: &str = "paxos_replica";
 const RAFT_PATH: &str = "raft_replica";
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Debug, Clone)]
-pub struct ClientParams {
-    algorithm: String,
-    num_nodes: u64,
-    is_reconfig_exp: bool,
-}
-
-impl ClientParams {
-    fn with(algorithm: String, num_nodes: u64, is_reconfig_exp: bool) -> ClientParams {
-        ClientParams {
-            algorithm,
-            num_nodes,
-            is_reconfig_exp,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Done;
 
 #[derive(Default)]
 pub struct AtomicBroadcast;
@@ -82,29 +64,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn str_to_client_conf(s: String) -> Result<Self::ClientConf, BenchmarkError> {
-        let split: Vec<_> = s.split(',').collect();
-        if split.len() != 3 {
-            Err(BenchmarkError::InvalidMessage(format!(
-                "String '{}' does not represent a client conf! Split length should be 2",
-                s
-            )))
-        } else {
-            let algorithm = split[0].to_lowercase();
-            let num_nodes = split[1].parse::<u64>().map_err(|e| {
-                BenchmarkError::InvalidMessage(format!(
-                    "String to ClientConf error: '{}' does not represent a node id: {:?}",
-                    split[1], e
-                ))
-            })?;
-            let r = split[2].parse::<u8>().map_err(|e| {
-                BenchmarkError::InvalidMessage(format!(
-                    "String to ClientConf error: '{}' should be 0 or 1: {:?}",
-                    split[2], e
-                ))
-            })?;
-            let is_reconfig_exp = r == 1;
-            Ok(ClientParams::with(algorithm, num_nodes, is_reconfig_exp))
-        }
+        Ok(ClientParams::with(s))
     }
 
     fn str_to_client_data(str: String) -> Result<Self::ClientData, BenchmarkError> {
@@ -115,8 +75,7 @@ impl DistributedBenchmark for AtomicBroadcast {
     }
 
     fn client_conf_to_str(c: Self::ClientConf) -> String {
-        let r: u8 = if c.is_reconfig_exp { 1 } else { 0 };
-        format!("{},{},{}", c.algorithm, c.num_nodes, r)
+        c.experiment_str
     }
 
     fn client_data_to_str(d: Self::ClientData) -> String {
@@ -146,6 +105,10 @@ pub struct ExperimentParams {
     pub max_inflight: usize,
     pub initial_election_factor: u64,
     pub preloaded_log_size: u64,
+    #[allow(dead_code)]
+    io_meta_results_path: String,
+    #[allow(dead_code)]
+    experiment_str: String,
 }
 
 impl ExperimentParams {
@@ -155,6 +118,8 @@ impl ExperimentParams {
         max_inflight: usize,
         initial_election_factor: u64,
         preloaded_log_size: u64,
+        io_meta_results_path: String,
+        experiment_str: String,
     ) -> ExperimentParams {
         ExperimentParams {
             election_timeout,
@@ -162,13 +127,16 @@ impl ExperimentParams {
             max_inflight,
             initial_election_factor,
             preloaded_log_size,
+            io_meta_results_path,
+            experiment_str,
         }
     }
 
-    pub fn load_from_file<P>(path: P) -> ExperimentParams
-    where
-        P: Into<PathBuf>,
-    {
+    pub fn load_from_file(
+        path: &str,
+        meta_sub_dir: String,
+        experiment_str: String,
+    ) -> ExperimentParams {
         let p: PathBuf = path.into();
         let config = HoconLoader::new()
             .load_file(p)
@@ -191,13 +159,34 @@ impl ExperimentParams {
         let preloaded_log_size = config["experiment"]["preloaded_log_size"]
             .as_i64()
             .expect("Failed to load preloaded_log_size") as u64;
+        let meta_path = config["experiment"]["meta_results_path"]
+            .as_string()
+            .expect("No path for meta results!");
+        let io_meta_results_path = format!("{}/{}/io", meta_path, meta_sub_dir); // meta_results/3-10k/io/paxos,3,10000.data
         ExperimentParams::new(
             election_timeout,
             outgoing_period,
             max_inflight,
             initial_election_factor,
             preloaded_log_size,
+            io_meta_results_path,
+            experiment_str,
         )
+    }
+
+    #[cfg(feature = "measure_io")]
+    pub fn get_io_meta_results_file(&self) -> File {
+        create_dir_all(&self.io_meta_results_path).expect("Failed to create io meta directory: {}");
+        let io_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!(
+                "{}/{}.data",
+                self.io_meta_results_path.as_str(),
+                self.experiment_str.as_str()
+            ))
+            .expect("Failed to open timestamps file");
+        io_file
     }
 }
 
@@ -446,16 +435,16 @@ impl AtomicBroadcastMaster {
         pid_map
     }
 
-    fn get_meta_results_path(&self) -> &String {
-        self.meta_results_path
+    fn get_meta_results_dir(&self, results_type: Option<&str>) -> String {
+        let meta = self
+            .meta_results_path
             .as_ref()
-            .expect("No meta results path!")
-    }
-
-    fn get_meta_results_sub_dir(&self) -> &String {
-        self.meta_results_sub_dir
+            .expect("No meta results path!");
+        let sub_dir = self
+            .meta_results_sub_dir
             .as_ref()
-            .expect("No meta results sub dir path!")
+            .expect("No meta results sub dir path!");
+        format!("{}/{}/{}", meta, sub_dir, results_type.unwrap_or("/"))
     }
 
     fn persist_timestamp_results(
@@ -464,16 +453,14 @@ impl AtomicBroadcastMaster {
         leader_changes: Vec<(Instant, u64)>,
         reconfig_ts: Option<(Instant, Instant)>,
     ) {
-        let meta_path = self.get_meta_results_path();
-        let sub_dir = self.get_meta_results_sub_dir();
-        let timestamps_dir = format!("{}/timestamps/{}/", meta_path, sub_dir);
+        let timestamps_dir = self.get_meta_results_dir(Some("timestamps"));
         create_dir_all(&timestamps_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &timestamps_dir));
         let mut timestamps_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(format!(
-                "{}raw_{}.data",
+                "{}/raw_{}.data",
                 &timestamps_dir,
                 self.experiment_str.as_ref().unwrap()
             ))
@@ -501,16 +488,14 @@ impl AtomicBroadcastMaster {
     }
 
     fn persist_windowed_results(&mut self, windowed_res: Vec<usize>) {
-        let meta_path = self.get_meta_results_path();
-        let sub_dir = self.get_meta_results_sub_dir();
-        let windowed_dir = format!("{}/windowed/{}/", meta_path, sub_dir);
+        let windowed_dir = self.get_meta_results_dir(Some("windowed"));
         create_dir_all(&windowed_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &windowed_dir));
         let mut windowed_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(format!(
-                "{}{}.data",
+                "{}/{}.data",
                 &windowed_dir,
                 self.experiment_str.as_ref().unwrap()
             ))
@@ -527,16 +512,14 @@ impl AtomicBroadcastMaster {
     }
 
     fn persist_latency_results(&mut self, latencies: &[Duration]) {
-        let meta_path = self.get_meta_results_path();
-        let sub_dir = self.get_meta_results_sub_dir();
-        let latency_dir = format!("{}/latency/{}/", meta_path, sub_dir);
+        let latency_dir = self.get_meta_results_dir(Some("latency"));
         create_dir_all(&latency_dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", &latency_dir));
         let mut latency_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(format!(
-                "{}raw_{}.data",
+                "{}/raw_{}.data",
                 &latency_dir,
                 self.experiment_str.as_ref().unwrap()
             ))
@@ -554,15 +537,14 @@ impl AtomicBroadcastMaster {
     }
 
     fn persist_latency_summary(&mut self) {
-        let meta_path = self.get_meta_results_path();
-        let dir = format!("{}/latency/", meta_path);
+        let dir = self.get_meta_results_dir(Some("latency"));
         create_dir_all(&dir)
             .unwrap_or_else(|_| panic!("Failed to create given directory: {}", dir));
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(format!(
-                "{}summary_{}.out",
+                "{}/summary_{}.out",
                 &dir,
                 self.experiment_str.as_ref().unwrap()
             ))
@@ -666,24 +648,15 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
     ) -> Result<Self::ClientConf, BenchmarkError> {
         println!("Setting up Atomic Broadcast (Master)");
         self.validate_experiment_params(&c, m.number_of_clients())?;
-        let experiment_str = format!(
-            "{},{},{},{},{},{}",
-            c.algorithm,
-            c.number_of_nodes,
-            c.concurrent_proposals,
-            c.number_of_proposals,
-            c.reconfiguration.clone(),
-            c.reconfig_policy
-        );
+        let experiment_str = create_experiment_str(&c);
         self.num_nodes = Some(c.number_of_nodes);
-        self.experiment_str = Some(experiment_str);
+        self.experiment_str = Some(experiment_str.clone());
         self.num_proposals = Some(c.number_of_proposals);
         self.concurrent_proposals = Some(c.concurrent_proposals);
-        self.meta_results_sub_dir = Some(format!(
-            "{}-{}k-{}",
+        self.meta_results_sub_dir = Some(create_metaresults_sub_dir(
             c.number_of_nodes,
-            c.concurrent_proposals / 1000,
-            c.reconfiguration
+            c.concurrent_proposals,
+            c.get_reconfiguration(),
         ));
         if c.concurrent_proposals == 1 || cfg!(feature = "track_latency") {
             self.latency_hist =
@@ -696,11 +669,7 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 4, conf, bc, TCP_NODELAY);
         self.system = Some(system);
-        let params = ClientParams::with(
-            c.algorithm,
-            c.number_of_nodes,
-            self.reconfiguration.is_some(),
-        );
+        let params = ClientParams::with(experiment_str);
         Ok(params)
     }
 
@@ -853,12 +822,14 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
         bc.validate();
         let system = crate::kompact_system_provider::global()
             .new_remote_system_with_threads_config("atomicbroadcast", 8, conf, bc, TCP_NODELAY);
-        let initial_config: Vec<u64> = (1..=c.num_nodes).collect();
-        let named_path = match c.algorithm.as_ref() {
+        let (params, meta_subdir) = get_deser_clientparams_and_subdir(&c.experiment_str);
+        let experiment_params =
+            ExperimentParams::load_from_file(CONFIG_PATH, meta_subdir, c.experiment_str.clone());
+        let initial_config: Vec<u64> = (1..=params.num_nodes).collect();
+        let named_path = match params.algorithm.as_ref() {
             "paxos" => {
-                let experiment_params = ExperimentParams::load_from_file(CONFIG_PATH);
                 let (paxos_comp, unique_reg_f) = system.create_and_register(|| {
-                    PaxosComp::with(initial_config, c.is_reconfig_exp, experiment_params)
+                    PaxosComp::with(initial_config, params.is_reconfig_exp, experiment_params)
                 });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "ReplicaComp failed to register!");
                 let self_path = system
@@ -873,8 +844,9 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             }
             "raft" => {
                 /*** Setup RaftComp ***/
-                let (raft_comp, unique_reg_f) =
-                    system.create_and_register(|| RaftComp::<Storage>::with(initial_config));
+                let (raft_comp, unique_reg_f) = system.create_and_register(|| {
+                    RaftComp::<Storage>::with(initial_config, experiment_params)
+                });
                 unique_reg_f.wait_expect(REGISTER_TIMEOUT, "RaftComp failed to register!");
                 let self_path = system
                     .register_by_alias(&raft_comp, RAFT_PATH)
@@ -931,6 +903,83 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 .expect("Kompact didn't shut down properly");
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ClientParams {
+    experiment_str: String,
+}
+
+impl ClientParams {
+    fn with(experiment_str: String) -> ClientParams {
+        ClientParams { experiment_str }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ClientParamsDeser {
+    pub algorithm: String,
+    pub num_nodes: u64,
+    pub is_reconfig_exp: bool,
+}
+
+impl ClientParamsDeser {
+    fn with(algorithm: String, num_nodes: u64, is_reconfig_exp: bool) -> ClientParamsDeser {
+        ClientParamsDeser {
+            algorithm,
+            num_nodes,
+            is_reconfig_exp,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Done;
+
+fn create_experiment_str(c: &AtomicBroadcastRequest) -> String {
+    format!(
+        "{},{},{},{},{},{}",
+        c.algorithm,
+        c.number_of_nodes,
+        c.concurrent_proposals,
+        c.number_of_proposals,
+        c.reconfiguration.clone(),
+        c.reconfig_policy
+    )
+}
+
+fn get_deser_clientparams_and_subdir(s: &str) -> (ClientParamsDeser, String) {
+    let split: Vec<_> = s.split(',').collect();
+    assert_eq!(split.len(), 6);
+    let algorithm = split[0].to_lowercase();
+    let num_nodes = split[1]
+        .parse::<u64>()
+        .unwrap_or_else(|_| panic!("{}' does not represent a node id", split[1]));
+    let concurrent_proposals = split[2]
+        .parse::<u64>()
+        .unwrap_or_else(|_| panic!("{}' does not represent concurrent proposals", split[2]));
+    let reconfig = split[4].to_lowercase();
+    let is_reconfig_exp = match reconfig.as_str() {
+        "off" => false,
+        r if r == "single" || r == "majority" => true,
+        other => panic!("Got unexpected reconfiguration: {}", other),
+    };
+    let cp = ClientParamsDeser::with(algorithm, num_nodes, is_reconfig_exp);
+    let subdir = create_metaresults_sub_dir(num_nodes, concurrent_proposals, reconfig.as_str());
+    (cp, subdir)
+}
+
+fn create_metaresults_sub_dir(
+    number_of_nodes: u64,
+    concurrent_proposals: u64,
+    reconfiguration: &str,
+) -> String {
+    format!(
+        "{}-{}k-{}",
+        number_of_nodes,
+        concurrent_proposals / 1000,
+        reconfiguration
+    )
 }
 
 #[cfg(test)]

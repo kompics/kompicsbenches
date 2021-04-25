@@ -1,11 +1,14 @@
-use crate::bench::atomic_broadcast::messages::{
-    paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
-};
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
+use crate::bench::atomic_broadcast::{
+    messages::{paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser},
+    util::io_metadata::LogIOMetaData,
+};
 use hashbrown::HashSet;
 use kompact::prelude::*;
 use leaderpaxos::leader_election::{Leader, Round};
+#[cfg(feature = "measure_io")]
+use std::io::Write;
 use std::time::Duration;
 
 #[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
@@ -23,7 +26,7 @@ impl Ballot {
 impl Round for Ballot {}
 
 #[derive(Debug)]
-pub struct Stop(pub Ask<u64, ()>); // pid
+pub struct Stop(pub Ask<(u64, Option<LogIOMetaData>), ()>); // pid
 
 pub struct BallotLeaderElection;
 
@@ -49,7 +52,7 @@ pub struct BallotLeaderComp {
     timer: Option<ScheduledTimer>,
     stopped: bool,
     stopped_peers: HashSet<u64>,
-    stop_ask: Option<Ask<u64, ()>>,
+    stop_ask: Option<Ask<(u64, Option<LogIOMetaData>), ()>>,
     quick_timeout: bool,
     initial_election_factor: u64,
     #[cfg(feature = "measure_io")]
@@ -190,12 +193,6 @@ impl ComponentLifecycle for BallotLeaderComp {
 
     fn on_kill(&mut self) -> Handled {
         self.stop_timer();
-        #[cfg(feature = "measure_io")]
-        {
-            if self.io_metadata != IOMetaData::default() {
-                info!(self.ctx.log(), "BLE IO: {:?}", self.io_metadata);
-            }
-        }
         Handled::Ok
     }
 }
@@ -210,10 +207,28 @@ impl Actor for BallotLeaderComp {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {
-        let pid = *stop.0.request();
+        #[allow(unused_variables)]
+        let (pid, log_io) = stop.0.request();
         self.stop_timer();
+        #[cfg(feature = "measure_io")]
+        {
+            if let Some(l) = log_io {
+                if self.io_metadata != IOMetaData::default() {
+                    let mut file = l.file.lock().unwrap();
+                    writeln!(
+                        file,
+                        "BLE IO: {:?}, cid: {:?}",
+                        self.io_metadata,
+                        self.ctx.id().to_hyphenated_ref().to_string()
+                    )
+                    .expect("Failed to write IO results file");
+                    file.flush().expect("Failed to flush IO results file");
+                    drop(file); // drop just to be sure
+                }
+            }
+        }
         for peer in &self.peers {
-            peer.tell_serialised(NetStopMsg::Peer(pid), self)
+            peer.tell_serialised(NetStopMsg::Peer(*pid), self)
                 .expect("NetStopMsg should serialise!");
         }
         self.stopped = true;

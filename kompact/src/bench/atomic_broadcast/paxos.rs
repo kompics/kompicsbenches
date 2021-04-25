@@ -36,6 +36,12 @@ use quanta::{Clock, Instant};
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
+#[cfg(feature = "measure_io")]
+use std::io::Write;
+#[cfg(feature = "measure_io")]
+use std::sync::Mutex;
+
+use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -450,26 +456,22 @@ where
         self.next_config_id = None;
     }
 
-    fn stop_components(&mut self) -> Handled {
-        #[cfg(feature = "measure_io")]
-        {
-            if let Some(timer) = self.io_timer.take() {
-                self.cancel_timer(timer);
-            }
-            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-                self.io_windows.push((self.clock.now(), self.io_metadata));
-                self.io_metadata.reset();
-                let mut str = String::new();
-                let total =
-                    self.io_windows
-                        .iter()
-                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                            sum + (*io_meta)
-                        });
-                info!(self.ctx.log(), "Total PaxosComp IO: {:?}\n{}", total, str);
-            }
+    fn stop_ble(&mut self, log_io: Option<LogIOMetaData>, stop_futures: &mut Vec<KFuture<()>>) {
+        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
+        for ble in rest_ble {
+            stop_futures.push(
+                ble.actor_ref()
+                    .ask_with(|p| BLEStop(Ask::new(p, (self.pid, log_io.clone())))),
+            );
         }
+        stop_futures.push(
+            ble_last
+                .actor_ref()
+                .ask_with(|p| BLEStop(Ask::new(p, (self.pid, log_io)))),
+        );
+    }
+
+    fn stop_components(&mut self) -> Handled {
         self.stopped = true;
         let num_configs = self.paxos_replicas.len() as u32;
         let stopping_before_started = self.active_config.id < num_configs;
@@ -487,16 +489,45 @@ where
             self.next_config_id,
             stopping_before_started
         );
-        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
-        for ble in rest_ble {
-            stop_futures.push(ble.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
+        #[cfg(feature = "measure_io")]
+        {
+            if let Some(timer) = self.io_timer.take() {
+                self.cancel_timer(timer);
+            }
+            let mut file = self.experiment_params.get_io_meta_results_file();
+            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
+                self.io_windows.push((self.clock.now(), self.io_metadata));
+                self.io_metadata.reset();
+                let mut str = String::new();
+                let total =
+                    self.io_windows
+                        .iter()
+                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                            sum + (*io_meta)
+                        });
+                writeln!(
+                    file,
+                    "---------- IO usage in iteration: {} ----------",
+                    self.iteration_id
+                )
+                .expect("Failed to write IO file");
+                writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
+                    .expect("Failed to write IO file");
+                file.flush().expect("Failed to flush IO file");
+            }
+            let m = Mutex::new(file);
+            let l = LogIOMetaData::with(Arc::new(m));
+            for c in &self.communicator_comps {
+                c.actor_ref().tell(l.clone());
+            }
+            self.stop_ble(Some(l), &mut stop_futures);
         }
-        stop_futures.push(
-            ble_last
-                .actor_ref()
-                .ask_with(|p| BLEStop(Ask::new(p, self.pid))),
-        );
 
+        #[cfg(not(feature = "measure_io"))]
+        {
+            self.stop_ble(None, &mut stop_futures);
+        }
         let (paxos_last, rest) = self
             .paxos_replicas
             .split_last()
@@ -1042,7 +1073,7 @@ where
                             if !self.handled_seq_requests.iter().any(|sr| {
                                 sr.config_id == prev_config_id && sr.requestor_pid == *pid
                             }) {
-                                // the continued node hasn't already requested us
+                                // the new node hasn't already requested us
                                 Some(segment.clone())
                             } else {
                                 None

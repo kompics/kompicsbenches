@@ -9,9 +9,11 @@ use super::{
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
+#[cfg(feature = "measure_io")]
+use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
 use crate::{
     bench::atomic_broadcast::{
-        atomic_broadcast::Done,
+        atomic_broadcast::{Done, ExperimentParams},
         client::create_raw_proposal,
         communicator::{AtomicBroadcastCompMsg, CommunicationPort, Communicator, CommunicatorMsg},
     },
@@ -22,6 +24,10 @@ use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
 use protobuf::Message as PbMessage;
 use rand::Rng;
+#[cfg(feature = "measure_io")]
+use std::io::Write;
+#[cfg(feature = "measure_io")]
+use std::sync::Mutex;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
 use tikv_raft::{
     prelude::{Entry, Message as TikvRaftMsg, *},
@@ -58,13 +64,14 @@ where
     partitioning_actor: Option<ActorPath>,
     cached_client: Option<ActorPath>,
     current_leader: u64,
+    experiment_params: ExperimentParams,
 }
 
 impl<S> RaftComp<S>
 where
     S: RaftStorage + Send + Clone + 'static,
 {
-    pub fn with(initial_config: Vec<u64>) -> Self {
+    pub fn with(initial_config: Vec<u64>, experiment_params: ExperimentParams) -> Self {
         RaftComp {
             ctx: ComponentContext::uninitialised(),
             pid: 0,
@@ -78,17 +85,14 @@ where
             partitioning_actor: None,
             cached_client: None,
             current_leader: 0,
+            experiment_params,
         }
     }
 
     fn create_rawraft_config(&self) -> Config {
         let config = self.ctx.config();
-        let max_inflight_msgs = config["experiment"]["max_inflight"]
-            .as_i64()
-            .expect("Failed to load max_inflight") as usize;
-        let election_timeout = config["experiment"]["election_timeout"]
-            .as_i64()
-            .expect("Failed to load election_timeout") as usize;
+        let max_inflight_msgs = self.experiment_params.max_inflight;
+        let election_timeout = self.experiment_params.election_timeout as usize;
         let tick_period = config["raft"]["tick_period"]
             .as_i64()
             .expect("Failed to load tick_period") as usize;
@@ -238,6 +242,23 @@ where
     }
 
     fn stop_components(&mut self) -> Handled {
+        #[cfg(feature = "measure_io")]
+        {
+            if let Some(c) = self.communicator.as_ref() {
+                let mut file = self.experiment_params.get_io_meta_results_file();
+                writeln!(
+                    file,
+                    "---------- IO usage in iteration: {} ----------",
+                    self.iteration_id
+                )
+                .expect("Failed to write IO file");
+                file.flush().expect("Failed to flush IO file");
+
+                let m = Mutex::new(file);
+                let l = LogIOMetaData::with(Arc::new(m));
+                c.actor_ref().tell(l);
+            }
+        }
         self.stopped = true;
         // info!(self.ctx.log(), "Stopping components");
         let raft = self
