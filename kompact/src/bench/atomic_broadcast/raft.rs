@@ -248,8 +248,8 @@ where
                 let mut file = self.experiment_params.get_io_meta_results_file();
                 writeln!(
                     file,
-                    "---------- IO usage in iteration: {} ----------",
-                    self.iteration_id
+                    "\n---------- IO usage node {} in iteration: {} ----------",
+                    self.pid, self.iteration_id
                 )
                 .expect("Failed to write IO file");
                 file.flush().expect("Failed to flush IO file");

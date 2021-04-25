@@ -618,7 +618,7 @@ impl AtomicBroadcastMaster {
             if retried_sum > 0 {
                 let len = self.num_retried.len();
                 let retried_len = self.num_retried.iter().filter(|x| **x > 0).count();
-                self.num_retried.sort();
+                self.num_retried.sort_unstable();
                 let min = self.num_retried.first().unwrap();
                 let max = self.num_retried.last().unwrap();
                 let avg = retried_sum / (self.iteration_id as u64);
@@ -824,7 +824,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
             .new_remote_system_with_threads_config("atomicbroadcast", 8, conf, bc, TCP_NODELAY);
         let (params, meta_subdir) = get_deser_clientparams_and_subdir(&c.experiment_str);
         let experiment_params =
-            ExperimentParams::load_from_file(CONFIG_PATH, meta_subdir, c.experiment_str.clone());
+            ExperimentParams::load_from_file(CONFIG_PATH, meta_subdir, c.experiment_str);
         let initial_config: Vec<u64> = (1..=params.num_nodes).collect();
         let named_path = match params.algorithm.as_ref() {
             "paxos" => {

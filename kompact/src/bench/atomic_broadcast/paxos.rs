@@ -143,7 +143,6 @@ where
     next_config_id: Option<ConfigId>,
     pending_segments: HashMap<ConfigId, Vec<SegmentIndex>>,
     received_segments: HashMap<ConfigId, Vec<SequenceSegment>>,
-    complete_sequences: Vec<ConfigId>,
     active_config_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
     handled_seq_requests: Vec<SegmentRequest>,
     cached_client: Option<ActorPath>,
@@ -187,7 +186,6 @@ where
             next_config_id: None,
             pending_segments: HashMap::new(),
             received_segments: HashMap::new(),
-            complete_sequences: vec![],
             active_config_peers: (vec![], vec![]),
             handled_seq_requests: vec![],
             cached_client: None,
@@ -508,8 +506,8 @@ where
                         });
                 writeln!(
                     file,
-                    "---------- IO usage in iteration: {} ----------",
-                    self.iteration_id
+                    "\n---------- IO usage node {} in iteration: {} ----------",
+                    self.pid, self.iteration_id
                 )
                 .expect("Failed to write IO file");
                 writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
@@ -711,6 +709,7 @@ where
         });
         let pending_segments: Vec<SegmentIndex> = indices
             .iter()
+            .filter(|(_, segment_idx)| segment_idx != &skip)
             .map(|(_, segment_idx)| *segment_idx)
             .collect();
         self.pending_segments.insert(config_id, pending_segments);
@@ -718,11 +717,18 @@ where
 
     fn retry_pending_segments(&mut self, config_id: ConfigId) -> Handled {
         if let Some(remaining) = self.pending_segments.get(&config_id) {
+            info!(self.ctx.log(), "Retrying pending segments: {:?}", remaining);
             let active_config_peers = &self.active_config_peers.0;
             let num_active_peers = active_config_peers.len();
             for (i, segment_idx) in remaining.iter().enumerate() {
-                let pid = active_config_peers[i % num_active_peers];
+                let idx = if i < num_active_peers {
+                    i
+                } else {
+                    i % num_active_peers
+                };
+                let pid = active_config_peers[idx];
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
+                info!(self.ctx.log(), "Requesting pid: {}, active_peers: {:?}, {:?}", pid, self.active_config_peers, sr);
                 #[cfg(feature = "measure_io")]
                 {
                     self.io_metadata.update_sent(&sr);
@@ -779,17 +785,16 @@ where
         for mut segment in all_segments {
             sequence.append(&mut segment.entries);
         }
-        self.complete_sequences.push(config_id); // TODO remove complete_sequence? Can check prev_sequences instead
         self.prev_sequences
             .insert(config_id, Arc::new(S::new_with_sequence(sequence)));
+        self.pending_segments.remove(&config_id);
 
         let next_config_id = self
             .next_config_id
             .expect("Got all sequence transfer but no next config id!");
-        if self.complete_sequences.len() + 1 == next_config_id as usize {
+        if self.prev_sequences.len() + 1 == next_config_id as usize {
             // got all sequence transfers
-            self.complete_sequences.clear();
-            debug!(self.ctx.log(), "Got all previous sequences!");
+            info!(self.ctx.log(), "Got all previous sequences!");
             self.start_replica(next_config_id);
         }
     }
@@ -853,7 +858,13 @@ where
             let est_size = std::mem::size_of_val(&st) + est_segment_size;
             self.io_metadata.update_sent_with_size(est_size);
         }
-        debug!(self.ctx.log(), "Replying seq transfer: idx: {:?}", sr.idx);
+        info!(
+            self.ctx.log(),
+            "Replying to pid: {} with {} segment request: idx: {:?}",
+            sr.requestor_pid,
+            succeeded,
+            sr.idx
+        );
         requestor
             .tell_serialised(ReconfigurationMsg::SegmentTransfer(st), self)
             .expect("Should serialise!");
@@ -869,7 +880,7 @@ where
         };
         already_handled
             || self.active_config.id >= config_id
-            || self.complete_sequences.contains(&config_id)
+            || self.prev_sequences.contains_key(&config_id)
     }
 
     fn handle_segment_transfer(&mut self, st: SegmentTransfer) {
@@ -880,24 +891,23 @@ where
         let prev_seq_len = st.metadata.len;
         // pull previous sequence if exists and not already started
         if prev_config_id != 0
-            && !self.complete_sequences.contains(&prev_config_id)
+            && !self.prev_sequences.contains_key(&prev_config_id)
             && !self.pending_segments.contains_key(&prev_config_id)
         {
             self.pull_sequence(prev_config_id, prev_seq_len, None);
         }
         if st.succeeded {
+            info!(
+                self.ctx.log(),
+                "Got successful segment {:?}",
+                st.segment.get_index()
+            );
             let config_id = st.config_id;
             self.handle_segment(config_id, st.segment);
             let got_all_segments = self
                 .pending_segments
                 .get(&config_id)
                 .unwrap()
-                // .unwrap_or_else(
-                //     panic!(format!(
-                //         "No entry in pending segments with config_id: {}",
-                //         config_id
-                //     ))
-                // )
                 .is_empty();
             if got_all_segments {
                 self.handle_completed_sequence_transfer(config_id);
@@ -907,7 +917,7 @@ where
             let config_id = st.config_id;
             warn!(
                 self.ctx.log(),
-                "Got failed seq transfer: idx: {:?}",
+                "Got failed segment transfer: idx: {:?}",
                 st.segment.get_index()
             );
             // query someone we know have reached final seq
@@ -940,7 +950,6 @@ where
         self.next_config_id = None;
         self.pending_segments.clear();
         self.received_segments.clear();
-        self.complete_sequences.clear();
         self.handled_seq_requests.clear();
         self.cached_client = None;
         self.hb_proposals.clear();
@@ -1020,28 +1029,6 @@ where
                 self.hb_proposals.deserialised.push(Proposal::with(data));
             }
             PaxosCompMsg::Reconfig(r) => {
-                /*** ReconfigResponse to client ***/
-                let new_config_len = r.nodes.len();
-                let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
-                data.put_u64(RECONFIG_ID);
-                data.put_u32(new_config_len as u32);
-                let config: Vec<u64> = r
-                    .nodes
-                    .continued_nodes
-                    .iter()
-                    .chain(r.nodes.new_nodes.iter())
-                    .copied()
-                    .collect();
-                let leader = match r.skip_prepare_use_leader {
-                    Some(l) => l.pid,
-                    None => 0,
-                };
-                let rr = ReconfigurationResp::with(leader, config);
-                self.cached_client
-                    .as_ref()
-                    .expect("No cached client!")
-                    .tell_serialised(AtomicBroadcastMsg::ReconfigurationResp(rr), self)
-                    .expect("Should serialise ReconfigResponse");
                 /*** handle final sequence and notify new nodes ***/
                 let prev_config_id = self.active_config.id;
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
@@ -1067,23 +1054,26 @@ where
                     self.start_replica(r.config_id);
                     // transfer sequence to new nodes
                     let continued_nodes = &r.nodes.continued_nodes;
-                    let segment = self.create_segment(continued_nodes, prev_config_id);
+                    let eager_transfer = if self.active_config.leader == self.pid {
+                        Some(self.create_segment(continued_nodes, prev_config_id))
+                    } else {
+                        None
+                    };
                     for pid in &r.nodes.new_nodes {
-                        let eager_transfer =
-                            if !self.handled_seq_requests.iter().any(|sr| {
-                                sr.config_id == prev_config_id && sr.requestor_pid == *pid
-                            }) {
-                                // the new node hasn't already requested us
-                                Some(segment.clone())
-                            } else {
-                                None
-                            };
+                        let segment = if !self.handled_seq_requests.iter().any(|sr| {
+                            sr.config_id == prev_config_id && sr.requestor_pid == *pid
+                        }) {
+                            // the new node hasn't already requested us
+                            eager_transfer.clone()
+                        } else {
+                            None
+                        };
                         let r = ReconfigInit::with(
                             r.config_id,
                             r.nodes.clone(),
                             seq_metadata.clone(),
                             self.pid,
-                            eager_transfer,
+                            segment,
                             r.skip_prepare_use_leader,
                         );
                         #[cfg(feature = "measure_io")]
@@ -1473,13 +1463,6 @@ where
 
     fn handle_stopsign(&mut self, ss: StopSign<Ballot>) {
         let final_seq = self.paxos.stop_and_get_sequence();
-        let new_config_len = ss.nodes.len();
-        let mut data: Vec<u8> = Vec::with_capacity(8 + 4 + 8 * new_config_len);
-        data.put_u64(RECONFIG_ID);
-        data.put_u32(new_config_len as u32);
-        for pid in &ss.nodes {
-            data.put_u64(*pid);
-        }
         let (continued_nodes, new_nodes) = ss
             .nodes
             .iter()
@@ -1488,9 +1471,17 @@ where
             self.ctx.log(),
             "Decided StopSign! Continued: {:?}, new: {:?}", &continued_nodes, &new_nodes
         );
+        let leader = match ss.skip_prepare_use_leader {
+            Some(l) => l.pid,
+            None => 0,
+        };
         let nodes = Reconfig::with(continued_nodes, new_nodes);
         let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_use_leader);
         self.supervisor.tell(PaxosCompMsg::Reconfig(r));
+        // respond client
+        let rr = ReconfigurationResp::with(leader, ss.nodes);
+        self.communication_port
+            .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
     }
 
     fn get_decided(&mut self) {

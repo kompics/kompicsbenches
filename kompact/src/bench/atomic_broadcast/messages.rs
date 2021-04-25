@@ -435,10 +435,6 @@ pub mod paxos {
             }
         }
 
-        pub fn len(&self) -> usize {
-            self.continued_nodes.len() + self.new_nodes.len()
-        }
-
         pub fn get_peers_of(&self, pid: u64) -> Vec<u64> {
             self.continued_nodes
                 .iter()
