@@ -975,9 +975,9 @@ fn create_metaresults_sub_dir(
     reconfiguration: &str,
 ) -> String {
     format!(
-        "{}-{}k-{}",
+        "{}-{}-{}",
         number_of_nodes,
-        concurrent_proposals / 1000,
+        concurrent_proposals,
         reconfiguration
     )
 }
