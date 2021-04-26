@@ -244,7 +244,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastConcurrentProposals = List(500L, 5L.k, 50L.k);
 
   private val algorithms = List("paxos", "raft");
-  private val reconfig = List("single", "majority");
+  private val reconfig = List("majority", "single");
   private val reconfig_policy = List("replace-follower", "replace-leader");
 
   private val atomicBroadcastNormalTestSpace = ParameterSpacePB // test space without reconfig
