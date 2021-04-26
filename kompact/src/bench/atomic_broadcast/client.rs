@@ -259,7 +259,6 @@ impl Client {
             if self.reconfig.is_none() {
                 if let Some(timer) = self.window_timer.take() {
                     self.cancel_timer(timer);
-                    self.windows.push(received_count as usize);
                 }
                 self.state = ExperimentState::Finished;
                 self.finished_latch
