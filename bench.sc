@@ -323,7 +323,7 @@ private def readNodes(p: Path): List[NodeEntry] = {
 	}
 }
 
-val login = HostConfigProvider.fromLogin(PublicKeyLogin("lkroll", "/Users/lkroll/.ssh/id_rsa"));
+val login = HostConfigProvider.fromLogin(PublicKeyLogin("hng", "/home/hng/kompicsbenches/kompicsbenches_master"));
 
 private def startClient(node: NodeEntry, bench: String, runId: String, master: String): Try[Int] = {
 	println(s"Connecting to ${node}...");
