@@ -1,0 +1,69 @@
+import matplotlib
+matplotlib.use('Agg')
+
+import matplotlib.pyplot as plt
+import sys
+import argparse
+import os
+import numpy as np
+import datetime
+import scipy.stats as st
+from pathlib import Path
+from matplotlib.ticker import (MultipleLocator,
+                               FormatStrFormatter,
+                               AutoMinorLocator)
+
+def format_time(seconds, _):
+    """Formats a timedelta duration to [N days] %M:%S format"""
+    secs_in_a_min = 60
+    #print(seconds)
+    minutes, seconds = divmod(int(seconds), secs_in_a_min)
+    #print("minutes: {}, seconds: {}".format(minutes, seconds))
+    time_fmt = "{:d}:{:02d}".format(minutes, seconds)
+    return time_fmt
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument('-s', required=True, help='Directory of raw results')
+parser.add_argument('-t', nargs='?', help='Output directory')
+parser.add_argument('-w', required=True, type=int, help='Window duration (s)')
+parser.set_defaults(feature=True)
+
+args = parser.parse_args()
+print("Plotting with args:",args)
+
+fig= plt.figure(figsize=(12,6))
+
+f = open(args.s, 'r')
+for line in f:
+	num_decided_per_window = line.split(",")
+	filtered_decided = list(filter(lambda x: x.isdigit(), num_decided_per_window))
+	all_ts = list(range(args.w, (len(filtered_decided) + 1) * args.w, args.w))
+	all_tp = list(map(lambda num_decided: int(num_decided) / args.w, filtered_decided))
+
+	plt.plot(all_ts, all_tp, marker='.')
+
+
+plt.xlabel("Time")
+plt.ylabel("Throughput (ops/s)")
+plt.ylim(bottom=0)
+plt.gcf().autofmt_xdate()
+
+
+split = args.s.split("/")
+exp_str = split[len(split)-3]
+exp_str_split = exp_str.split("-")
+num_nodes = exp_str_split[0]
+num_cp = exp_str_split[1]
+reconfig = exp_str_split[len(exp_str_split) - 1]
+title = "All runs {} nodes, {} concurrent proposals".format(num_nodes, num_cp)
+if reconfig != "off":
+	title += ", {} reconfiguration".format(reconfig)
+plt.title(title)
+
+if args.t is not None:
+    target_dir = args.t + "/windowed/{}-{}/".format(num_nodes, num_cp)
+else:
+    target_dir = "./"
+Path(target_dir).mkdir(parents=True, exist_ok=True)
+plt.savefig(target_dir + "all-runs-{}.png".format(exp_str), dpi = 600)

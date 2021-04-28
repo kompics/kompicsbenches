@@ -17,9 +17,9 @@ colors = {
   "paxos": "royalblue",
   "paxos-replace-follower": "royalblue",
   "paxos-replace-leader": "darkblue",
-  "raft": "lightcoral",
-  "raft-replace-follower": "lightcoral",
-  "raft-replace-leader": "red",
+  "raft": "red",
+  "raft-replace-follower": "red",
+  "raft-replace-leader": "maroon",
 }
 
 def get_label_and_color(filename):
