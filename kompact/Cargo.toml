@@ -8,7 +8,7 @@ edition = "2018"
 #kompact 				= { git = "https://github.com/kompics/kompact"}
 kompact 				= { git = "https://github.com/kompics/kompact", rev = "94956af" }
 #kompact 				= { path = "../../kompact/core/" }
-leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos", features = ["batch_accept"] }
+leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos", features = ["batch_accept", "continued_leader_reconfiguration"] }
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
 futures         		= "0.1"
@@ -50,4 +50,4 @@ use_pid_map = [] # assign nodes to specific process ids
 periodic_client_logging = []
 periodic_replica_logging = []
 
-default = ["use_pid_map"]
+default = ["use_pid_map", "measure_io", "preloaded_log"]
