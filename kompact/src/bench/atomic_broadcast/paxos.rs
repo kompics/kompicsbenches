@@ -493,6 +493,12 @@ where
                 self.cancel_timer(timer);
             }
             let mut file = self.experiment_params.get_io_meta_results_file();
+            writeln!(
+                file,
+                "\n---------- IO usage node {} in iteration: {} ----------",
+                self.pid, self.iteration_id
+            )
+                .expect("Failed to write IO file");
             if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
                 self.io_windows.push((self.clock.now(), self.io_metadata));
                 self.io_metadata.reset();
@@ -504,12 +510,6 @@ where
                             str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
                             sum + (*io_meta)
                         });
-                writeln!(
-                    file,
-                    "\n---------- IO usage node {} in iteration: {} ----------",
-                    self.pid, self.iteration_id
-                )
-                .expect("Failed to write IO file");
                 writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
                     .expect("Failed to write IO file");
                 file.flush().expect("Failed to flush IO file");
