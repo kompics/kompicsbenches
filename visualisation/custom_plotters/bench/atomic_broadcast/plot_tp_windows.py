@@ -14,22 +14,26 @@ from matplotlib.ticker import (MultipleLocator,
                                AutoMinorLocator)
 
 colors = {
-  "paxos": "royalblue",
-  "paxos-replace-follower": "royalblue",
-  "paxos-replace-leader": "darkblue",
-  "raft": "red",
-  "raft-replace-follower": "red",
-  "raft-replace-leader": "maroon",
+  "Omni Paxos": "royalblue",
+  "Omni Paxos, replace follower": "royalblue",
+  "Omni Paxos, replace leader": "darkblue",
+  "Raft": "red",
+  "Raft, replace follower": "red",
+  "Raft, replace leader": "maroon",
 }
 
 def get_label_and_color(filename):
 	csv = filename.split(",")
 	algorithm = csv[0]
+	if algorithm == "paxos":
+		algorithm = "Omni Paxos"
+	else:
+		algorithm = "Raft"
 	reconfig = csv[len(csv)-1].split(".")[0]
 	if reconfig == "none":
 		label = algorithm
 	else:
-		label = "{}-{}".format(algorithm, reconfig)
+		label = "{}, {}".format(algorithm, reconfig).replace("-", " ")
 	color = colors[label]
 	return (label, color)
 
@@ -53,7 +57,7 @@ parser.set_defaults(feature=True)
 args = parser.parse_args()
 print("Plotting with args:",args)
 
-fig= plt.figure(figsize=(12,6))
+fig, ax = plt.subplots()
 
 max_ts = 0
 data_files = [f for f in os.listdir(args.s) if f.endswith('.data')]
@@ -105,28 +109,26 @@ for filename in data_files :
 				all_ci95_hi.append(all_tp_per_window[0])
 
 	(label, color) = get_label_and_color(filename)
-	plt.plot(all_ts, np.array(all_avg_tp), marker='.', color=color, label=label)
-	#plt.plot(all_ts, np.array(all_ci95_lo))
-	#plt.plot(all_ts, np.array(all_ci95_hi))
+	ax.plot(all_ts, np.array(all_avg_tp), marker='.', color=color, label=label)
+	#ax.plot(all_ts, np.array(all_ci95_lo))
+	#ax.plot(all_ts, np.array(all_ci95_hi))
 	if args.ci:
-		plt.fill_between(all_ts, all_ci95_lo, all_ci95_hi, color=color, alpha=0.2)
-	#plt.plot(all_ts, all_min_tp, marker='o')
-	#plt.plot(all_ts, all_max_tp, marker='o')
+		ax.fill_between(all_ts, all_ci95_lo, all_ci95_hi, color=color, alpha=0.2)
+	#ax.plot(all_ts, all_min_tp, marker='o')
+	#ax.plot(all_ts, all_max_tp, marker='o')
 
-#fig, ax = plt.subplots()
-plt.legend(loc = "lower right")
-x_axis = np.arange(0, max_ts+args.w, 2*args.w)
-#print("x_axis: ", x_axis)
+ax.legend(loc = "lower right")
+x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
 
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
 plt.xticks(x_axis)
-#fig, ax = plt.subplots()
-#ax.xaxis.set_major_formatter(format_time)
+ax.xaxis.set_major_formatter(format_time)
 
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
 
+fig.set_size_inches(12, 6)
 
 split = args.s.split("/")
 exp_str = split[len(split)-3]

@@ -13,6 +13,35 @@ from matplotlib.ticker import (MultipleLocator,
                                FormatStrFormatter,
                                AutoMinorLocator)
 
+def get_label(filename):
+    csv = filename.split(",")
+    algorithm = csv[0]
+    if algorithm == "paxos":
+        algorithm = "Omni Paxos"
+    else:
+        algorithm = "Raft"
+    reconfig = csv[len(csv)-1].split(".")[0]
+    if reconfig == "none":
+        label = algorithm
+    else:
+        label = "{}, {}".format(algorithm, reconfig).replace("-", " ")
+    return label
+
+def get_file_str(filename):
+    csv = filename.split(",")
+    print(csv)
+    algorithm = csv[0]
+    if algorithm == "paxos":
+        algorithm = "omnipaxos"
+    else:
+        algorithm = "raft"
+    reconfig = csv[len(csv)-1].split(".")[0]
+    if reconfig == "none":
+        label = algorithm
+    else:
+        label = "{}-{}".format(algorithm, reconfig)
+    return label
+
 def format_time(seconds, _):
     """Formats a timedelta duration to [N days] %M:%S format"""
     secs_in_a_min = 60
@@ -32,7 +61,7 @@ parser.set_defaults(feature=True)
 args = parser.parse_args()
 print("Plotting with args:",args)
 
-fig= plt.figure(figsize=(12,6))
+fig, ax = plt.subplots()
 
 f = open(args.s, 'r')
 for line in f:
@@ -43,12 +72,18 @@ for line in f:
 
 	plt.plot(all_ts, all_tp, marker='.')
 
+max_ts = max(all_ts)
+x_axis = np.arange(0, max_ts+3*args.w, 3*args.w)
 
-plt.xlabel("Time")
 plt.ylabel("Throughput (ops/s)")
+plt.xlabel("Time")
+plt.xticks(x_axis)
+ax.xaxis.set_major_formatter(format_time)
+
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
 
+fig.set_size_inches(12, 6)
 
 split = args.s.split("/")
 exp_str = split[len(split)-3]
@@ -56,14 +91,14 @@ exp_str_split = exp_str.split("-")
 num_nodes = exp_str_split[0]
 num_cp = exp_str_split[1]
 reconfig = exp_str_split[len(exp_str_split) - 1]
-title = "All runs {} nodes, {} concurrent proposals".format(num_nodes, num_cp)
+title = "All runs {} nodes, {} concurrent proposals, {}".format(num_nodes, num_cp, get_label(split[len(split)-1]))
 if reconfig != "off":
 	title += ", {} reconfiguration".format(reconfig)
 plt.title(title)
 
 if args.t is not None:
-    target_dir = args.t + "/windowed/{}-{}/".format(num_nodes, num_cp)
+    target_dir = args.t + "/"
 else:
     target_dir = "./"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "all-runs-{}.png".format(exp_str), dpi = 600)
+plt.savefig(target_dir + "all-runs-{}-{}.png".format(get_file_str(split[len(split)-1]), exp_str), dpi = 600)
