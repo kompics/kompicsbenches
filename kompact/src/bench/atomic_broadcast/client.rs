@@ -94,7 +94,6 @@ pub struct Client {
     max_proposal_id: u64,
     responses: HashMap<u64, Option<Duration>>,
     pending_proposals: HashMap<u64, ProposalMetaData>,
-    retry_proposals: Vec<u64>,
     timeout: Duration,
     current_leader: u64,
     state: ExperimentState,
@@ -148,7 +147,6 @@ impl Client {
             max_proposal_id: num_proposals + preloaded_log_size,
             responses: HashMap::with_capacity(num_proposals as usize),
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
-            retry_proposals: Vec::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
             state: ExperimentState::Setup,
@@ -205,18 +203,7 @@ impl Client {
         }
     }
 
-    fn send_retry_proposals(&mut self) {
-        let retry_proposals: Vec<u64> = std::mem::take(&mut self.retry_proposals);
-        self.num_retried += retry_proposals.len();
-        for id in retry_proposals {
-            self.propose_normal(id);
-        }
-    }
-
     fn send_concurrent_proposals(&mut self) {
-        if !self.retry_proposals.is_empty() {
-            self.send_retry_proposals();
-        }
         let num_inflight = self.pending_proposals.len() as u64;
         if num_inflight == self.num_concurrent_proposals || self.current_leader == 0 {
             return;
@@ -536,8 +523,10 @@ impl Actor for Client {
                     },
                     AtomicBroadcastMsg::Proposal(p) => {    // node piggybacked proposal i.e. proposal failed
                         let id = p.data.as_slice().get_u64();
-                        self.retry_proposals.push(id);
-                        self.send_concurrent_proposals();
+                        if !self.responses.contains_key(&id) {
+                            self.num_retried += 1;
+                            self.propose_normal(id);
+                        }
                     }
                     e => error!(self.ctx.log(), "Client received unexpected msg: {:?}", e),
                 }
