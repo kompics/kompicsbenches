@@ -824,7 +824,7 @@ where
                                 self.supervisor.tell(RaftCompMsg::Removed);
                             } else {
                                 self.reconfig_state = ReconfigurationState::Finished;
-                                if self.raw_raft.raft.leader_id == 0 {
+                                if !current_voters.contains(&self.raw_raft.raft.leader_id) {
                                     // leader was removed
                                     self.state = State::Election; // reset leader so it can notify client when new leader emerges
                                                                   // campaign later if we are not removed

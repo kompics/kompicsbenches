@@ -202,23 +202,22 @@ pub mod paxos {
                 }
                 PaxosMsg::Prepare(p) => {
                     buf.put_u8(PREPARE_ID);
+                    buf.put_u64(p.ld);
+                    buf.put_u64(p.la);
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64(p.ld);
-                    buf.put_u64(p.sfx_len);
                 }
                 PaxosMsg::Promise(p) => {
                     buf.put_u8(PROMISE_ID);
+                    buf.put_u64(p.ld);
+                    buf.put_u64(p.la);
                     PaxosSer::serialise_ballot(&p.n, buf);
                     PaxosSer::serialise_ballot(&p.n_accepted, buf);
-                    buf.put_u64(p.ld);
                     PaxosSer::serialise_entries(&p.sfx, buf);
                 }
                 PaxosMsg::AcceptSync(acc_sync) => {
                     buf.put_u8(ACCEPTSYNC_ID);
-                    buf.put_u64(acc_sync.ld);
-                    let sync: u8 = if acc_sync.sync { 1 } else { 0 };
-                    buf.put_u8(sync);
+                    buf.put_u64(acc_sync.sync_idx);
                     PaxosSer::serialise_ballot(&acc_sync.n, buf);
                     PaxosSer::serialise_entries(&acc_sync.entries, buf);
                 }
@@ -265,31 +264,27 @@ pub mod paxos {
             let msg = match buf.get_u8() {
                 PREPAREREQ_ID => Message::with(from, to, PaxosMsg::PrepareReq),
                 PREPARE_ID => {
+                    let ld = buf.get_u64();
+                    let la = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64();
-                    let sfx_len = buf.get_u64();
-                    let p = Prepare::with(n, ld, n_accepted, sfx_len);
+                    let p = Prepare::with(n, ld, n_accepted, la);
                     Message::with(from, to, PaxosMsg::Prepare(p))
                 }
                 PROMISE_ID => {
+                    let ld = buf.get_u64();
+                    let la = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let n_accepted = Self::deserialise_ballot(buf);
-                    let ld = buf.get_u64();
                     let sfx = Self::deserialise_entries(buf);
-                    let prom = Promise::with(n, n_accepted, sfx, ld);
+                    let prom = Promise::with(n, n_accepted, sfx, ld, la);
                     Message::with(from, to, PaxosMsg::Promise(prom))
                 }
                 ACCEPTSYNC_ID => {
-                    let ld = buf.get_u64();
-                    let sync = match buf.get_u8() {
-                        1 => true,
-                        0 => false,
-                        _ => panic!("Unexpected sync flag when deserialising acceptsync"),
-                    };
+                    let sync_idx = buf.get_u64();
                     let n = Self::deserialise_ballot(buf);
                     let sfx = Self::deserialise_entries(buf);
-                    let acc_sync = AcceptSync::with(n, sfx, ld, sync);
+                    let acc_sync = AcceptSync::with(n, sfx, sync_idx);
                     Message::with(from, to, PaxosMsg::AcceptSync(acc_sync))
                 }
                 ACCEPTDECIDE_ID => {

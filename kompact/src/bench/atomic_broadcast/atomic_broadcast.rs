@@ -482,6 +482,7 @@ impl AtomicBroadcastMaster {
             writeln!(timestamps_file, "{}", timestamp)
                 .expect("Failed to write raw timestamps file");
         }
+        writeln!(timestamps_file, "").unwrap();
         timestamps_file
             .flush()
             .expect("Failed to flush raw timestamps file");
