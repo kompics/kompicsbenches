@@ -885,6 +885,7 @@ impl DistributedBenchmarkClient for AtomicBroadcastClient {
                 .ask_with(|p| RaftCompMsg::KillComponents(Ask::new(p, ())));
             kill_comps_f.wait();
         }
+        println!("KillAsk complete");
         if last_iteration {
             let system = self.system.take().unwrap();
             if let Some(replica) = self.paxos_comp.take() {
