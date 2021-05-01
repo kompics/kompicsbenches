@@ -143,7 +143,7 @@ where
     next_config_id: Option<ConfigId>,
     pending_segments: HashMap<ConfigId, Vec<SegmentIndex>>,
     received_segments: HashMap<ConfigId, Vec<SequenceSegment>>,
-    active_config_peers: (Vec<u64>, Vec<u64>), // (ready, not_ready)
+    active_config_ready_peers: Vec<u64>,
     handled_seq_requests: Vec<SegmentRequest>,
     cached_client: Option<ActorPath>,
     hb_proposals: HoldBackProposals,
@@ -186,7 +186,7 @@ where
             next_config_id: None,
             pending_segments: HashMap::new(),
             received_segments: HashMap::new(),
-            active_config_peers: (vec![], vec![]),
+            active_config_ready_peers: vec![],
             handled_seq_requests: vec![],
             cached_client: None,
             hb_proposals: HoldBackProposals::default(),
@@ -647,13 +647,9 @@ where
     }
 
     /// Calculates the `SegmentIndex` of each node
-    fn get_node_segment_idx(&self, seq_len: u64) -> Vec<(u64, SegmentIndex)> {
-        let ready_peers = &self.active_config_peers.0;
-        let unready_peers = &self.active_config_peers.1;
-        let num_continued_nodes = ready_peers.len() + unready_peers.len();
-
-        let offset = seq_len / num_continued_nodes as u64;
-        let unready_idx = unready_peers.iter().enumerate().map(|(i, pid)| {
+    fn get_node_segment_idx(&self, seq_len: u64, from_nodes: &[u64]) -> Vec<(u64, SegmentIndex)> {
+        let offset = seq_len / from_nodes.len() as u64;
+        from_nodes.iter().enumerate().map(|(i, pid)| {
             let from_idx = i as u64 * offset;
             let to_idx = if from_idx as u64 + offset > seq_len {
                 seq_len
@@ -662,29 +658,18 @@ where
             };
             let idx = SegmentIndex::with(from_idx, to_idx);
             (*pid, idx)
-        });
-        let ready_idx = ready_peers.iter().enumerate().map(|(i, pid)| {
-            let from_idx = i as u64 * offset;
-            let to_idx = if from_idx as u64 + offset > seq_len {
-                seq_len
-            } else {
-                from_idx + offset
-            };
-            let idx = SegmentIndex::with(from_idx, to_idx);
-            (*pid, idx)
-        });
-        let pid_idx: Vec<(u64, SegmentIndex)> = unready_idx.chain(ready_idx).collect();
-        pid_idx
+        }).collect()
     }
 
-    fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, skip_idx: Option<SegmentIndex>) {
+    fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, skip_idx: Option<SegmentIndex>, from_nodes: &[u64]) {
+        debug!(self.ctx.log(), "Pull Sequence skip: {:?}", skip_idx);
         let skip = skip_idx.unwrap_or_else(|| SegmentIndex::with(0, 0));
-        let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len);
+        let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len, from_nodes);
         for (pid, segment_idx) in &indices {
             if segment_idx != &skip {
-                debug!(
+                info!(
                     self.ctx.log(),
-                    "Requesting segment from {}, config_id: {}, idx: {:?}",
+                    "Pull Sequence: Requesting segment from {}, config_id: {}, idx: {:?}",
                     pid,
                     config_id,
                     segment_idx
@@ -717,18 +702,17 @@ where
 
     fn retry_pending_segments(&mut self, config_id: ConfigId) -> Handled {
         if let Some(remaining) = self.pending_segments.get(&config_id) {
-            info!(self.ctx.log(), "Retrying pending segments: {:?}", remaining);
-            let active_config_peers = &self.active_config_peers.0;
-            let num_active_peers = active_config_peers.len();
+            let active_config_ready_peers = &self.active_config_ready_peers;
+            let num_active_peers = active_config_ready_peers.len();
             for (i, segment_idx) in remaining.iter().enumerate() {
                 let idx = if i < num_active_peers {
-                    i
+                    num_active_peers - 1 - i
                 } else {
-                    i % num_active_peers
+                    num_active_peers - 1 - (i % num_active_peers)
                 };
-                let pid = active_config_peers[idx];
+                let pid = active_config_ready_peers[idx];
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
-                info!(self.ctx.log(), "Requesting pid: {}, active_peers: {:?}, {:?}", pid, self.active_config_peers, sr);
+                info!(self.ctx.log(), "Retry SegmentRequest: pid: {}, active_peers: {:?}, {:?}", pid, self.active_config_ready_peers, sr);
                 #[cfg(feature = "measure_io")]
                 {
                     self.io_metadata.update_sent(&sr);
@@ -781,6 +765,7 @@ where
             .expect("Should have all segments!");
         all_segments.sort_by_key(|s1| s1.get_from_idx());
         let len = all_segments.last().unwrap().get_to_idx() as usize;
+        info!(self.ctx.log(), "Got complete sequence of config_id: {}, len: {}", config_id, len);
         let mut sequence = Vec::with_capacity(len);
         for mut segment in all_segments {
             sequence.append(&mut segment.entries);
@@ -894,10 +879,11 @@ where
             && !self.prev_sequences.contains_key(&prev_config_id)
             && !self.pending_segments.contains_key(&prev_config_id)
         {
-            self.pull_sequence(prev_config_id, prev_seq_len, None);
+            let ready_peers = self.active_config_ready_peers.clone();
+            self.pull_sequence(prev_config_id, prev_seq_len, None, &ready_peers);
         }
         if st.succeeded {
-            info!(
+            debug!(
                 self.ctx.log(),
                 "Got successful segment {:?}",
                 st.segment.get_index()
@@ -921,12 +907,12 @@ where
                 st.segment.get_index()
             );
             // query someone we know have reached final seq
-            let num_active = self.active_config_peers.0.len();
+            let num_active = self.active_config_ready_peers.len();
             if num_active > 0 {
                 // choose randomly
                 let mut rng = rand::thread_rng();
                 let rnd = rng.gen_range(0, num_active);
-                let pid = self.active_config_peers.0[rnd];
+                let pid = self.active_config_ready_peers[rnd];
                 let sr = SegmentRequest::with(config_id, st.segment.get_index(), self.pid);
                 #[cfg(feature = "measure_io")]
                 {
@@ -953,7 +939,7 @@ where
         self.handled_seq_requests.clear();
         self.cached_client = None;
         self.hb_proposals.clear();
-        self.active_config_peers = (vec![], vec![]);
+        self.active_config_ready_peers.clear();
         self.first_config_id = 0;
         self.removed = false;
 
@@ -1031,6 +1017,7 @@ where
             PaxosCompMsg::Reconfig(r) => {
                 /*** handle final sequence and notify new nodes ***/
                 let prev_config_id = self.active_config.id;
+                let prev_leader = self.active_config.leader;
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
                 debug!(
                     self.ctx.log(),
@@ -1054,7 +1041,7 @@ where
                     self.start_replica(r.config_id);
                     // transfer sequence to new nodes
                     let continued_nodes = &r.nodes.continued_nodes;
-                    let eager_transfer = if self.active_config.leader == self.pid {
+                    let eager_transfer = if prev_leader == self.pid {
                         Some(self.create_segment(continued_nodes, prev_config_id))
                     } else {
                         None
@@ -1064,6 +1051,9 @@ where
                             sr.config_id == prev_config_id && sr.requestor_pid == *pid
                         }) {
                             // the new node hasn't already requested us
+                            if let Some(s) = &eager_transfer {
+                                self.handled_seq_requests.push(SegmentRequest::with(prev_config_id, s.get_index(), *pid));
+                            }
                             eager_transfer.clone()
                         } else {
                             None
@@ -1289,16 +1279,9 @@ where
                                             self.next_config_id = Some(r.config_id);
                                             let peers = r.nodes.get_peers_of(self.pid);
                                             self.set_initial_replica_state_after_reconfig(r.config_id, r.skip_prepare_use_leader, peers);
-                                            for pid in &r.nodes.continued_nodes {
-                                                if pid == &r.from {
-                                                    self.active_config_peers.0.push(*pid);
-                                                } else {
-                                                    self.active_config_peers.1.push(*pid);
-                                                }
+                                            if r.nodes.continued_nodes.contains(&r.from) {
+                                                self.active_config_ready_peers.push(r.from);
                                             }
-                                            let mut nodes = r.nodes.continued_nodes;
-                                            let mut new_nodes = r.nodes.new_nodes;
-                                            nodes.append(&mut new_nodes);
                                             if r.seq_metadata.len == 1 && r.seq_metadata.config_id == 1 {
                                                 // only SS in final sequence and no other prev sequences -> start directly
                                                 let final_sequence = S::new_with_sequence(vec![]);
@@ -1306,7 +1289,8 @@ where
                                                 self.start_replica(r.config_id);
                                             } else {
                                                 let skip_idx = r.segment.as_ref().map(|segment| segment.get_index());
-                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_idx);
+                                                // pull sequence from continued nodes
+                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_idx, &r.nodes.continued_nodes);
                                                 if skip_idx.is_some() {
                                                     let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
                                                     self.handle_segment_transfer(st);
@@ -1316,8 +1300,9 @@ where
                                         Some(next_config_id) => {
                                             if next_config_id == r.config_id && r.nodes.continued_nodes.contains(&r.from) {
                                                 // update who we know already decided final seq
-                                                self.active_config_peers.1.retain(|x| x != &r.from);
-                                                self.active_config_peers.0.push(r.from);
+                                                if r.nodes.continued_nodes.contains(&r.from) {
+                                                    self.active_config_ready_peers.push(r.from);
+                                                }
                                                 let eager_segment_transfer = r.segment.is_some();
                                                 if eager_segment_transfer {
                                                     let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
