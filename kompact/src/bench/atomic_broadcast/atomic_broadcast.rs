@@ -699,6 +699,10 @@ impl DistributedBenchmarkMaster for AtomicBroadcastMaster {
                 for (ap, pid) in pm {
                     nodes_id.insert(*pid as u64, ap.clone());
                 }
+                nodes.clear();
+                for i in 1..=(num_nodes_needed as u64) {
+                    nodes.push(nodes_id.get(&i).unwrap().clone());
+                }
             }
             None => {
                 for (id, ap) in nodes.iter().enumerate() {
