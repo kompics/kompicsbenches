@@ -64,16 +64,18 @@ print("Plotting with args:",args)
 fig, ax = plt.subplots()
 
 f = open(args.s, 'r')
-for line in f:
+for (idx, line) in enumerate(f):
 	num_decided_per_window = line.split(",")
 	filtered_decided = list(filter(lambda x: x.isdigit(), num_decided_per_window))
 	all_ts = list(range(args.w, (len(filtered_decided) + 1) * args.w, args.w))
 	all_tp = list(map(lambda num_decided: int(num_decided) / args.w, filtered_decided))
 
-	plt.plot(all_ts, all_tp, marker='.')
+	plt.plot(all_ts, all_tp, marker='.', label="{}".format(idx + 1))
 
 max_ts = max(all_ts)
 x_axis = np.arange(0, max_ts+3*args.w, 3*args.w)
+
+ax.legend(loc = "lower right")
 
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")

@@ -14,26 +14,26 @@ from matplotlib.ticker import (MultipleLocator,
                                AutoMinorLocator)
 
 colors = {
-  "Omni Paxos": "royalblue",
-  "Omni Paxos, replace follower": "royalblue",
-  "Omni Paxos, replace leader": "darkblue",
+  "Omni-Paxos": "royalblue",
+  "Omni-Paxos replace follower": "royalblue",
+  "Omni-Paxos replace leader": "darkblue",
   "Raft": "red",
-  "Raft, replace follower": "red",
-  "Raft, replace leader": "maroon",
+  "Raft replace follower": "red",
+  "Raft replace leader": "maroon",
 }
 
 def get_label_and_color(filename):
 	csv = filename.split(",")
 	algorithm = csv[0]
 	if algorithm == "paxos":
-		algorithm = "Omni Paxos"
+		algorithm = "Omni-Paxos"
 	else:
 		algorithm = "Raft"
 	reconfig = csv[len(csv)-1].split(".")[0]
 	if reconfig == "none":
 		label = algorithm
 	else:
-		label = "{}, {}".format(algorithm, reconfig).replace("-", " ")
+		label = "{} {}".format(algorithm, reconfig.replace("-", " "))
 	color = colors[label]
 	return (label, color)
 
