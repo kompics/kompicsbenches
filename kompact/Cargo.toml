@@ -50,4 +50,4 @@ use_pid_map = [] # assign nodes to specific process ids
 periodic_client_logging = []
 periodic_replica_logging = []
 
-default = ["use_pid_map", "measure_io", "preloaded_log"]
+default = ["use_pid_map"]
