@@ -14,12 +14,12 @@ from matplotlib.ticker import (MultipleLocator,
                                AutoMinorLocator)
 
 colors = {
-  "Omni-Paxos": "royalblue",
-  "Omni-Paxos replace follower": "royalblue",
-  "Omni-Paxos replace leader": "darkblue",
-  "Raft": "red",
-  "Raft replace follower": "red",
-  "Raft replace leader": "maroon",
+  "Omni-Paxos": "dodgerblue",
+  "Omni-Paxos replace follower": "dodgerblue",
+  "Omni-Paxos replace leader": "midnightblue",
+  "Raft": "orange",
+  "Raft replace follower": "orange",
+  "Raft replace leader": "crimson",
 }
 
 def get_label_and_color(filename):
@@ -82,7 +82,8 @@ for filename in data_files :
 	all_min_tp = []
 	all_max_tp = []
 
-	for (window_idx, all_tp_per_window) in enumerate(all_tp):
+	all_tp_filtered = list(filter(lambda x: len(x) == 10, all_tp)) 
+	for (window_idx, all_tp_per_window) in enumerate(all_tp_filtered):
 		ts = (window_idx+1) * args.w
 		if ts > max_ts:
 			max_ts = ts
@@ -97,7 +98,7 @@ for filename in data_files :
 		all_max_tp.append(max_tp)
 
 		if args.ci:
-			if len(all_tp_per_window) > 1 and sum(all_tp_per_window) > 0:
+			if sum(all_tp_per_window) > 0:
 				(ci95_lo, ci95_hi) = st.t.interval(alpha=0.95, df=len(all_tp_per_window)-1, loc=np.mean(np.array(all_tp_per_window)), scale=st.sem(np.array(all_tp_per_window))) 
 				if ci95_lo < 0:
 					ci95_lo = 0
@@ -109,7 +110,7 @@ for filename in data_files :
 				all_ci95_hi.append(all_tp_per_window[0])
 
 	(label, color) = get_label_and_color(filename)
-	ax.plot(all_ts, np.array(all_avg_tp), marker='.', color=color, label=label)
+	ax.plot(all_ts, np.array(all_avg_tp), marker=".", color=color, label=label)
 	#ax.plot(all_ts, np.array(all_ci95_lo))
 	#ax.plot(all_ts, np.array(all_ci95_hi))
 	if args.ci:
