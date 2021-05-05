@@ -7,10 +7,14 @@ use super::{
 };
 #[cfg(test)]
 use crate::bench::atomic_broadcast::atomic_broadcast::tests::SequenceResp;
+#[cfg(feature = "simulate_partition")]
+use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
+#[cfg(feature = "simulate_partition")]
+use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 use crate::{
     bench::atomic_broadcast::{
         atomic_broadcast::{Done, ExperimentParams},
@@ -307,7 +311,7 @@ where
         match msg {
             RaftCompMsg::Leader(notify_client, pid) => {
                 debug!(self.ctx.log(), "Node {} became leader", pid);
-                if notify_client {
+                if notify_client || (cfg!(feature = "simulate_partition") && pid == self.pid) {
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
@@ -388,6 +392,21 @@ where
                         leader.forward_with_original_sender(m, self);
                     }
                 }
+            }
+            #[cfg(feature = "simulate_partition")]
+            PARTITIONING_EXP_ID => {
+                match_deser! {m {
+                    msg(p): PartitioningExpMsg [using PartitioningExpMsgDeser] => {
+                        match p {
+                            PartitioningExpMsg::DisconnectPeers(peers, lagging_peer) => {
+                                self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.disconnect_peers(peers, lagging_peer));
+                            }
+                            PartitioningExpMsg::RecoverPeers => {
+                                self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.recover_peers());
+                            }
+                        }
+                    }
+                }}
             }
             _ => {
                 let NetMessage { sender, data, .. } = m;

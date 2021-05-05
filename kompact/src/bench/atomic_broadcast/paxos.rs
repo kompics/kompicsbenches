@@ -36,12 +36,16 @@ use quanta::{Clock, Instant};
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
+use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
 #[cfg(feature = "measure_io")]
 use std::io::Write;
 #[cfg(feature = "measure_io")]
 use std::sync::Mutex;
 
-use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
+#[cfg(feature = "simulate_partition")]
+use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
+#[cfg(feature = "simulate_partition")]
+use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 
 const BLE: &str = "ble";
 const COMMUNICATOR: &str = "communicator";
@@ -498,7 +502,7 @@ where
                 "\n---------- IO usage node {} in iteration: {} ----------",
                 self.pid, self.iteration_id
             )
-                .expect("Failed to write IO file");
+            .expect("Failed to write IO file");
             if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
                 self.io_windows.push((self.clock.now(), self.io_metadata));
                 self.io_metadata.reset();
@@ -649,19 +653,29 @@ where
     /// Calculates the `SegmentIndex` of each node
     fn get_node_segment_idx(&self, seq_len: u64, from_nodes: &[u64]) -> Vec<(u64, SegmentIndex)> {
         let offset = seq_len / from_nodes.len() as u64;
-        from_nodes.iter().enumerate().map(|(i, pid)| {
-            let from_idx = i as u64 * offset;
-            let to_idx = if from_idx as u64 + offset > seq_len {
-                seq_len
-            } else {
-                from_idx + offset
-            };
-            let idx = SegmentIndex::with(from_idx, to_idx);
-            (*pid, idx)
-        }).collect()
+        from_nodes
+            .iter()
+            .enumerate()
+            .map(|(i, pid)| {
+                let from_idx = i as u64 * offset;
+                let to_idx = if from_idx as u64 + offset > seq_len {
+                    seq_len
+                } else {
+                    from_idx + offset
+                };
+                let idx = SegmentIndex::with(from_idx, to_idx);
+                (*pid, idx)
+            })
+            .collect()
     }
 
-    fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, skip_idx: Option<SegmentIndex>, from_nodes: &[u64]) {
+    fn pull_sequence(
+        &mut self,
+        config_id: ConfigId,
+        seq_len: u64,
+        skip_idx: Option<SegmentIndex>,
+        from_nodes: &[u64],
+    ) {
         debug!(self.ctx.log(), "Pull Sequence skip: {:?}", skip_idx);
         let skip = skip_idx.unwrap_or_else(|| SegmentIndex::with(0, 0));
         let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len, from_nodes);
@@ -712,7 +726,13 @@ where
                 };
                 let pid = active_config_ready_peers[idx];
                 let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
-                info!(self.ctx.log(), "Retry SegmentRequest: pid: {}, active_peers: {:?}, {:?}", pid, self.active_config_ready_peers, sr);
+                info!(
+                    self.ctx.log(),
+                    "Retry SegmentRequest: pid: {}, active_peers: {:?}, {:?}",
+                    pid,
+                    self.active_config_ready_peers,
+                    sr
+                );
                 #[cfg(feature = "measure_io")]
                 {
                     self.io_metadata.update_sent(&sr);
@@ -765,7 +785,10 @@ where
             .expect("Should have all segments!");
         all_segments.sort_by_key(|s1| s1.get_from_idx());
         let len = all_segments.last().unwrap().get_to_idx() as usize;
-        info!(self.ctx.log(), "Got complete sequence of config_id: {}, len: {}", config_id, len);
+        info!(
+            self.ctx.log(),
+            "Got complete sequence of config_id: {}, len: {}", config_id, len
+        );
         let mut sequence = Vec::with_capacity(len);
         for mut segment in all_segments {
             sequence.append(&mut segment.entries);
@@ -890,11 +913,7 @@ where
             );
             let config_id = st.config_id;
             self.handle_segment(config_id, st.segment);
-            let got_all_segments = self
-                .pending_segments
-                .get(&config_id)
-                .unwrap()
-                .is_empty();
+            let got_all_segments = self.pending_segments.get(&config_id).unwrap().is_empty();
             if got_all_segments {
                 self.handle_completed_sequence_transfer(config_id);
             }
@@ -996,7 +1015,7 @@ where
                     let prev_leader = self.active_config.leader;
                     self.active_config.leader = pid;
                     if pid == self.pid {
-                        if prev_leader == 0 {
+                        if prev_leader == 0 || cfg!(feature = "simulate_partition"){
                             // notify client if no leader before
                             self.cached_client
                                 .as_ref()
@@ -1047,17 +1066,22 @@ where
                         None
                     };
                     for pid in &r.nodes.new_nodes {
-                        let segment = if !self.handled_seq_requests.iter().any(|sr| {
-                            sr.config_id == prev_config_id && sr.requestor_pid == *pid
-                        }) {
-                            // the new node hasn't already requested us
-                            if let Some(s) = &eager_transfer {
-                                self.handled_seq_requests.push(SegmentRequest::with(prev_config_id, s.get_index(), *pid));
-                            }
-                            eager_transfer.clone()
-                        } else {
-                            None
-                        };
+                        let segment =
+                            if !self.handled_seq_requests.iter().any(|sr| {
+                                sr.config_id == prev_config_id && sr.requestor_pid == *pid
+                            }) {
+                                // the new node hasn't already requested us
+                                if let Some(s) = &eager_transfer {
+                                    self.handled_seq_requests.push(SegmentRequest::with(
+                                        prev_config_id,
+                                        s.get_index(),
+                                        *pid,
+                                    ));
+                                }
+                                eager_transfer.clone()
+                            } else {
+                                None
+                            };
                         let r = ReconfigInit::with(
                             r.config_id,
                             r.nodes.clone(),
@@ -1184,6 +1208,38 @@ where
                         }
                     }
                 }
+            }
+            #[cfg(feature = "simulate_partition")]
+            PARTITIONING_EXP_ID => {
+                match_deser! {m {
+                    msg(p): PartitioningExpMsg [using PartitioningExpMsgDeser] => {
+                        match p {
+                            PartitioningExpMsg::DisconnectPeers(peers, lagging_peer) => {
+                                for communicator in &self.communicator_comps {
+                                    communicator.on_definition(|c| c.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                }
+                                for ble in &self.ble_comps {
+                                    ble.on_definition(|ble| ble.disconnect_peers(peers.clone(), lagging_peer.clone()));
+                                }
+                                let mut all_disconnected_peers = peers;
+                                if let Some(lagging) = lagging_peer {
+                                    all_disconnected_peers.push(lagging);
+                                }
+                                for paxos in &self.paxos_replicas {
+                                    paxos.on_definition(|p| p.connection_lost(all_disconnected_peers.clone()));
+                                }
+                            }
+                            PartitioningExpMsg::RecoverPeers => {
+                                for communicator in &self.communicator_comps {
+                                    communicator.on_definition(|c| c.recover_peers());
+                                }
+                                for ble in &self.ble_comps {
+                                    ble.on_definition(|ble| ble.recover_peers());
+                                }
+                            }
+                        }
+                    }
+                }}
             }
             _ => {
                 let NetMessage { sender, data, .. } = m;
@@ -1513,6 +1569,13 @@ where
         let prio_start_round = Ballot::with(n, 0);
         self.paxos
             .propose_reconfiguration(reconfig, Some(prio_start_round))
+    }
+
+    #[cfg(feature = "simulate_partition")]
+    fn connection_lost(&mut self, peers: Vec<u64>) {
+        for pid in peers {
+            self.paxos.connection_lost(pid);
+        }
     }
 }
 

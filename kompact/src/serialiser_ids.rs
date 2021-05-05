@@ -21,3 +21,5 @@ pub const PAXOS_ID: SerId = 60;
 pub const RECONFIG_ID: SerId = 61;
 pub const TEST_SEQ_ID: SerId = 62;
 pub const STOP_ID: SerId = 63;
+#[cfg(feature = "simulate_partition")]
+pub const PARTITIONING_EXP_ID: SerId = 64;
