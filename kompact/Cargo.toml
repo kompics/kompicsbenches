@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 #kompact 				= { git = "https://github.com/kompics/kompact"}
 kompact 				= { git = "https://github.com/kompics/kompact", rev = "94956af" }
-#kompact 				= { path = "../../kompact/core/" }
+#leaderpaxos             = { path = "../../leaderpaxos", features = ["batch_accept"] }
 leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos", features = ["batch_accept"] }
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
@@ -35,8 +35,8 @@ pretty-bytes            = {version = "0.2.2", optional = true}
 [dev-dependencies]
 uuid = { version = "0.8", features = ["v4"] }
 
-[profile.release]
-lto = true
+#[profile.release]
+#lto = true
 
 [features]
 travis_ci = ["slog/max_level_info", "slog/release_max_level_info"]
@@ -49,5 +49,6 @@ preloaded_log = []
 use_pid_map = [] # assign nodes to specific process ids
 periodic_client_logging = []
 periodic_replica_logging = []
+simulate_partition = [] # simulate livelock and deadlock scenarios
 
 #default = []

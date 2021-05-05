@@ -2,6 +2,8 @@ use super::messages::{
     AtomicBroadcastDeser, AtomicBroadcastMsg, Proposal, StopMsg as NetStopMsg, StopMsgDeser,
     RECONFIG_ID,
 };
+#[cfg(feature = "simulate_partition")]
+use crate::bench::atomic_broadcast::messages::PartitioningExpMsg;
 use crate::bench::atomic_broadcast::{
     atomic_broadcast::ReconfigurationPolicy,
     messages::{ReconfigurationProposal, ReconfigurationResp},
@@ -409,6 +411,84 @@ impl Client {
                 .expect("Failed to reply StopAsk!");
         }
     }
+
+    #[cfg(feature = "simulate_partition")]
+    fn create_partition(&mut self) {
+        assert_ne!(self.current_leader, 0);
+        let leader_ap = self.nodes.get(&self.current_leader).expect("No leader");
+        let followers: Vec<_> = self
+            .nodes
+            .iter()
+            .filter_map(|(pid, _)| {
+                if pid != &self.current_leader {
+                    Some(pid)
+                } else {
+                    None
+                }
+            })
+            .copied()
+            .collect();
+        if self.nodes.len() == 5 {  // Raft deadlock scenario
+            let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
+            info!(self.ctx.log(), "Creating partition. leader: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, lagging_follower, self.responses.len());
+            for pid in &followers {
+                let disconnect_peers: Vec<_> = if pid == &lagging_follower {
+                    vec![self.current_leader]
+                } else {
+                    self.nodes
+                        .keys()
+                        .filter(|p| *p != &lagging_follower && *p != pid)
+                        .copied()
+                        .collect()
+                };
+                info!(
+                    self.ctx.log(),
+                    "Node {} getting disconnected from {:?}", pid, disconnect_peers
+                );
+                let ap = self.nodes.get(&pid).expect("No follower ap");
+                ap.tell_serialised(
+                    PartitioningExpMsg::DisconnectPeers(disconnect_peers, None),
+                    self,
+                )
+                    .expect("Should serialise");
+            }
+            let non_lagging: Vec<u64> = followers
+                .iter()
+                .filter(|pid| *pid != &lagging_follower)
+                .copied()
+                .collect();
+            leader_ap
+                .tell_serialised(
+                    PartitioningExpMsg::DisconnectPeers(non_lagging, Some(lagging_follower)),
+                    self,
+                )
+                .expect("Should serialise");
+        } else if self.nodes.len() == 3 {   // Raft livelock scenario
+            let disconnected_follower = followers.first().unwrap();
+            let ap = self.nodes.get(disconnected_follower).unwrap();
+            ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None), self).expect("Should serialise!");
+            leader_ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None), self).expect("Should serialise!");
+            info!(self.ctx.log(), "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}", self.current_leader, disconnected_follower, self.responses.len());
+        } else {
+            unimplemented!()
+        }
+        let partition_duration = self.ctx.config()["partition_experiment"]["partition_duration"]
+            .as_duration()
+            .expect("No partition duration!");
+        self.schedule_once(partition_duration, move |c, _| {
+            c.recover_partition();
+            Handled::Ok
+        });
+    }
+
+    #[cfg(feature = "simulate_partition")]
+    fn recover_partition(&mut self) {
+        info!(self.ctx.log(), "Recovering from network partition");
+        for (_pid, ap) in &self.nodes {
+            ap.tell_serialised(PartitioningExpMsg::RecoverPeers, self)
+                .expect("Should serialise");
+        }
+    }
 }
 
 ignore_lifecycle!(Client);
@@ -441,6 +521,16 @@ impl Actor for Client {
                     });
                 self.window_timer = Some(timer);
                 self.send_concurrent_proposals();
+                #[cfg(feature = "simulate_partition")]
+                {
+                    let partition_ts = self.ctx.config()["partition_experiment"]["partition_ts"]
+                        .as_duration()
+                        .expect("No partition ts!");
+                    self.schedule_once(partition_ts, move |c, _| {
+                        c.create_partition();
+                        Handled::Ok
+                    });
+                }
             }
             LocalClientMessage::Stop(a) => {
                 let pending_proposals = std::mem::take(&mut self.pending_proposals);
@@ -469,6 +559,12 @@ impl Actor for Client {
                         self.current_leader = pid;
                         #[cfg(feature = "preloaded_log")] {
                             if self.state == ExperimentState::Setup { // wait until all preloaded responses before decrementing leader latch
+                                return Handled::Ok;
+                            }
+                        }
+                        #[cfg(feature = "simulate_partition")] {
+                            if self.state == ExperimentState::Running {
+                                info!(self.ctx.log(), "Leader changed: {}", self.current_leader);
                                 return Handled::Ok;
                             }
                         }

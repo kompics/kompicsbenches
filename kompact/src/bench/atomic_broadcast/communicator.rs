@@ -60,6 +60,8 @@ pub struct Communicator {
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
     io_windows: Vec<(Instant, IOMetaData)>,
+    #[cfg(feature = "simulate_partition")]
+    disconnected_peers: Vec<u64>,
 }
 
 impl Communicator {
@@ -75,6 +77,8 @@ impl Communicator {
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
             io_windows: vec![],
+            #[cfg(feature = "simulate_partition")]
+            disconnected_peers: vec![],
         }
     }
 
@@ -120,6 +124,29 @@ impl Communicator {
         let num_entries = rm.entries.len();
         num_entries * DATA_SIZE + std::mem::size_of_val(rm)
     }
+
+    #[cfg(feature = "simulate_partition")]
+    pub fn disconnect_peers(&mut self, peers: Vec<u64>, lagging_peer: Option<u64>) {
+        if let Some(lp) = lagging_peer {
+            // disconnect from lagging peer first
+            self.disconnected_peers.push(lp);
+            let a = peers.clone();
+            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"].as_duration().expect("No lagging duration!");
+            self.schedule_once(lagging_delay, move |c, _| {
+                for pid in a {
+                    c.disconnected_peers.push(pid);
+                }
+                Handled::Ok
+            });
+        } else {
+            self.disconnected_peers = peers;
+        }
+    }
+
+    #[cfg(feature = "simulate_partition")]
+    pub fn recover_peers(&mut self) {
+        self.disconnected_peers.clear();
+    }
 }
 
 impl ComponentLifecycle for Communicator {
@@ -144,12 +171,24 @@ impl Provide<CommunicationPort> for Communicator {
         self.update_sent_io_metadata(&msg);
         match msg {
             CommunicatorMsg::RawRaftMsg(rm) => {
+                #[cfg(feature = "simulate_partition")]
+                {
+                    if self.disconnected_peers.contains(&rm.get_to()) {
+                        return Handled::Ok;
+                    }
+                }
                 let receiver = self.get_actorpath(rm.get_to());
                 receiver
                     .tell_serialised(RaftMsg(rm), self)
                     .expect("Should serialise RaftMsg");
             }
             CommunicatorMsg::RawPaxosMsg(pm) => {
+                #[cfg(feature = "simulate_partition")]
+                {
+                    if self.disconnected_peers.contains(&pm.to) {
+                        return Handled::Ok;
+                    }
+                }
                 trace!(self.ctx.log(), "sending {:?}", pm);
                 let receiver = self.get_actorpath(pm.to);
                 receiver

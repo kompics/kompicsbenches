@@ -657,11 +657,16 @@ pub mod paxos {
         pub struct HeartbeatReply {
             pub round: u32,
             pub ballot: Ballot,
+            pub candidate: bool,
         }
 
         impl HeartbeatReply {
-            pub fn with(round: u32, ballot: Ballot) -> HeartbeatReply {
-                HeartbeatReply { round, ballot }
+            pub fn with(round: u32, ballot: Ballot, candidate: bool) -> HeartbeatReply {
+                HeartbeatReply {
+                    round,
+                    ballot,
+                    candidate,
+                }
             }
         }
 
@@ -690,6 +695,11 @@ pub mod paxos {
                         buf.put_u32(rep.round);
                         buf.put_u32(rep.ballot.n);
                         buf.put_u64(rep.ballot.pid);
+                        if rep.candidate {
+                            buf.put_u8(1);
+                        } else {
+                            buf.put_u8(0);
+                        }
                     }
                 }
                 Ok(())
@@ -715,7 +725,8 @@ pub mod paxos {
                         let n = buf.get_u32();
                         let pid = buf.get_u64();
                         let ballot = Ballot::with(n, pid);
-                        let hb_rep = HeartbeatReply::with(round, ballot);
+                        let candidate = if buf.get_u8() < 1 { false } else { true };
+                        let hb_rep = HeartbeatReply::with(round, ballot, candidate);
                         Ok(HeartbeatMsg::Reply(hb_rep))
                     }
                     _ => Err(SerError::InvalidType(
@@ -1022,5 +1033,80 @@ impl Deserialiser<StopMsg> for StopMsgDeser {
                 "Found unkown id but expected Peer stop or client stop".into(),
             )),
         }
+    }
+}
+
+#[cfg(feature = "simulate_partition")]
+const DISCONNECT_ID: u8 = 1;
+#[cfg(feature = "simulate_partition")]
+const RECOVER_ID: u8 = 2;
+
+#[cfg(feature = "simulate_partition")]
+#[derive(Clone, Debug)]
+pub enum PartitioningExpMsg {
+    DisconnectPeers(Vec<u64>, Option<u64>), // option to disconnect one of the nodes later
+    RecoverPeers,
+}
+
+#[cfg(feature = "simulate_partition")]
+pub struct PartitioningExpMsgDeser;
+
+#[cfg(feature = "simulate_partition")]
+impl Deserialiser<PartitioningExpMsg> for PartitioningExpMsgDeser {
+    const SER_ID: u64 = serialiser_ids::PARTITIONING_EXP_ID;
+
+    fn deserialise(buf: &mut dyn Buf) -> Result<PartitioningExpMsg, SerError> {
+        match buf.get_u8() {
+            DISCONNECT_ID => {
+                let mut peers = vec![];
+                let peers_len = buf.get_u32();
+                for _ in 0..peers_len {
+                    peers.push(buf.get_u64());
+                }
+                let dp = buf.get_u64();
+                let delayed_peer = if dp > 0 { Some(dp) } else { None };
+                Ok(PartitioningExpMsg::DisconnectPeers(peers, delayed_peer))
+            }
+            RECOVER_ID => Ok(PartitioningExpMsg::RecoverPeers),
+            _ => Err(SerError::InvalidType(
+                "Found unkown id but expected Disconnect or Recover Peers".into(),
+            )),
+        }
+    }
+}
+
+#[cfg(feature = "simulate_partition")]
+impl Serialisable for PartitioningExpMsg {
+    fn ser_id(&self) -> u64 {
+        serialiser_ids::PARTITIONING_EXP_ID
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        None
+    }
+
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        match self {
+            PartitioningExpMsg::DisconnectPeers(peers, lagging_peer) => {
+                buf.put_u8(DISCONNECT_ID);
+                buf.put_u32(peers.len() as u32);
+                for pid in peers {
+                    buf.put_u64(*pid);
+                }
+                if let Some(lp) = lagging_peer {
+                    buf.put_u64(*lp);
+                } else {
+                    buf.put_u64(0);
+                }
+            }
+            PartitioningExpMsg::RecoverPeers => {
+                buf.put_u8(RECOVER_ID);
+            }
+        }
+        Ok(())
+    }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
     }
 }
