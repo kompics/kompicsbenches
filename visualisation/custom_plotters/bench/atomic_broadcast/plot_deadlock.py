@@ -129,9 +129,15 @@ for d in directories:
 		#ax.plot(all_ts, all_min_tp, marker='o')
 		#ax.plot(all_ts, all_max_tp, marker='o')
 
-ax.legend(loc = "lower right")
 x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
 #plt.axvline(x=20, label='Network Partition')
+MEDIUM_SIZE = 18
+ax.legend(loc = "lower right", fontsize=15)
+x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
+
+for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+             ax.get_xticklabels() + ax.get_yticklabels()):
+    item.set_fontsize(MEDIUM_SIZE)
 
 handles, labels = plt.gca().get_legend_handles_labels()
 for h in handles:
@@ -156,7 +162,7 @@ fig.set_size_inches(12, 6)
 #num_cp = exp_str_split[1]
 exp_str = "deadlock"
 title = "Deadlock scenario"
-plt.title(title)
+plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
     target_dir = args.t + "/deadlock/{}-{}/".format(num_nodes, num_cp)
@@ -165,4 +171,4 @@ else:
 if args.ci == False:
 	exp_str = exp_str + "-no-ci"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 1000)
+plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600)

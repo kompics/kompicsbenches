@@ -58,7 +58,6 @@ args = parser.parse_args()
 print("Plotting with args:",args)
 
 fig, ax = plt.subplots()
-
 max_ts = 0
 data_files = [f for f in os.listdir(args.s) if f.endswith('.data')]
 for filename in data_files :
@@ -118,8 +117,13 @@ for filename in data_files :
 	#ax.plot(all_ts, all_min_tp, marker='o')
 	#ax.plot(all_ts, all_max_tp, marker='o')
 
-ax.legend(loc = "lower right")
+MEDIUM_SIZE = 18
+ax.legend(loc = "lower right", fontsize=15)
 x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
+
+for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+             ax.get_xticklabels() + ax.get_yticklabels()):
+    item.set_fontsize(MEDIUM_SIZE)
 
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
@@ -140,7 +144,7 @@ reconfig = exp_str_split[len(exp_str_split) - 1]
 title = "{} nodes, {} concurrent proposals".format(num_nodes, num_cp)
 if reconfig != "off":
 	title += ", {} reconfiguration".format(reconfig)
-plt.title(title)
+plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
     target_dir = args.t + "/windowed/{}-{}/".format(num_nodes, num_cp)
@@ -149,4 +153,4 @@ else:
 if args.ci == False:
 	exp_str = exp_str + "-no-ci"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "{}.png".format(exp_str), dpi = 600)
+plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600)
