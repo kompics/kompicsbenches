@@ -138,10 +138,12 @@ fig.set_size_inches(12, 6)
 split = args.s.split("/")
 exp_str = split[len(split)-3]
 exp_str_split = exp_str.split("-")
-num_nodes = exp_str_split[0]
 num_cp = exp_str_split[1]
+num_cp_int = int(num_cp)
+if num_cp_int > 1000:
+	num_cp = "{}k".format(int(num_cp_int/1000)) 
 reconfig = exp_str_split[len(exp_str_split) - 1]
-title = "{} nodes, {} concurrent proposals".format(num_nodes, num_cp)
+title = "{} concurrent proposals".format(num_cp)
 if reconfig != "off":
 	title += ", {} reconfiguration".format(reconfig)
 plt.title(title, fontsize=MEDIUM_SIZE)
