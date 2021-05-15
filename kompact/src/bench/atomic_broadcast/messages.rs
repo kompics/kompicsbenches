@@ -453,7 +453,6 @@ pub mod paxos {
         pub nodes: Reconfig,
         pub seq_metadata: SequenceMetaData,
         pub from: u64,
-        pub segment: Option<SequenceSegment>,
         pub skip_prepare_use_leader: Option<Leader<Ballot>>,
     }
 
@@ -463,7 +462,6 @@ pub mod paxos {
             nodes: Reconfig,
             seq_metadata: SequenceMetaData,
             from: u64,
-            segment: Option<SequenceSegment>,
             skip_prepare_use_leader: Option<Leader<Ballot>>,
         ) -> ReconfigInit {
             ReconfigInit {
@@ -471,7 +469,6 @@ pub mod paxos {
                 nodes,
                 seq_metadata,
                 from,
-                segment,
                 skip_prepare_use_leader,
             }
         }
@@ -507,15 +504,6 @@ pub mod paxos {
                         .for_each(|pid| buf.put_u64(*pid));
                     buf.put_u32(r.nodes.new_nodes.len() as u32);
                     r.nodes.new_nodes.iter().for_each(|pid| buf.put_u64(*pid));
-                    match &r.segment {
-                        Some(segment) => {
-                            buf.put_u8(1);
-                            buf.put_u64(segment.get_from_idx());
-                            buf.put_u64(segment.get_to_idx());
-                            PaxosSer::serialise_entries(segment.entries.as_slice(), buf);
-                        }
-                        None => buf.put_u8(0),
-                    }
                     match &r.skip_prepare_use_leader {
                         Some(l) => {
                             buf.put_u8(1);
@@ -571,16 +559,6 @@ pub mod paxos {
                     for _ in 0..new_nodes_len {
                         new_nodes.push(buf.get_u64());
                     }
-                    let segment = match buf.get_u8() {
-                        1 => {
-                            let from_idx = buf.get_u64();
-                            let to_idx = buf.get_u64();
-                            let idx = SegmentIndex::with(from_idx, to_idx);
-                            let entries = PaxosSer::deserialise_entries(buf);
-                            Some(SequenceSegment::with(idx, entries))
-                        }
-                        _ => None,
-                    };
                     let skip_prepare_use_leader = match buf.get_u8() {
                         1 => {
                             let leader_pid = buf.get_u64();
@@ -597,7 +575,6 @@ pub mod paxos {
                         nodes,
                         seq_metadata,
                         from,
-                        segment,
                         skip_prepare_use_leader,
                     );
                     Ok(ReconfigurationMsg::Init(r))

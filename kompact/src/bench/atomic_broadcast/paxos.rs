@@ -673,32 +673,27 @@ where
         &mut self,
         config_id: ConfigId,
         seq_len: u64,
-        skip_idx: Option<SegmentIndex>,
         from_nodes: &[u64],
     ) {
-        debug!(self.ctx.log(), "Pull Sequence skip: {:?}", skip_idx);
-        let skip = skip_idx.unwrap_or_else(|| SegmentIndex::with(0, 0));
         let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len, from_nodes);
         for (pid, segment_idx) in &indices {
-            if segment_idx != &skip {
-                info!(
-                    self.ctx.log(),
-                    "Pull Sequence: Requesting segment from {}, config_id: {}, idx: {:?}",
-                    pid,
-                    config_id,
-                    segment_idx
-                );
+            info!(
+                self.ctx.log(),
+                "Pull Sequence: Requesting segment from {}, config_id: {}, idx: {:?}",
+                pid,
+                config_id,
+                segment_idx
+            );
 
-                let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
-                #[cfg(feature = "measure_io")]
+            let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
+            #[cfg(feature = "measure_io")]
                 {
                     self.io_metadata.update_sent(&sr);
                 }
-                let receiver = self.get_actorpath(*pid);
-                receiver
-                    .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
-                    .expect("Should serialise!");
-            }
+            let receiver = self.get_actorpath(*pid);
+            receiver
+                .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
+                .expect("Should serialise!");
         }
         let transfer_timeout = self.ctx.config()["paxos"]["transfer_timeout"]
             .as_duration()
@@ -708,7 +703,6 @@ where
         });
         let pending_segments: Vec<SegmentIndex> = indices
             .iter()
-            .filter(|(_, segment_idx)| segment_idx != &skip)
             .map(|(_, segment_idx)| *segment_idx)
             .collect();
         self.pending_segments.insert(config_id, pending_segments);
@@ -807,29 +801,6 @@ where
         }
     }
 
-    fn get_continued_idx(&self, continued_nodes: &[u64]) -> usize {
-        continued_nodes
-            .iter()
-            .position(|pid| pid == &self.pid)
-            .expect("Could not find my pid in continued_nodes")
-    }
-
-    fn create_segment(&self, continued_nodes: &[u64], config_id: ConfigId) -> SequenceSegment {
-        let index = self.get_continued_idx(continued_nodes);
-        let n_continued = continued_nodes.len();
-        let final_seq = self
-            .prev_sequences
-            .get(&config_id)
-            .expect("Should have final sequence");
-        let seq_len = final_seq.get_sequence_len();
-        let offset = seq_len / n_continued as u64;
-        let from_idx = index as u64 * offset;
-        let to_idx = from_idx + offset;
-        let idx = SegmentIndex::with(from_idx, to_idx);
-        let entries = final_seq.get_entries(from_idx, to_idx).to_vec();
-        SequenceSegment::with(idx, entries)
-    }
-
     fn handle_segment_request(&mut self, sr: SegmentRequest, requestor: ActorPath) {
         if self.active_config.leader == sr.requestor_pid || self.handled_seq_requests.contains(&sr)
         {
@@ -903,7 +874,7 @@ where
             && !self.pending_segments.contains_key(&prev_config_id)
         {
             let ready_peers = self.active_config_ready_peers.clone();
-            self.pull_sequence(prev_config_id, prev_seq_len, None, &ready_peers);
+            self.pull_sequence(prev_config_id, prev_seq_len, &ready_peers);
         }
         if st.succeeded {
             debug!(
@@ -967,7 +938,7 @@ where
         self.communicator_comps.clear();
         #[cfg(feature = "measure_io")]
         {
-            self.io_metadata = IOMetaData::default();
+            self.io_metadata.reset();
             self.io_windows.clear();
         }
     }
@@ -1036,7 +1007,6 @@ where
             PaxosCompMsg::Reconfig(r) => {
                 /*** handle final sequence and notify new nodes ***/
                 let prev_config_id = self.active_config.id;
-                let prev_leader = self.active_config.leader;
                 let final_seq_len: u64 = r.final_sequence.get_sequence_len();
                 debug!(
                     self.ctx.log(),
@@ -1048,7 +1018,6 @@ where
                 let seq_metadata = SequenceMetaData::with(prev_config_id, final_seq_len);
                 self.prev_sequences.insert(prev_config_id, r.final_sequence);
                 let continued = r.nodes.continued_nodes.contains(&self.pid);
-                let prev_config_id = r.config_id - 1;
                 /*** Start new replica if continued ***/
                 if continued {
                     let peers = r.nodes.get_peers_of(self.pid);
@@ -1058,46 +1027,17 @@ where
                         peers,
                     );
                     self.start_replica(r.config_id);
-                    // transfer sequence to new nodes
-                    let continued_nodes = &r.nodes.continued_nodes;
-                    let eager_transfer = if prev_leader == self.pid {
-                        Some(self.create_segment(continued_nodes, prev_config_id))
-                    } else {
-                        None
-                    };
                     for pid in &r.nodes.new_nodes {
-                        let segment =
-                            if !self.handled_seq_requests.iter().any(|sr| {
-                                sr.config_id == prev_config_id && sr.requestor_pid == *pid
-                            }) {
-                                // the new node hasn't already requested us
-                                if let Some(s) = &eager_transfer {
-                                    self.handled_seq_requests.push(SegmentRequest::with(
-                                        prev_config_id,
-                                        s.get_index(),
-                                        *pid,
-                                    ));
-                                }
-                                eager_transfer.clone()
-                            } else {
-                                None
-                            };
                         let r = ReconfigInit::with(
                             r.config_id,
                             r.nodes.clone(),
                             seq_metadata.clone(),
                             self.pid,
-                            segment,
                             r.skip_prepare_use_leader,
                         );
                         #[cfg(feature = "measure_io")]
                         {
-                            let est_segment_size = match &r.segment {
-                                Some(s) => Self::estimate_segment_size(s),
-                                None => 0,
-                            };
-                            let est_size = std::mem::size_of_val(&r) + est_segment_size;
-                            self.io_metadata.update_sent_with_size(est_size);
+                            self.io_metadata.update_sent(&r);
                         }
                         let r_init = ReconfigurationMsg::Init(r);
                         let actorpath = self.get_actorpath(*pid);
@@ -1319,12 +1259,7 @@ where
                                     return Handled::Ok;
                                 } else {
                                     #[cfg(feature = "measure_io")] {
-                                        let est_segment_size = match &r.segment {
-                                            Some(s) => Self::estimate_segment_size(s),
-                                            None => 0
-                                        };
-                                        let est_size = std::mem::size_of_val(&r) + est_segment_size;
-                                        self.io_metadata.update_received_with_size(est_size);
+                                        self.io_metadata.update_received(&r);
                                     }
                                     if self.active_config.id >= r.config_id {
                                         return Handled::Ok;
@@ -1344,26 +1279,14 @@ where
                                                 self.prev_sequences.insert(r.seq_metadata.config_id, Arc::new(final_sequence));
                                                 self.start_replica(r.config_id);
                                             } else {
-                                                let skip_idx = r.segment.as_ref().map(|segment| segment.get_index());
                                                 // pull sequence from continued nodes
-                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, skip_idx, &r.nodes.continued_nodes);
-                                                if skip_idx.is_some() {
-                                                    let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
-                                                    self.handle_segment_transfer(st);
-                                                }
+                                                self.pull_sequence(r.seq_metadata.config_id, r.seq_metadata.len, &r.nodes.continued_nodes);
                                             }
                                         },
                                         Some(next_config_id) => {
                                             if next_config_id == r.config_id && r.nodes.continued_nodes.contains(&r.from) {
                                                 // update who we know already decided final seq
-                                                if r.nodes.continued_nodes.contains(&r.from) {
-                                                    self.active_config_ready_peers.push(r.from);
-                                                }
-                                                let eager_segment_transfer = r.segment.is_some();
-                                                if eager_segment_transfer {
-                                                    let st = SegmentTransfer::with(r.seq_metadata.config_id, true, r.seq_metadata, r.segment.unwrap());
-                                                    self.handle_segment_transfer(st);
-                                                }
+                                                self.active_config_ready_peers.push(r.from);
                                             }
                                         }
                                     }
