@@ -62,7 +62,7 @@ pub mod raft {
 pub mod paxos {
     use crate::{bench::atomic_broadcast::ble::Ballot, serialiser_ids};
     use kompact::prelude::{Any, Buf, BufMut, Deserialiser, SerError, Serialisable};
-    use leaderpaxos::{
+    use omnipaxos::{
         leader_election::Leader,
         messages::*,
         storage::{Entry, StopSign},

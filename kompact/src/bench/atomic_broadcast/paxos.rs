@@ -26,7 +26,7 @@ use rand::Rng;
 use std::{fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
 use crate::bench::atomic_broadcast::messages::paxos::SegmentIndex;
-use leaderpaxos::{leader_election::*, paxos::*, storage::*};
+use omnipaxos::{leader_election::*, paxos::*, storage::*};
 
 use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
@@ -36,11 +36,8 @@ use quanta::{Clock, Instant};
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
-use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
 #[cfg(feature = "measure_io")]
 use std::io::Write;
-#[cfg(feature = "measure_io")]
-use std::sync::Mutex;
 
 #[cfg(feature = "simulate_partition")]
 use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningExpMsgDeser};
@@ -270,7 +267,6 @@ where
         skip_prepare_use_leader: Option<Leader<Ballot>>,
     ) -> Paxos<Ballot, S, P> {
         let reconfig_replica = raw_peers.is_none(); // replica to be used after reconfiguration
-        let max_inflight = self.experiment_params.max_inflight;
         let initial_log = if cfg!(feature = "preloaded_log") && !reconfig_replica {
             let size: u64 = self.experiment_params.preloaded_log_size;
             let mut preloaded_log = Vec::with_capacity(size as usize);
@@ -281,7 +277,7 @@ where
             }
             preloaded_log
         } else {
-            Vec::with_capacity(max_inflight)
+            vec![]
         };
         let seq = S::new_with_sequence(initial_log);
         let paxos_state = P::new();
@@ -292,7 +288,6 @@ where
             raw_peers.unwrap_or_else(|| vec![1]), // if peers is empty then we will set it later upon reconfiguration, hence initialise with vec![1] for now
             storage,
             skip_prepare_use_leader,
-            Some(max_inflight),
         )
     }
 
@@ -396,8 +391,7 @@ where
             p.peers = peers.clone();
             let paxos_state = P::new();
             // let raw_paxos_log: KompactLogger = self.ctx.log().new(o!("raw_paxos" => self.pid));
-            let max_inflight = self.experiment_params.max_inflight;
-            let seq = S::new_with_sequence(Vec::with_capacity(max_inflight));
+            let seq = S::new();
             let storage = Storage::with(seq, paxos_state);
             p.paxos = Paxos::with(
                 config_id,
@@ -406,7 +400,6 @@ where
                 storage,
                 // raw_paxos_log,
                 skip_prepare_use_leader,
-                Some(max_inflight),
             );
         });
         let ble = self
@@ -458,22 +451,66 @@ where
         self.next_config_id = None;
     }
 
-    fn stop_ble(&mut self, log_io: Option<LogIOMetaData>, stop_futures: &mut Vec<KFuture<()>>) {
-        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
-        for ble in rest_ble {
-            stop_futures.push(
-                ble.actor_ref()
-                    .ask_with(|p| BLEStop(Ask::new(p, (self.pid, log_io.clone())))),
-            );
+    #[cfg(feature = "measure_io")]
+    fn write_io(&mut self) {
+        if let Some(timer) = self.io_timer.take() {
+            self.cancel_timer(timer);
         }
-        stop_futures.push(
-            ble_last
-                .actor_ref()
-                .ask_with(|p| BLEStop(Ask::new(p, (self.pid, log_io)))),
-        );
+        let mut file = self.experiment_params.get_io_meta_results_file();
+        writeln!(
+            file,
+            "\n---------- IO usage node {} in iteration: {} ----------",
+            self.pid, self.iteration_id
+        )
+        .expect("Failed to write IO file");
+        if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
+            self.io_windows.push((self.clock.now(), self.io_metadata));
+            self.io_metadata.reset();
+            let mut str = String::new();
+            let total = self
+                .io_windows
+                .iter()
+                .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                    sum + (*io_meta)
+                });
+            writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
+                .expect("Failed to write IO file");
+        }
+        for communicator in &self.communicator_comps {
+            let io_windows = communicator.on_definition(|c| c.get_io_windows());
+            let mut str = String::new();
+            let total = io_windows
+                .iter()
+                .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                    sum + *io_meta
+                });
+            writeln!(
+                file,
+                "Total Communicator IO: {:?}, cid: {:?}\n{}",
+                total,
+                communicator.id().to_hyphenated_ref().to_string(),
+                str
+            )
+            .expect("Failed to write IO results file");
+        }
+        for ble in &self.ble_comps {
+            let io = ble.on_definition(|c| c.get_io_metadata());
+            writeln!(
+                file,
+                "Total BLE IO: {:?}, cid: {:?}",
+                io,
+                ble.id().to_hyphenated_ref().to_string(),
+            )
+            .expect("Failed to write IO results file");
+        }
+        file.flush().expect("Failed to flush IO file");
     }
 
     fn stop_components(&mut self) -> Handled {
+        #[cfg(feature = "measure_io")]
+        self.write_io();
         self.stopped = true;
         let num_configs = self.paxos_replicas.len() as u32;
         let stopping_before_started = self.active_config.id < num_configs;
@@ -491,45 +528,15 @@ where
             self.next_config_id,
             stopping_before_started
         );
-        #[cfg(feature = "measure_io")]
-        {
-            if let Some(timer) = self.io_timer.take() {
-                self.cancel_timer(timer);
-            }
-            let mut file = self.experiment_params.get_io_meta_results_file();
-            writeln!(
-                file,
-                "\n---------- IO usage node {} in iteration: {} ----------",
-                self.pid, self.iteration_id
-            )
-            .expect("Failed to write IO file");
-            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-                self.io_windows.push((self.clock.now(), self.io_metadata));
-                self.io_metadata.reset();
-                let mut str = String::new();
-                let total =
-                    self.io_windows
-                        .iter()
-                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                            sum + (*io_meta)
-                        });
-                writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
-                    .expect("Failed to write IO file");
-                file.flush().expect("Failed to flush IO file");
-            }
-            let m = Mutex::new(file);
-            let l = LogIOMetaData::with(Arc::new(m));
-            for c in &self.communicator_comps {
-                c.actor_ref().tell(l.clone());
-            }
-            self.stop_ble(Some(l), &mut stop_futures);
+        let (ble_last, rest_ble) = self.ble_comps.split_last().expect("No ble comps!");
+        for ble in rest_ble {
+            stop_futures.push(ble.actor_ref().ask_with(|p| BLEStop(Ask::new(p, self.pid))));
         }
-
-        #[cfg(not(feature = "measure_io"))]
-        {
-            self.stop_ble(None, &mut stop_futures);
-        }
+        stop_futures.push(
+            ble_last
+                .actor_ref()
+                .ask_with(|p| BLEStop(Ask::new(p, self.pid))),
+        );
         let (paxos_last, rest) = self
             .paxos_replicas
             .split_last()
@@ -669,12 +676,7 @@ where
             .collect()
     }
 
-    fn pull_sequence(
-        &mut self,
-        config_id: ConfigId,
-        seq_len: u64,
-        from_nodes: &[u64],
-    ) {
+    fn pull_sequence(&mut self, config_id: ConfigId, seq_len: u64, from_nodes: &[u64]) {
         let indices: Vec<(u64, SegmentIndex)> = self.get_node_segment_idx(seq_len, from_nodes);
         for (pid, segment_idx) in &indices {
             info!(
@@ -687,9 +689,9 @@ where
 
             let sr = SegmentRequest::with(config_id, *segment_idx, self.pid);
             #[cfg(feature = "measure_io")]
-                {
-                    self.io_metadata.update_sent(&sr);
-                }
+            {
+                self.io_metadata.update_sent(&sr);
+            }
             let receiver = self.get_actorpath(*pid);
             receiver
                 .tell_serialised(ReconfigurationMsg::SegmentRequest(sr), self)
@@ -986,7 +988,7 @@ where
                     let prev_leader = self.active_config.leader;
                     self.active_config.leader = pid;
                     if pid == self.pid {
-                        if prev_leader == 0 || cfg!(feature = "simulate_partition"){
+                        if prev_leader == 0 || cfg!(feature = "simulate_partition") {
                             // notify client if no leader before
                             self.cached_client
                                 .as_ref()
@@ -1532,9 +1534,10 @@ where
             }
             PaxosReplicaMsg::LocalSegmentReq(requestor, seq_req, prev_seq_metadata) => {
                 let segment_idx = seq_req.idx;
-                let (succeeded, entries) = self
+                let entries = self
                     .paxos
                     .get_chosen_entries(segment_idx.from, segment_idx.to);
+                let succeeded = !entries.is_empty();
                 let segment = SequenceSegment::with(segment_idx, entries);
                 let st =
                     SegmentTransfer::with(seq_req.config_id, succeeded, prev_seq_metadata, segment);
@@ -1593,18 +1596,6 @@ where
 
     fn on_kill(&mut self) -> Handled {
         self.stop_timer();
-        #[cfg(feature = "measure_io")]
-        {
-            if !self.peers.is_empty() {
-                let final_seq = self.paxos.get_sequence();
-                info!(
-                    self.ctx.log(),
-                    "Final Sequence in config_id: {}, len: {}",
-                    self.config_id,
-                    final_seq.len()
-                );
-            }
-        }
         Handled::Ok
     }
 }

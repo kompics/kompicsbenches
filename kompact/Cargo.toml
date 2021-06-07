@@ -8,7 +8,7 @@ edition = "2018"
 #kompact 				= { git = "https://github.com/kompics/kompact"}
 kompact 				= { git = "https://github.com/kompics/kompact", rev = "94956af" }
 #leaderpaxos             = { path = "../../leaderpaxos", features = ["batch_accept"] }
-leaderpaxos             = { git = "https://github.com/haraldng/leaderpaxos", features = ["batch_accept"] }
+omnipaxos               = { git = "https://github.com/haraldng/omnipaxos", features = ["batch_accept"] }
 benchmark_suite_shared 	= { path = "../shared_rust/" }
 protobuf        		= "2"
 futures         		= "0.1"

@@ -428,7 +428,8 @@ impl Client {
             })
             .copied()
             .collect();
-        if self.nodes.len() == 5 {  // Raft deadlock scenario
+        if self.nodes.len() == 5 {
+            // Raft deadlock scenario
             let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
             info!(self.ctx.log(), "Creating partition. leader: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, lagging_follower, self.responses.len());
             for pid in &followers {
@@ -450,7 +451,7 @@ impl Client {
                     PartitioningExpMsg::DisconnectPeers(disconnect_peers, None),
                     self,
                 )
-                    .expect("Should serialise");
+                .expect("Should serialise");
             }
             let non_lagging: Vec<u64> = followers
                 .iter()
@@ -463,12 +464,28 @@ impl Client {
                     self,
                 )
                 .expect("Should serialise");
-        } else if self.nodes.len() == 3 {   // Raft livelock scenario
+        } else if self.nodes.len() == 3 {
+            // Raft livelock scenario
             let disconnected_follower = followers.first().unwrap();
             let ap = self.nodes.get(disconnected_follower).unwrap();
-            ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None), self).expect("Should serialise!");
-            leader_ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None), self).expect("Should serialise!");
-            info!(self.ctx.log(), "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}", self.current_leader, disconnected_follower, self.responses.len());
+            ap.tell_serialised(
+                PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None),
+                self,
+            )
+            .expect("Should serialise!");
+            leader_ap
+                .tell_serialised(
+                    PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None),
+                    self,
+                )
+                .expect("Should serialise!");
+            info!(
+                self.ctx.log(),
+                "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}",
+                self.current_leader,
+                disconnected_follower,
+                self.responses.len()
+            );
         } else {
             unimplemented!()
         }
@@ -554,26 +571,23 @@ impl Actor for Client {
             msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
-                    AtomicBroadcastMsg::Leader(pid) => {
+                    AtomicBroadcastMsg::Leader(pid) if self.state == ExperimentState::Setup => {
                         assert!(pid > 0);
                         self.current_leader = pid;
-                        #[cfg(feature = "preloaded_log")] {
-                            if self.state == ExperimentState::Setup { // wait until all preloaded responses before decrementing leader latch
-                                return Handled::Ok;
+                        if cfg!(feature = "preloaded_log") {
+                            return Handled::Ok; // wait until all preloaded responses before decrementing leader latch
+                        } else {
+                            match self.leader_election_latch.decrement() {
+                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
+                                Err(e) => if e != CountdownError::AlreadySet {
+                                    panic!("Failed to decrement election latch: {:?}", e);
+                                }
                             }
                         }
-                        #[cfg(feature = "simulate_partition")] {
-                            if self.state == ExperimentState::Running {
-                                info!(self.ctx.log(), "Leader changed: {}", self.current_leader);
-                                return Handled::Ok;
-                            }
-                        }
-                        match self.leader_election_latch.decrement() {
-                            Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
-                            Err(e) => if e != CountdownError::AlreadySet {
-                                panic!("Failed to decrement election latch: {:?}", e);
-                            }
-                        }
+                    }
+                    AtomicBroadcastMsg::Leader(pid) if self.state == ExperimentState::Running => {
+                        self.current_leader = pid;
+                        self.leader_changes.push((self.clock.now(), self.current_leader));
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
                         self.handle_reconfig_response(rr);

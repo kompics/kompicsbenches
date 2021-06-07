@@ -1,14 +1,11 @@
+use crate::bench::atomic_broadcast::messages::{
+    paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser,
+};
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
-use crate::bench::atomic_broadcast::{
-    messages::{paxos::ballot_leader_election::*, StopMsg as NetStopMsg, StopMsgDeser},
-    util::io_metadata::LogIOMetaData,
-};
 use hashbrown::HashSet;
 use kompact::prelude::*;
-use leaderpaxos::leader_election::{Leader, Round};
-#[cfg(feature = "measure_io")]
-use std::io::Write;
+use omnipaxos::leader_election::{Leader, Round};
 use std::time::Duration;
 
 #[derive(Clone, Copy, Eq, Debug, Default, Ord, PartialOrd, PartialEq)]
@@ -26,7 +23,7 @@ impl Ballot {
 impl Round for Ballot {}
 
 #[derive(Debug)]
-pub struct Stop(pub Ask<(u64, Option<LogIOMetaData>), ()>); // pid
+pub struct Stop(pub Ask<u64, ()>); // pid
 
 pub struct BallotLeaderElection;
 
@@ -53,7 +50,7 @@ pub struct BallotLeaderComp {
     timer: Option<ScheduledTimer>,
     stopped: bool,
     stopped_peers: HashSet<u64>,
-    stop_ask: Option<Ask<(u64, Option<LogIOMetaData>), ()>>,
+    stop_ask: Option<Ask<u64, ()>>,
     quick_timeout: bool,
     initial_election_factor: u64,
     #[cfg(feature = "measure_io")]
@@ -178,9 +175,9 @@ impl BallotLeaderComp {
         for peer in &self.peers {
             let hb_request = HeartbeatRequest::with(self.hb_round);
             #[cfg(feature = "measure_io")]
-                {
-                    self.io_metadata.update_sent(&hb_request);
-                }
+            {
+                self.io_metadata.update_sent(&hb_request);
+            }
             peer.tell_serialised(HeartbeatMsg::Request(hb_request), self)
                 .expect("HBRequest should serialise!");
         }
@@ -216,7 +213,9 @@ impl BallotLeaderComp {
             // disconnect from lagging peer first
             self.disconnected_peers.push(lp);
             let a = peers.clone();
-            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"].as_duration().expect("No lagging duration!");
+            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"]
+                .as_duration()
+                .expect("No lagging duration!");
             self.schedule_once(lagging_delay, move |c, _| {
                 for pid in a {
                     c.disconnected_peers.push(pid);
@@ -231,6 +230,11 @@ impl BallotLeaderComp {
     #[cfg(feature = "simulate_partition")]
     pub fn recover_peers(&mut self) {
         self.disconnected_peers.clear();
+    }
+
+    #[cfg(feature = "measure_io")]
+    pub fn get_io_metadata(&mut self) -> IOMetaData {
+        self.io_metadata
     }
 }
 
@@ -259,26 +263,8 @@ impl Actor for BallotLeaderComp {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {
-        #[allow(unused_variables)]
-        let (pid, log_io) = stop.0.request();
+        let pid = stop.0.request();
         self.stop_timer();
-        #[cfg(feature = "measure_io")]
-        {
-            if let Some(l) = log_io {
-                if self.io_metadata != IOMetaData::default() {
-                    let mut file = l.file.lock().unwrap();
-                    writeln!(
-                        file,
-                        "BLE IO: {:?}, cid: {:?}",
-                        self.io_metadata,
-                        self.ctx.id().to_hyphenated_ref().to_string()
-                    )
-                    .expect("Failed to write IO results file");
-                    file.flush().expect("Failed to flush IO results file");
-                    drop(file); // drop just to be sure
-                }
-            }
-        }
         for peer in &self.peers {
             peer.tell_serialised(NetStopMsg::Peer(*pid), self)
                 .expect("NetStopMsg should serialise!");

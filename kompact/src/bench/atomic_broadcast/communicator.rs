@@ -11,18 +11,15 @@ use crate::bench::atomic_broadcast::{
         raft::{RaftMsg, RawRaftSer},
         AtomicBroadcastMsg, ProposalResp, ReconfigurationResp, StopMsg as NetStopMsg, StopMsgDeser,
     },
-    util::io_metadata::LogIOMetaData,
 };
 use hashbrown::HashMap;
 use kompact::prelude::*;
-use leaderpaxos::messages::Message as RawPaxosMsg;
+use omnipaxos::messages::Message as RawPaxosMsg;
 
 #[cfg(feature = "measure_io")]
-use leaderpaxos::messages::PaxosMsg;
+use omnipaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
 use quanta::{Clock, Instant};
-#[cfg(feature = "measure_io")]
-use std::io::Write;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -108,6 +105,11 @@ impl Communicator {
     }
 
     #[cfg(feature = "measure_io")]
+    pub fn get_io_windows(&mut self) -> Vec<(Instant, IOMetaData)> {
+        std::mem::take(&mut self.io_windows)
+    }
+
+    #[cfg(feature = "measure_io")]
     fn estimate_paxos_msg_size(pm: &RawPaxosMsg<Ballot>) -> usize {
         let num_entries = match &pm.msg {
             PaxosMsg::Promise(p) => p.sfx.len(),
@@ -131,7 +133,9 @@ impl Communicator {
             // disconnect from lagging peer first
             self.disconnected_peers.push(lp);
             let a = peers.clone();
-            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"].as_duration().expect("No lagging duration!");
+            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"]
+                .as_duration()
+                .expect("No lagging duration!");
             self.schedule_once(lagging_delay, move |c, _| {
                 for pid in a {
                     c.disconnected_peers.push(pid);
@@ -227,37 +231,10 @@ impl Provide<CommunicationPort> for Communicator {
 }
 
 impl Actor for Communicator {
-    type Message = LogIOMetaData;
+    type Message = ();
 
     #[allow(unused_variables)]
-    fn receive_local(&mut self, log_io: LogIOMetaData) -> Handled {
-        #[cfg(feature = "measure_io")]
-        {
-            if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-                self.io_windows.push((self.clock.now(), self.io_metadata));
-                self.io_metadata.reset();
-                let mut str = String::new();
-                let total =
-                    self.io_windows
-                        .iter()
-                        .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                            str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
-                            sum + *io_meta
-                        });
-
-                let mut file = log_io.file.lock().unwrap();
-                writeln!(
-                    file,
-                    "Total Communicator IO: {:?}, cid: {:?}\n{}",
-                    total,
-                    self.ctx.id().to_hyphenated_ref().to_string(),
-                    str
-                )
-                .expect("Failed to write IO results file");
-                file.flush().expect("Failed to flush IO results file");
-                drop(file); // drop just to be sure
-            }
-        }
+    fn receive_local(&mut self, _msg: Self::Message) -> Handled {
         Handled::Ok
     }
 
