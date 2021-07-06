@@ -51,10 +51,10 @@ public class Windower extends ComponentDefinition {
         subscribe(flushHandler, net);
     }
 
-    private ClassMatchedHandler<Start, NetMessage> startHandler = new ClassMatchedHandler<Start, NetMessage>() {
+    private ClassMatchedHandler<WindowerMessage.Start, NetMessage> startHandler = new ClassMatchedHandler<WindowerMessage.Start, NetMessage>() {
 
         @Override
-        public void handle(Start content, NetMessage context) {
+        public void handle(WindowerMessage.Start content, NetMessage context) {
             if (content.partitionId == partitionId) {
                 if (!running) {
                     logger.debug("Got Start");

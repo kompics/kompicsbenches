@@ -10,6 +10,7 @@
          'ThroughputPingPong'/3,
          'NetThroughputPingPong'/3,
          'AtomicRegister'/3,
+         'SizedThroughput'/3,
          'StreamingWindows'/3,
          'Fibonacci'/3,
          'Chameneos'/3,
@@ -29,6 +30,12 @@
       write_workload => float() | infinity | '-infinity' | nan,
       partition_size => integer(),
       number_of_keys => integer()}.
+
+-type 'SizedThroughputRequest'() ::
+    #{message_size => integer(),
+      batch_size => integer(),
+      number_of_batches => integer(),
+      number_of_pairs => integer()}.
 
 -type 'StreamingWindowsRequest'() ::
     #{number_of_partitions => integer(),
@@ -144,7 +151,15 @@ decoder() -> benchmarks.
     Response = await_benchmark_result(atomic_register_bench, Message),
     {Response, Stream}.
 
--spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
+-spec 'SizedThroughput'(Message::'SizedThroughputRequest'(), Stream::grpc:stream(), State::any()) ->
+  {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'SizedThroughput'(Message, Stream, _State) ->
+    io:fwrite("Got SizedThroughput request request.~n"),
+    Response = await_benchmark_result(sized_throughput_bench, Message),
+    {Response, Stream}.
+
+  -spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'StreamingWindows'(Message, Stream, _State) ->

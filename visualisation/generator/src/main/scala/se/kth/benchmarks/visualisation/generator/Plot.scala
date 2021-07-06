@@ -37,6 +37,7 @@ object Plotter extends StrictLogging {
       case "ATOMICREGISTER"               => plots.AtomicRegister.plot(data)
       case "STREAMINGWINDOWS"             => plots.StreamingWindows.plot(data)
       case "ATOMICBROADCAST"              => plots.AtomicBroadcast.plot(data)
+      case "SIZEDTP"                      => plots.SizedThroughput.plot(data)
       case _                              => PlotGroup.Empty // TODO
     }
   }
@@ -375,6 +376,7 @@ case class ImplGroupedResult[Params: ClassTag](implLabel: String, params: List[P
 sealed trait Series {
   def addMeta(values: (String, JsValue)*): Series;
   def render: String;
+  def getName: String;
 }
 case class DataSeries(meta: Map[String, JsValue], data: Array[Double]) extends Series {
   override def addMeta(values: (String, JsValue)*): Series = {
@@ -399,6 +401,10 @@ case class DataSeries(meta: Map[String, JsValue], data: Array[Double]) extends S
     sb += '}';
     sb.toString
   }
+
+  override def getName: String = {
+    meta.get("name").get.render
+  }
 }
 case class ErrorBarSeries(meta: Map[String, JsValue], data: Array[(Double, Double)]) extends Series {
   override def addMeta(values: (String, JsValue)*): Series = {
@@ -418,7 +424,10 @@ case class ErrorBarSeries(meta: Map[String, JsValue], data: Array[(Double, Doubl
     sb += '}';
     sb.toString
   }
-}
+
+  override def getName: String = {
+    meta.get("name").get.render
+  }}
 case class BenchmarkData[Params](benchmark: Benchmark, results: Map[String, ImplGroupedResult[Params]]) {
   def mapParams[P: ClassTag](f: Params => P): BenchmarkData[P] = {
     val mapped: Map[String, ImplGroupedResult[P]] = this.results.mapValues(p => p.mapParams(f));

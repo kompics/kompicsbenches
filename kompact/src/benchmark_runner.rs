@@ -160,6 +160,15 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerActorImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn sized_throughput(
+        &self,
+        _o: grpc::RequestOptions,
+        p: benchmarks::SizedThroughputRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        println!("Got STP req: {:?}", p);
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 #[derive(Clone)]
@@ -299,6 +308,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerComponentImpl {
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }
+
+    fn sized_throughput(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::SizedThroughputRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
 }
 
 #[derive(Clone)]
@@ -416,6 +433,14 @@ impl benchmarks_grpc::BenchmarkRunner for BenchmarkRunnerMixedImpl {
         &self,
         _o: grpc::RequestOptions,
         _p: benchmarks::AtomicBroadcastRequest,
+    ) -> grpc::SingleResponse<messages::TestResult> {
+        grpc::SingleResponse::completed(not_implemented())
+    }
+
+    fn sized_throughput(
+        &self,
+        _o: grpc::RequestOptions,
+        _p: benchmarks::SizedThroughputRequest,
     ) -> grpc::SingleResponse<messages::TestResult> {
         grpc::SingleResponse::completed(not_implemented())
     }

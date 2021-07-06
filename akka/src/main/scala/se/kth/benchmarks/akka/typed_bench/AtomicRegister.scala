@@ -11,7 +11,6 @@ import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
 import java.util.concurrent.{CountDownLatch, TimeUnit, TimeoutException}
 import java.util.UUID.randomUUID
-
 import kompics.benchmarks.benchmarks.AtomicRegisterRequest
 import scalapb.GeneratedMessage
 import se.kth.benchmarks.{DeploymentMetaData, DistributedBenchmark}
@@ -27,6 +26,8 @@ import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadRespo
 
 import scala.collection.immutable.List
 import scala.collection.mutable.ListBuffer
+import scala.language.postfixOps
+import scala.math.Ordering.Implicits._
 
 object AtomicRegister extends DistributedBenchmark {
 
@@ -77,7 +78,7 @@ object AtomicRegister extends DistributedBenchmark {
       this.system = ActorSystemProvider.newRemoteTypedActorSystem[SystemSupervisor.SystemMessage](
         SystemSupervisor(),
         s"atomicreg_supervisor${randomUUID()}",
-        4,
+        Runtime.getRuntime.availableProcessors(),
         serializers
       )
 
@@ -85,7 +86,7 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def prepareIteration(d: List[ClientData]): Unit = {
-      logger.debug("Preparing iteration");
+      logger.info("Preparing iteration");
       val testing = false
       init_id += 1
       system ! StartAtomicRegister(read_workload, write_workload, testing, init_id)
@@ -108,7 +109,7 @@ object AtomicRegister extends DistributedBenchmark {
     };
 
     override def cleanupIteration(lastIteration: Boolean, execTimeMillis: Double): Unit = {
-      logger.debug("Cleaning up Atomic Register(Master) side");
+      logger.info("Cleaning up Atomic Register(Master) side");
       if (prepare_latch != null) prepare_latch = null
       if (finished_latch != null) finished_latch = null
       implicit val timeout: Timeout = 3.seconds
@@ -149,11 +150,11 @@ object AtomicRegister extends DistributedBenchmark {
     }
 
     override def prepareIteration(): Unit = {
-      logger.debug("Preparing Atomic Register(Client) iteration")
+      logger.info("Preparing Atomic Register(Client) iteration")
     }
 
     override def cleanupIteration(lastIteration: Boolean): Unit = {
-      logger.debug("Cleaning up Atomic Register(Client) side")
+      logger.info("Cleaning up Atomic Register(Client) side")
       if (lastIteration) {
         try {
           system.terminate();
@@ -187,7 +188,7 @@ object AtomicRegister extends DistributedBenchmark {
     case object OperationSucceeded
   }
 
-  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage] {
+  class SystemSupervisor(context: ActorContext[SystemMessage]) extends AbstractBehavior[SystemMessage](context) {
     import SystemSupervisor._
 
     val resolver = ActorRefResolver(context.system)
@@ -198,7 +199,7 @@ object AtomicRegister extends DistributedBenchmark {
       msg match {
         case StartAtomicRegister(r, w, t, init_id) => {
           atomicRegister = context.spawn[AtomicRegisterMessage](AtomicRegisterActor(r, w, t), s"typed_atomicreg$init_id")
-          this.context.log.debug(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
+          this.context.log.info(s"Atomic Register(Master) ref is ${resolver.toSerializationFormat(atomicRegister)}")
         }
         case s: StartPartitioningActor => {
           val atomicRegRef = ClientRef(resolver.toSerializationFormat(atomicRegister))
@@ -266,9 +267,9 @@ object AtomicRegister extends DistributedBenchmark {
   }
 
   class AtomicRegisterActor(context: ActorContext[AtomicRegisterMessage], read_workload: Float, write_workload: Float, testing: Boolean)
-      extends AbstractBehavior[AtomicRegisterMessage] {
-    implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
-      o.mkOrderingOps(x); // for tuple comparison
+      extends AbstractBehavior[AtomicRegisterMessage](context) {
+    // implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
+    //  o.mkOrderingOps(x); // for tuple comparison
 //    val logger = context.log
 
     var nodes: List[ActorRef[AtomicRegisterMessage]] = _

@@ -1,7 +1,6 @@
 package se.kth.benchmarks.akka
 
 import java.util.concurrent.CountDownLatch
-
 import akka.actor.{Actor, ActorRef}
 import akka.event.Logging
 import akka.serialization.Serializer
@@ -18,6 +17,7 @@ import akka.actor.ActorLogging
 import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
 
 import scala.collection.immutable.List
+import scala.language.postfixOps
 
 class PartitioningActor(prepare_latch: CountDownLatch,
                         finished_latch: Option[CountDownLatch],
@@ -39,6 +39,7 @@ class PartitioningActor(prepare_latch: CountDownLatch,
 
   override def receive: Receive = {
     case Start => {
+      log.debug("Received Start")
       val actorRefsF =
         Future.sequence(active_nodes.map(node => context.actorSelection(node.actorPath).resolveOne(6 seconds)))
       actorRefsF.onComplete {
@@ -59,13 +60,14 @@ class PartitioningActor(prepare_latch: CountDownLatch,
         } catch {
           case _ => {
             val a_path = context.actorSelection(node.actorPath)
-            logger.info(s"Could not resolve ActorRef. Sending INIT to ActorPath instead: $a_path")
+            log.info(s"Could not resolve ActorRef. Sending INIT to ActorPath instead: $a_path")
             a_path ! INIT(rank, init_id, active_nodes, min_key, max_key)
           }
         }*/
     }
 
     case ResolvedNodes(resolvedRefs) => {
+      log.debug("Resolved Nodes")
       val min_key: Long = 0L
       val max_key: Long = num_keys - 1
       resolved_active_nodes = resolvedRefs
@@ -85,8 +87,10 @@ class PartitioningActor(prepare_latch: CountDownLatch,
       resolved_active_nodes.foreach(ref => ref ! Run)
     }
     case Done => {
+      log.debug("Got Done!")
       done_count += 1
       if (done_count == n) {
+        log.debug("Done!!!")
         finished_latch.get.countDown()
       }
     }

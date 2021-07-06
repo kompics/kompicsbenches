@@ -11,6 +11,7 @@ mod messages;
 pub mod net_throughput_pingpong;
 pub mod netpingpong;
 pub mod pingpong;
+pub mod sized_throughput;
 pub mod streaming_windows;
 pub mod throughput_pingpong;
 
@@ -78,6 +79,12 @@ impl BenchmarkFactory for ComponentFactory {
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
     }
+
+    fn sized_throughput(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
+    }
 }
 
 pub fn actor() -> Box<dyn BenchmarkFactory> {
@@ -98,6 +105,7 @@ impl BenchmarkFactory for ActorFactory {
                 self.atomic_register().map_into()
             }
             streaming_windows::StreamingWindows::LABEL => self.streaming_windows().map_into(),
+            sized_throughput::SizedThroughputBenchmark::LABEL => self.sized_throughput().map_into(),
             _ => Err(NotImplementedError::NotFound),
         }
     }
@@ -147,6 +155,12 @@ impl BenchmarkFactory for ActorFactory {
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Err(NotImplementedError::NotImplementable)
+    }
+
+    fn sized_throughput(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Ok(sized_throughput::SizedThroughputBenchmark {}.into())
     }
 }
 pub fn mixed() -> Box<dyn BenchmarkFactory> {
@@ -212,5 +226,11 @@ impl BenchmarkFactory for MixedFactory {
         &self,
     ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
         Ok(atomic_broadcast::atomic_broadcast::AtomicBroadcast {}.into())
+    }
+
+    fn sized_throughput(
+        &self,
+    ) -> Result<Box<dyn AbstractDistributedBenchmark>, NotImplementedError> {
+        Err(NotImplementedError::NotImplementable)
     }
 }

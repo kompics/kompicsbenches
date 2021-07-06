@@ -2,12 +2,14 @@ package se.kth.benchmarks
 
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
+
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 import io.grpc.{Server, ServerBuilder}
-
 import com.typesafe.scalalogging.StrictLogging
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder
+
 import java.util.concurrent.Executors
 
 class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext, runner: BenchmarkRunnerGrpc.BenchmarkRunner)
@@ -21,7 +23,7 @@ class BenchmarkRunnerServer(port: Int, executionContext: ExecutionContext, runne
     implicit val retryStrategy = RetryStrategy.fixedBackOff(retryDuration = 500.milliseconds, maxAttempts = 10);
 
     server = Retry {
-      ServerBuilder
+      NettyServerBuilder
         .forPort(port)
         .addService(BenchmarkRunnerGrpc.bindService(runner, executionContext))
         .build()

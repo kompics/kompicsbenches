@@ -5,10 +5,11 @@ authors = ["Lars Kroll <lkroll@kth.se>"]
 edition = "2018"
 
 [dependencies]
-actix 			= "0.8"
+actix 			= "0.11.1"
 benchmark_suite_shared = { path = "../shared_rust/" }
 protobuf        = "2"
-futures         = "0.1"
+futures         = {version = "0.3.15", package = 'futures' }
+benchfutures    = {version = "0.1", package = 'futures' }
 futures-cpupool = "0.1"
 grpc 			= "0.6"
 synchronoise 	= "1.0"

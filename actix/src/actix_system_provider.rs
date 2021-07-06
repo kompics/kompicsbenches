@@ -2,13 +2,12 @@
 
 use actix::*;
 //use actix::prelude::*;
-use futures::sync::mpsc::{channel, Receiver, Sender};
-use futures::sync::oneshot::channel as promise;
-use futures::{Future, Stream};
+use futures::channel::mpsc::{channel, Receiver, Sender};
+use futures::channel::oneshot::channel as promise;
+use futures::{StreamExt, Future};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::thread;
-
 //pub struct ActixSystemProvider;
 
 //impl ActixSystemProvider {
@@ -75,17 +74,18 @@ impl ActixSystem {
         let boxed = Box::new(fun);
         self.system_ref
             .try_send(SystemCommand::Start(boxed))
-            .map_err(|_| SystemError::SendError)
-            .and_then(|_| rx.wait().map_err(|_| SystemError::SendError))
+            .map_err(|_| SystemError::SendError);
+        futures::executor::block_on(rx).map_err(|_| SystemError::SendError)
+            //.and_then(|_| futures::executor::block_on(rx).map_err(|_| SystemError::SendError))
+
     }
 
     pub fn stop<A>(&mut self, actor: Addr<A>) -> Result<(), SystemError>
     where
         A: Actor<Context = Context<A>> + Handler<PoisonPill>,
     {
-        actor
-            .send(PoisonPill)
-            .wait()
+        futures::executor::block_on(actor
+            .send(PoisonPill))
             .map_err(|_| SystemError::SendError)
     }
 }
@@ -137,9 +137,11 @@ struct ActixSystemCore {
 
 impl ActixSystemCore {
     fn run(&mut self) -> () {
-        let system = System::new(self.label.clone());
+        let system = System::new();
+            //(self.label.clone());
 
-        let manager_future = self.receiver.take().unwrap().for_each(|cmd| {
+        let command_receiver = Box::new(self.receiver.take().unwrap());
+        let manager_future = command_receiver.for_each(|cmd| {
             match cmd {
                 SystemCommand::Start(f) => {
                     //println!("Starting something!");
@@ -152,19 +154,14 @@ impl ActixSystemCore {
                     System::current().stop();
                 }
             }
-            Ok(())
+            futures::future::ready(())
         });
 
-        Arbiter::spawn(manager_future);
+        System::current().arbiter().spawn(manager_future);
 
         println!("Running system...");
         system.run().expect("Should be running.");
         println!("System stopped!");
-        // loop {
-        //     match self.receiver.recv() {
-
-        //     }
-        // }
     }
 }
 
@@ -222,6 +219,7 @@ mod tests {
         }
     }
 
+    /*
     #[test]
     fn test_system_creation() {
         let mut sys = new_system("TestSystem");
@@ -241,4 +239,6 @@ mod tests {
         sys.shutdown().expect("Should work maybe.");
         println!("Finished!");
     }
+
+     */
 }

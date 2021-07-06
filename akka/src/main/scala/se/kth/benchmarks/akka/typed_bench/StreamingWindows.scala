@@ -172,7 +172,7 @@ object StreamingWindows extends DistributedBenchmark {
 
   object MasterSupervisor {
     sealed trait SystemMessage;
-    case class StartSources(replyTo: ActorRef[List[ActorReference]], numberOfPartitions: Int) extends SystemMessage;
+    case class StartSources(sources: ActorRef[List[ActorReference]], numberOfPartitions: Int) extends SystemMessage;
     case class StartSinks(replyTo: ActorRef[OperationSucceeded.type],
                           latch: CountDownLatch,
                           windowers: List[ActorReference],
@@ -189,10 +189,10 @@ object StreamingWindows extends DistributedBenchmark {
   }
 
   class MasterSupervisor(context: ActorContext[MasterSupervisor.SystemMessage])
-      extends AbstractBehavior[MasterSupervisor.SystemMessage] {
+      extends AbstractBehavior[MasterSupervisor.SystemMessage](context) {
     import MasterSupervisor._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val resolver = ActorRefResolver(context.system);
 
@@ -234,7 +234,7 @@ object StreamingWindows extends DistributedBenchmark {
           this.resetReplyTo = Some(replyTo);
           this.sources.map {
             case (_, source) =>
-              context.ask(source)(StreamSource.Reset) {
+              context.ask(source, StreamSource.Reset) {
                 case Success(_) => SourceReset(true, source.narrow[Nothing])
                 case Failure(ex) => {
                   log.error("StreamSource did not reply with Flushed!", ex);
@@ -330,10 +330,10 @@ object StreamingWindows extends DistributedBenchmark {
   }
 
   class ClientSupervisor(context: ActorContext[ClientSupervisor.SystemMessage])
-      extends AbstractBehavior[ClientSupervisor.SystemMessage] {
+      extends AbstractBehavior[ClientSupervisor.SystemMessage](context) {
     import ClientSupervisor._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val resolver = ActorRefResolver(context.system);
 
@@ -381,15 +381,15 @@ object StreamingWindows extends DistributedBenchmark {
       Behaviors.setup(ctx => new Windower(ctx, windowSize, batchSize, amplification, upstream));
   }
 
-  class Windower(val context: ActorContext[Windower.WindowerMsg],
+  class Windower(context: ActorContext[Windower.WindowerMsg],
                  windowSize: Duration,
                  val batchSize: Long,
                  val amplification: Long,
                  val upstream: ActorRef[StreamSource.SourceMsg])
-      extends AbstractBehavior[Windower.WindowerMsg] {
+      extends AbstractBehavior[Windower.WindowerMsg](context) {
     import Windower._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val resolver = ActorRefResolver(context.system);
     val selfRef = ActorReference(resolver.toSerializationFormat(context.self));
@@ -456,7 +456,7 @@ object StreamingWindows extends DistributedBenchmark {
     private def triggerWindow(partitionId: Int): Unit = {
       log.debug(s"Triggering window with ${currentWindow.size} messages.");
       if (currentWindow.isEmpty) {
-        log.warning("Windows should not be empty in the benchmark!");
+        log.warn("Windows should not be empty in the benchmark!");
         return;
       }
       val median = Statistics.medianFromUnsorted(currentWindow);
@@ -482,11 +482,11 @@ object StreamingWindows extends DistributedBenchmark {
 
     def apply(pid: Int): Behavior[SourceMsg] = Behaviors.setup(ctx => new StreamSource(ctx, pid));
   }
-  class StreamSource(val context: ActorContext[StreamSource.SourceMsg], val partitionId: Int)
-      extends AbstractBehavior[StreamSource.SourceMsg] {
+  class StreamSource(context: ActorContext[StreamSource.SourceMsg], val partitionId: Int)
+      extends AbstractBehavior[StreamSource.SourceMsg](context) {
     import StreamSource._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val resolver = ActorRefResolver(context.system);
 
@@ -561,14 +561,14 @@ object StreamingWindows extends DistributedBenchmark {
               upstream: ActorRef[Windower.WindowerMsg]): Behavior[SinkMsg] =
       Behaviors.setup(ctx => new StreamSink(ctx, latch, numberOfWindows, upstream));
   }
-  class StreamSink(val context: ActorContext[StreamSink.SinkMsg],
+  class StreamSink(context: ActorContext[StreamSink.SinkMsg],
                    val latch: CountDownLatch,
                    val numberOfWindows: Long,
                    val upstream: ActorRef[Windower.WindowerMsg])
-      extends AbstractBehavior[StreamSink.SinkMsg] {
+      extends AbstractBehavior[StreamSink.SinkMsg](context) {
     import StreamSink._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val resolver = ActorRefResolver(context.system);
     val selfRef = ActorReference(resolver.toSerializationFormat(context.self));

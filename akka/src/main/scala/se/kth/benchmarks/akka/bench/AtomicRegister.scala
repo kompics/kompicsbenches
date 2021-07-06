@@ -21,6 +21,8 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Try
 import java.util.UUID.randomUUID
 
+import scala.math.Ordering.Implicits._
+
 import com.typesafe.scalalogging.StrictLogging
 import se.kth.benchmarks.test.KVTestUtil.{KVTimestamp, ReadInvokation, ReadResponse, WriteInvokation, WriteResponse}
 
@@ -213,8 +215,8 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
   }
 
   class AtomicRegisterActor(read_workload: Float, write_workload: Float, testing: Boolean) extends Actor {
-    implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
-      o.mkOrderingOps(x); // for tuple comparison
+    //implicit def addComparators[A](x: A)(implicit o: math.Ordering[A]): o.Ops =
+    //  o.mkOrderingOps(x); // for tuple comparison
 
     val logger = Logging(context.system, this)
 
@@ -301,6 +303,7 @@ object AtomicRegister extends DistributedBenchmark with StrictLogging {
     }
 
     private def sendDone(): Unit = {
+      logger.debug("Sending Done!")
       if (!testing) master ! Done
       else master ! TestDone(timestamps.toList)
     }

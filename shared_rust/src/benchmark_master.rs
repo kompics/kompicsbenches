@@ -9,7 +9,7 @@ use crate::{
 };
 use crossbeam::channel as cbchannel;
 use futures::{future, sync::oneshot, Future};
-use grpc::ClientStubExt;
+use grpc::{ClientStubExt, RequestOptions, SingleResponse};
 use retry::{delay::Fixed, retry, OperationResult};
 #[allow(unused_imports)]
 use slog::{crit, debug, error, info, o, warn, Drain, Logger};
@@ -20,6 +20,8 @@ use std::{
     thread,
     time::Duration,
 };
+use crate::kompics_benchmarks::benchmarks::SizedThroughputRequest;
+use crate::kompics_benchmarks::messages::TestResult;
 
 pub fn run(
     runner_port: u16,
@@ -689,6 +691,12 @@ impl benchmarks_grpc::BenchmarkRunner for RunnerHandler {
     ) -> grpc::SingleResponse<messages::TestResult> {
         info!(self.logger, "Got Atomic Broadcast req: {:?}", p);
         let b_res = self.benchmarks.atomic_broadcast();
+        self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
+    }
+
+    fn sized_throughput(&self, _: RequestOptions, p: SizedThroughputRequest) -> SingleResponse<TestResult> {
+        info!(self.logger, "Got Sized Throughput req: {:?}", p);
+        let b_res = self.benchmarks.sized_throughput();
         self.enqueue_if_implemented(b_res, |b| BenchInvocation::new(b.into(), p))
     }
 }

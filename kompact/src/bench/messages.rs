@@ -1,5 +1,7 @@
 use crate::serialiser_ids;
 use kompact::prelude::*;
+use rand::Rng;
+use std::fmt::{Debug, Formatter};
 
 #[derive(Debug)]
 pub struct Run;
@@ -169,5 +171,79 @@ impl Deserialiser<Pong> for Pong {
     fn deserialise(buf: &mut dyn Buf) -> Result<Pong, SerError> {
         let index = buf.get_u64();
         Ok(Pong::new(index))
+    }
+}
+
+#[derive(Clone)]
+pub struct SizedThroughputMessage {
+    data: Box<[u8]>,
+    pub aux: u8,
+    //checksum: u64,
+}
+
+impl SizedThroughputMessage {
+    const SERID: SerId = serialiser_ids::STP_MESSAGE_ID;
+
+    pub fn new(size: usize) -> Self {
+        let mut rng = rand::thread_rng();
+        let data_vec: Vec<u8> = (0..size).map(|v| rng.gen_range(u8::MIN, u8::MAX)).collect();
+        let data = data_vec.into_boxed_slice();
+        /*let mut checksum: u64 = 0;
+        for d in &data {
+            checksum += *d as u64;
+        }*/
+        SizedThroughputMessage { data, aux: 1 }
+    }
+}
+
+impl Debug for SizedThroughputMessage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BigPingMsg")
+            .field("data length", &(self.data.len()))
+            .finish()
+    }
+}
+
+impl Serialisable for SizedThroughputMessage {
+    fn ser_id(&self) -> SerId {
+        Self::SERID
+    }
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.data.len() + 4)
+    }
+    fn serialise(&self, buf: &mut dyn BufMut) -> Result<(), SerError> {
+        buf.put_u32(self.data.len() as u32);
+        buf.put_u8(self.aux);
+        //buf.put_u64(self.checksum);
+        buf.put_slice(&*self.data);
+        Ok(())
+    }
+
+    fn local(self: Box<Self>) -> Result<Box<dyn Any + Send>, Box<dyn Serialisable>> {
+        Ok(self)
+    }
+}
+
+impl Deserialiser<SizedThroughputMessage> for SizedThroughputMessage {
+    const SER_ID: SerId = Self::SERID;
+    fn deserialise(buf: &mut dyn Buf) -> Result<SizedThroughputMessage, SerError> {
+        let data_len = buf.get_u32() as usize;
+        let aux = buf.get_u8();
+        /* unsafe {
+            data.set_len(data_len);
+        } */
+        // let checksum = buf.get_u64();
+        unsafe {
+            let mut data = Box::<[u8]>::new_uninit_slice(data_len).assume_init();
+            buf.copy_to_slice(&mut *data);
+            Ok(Self { data, aux })
+        }
+        /*
+        let mut sum: u64 = 0;
+        for d in &data {
+            sum += *d as u64;
+        }
+        assert_eq!(sum, checksum);
+        */
     }
 }

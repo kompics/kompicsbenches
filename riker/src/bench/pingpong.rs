@@ -137,7 +137,7 @@ impl Pinger {
         latch: Arc<CountdownEvent>,
         ponger: ActorRef<Ping>,
     ) -> BoxActorProd<Pinger> {
-        Props::new(move || Pinger::with(count, latch.clone(), ponger.clone()))
+        Props::new_from(move || Pinger::with(count, latch.clone(), ponger.clone()))
     }
 }
 
@@ -178,7 +178,7 @@ impl Ponger {
         Ponger
     }
     fn props() -> BoxActorProd<Ponger> {
-        Props::new(Ponger::new)
+        Props::new_from(Ponger::new)
     }
 }
 

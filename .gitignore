@@ -83,6 +83,7 @@ kompics_rust/src/kompics_benchmark/benchmarks_grpc.rs
 
 # IntelliJ
 *.iml
+project/
 
 # Erlang
 .eunit
@@ -103,3 +104,8 @@ out/
 .metals/
 *.code-workspace
 .vscode
+
+# Install script leftovers
+protoc3/
+protoc-3*
+scala-2.13.0.deb

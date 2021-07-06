@@ -185,6 +185,7 @@ impl BenchmarkClient {
                             *state = State::Ready; // Clearly Check-In succeeded, even if the RPC was faulty
                         }
                         let test_label = sc.take_label();
+                        info!(self.logger, "Getting benchmark by label {}", test_label);
                         let b_res = self.benchmarks.by_label(&test_label);
                         let client_data_res: Result<String, BenchmarkError> = b_res
                             .map_err(|e| BenchmarkError::NotImplemented(e))

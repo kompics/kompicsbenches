@@ -13,9 +13,9 @@
          'StreamingWindows'/3,
          'Fibonacci'/3,
          'Chameneos'/3,
-         'AllPairsShortestPath'/3]).
-
--export([await_benchmark_result/3]).
+         'AllPairsShortestPath'/3,
+         'AtomicBroadcast'/3,
+         'SizedThroughput'/3]).
 
 -type 'PingPongRequest'() ::
     #{number_of_messages => integer()}.
@@ -39,6 +39,12 @@
       number_of_windows => integer(),
       window_size_amplification => integer()}.
 
+-type 'SizedThroughputRequest'() ::
+    #{message_size => integer(),
+      batch_size => integer(),
+      number_of_batches => integer(),
+      number_of_pairs => integer()}.
+
 -type 'FibonacciRequest'() ::
     #{fib_number => integer()}.
 
@@ -49,6 +55,14 @@
 -type 'APSPRequest'() ::
     #{number_of_nodes => integer(),
       block_size => integer()}.
+
+-type 'AtomicBroadcastRequest'() ::
+    #{algorithm => string(),
+      number_of_nodes => integer(),
+      number_of_proposals => integer(),
+      concurrent_proposals => integer(),
+      reconfiguration => string(),
+      reconfig_policy => string()}.
 
 -type 'TestResult'() ::
     #{sealed_value =>
@@ -89,89 +103,77 @@ decoder() -> benchmarks.
     {'ReadyResponse'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'Ready'(_Message, Stream, _State) ->
-    io:fwrite("Got ready request.~n"),
-    {#{status => true}, Stream}.
+    {#{}, Stream}.
 
 -spec 'Shutdown'(Message::'ShutdownRequest'(), Stream::grpc:stream(), State::any()) ->
     {'ShutdownAck'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'Shutdown'(_Message, Stream, _State) ->
-    io:fwrite("Got shutdown request, but shouldn't handle this!~n"),
     {#{}, Stream}.
 
 -spec 'PingPong'(Message::'PingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'PingPong'(Message, Stream, _State) ->
-    io:fwrite("Got PingPong request.~n"),
-    {ok, Response} = await_benchmark_result(ping_pong_bench, Message, "PingPong"),
-    {Response, Stream}.
+'PingPong'(_Message, Stream, _State) ->
+    {#{}, Stream}.
 
 -spec 'NetPingPong'(Message::'PingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'NetPingPong'(_Message, Stream, _State) ->
-    io:fwrite("Got NetPingPong request.~n"),
-    {test_result:not_implemented(), Stream}.
+    {#{}, Stream}.
 
 -spec 'ThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'ThroughputPingPong'(Message, Stream, _State) ->
-    io:fwrite("Got ThroughputPingPong request.~n"),
-    {ok, Response} = await_benchmark_result(throughput_ping_pong_bench, Message, "ThroughputPingPong"),
-    {Response, Stream}.
+'ThroughputPingPong'(_Message, Stream, _State) ->
+    {#{}, Stream}.
 
 -spec 'NetThroughputPingPong'(Message::'ThroughputPingPongRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'NetThroughputPingPong'(_Message, Stream, _State) ->
-    io:fwrite("Got NetThroughputPingPong request.~n"),
-    {test_result:not_implemented(), Stream}.
+    {#{}, Stream}.
 
 -spec 'AtomicRegister'(Message::'AtomicRegisterRequest'(), Stream::grpc:stream(), State::any()) ->
-  {'TestResult'(), grpc:stream()} | grpc:error_response().
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'AtomicRegister'(_Message, Stream, _State) ->
-  io:fwrite("Got AtomicRegister request.~n"),
-  {test_result:not_implemented(), Stream}.
+    {#{}, Stream}.
 
 -spec 'StreamingWindows'(Message::'StreamingWindowsRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
 'StreamingWindows'(_Message, Stream, _State) ->
-    io:fwrite("Got StreamingWindows request.~n"),
-  {test_result:not_implemented(), Stream}.
+    {#{}, Stream}.
 
 -spec 'Fibonacci'(Message::'FibonacciRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'Fibonacci'(Message, Stream, _State) ->
-    io:fwrite("Got Fibonacci request.~n"),
-    {ok, Response} = await_benchmark_result(fibonacci_bench, Message, "Fibonacci"),
-    {Response, Stream}.
+'Fibonacci'(_Message, Stream, _State) ->
+    {#{}, Stream}.
 
 -spec 'Chameneos'(Message::'ChameneosRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'Chameneos'(Message, Stream, _State) ->
-    io:fwrite("Got Chameneos request.~n"),
-    {ok, Response} = await_benchmark_result(chameneos_bench, Message, "Chameneos"),
-    {Response, Stream}.
+'Chameneos'(_Message, Stream, _State) ->
+    {#{}, Stream}.
 
 -spec 'AllPairsShortestPath'(Message::'APSPRequest'(), Stream::grpc:stream(), State::any()) ->
     {'TestResult'(), grpc:stream()} | grpc:error_response().
 %% This is a unary RPC
-'AllPairsShortestPath'(Message, Stream, _State) ->
-    io:fwrite("Got APSP request.~n"),
-    {ok, Response} = await_benchmark_result(all_pairs_shortest_path_bench, Message, "AllPairsShortestPath"),
-    {Response, Stream}.
+'AllPairsShortestPath'(_Message, Stream, _State) ->
+    {#{}, Stream}.
 
--spec await_benchmark_result(Bench :: module(), Message :: any(), Label :: string()) -> {ok, benchmarks:'TestResult'()}.
-await_benchmark_result(Bench, Message, Label) ->
-  io:fwrite("Got ~s request.~n", [Label]),
-  Res = bench_helpers:isolate(fun() -> benchmark_runner:run(Bench,Message) end),
-  io:fwrite("Finished ~s run with ~p.~n", [Label, Res]),
-  Response = test_result:from_result(Res),
-  io:fwrite("Sending ~s response ~p.~n", [Label, Response]),
-  {ok, Response}.
+-spec 'AtomicBroadcast'(Message::'AtomicBroadcastRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'AtomicBroadcast'(_Message, Stream, _State) ->
+    {#{}, Stream}.
+
+-spec 'SizedThroughput'(Message::'SizedThroughputRequest'(), Stream::grpc:stream(), State::any()) ->
+    {'TestResult'(), grpc:stream()} | grpc:error_response().
+%% This is a unary RPC
+'SizedThroughput'(_Message, Stream, _State) ->
+    {#{}, Stream}.
+

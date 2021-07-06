@@ -1,14 +1,6 @@
 package se.kth.benchmarks.visualisation.generator.plots
 
-import se.kth.benchmarks.visualisation.generator.{
-  BenchmarkData,
-  ImplGroupedResult,
-  JsRaw,
-  JsString,
-  PlotData,
-  PlotGroup,
-  Series
-}
+import se.kth.benchmarks.visualisation.generator.{BenchmarkData, FrameworkPlotStyle, ImplGroupedResult, JsRaw, JsString, PlotData, PlotGroup, Series}
 import se.kth.benchmarks.runner.{Benchmark, BenchmarkWithSpace, ParameterSpacePB}
 import kompics.benchmarks.benchmarks._
 
@@ -27,10 +19,12 @@ object Fibonacci {
       (key, groupedSeries(key), groupedErrorSeries(key))
     }).toList;
     val sortedSeries: List[Series] = mergedSeries.sortBy(_._1).map(t => List[Series](t._2, t._3)).flatten;
-    val pimpedSeries: List[Series] = sortedSeries.map(
-      _.addMeta(
-        "tooltip" -> JsRaw("{valueDecimals: 2, valueSuffix: 'ms'}")
-      )
+    val pimpedSeries: List[Series] = sortedSeries.map( series => {
+      series.addMeta("tooltip" -> JsRaw(s"{valueDecimals: 2, valueSuffix: 'ms'}"))
+        .addMeta(  "color" -> JsRaw(FrameworkPlotStyle.getColor(series.getName)))
+        .addMeta(  "marker" -> JsRaw(s"{${FrameworkPlotStyle.getMarker(series.getName)}}"))
+        .addMeta("dashStyle" -> JsRaw(FrameworkPlotStyle.getDashStyle(series.getName)))
+    }
     );
     val paramsS = params.map(_.toString);
     val plotid = s"${bench.symbol.toLowerCase()}-fibonacci-index";

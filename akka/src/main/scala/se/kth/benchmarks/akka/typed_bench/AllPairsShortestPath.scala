@@ -81,10 +81,10 @@ object AllPairsShortestPath extends Benchmark {
     def apply(blockSize: Int): Behavior[ManagerMsg] =
       Behaviors.setup(context => new ManagerActor(context, blockSize));
   }
-  class ManagerActor(val context: ActorContext[ManagerMsg], val blockSize: Int) extends AbstractBehavior[ManagerMsg] {
+  class ManagerActor(context: ActorContext[ManagerMsg], val blockSize: Int) extends AbstractBehavior[ManagerMsg](context) {
     import Messages._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val selfRef = context.self;
 
@@ -173,14 +173,14 @@ object AllPairsShortestPath extends Benchmark {
     def apply(initialBlock: Block[Double], numNodes: Int, manager: ActorRef[ManagerMsg]): Behavior[BlockMsg] =
       Behaviors.setup(context => new BlockActor(context, initialBlock, numNodes, manager));
   }
-  class BlockActor(val context: ActorContext[BlockMsg],
+  class BlockActor(context: ActorContext[BlockMsg],
                    initialBlock: Block[Double],
                    val numNodes: Int,
                    val manager: ActorRef[ManagerMsg])
-      extends AbstractBehavior[BlockMsg] {
+      extends AbstractBehavior[BlockMsg](context) {
     import Messages._;
 
-    context.setLoggerClass(this.getClass);
+    context.setLoggerName(this.getClass);
     val log = context.log;
     val selfRef = context.self;
 

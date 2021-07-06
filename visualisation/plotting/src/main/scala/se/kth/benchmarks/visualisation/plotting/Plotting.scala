@@ -32,7 +32,7 @@ object Plotting {
       override val title: Cfg[Title] = Title(text = plotTitle);
       override val xAxis: CfgArray[XAxis] =
         js.Array(XAxis(title = XAxisTitle(text = xAxisLabel), categories = xAxisCategories, minRange = 2));
-      override val yAxis: CfgArray[YAxis] = js.Array(YAxis(title = YAxisTitle(text = yAxisLabel)));
+      override val yAxis: CfgArray[YAxis] = js.Array(YAxis(title = YAxisTitle(text = yAxisLabel), `type` = "linear"));
       override val series: SeriesCfg = seriesData;
     });
   }

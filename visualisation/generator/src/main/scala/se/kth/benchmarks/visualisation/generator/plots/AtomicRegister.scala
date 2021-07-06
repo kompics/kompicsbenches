@@ -19,7 +19,7 @@ object AtomicRegister {
   type Params = AtomicRegisterRequest;
 
   def plot(data: BenchmarkData[String]): PlotGroup = {
-    println("data: " + data);
+    // println("data: " + data);
     val paramData = {
       val bench = data.benchmark.asInstanceOf[BenchmarkWithSpace[Params]];
       val space = bench.space.asInstanceOf[ParameterSpacePB[Params]];

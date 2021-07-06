@@ -3,12 +3,16 @@ package se.kth.benchmarks
 import kompics.benchmarks.benchmarks._
 import kompics.benchmarks.messages._
 import kompics.benchmarks.distributed._
+
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 import io.grpc.{ManagedChannelBuilder, Server, ServerBuilder}
+
 import java.util.concurrent.Executors
 import com.typesafe.scalalogging.StrictLogging
+
+import scala.language.postfixOps
 
 class BenchmarkClient(val address: String, val masterAddress: String, val masterPort: Int) extends StrictLogging {
   self =>
