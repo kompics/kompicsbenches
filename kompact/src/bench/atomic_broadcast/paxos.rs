@@ -957,7 +957,7 @@ pub enum PaxosCompMsg<S>
 where
     S: SequenceTraits<Ballot>,
 {
-    Leader(ConfigId, u64),
+    Leader(ConfigId, u64, u32), // pid, round
     PendingReconfig(Vec<u8>),
     Reconfig(FinalMsg<S>),
     KillComponents(Ask<(), Done>),
@@ -983,7 +983,7 @@ where
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
-            PaxosCompMsg::Leader(config_id, pid) => {
+            PaxosCompMsg::Leader(config_id, pid, round) => {
                 if self.active_config.id == config_id {
                     let prev_leader = self.active_config.leader;
                     self.active_config.leader = pid;
@@ -993,7 +993,7 @@ where
                             self.cached_client
                                 .as_ref()
                                 .expect("No cached client!")
-                                .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
+                                .tell_serialised(AtomicBroadcastMsg::Leader(pid, round as u64), self)
                                 .expect("Should serialise FirstLeader");
                         }
                         self.propose_hb_proposals();
@@ -1344,6 +1344,7 @@ where
     config_id: ConfigId,
     pid: u64,
     current_leader: u64,
+    leader_ballot: Ballot,
     timer: Option<ScheduledTimer>,
     stopped: bool,
     stopped_peers: HashSet<u64>,
@@ -1375,6 +1376,7 @@ where
             config_id,
             pid,
             current_leader: 0,
+            leader_ballot: Ballot::default(),
             timer: None,
             stopped: false,
             stop_ask: None,
@@ -1445,17 +1447,18 @@ where
         let r = FinalMsg::with(ss.config_id, nodes, final_seq, ss.skip_prepare_use_leader);
         self.supervisor.tell(PaxosCompMsg::Reconfig(r));
         // respond client
-        let rr = ReconfigurationResp::with(leader, ss.nodes);
+        let rr = ReconfigurationResp::with(leader, self.leader_ballot.n as u64, ss.nodes);
         self.communication_port
             .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
     }
 
     fn get_decided(&mut self) {
-        let leader = self.paxos.get_current_leader();
-        if self.current_leader != leader {
-            self.current_leader = leader;
+        let promise = self.paxos.get_promise();
+        if promise > self.leader_ballot {
+            self.leader_ballot = promise;
+            self.current_leader = self.paxos.get_current_leader();
             self.supervisor
-                .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader));
+                .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader, promise.n));
         }
         let decided_entries = self.paxos.get_decided_entries();
         #[cfg(feature = "periodic_replica_logging")]
@@ -1466,7 +1469,7 @@ where
             for decided in decided_entries.to_vec() {
                 match decided {
                     Entry::Normal(data) => {
-                        let pr = ProposalResp::with(data, self.pid);
+                        let pr = ProposalResp::with(data, self.pid, promise.n as u64);
                         self.communication_port
                             .trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
@@ -1650,10 +1653,11 @@ where
             "Node {} became leader in config {}. Ballot: {:?}", l.pid, self.config_id, l.round
         );
         self.paxos.handle_leader(l);
-        if self.current_leader != l.pid && !self.paxos.stopped() {
+        if self.leader_ballot < l.round && !self.paxos.stopped() {
             self.current_leader = l.pid;
+            self.leader_ballot = l.round;
             self.supervisor
-                .tell(PaxosCompMsg::Leader(self.config_id, l.pid));
+                .tell(PaxosCompMsg::Leader(self.config_id, l.pid, l.round.n));
         }
         Handled::Ok
     }

@@ -776,13 +776,15 @@ impl ReconfigurationProposal {
 pub struct ProposalResp {
     pub data: Vec<u8>,
     pub latest_leader: u64,
+    pub leader_round: u64,
 }
 
 impl ProposalResp {
-    pub fn with(data: Vec<u8>, latest_leader: u64) -> ProposalResp {
+    pub fn with(data: Vec<u8>, latest_leader: u64, leader_round: u64) -> ProposalResp {
         ProposalResp {
             data,
             latest_leader,
+            leader_round
         }
     }
 }
@@ -790,13 +792,15 @@ impl ProposalResp {
 #[derive(Clone, Debug)]
 pub struct ReconfigurationResp {
     pub latest_leader: u64,
+    pub leader_round: u64,
     pub current_configuration: Vec<u64>,
 }
 
 impl ReconfigurationResp {
-    pub fn with(latest_leader: u64, current_configuration: Vec<u64>) -> Self {
+    pub fn with(latest_leader: u64, leader_round: u64, current_configuration: Vec<u64>) -> Self {
         ReconfigurationResp {
             latest_leader,
+            leader_round,
             current_configuration,
         }
     }
@@ -808,7 +812,7 @@ pub enum AtomicBroadcastMsg {
     ReconfigurationProposal(ReconfigurationProposal),
     ProposalResp(ProposalResp),
     ReconfigurationResp(ReconfigurationResp),
-    Leader(u64),
+    Leader(u64, u64),   // pid, round
 }
 
 const PROPOSAL_ID: u8 = 1;
@@ -827,19 +831,6 @@ impl Serialisable for AtomicBroadcastMsg {
     }
 
     fn size_hint(&self) -> Option<usize> {
-        /*let msg_size = match &self {
-            AtomicBroadcastMsg::Proposal(p) => {
-                let reconfig_len = match p.reconfig.as_ref() {
-                    Some(r) => r.len(),
-                    _ => 0,
-                };
-                13 + DATA_SIZE_HINT + reconfig_len * 8
-            }
-            AtomicBroadcastMsg::ProposalResp(_) => 13 + DATA_SIZE_HINT,
-            AtomicBroadcastMsg::PendingReconfiguration(_) => 5 + DATA_SIZE_HINT,
-            AtomicBroadcastMsg::FirstLeader(_) => 9,
-        };
-        Some(msg_size)*/
         None
     }
 
@@ -866,6 +857,7 @@ impl Serialisable for AtomicBroadcastMsg {
             AtomicBroadcastMsg::ProposalResp(pr) => {
                 buf.put_u8(PROPOSALRESP_ID);
                 buf.put_u64(pr.latest_leader);
+                buf.put_u64(pr.leader_round);
                 let data = pr.data.as_slice();
                 let data_len = data.len() as u32;
                 buf.put_u32(data_len);
@@ -874,15 +866,17 @@ impl Serialisable for AtomicBroadcastMsg {
             AtomicBroadcastMsg::ReconfigurationResp(rr) => {
                 buf.put_u8(RECONFIGRESP_ID);
                 buf.put_u64(rr.latest_leader);
+                buf.put_u64(rr.leader_round);
                 let config_len: u32 = rr.current_configuration.len() as u32;
                 buf.put_u32(config_len);
                 for node in &rr.current_configuration {
                     buf.put_u64(*node);
                 }
             }
-            AtomicBroadcastMsg::Leader(pid) => {
+            AtomicBroadcastMsg::Leader(pid, round) => {
                 buf.put_u8(LEADER_ID);
                 buf.put_u64(*pid);
+                buf.put_u64(*round);
             }
         }
         Ok(())
@@ -928,29 +922,31 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
             }
             PROPOSALRESP_ID => {
                 let latest_leader = buf.get_u64();
+                let leader_round = buf.get_u64();
                 let data_len = buf.get_u32() as usize;
-                // println!("latest_leader: {}, data_len: {}, buf remaining: {}", latest_leader, data_len, buf.remaining());
                 let mut data = vec![0; data_len];
                 buf.copy_to_slice(&mut data);
                 let pr = ProposalResp {
                     data,
                     latest_leader,
+                    leader_round
                 };
-                // print!(" deser ok");
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             }
             LEADER_ID => {
                 let pid = buf.get_u64();
-                Ok(AtomicBroadcastMsg::Leader(pid))
+                let round = buf.get_u64();
+                Ok(AtomicBroadcastMsg::Leader(pid, round))
             }
             RECONFIGRESP_ID => {
                 let latest_leader = buf.get_u64();
+                let leader_round = buf.get_u64();
                 let config_len = buf.get_u32() as usize;
                 let mut current_config = Vec::with_capacity(config_len);
                 for _ in 0..config_len {
                     current_config.push(buf.get_u64());
                 }
-                let rr = ReconfigurationResp::with(latest_leader, current_config);
+                let rr = ReconfigurationResp::with(latest_leader, leader_round, current_config);
                 Ok(AtomicBroadcastMsg::ReconfigurationResp(rr))
             }
             _ => Err(SerError::InvalidType(

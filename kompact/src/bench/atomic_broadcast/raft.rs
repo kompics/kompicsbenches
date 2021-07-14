@@ -41,7 +41,7 @@ const DELAY: Duration = Duration::from_millis(0);
 
 #[derive(Debug)]
 pub enum RaftCompMsg {
-    Leader(bool, u64),
+    Leader(bool, u64, u64), // notify_client, pid, term
     Removed,
     ForwardReconfig(u64, ReconfigurationProposal),
     KillComponents(Ask<(), Done>),
@@ -316,13 +316,13 @@ where
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
-            RaftCompMsg::Leader(notify_client, pid) => {
+            RaftCompMsg::Leader(notify_client, pid, term) => {
                 debug!(self.ctx.log(), "Node {} became leader", pid);
                 if notify_client || (cfg!(feature = "simulate_partition") && pid == self.pid) {
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
-                        .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
+                        .tell_serialised(AtomicBroadcastMsg::Leader(pid, term), self)
                         .expect("Should serialise FirstLeader");
                 }
                 self.current_leader = pid
@@ -720,7 +720,7 @@ where
                     false
                 };
                 self.supervisor
-                    .tell(RaftCompMsg::Leader(notify_client, leader));
+                    .tell(RaftCompMsg::Leader(notify_client, leader, self.raw_raft.raft.term));
             }
         }
         Handled::Ok
@@ -887,7 +887,7 @@ where
                                 current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-                            let rr = ReconfigurationResp::with(leader, current_configuration);
+                            let rr = ReconfigurationResp::with(leader, self.raw_raft.raft.term, current_configuration,);
                             self.communication_port
                                 .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
                         }
@@ -897,7 +897,7 @@ where
                     // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader {
                         let pr =
-                            ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id);
+                            ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id, self.raw_raft.raft.term);
                         self.communication_port
                             .trigger(CommunicatorMsg::ProposalResponse(pr));
                     }

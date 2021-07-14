@@ -1539,7 +1539,6 @@ checksum = "a9a7ab5d64814df0fe4a4b5ead45ed6c5f181ee3ff04ba344313a6c80446c5d4"
 [[package]]
 name = "omnipaxos"
 version = "0.1.0"
-source = "git+https://github.com/haraldng/omnipaxos#0948c1ad370e93868b19ac824e707b5b7c84adef"
 
 [[package]]
 name = "once_cell"

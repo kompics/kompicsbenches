@@ -98,6 +98,7 @@ pub struct Client {
     pending_proposals: HashMap<u64, ProposalMetaData>,
     timeout: Duration,
     current_leader: u64,
+    leader_round: u64,
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
@@ -151,6 +152,7 @@ impl Client {
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
+            leader_round: 0,
             state: ExperimentState::Setup,
             current_config: initial_config,
             num_timed_out: 0,
@@ -323,8 +325,9 @@ impl Client {
                     self.current_leader,
                     self.current_config
                 );
-                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader {
+                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader && rr.leader_round > self.leader_round {
                     self.current_leader = rr.latest_leader;
+                    self.leader_round = rr.leader_round;
                     self.leader_changes
                         .push((self.clock.now(), rr.latest_leader));
                 }
@@ -527,7 +530,7 @@ impl Actor for Client {
                 #[cfg(feature = "periodic_client_logging")]
                 {
                     self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                        info!(c.ctx.log(), "Num responses: {}", c.responses.len());
+                        info!(c.ctx.log(), "Num responses: {}, leader: {}, ballot/term: {}", c.responses.len(), c.current_leader, c.leader_round);
                         Handled::Ok
                     });
                 }
@@ -571,9 +574,10 @@ impl Actor for Client {
             msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
-                    AtomicBroadcastMsg::Leader(pid) if self.state == ExperimentState::Setup => {
+                    AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Setup => {
                         assert!(pid > 0);
                         self.current_leader = pid;
+                        self.leader_round = round;
                         if cfg!(feature = "preloaded_log") {
                             return Handled::Ok; // wait until all preloaded responses before decrementing leader latch
                         } else {
@@ -585,8 +589,9 @@ impl Actor for Client {
                             }
                         }
                     }
-                    AtomicBroadcastMsg::Leader(pid) if self.state == ExperimentState::Running => {
+                    AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Running && round > self.leader_round => {
                         self.current_leader = pid;
+                        self.leader_round = round;
                         self.leader_changes.push((self.clock.now(), self.current_leader));
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
@@ -599,17 +604,19 @@ impl Actor for Client {
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                             let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
                             self.cancel_timer(proposal_meta.timer);
-                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
+                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.leader_round < pr.leader_round{
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                 self.current_leader = pr.latest_leader;
+                                self.leader_round = pr.leader_round;
                                 self.leader_changes.push((self.clock.now(), pr.latest_leader));
                             }
                             self.handle_normal_response(id, latency);
                             self.send_concurrent_proposals();
                         } else {
                             #[cfg(feature = "preloaded_log")] {
-                                if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup{
+                                if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup {
                                     self.current_leader = pr.latest_leader;
+                                    self.leader_round = pr.leader_round;
                                     self.rem_preloaded_proposals -= 1;
                                     if self.rem_preloaded_proposals == 0 {
                                         match self.leader_election_latch.decrement() {
