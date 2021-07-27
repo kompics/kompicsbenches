@@ -1219,9 +1219,9 @@ dependencies = [
  "hocon",
  "indexmap",
  "kompact",
- "leaderpaxos",
  "memmap",
  "num_cpus",
+ "omnipaxos",
  "parse_duration",
  "pretty-bytes",
  "protobuf",
@@ -1248,11 +1248,6 @@ name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
-
-[[package]]
-name = "leaderpaxos"
-version = "0.1.0"
-source = "git+https://github.com/haraldng/leaderpaxos#b67716a8d6e737b2c2148a57c26dfbcb27df2a00"
 
 [[package]]
 name = "libc"
@@ -1540,6 +1535,11 @@ name = "object"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9a7ab5d64814df0fe4a4b5ead45ed6c5f181ee3ff04ba344313a6c80446c5d4"
+
+[[package]]
+name = "omnipaxos"
+version = "0.1.0"
+source = "git+https://github.com/haraldng/omnipaxos?branch=get-promise#b71f320b0a7d3b31582513dc5151987873ea5129"
 
 [[package]]
 name = "once_cell"

@@ -98,6 +98,7 @@ pub struct Client {
     pending_proposals: HashMap<u64, ProposalMetaData>,
     timeout: Duration,
     current_leader: u64,
+    leader_round: u64,
     state: ExperimentState,
     current_config: Vec<u64>,
     num_timed_out: u64,
@@ -151,6 +152,7 @@ impl Client {
             pending_proposals: HashMap::with_capacity(num_concurrent_proposals as usize),
             timeout,
             current_leader: 0,
+            leader_round: 0,
             state: ExperimentState::Setup,
             current_config: initial_config,
             num_timed_out: 0,
@@ -323,8 +325,9 @@ impl Client {
                     self.current_leader,
                     self.current_config
                 );
-                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader {
+                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader && rr.leader_round > self.leader_round {
                     self.current_leader = rr.latest_leader;
+                    self.leader_round = rr.leader_round;
                     self.leader_changes
                         .push((self.clock.now(), rr.latest_leader));
                 }
@@ -428,7 +431,8 @@ impl Client {
             })
             .copied()
             .collect();
-        if self.nodes.len() == 5 {  // Raft deadlock scenario
+        if self.nodes.len() == 5 {
+            // Raft deadlock scenario
             let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
             info!(self.ctx.log(), "Creating partition. leader: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, lagging_follower, self.responses.len());
             for pid in &followers {
@@ -450,7 +454,7 @@ impl Client {
                     PartitioningExpMsg::DisconnectPeers(disconnect_peers, None),
                     self,
                 )
-                    .expect("Should serialise");
+                .expect("Should serialise");
             }
             let non_lagging: Vec<u64> = followers
                 .iter()
@@ -463,12 +467,28 @@ impl Client {
                     self,
                 )
                 .expect("Should serialise");
-        } else if self.nodes.len() == 3 {   // Raft livelock scenario
+        } else if self.nodes.len() == 3 {
+            // Raft livelock scenario
             let disconnected_follower = followers.first().unwrap();
             let ap = self.nodes.get(disconnected_follower).unwrap();
-            ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None), self).expect("Should serialise!");
-            leader_ap.tell_serialised(PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None), self).expect("Should serialise!");
-            info!(self.ctx.log(), "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}", self.current_leader, disconnected_follower, self.responses.len());
+            ap.tell_serialised(
+                PartitioningExpMsg::DisconnectPeers(vec![self.current_leader], None),
+                self,
+            )
+            .expect("Should serialise!");
+            leader_ap
+                .tell_serialised(
+                    PartitioningExpMsg::DisconnectPeers(vec![*disconnected_follower], None),
+                    self,
+                )
+                .expect("Should serialise!");
+            info!(
+                self.ctx.log(),
+                "Creating partition. Disconnecting leader: {} from follower: {}, num_responses: {}",
+                self.current_leader,
+                disconnected_follower,
+                self.responses.len()
+            );
         } else {
             unimplemented!()
         }
@@ -510,7 +530,7 @@ impl Actor for Client {
                 #[cfg(feature = "periodic_client_logging")]
                 {
                     self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                        info!(c.ctx.log(), "Num responses: {}", c.responses.len());
+                        info!(c.ctx.log(), "Num responses: {}, leader: {}, ballot/term: {}", c.responses.len(), c.current_leader, c.leader_round);
                         Handled::Ok
                     });
                 }
@@ -554,25 +574,26 @@ impl Actor for Client {
             msg(am): AtomicBroadcastMsg [using AtomicBroadcastDeser] => {
                 // info!(self.ctx.log(), "Handling {:?}", am);
                 match am {
-                    AtomicBroadcastMsg::Leader(pid) => {
+                    AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Setup => {
                         assert!(pid > 0);
                         self.current_leader = pid;
-                        #[cfg(feature = "preloaded_log")] {
-                            if self.state == ExperimentState::Setup { // wait until all preloaded responses before decrementing leader latch
-                                return Handled::Ok;
+                        self.leader_round = round;
+                        if cfg!(feature = "preloaded_log") {
+                            return Handled::Ok; // wait until all preloaded responses before decrementing leader latch
+                        } else {
+                            match self.leader_election_latch.decrement() {
+                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
+                                Err(e) => if e != CountdownError::AlreadySet {
+                                    panic!("Failed to decrement election latch: {:?}", e);
+                                }
                             }
                         }
-                        #[cfg(feature = "simulate_partition")] {
-                            if self.state == ExperimentState::Running {
-                                info!(self.ctx.log(), "Leader changed: {}", self.current_leader);
-                                return Handled::Ok;
-                            }
-                        }
-                        match self.leader_election_latch.decrement() {
-                            Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
-                            Err(e) => if e != CountdownError::AlreadySet {
-                                panic!("Failed to decrement election latch: {:?}", e);
-                            }
+                    }
+                    AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Running && round > self.leader_round => {
+                        self.leader_round = round;
+                        if self.current_leader != pid {
+                            self.current_leader = pid;
+                            self.leader_changes.push((self.clock.now(), self.current_leader));
                         }
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
@@ -585,17 +606,21 @@ impl Actor for Client {
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                             let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
                             self.cancel_timer(proposal_meta.timer);
-                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader {
+                            if self.current_config.contains(&pr.latest_leader) && self.leader_round < pr.leader_round{
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
-                                self.current_leader = pr.latest_leader;
-                                self.leader_changes.push((self.clock.now(), pr.latest_leader));
+                                self.leader_round = pr.leader_round;
+                                if self.current_leader != pr.latest_leader {
+                                    self.current_leader = pr.latest_leader;
+                                    self.leader_changes.push((self.clock.now(), self.current_leader));
+                                }
                             }
                             self.handle_normal_response(id, latency);
                             self.send_concurrent_proposals();
                         } else {
                             #[cfg(feature = "preloaded_log")] {
-                                if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup{
+                                if id <= self.num_preloaded_proposals && self.state == ExperimentState::Setup {
                                     self.current_leader = pr.latest_leader;
+                                    self.leader_round = pr.leader_round;
                                     self.rem_preloaded_proposals -= 1;
                                     if self.rem_preloaded_proposals == 0 {
                                         match self.leader_election_latch.decrement() {

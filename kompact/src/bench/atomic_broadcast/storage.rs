@@ -751,10 +751,10 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::bench::atomic_broadcast::{ble::Ballot, messages::paxos::PaxosSer};
+    use crate::bench::atomic_broadcast::{ble::Ballot};
     use std::fmt::Debug;
 
-    use leaderpaxos::storage::*;
+    use omnipaxos::storage::*;
 
     #[derive(Debug)]
     pub struct MemorySequence {
@@ -797,38 +797,11 @@ pub mod paxos {
             }
         }
 
-        fn get_ser_entries(&self, from: u64, to: u64) -> Option<Vec<u8>> {
-            match self.sequence.get(from as usize..to as usize) {
-                Some(ents) => {
-                    let mut bytes = Vec::with_capacity(((to - from) * 8) as usize);
-                    PaxosSer::serialise_entries(ents, &mut bytes);
-                    Some(bytes)
-                }
-                _ => None,
-            }
-        }
-
         fn get_suffix(&self, from: u64) -> Vec<Entry<Ballot>> {
             match self.sequence.get(from as usize..) {
                 Some(s) => s.to_vec(),
                 None => vec![],
             }
-        }
-
-        fn get_ser_suffix(&self, from: u64) -> Option<Vec<u8>> {
-            match self.sequence.get(from as usize..) {
-                Some(s) => {
-                    let len = s.len();
-                    let mut bytes: Vec<u8> = Vec::with_capacity(len * 40);
-                    PaxosSer::serialise_entries(s, &mut bytes);
-                    Some(bytes)
-                }
-                None => None,
-            }
-        }
-
-        fn get_sequence(&self) -> Vec<Entry<Ballot>> {
-            self.sequence.clone()
         }
 
         fn get_sequence_len(&self) -> u64 {

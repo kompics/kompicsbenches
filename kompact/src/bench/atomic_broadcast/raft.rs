@@ -12,7 +12,7 @@ use crate::bench::atomic_broadcast::messages::{PartitioningExpMsg, PartitioningE
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
 #[cfg(feature = "measure_io")]
-use crate::bench::atomic_broadcast::util::io_metadata::LogIOMetaData;
+use crate::bench::atomic_broadcast::util::io_metadata::IOMetaData;
 #[cfg(feature = "simulate_partition")]
 use crate::bench::serialiser_ids::PARTITIONING_EXP_ID;
 use crate::{
@@ -30,8 +30,6 @@ use protobuf::Message as PbMessage;
 use rand::Rng;
 #[cfg(feature = "measure_io")]
 use std::io::Write;
-#[cfg(feature = "measure_io")]
-use std::sync::Mutex;
 use std::{borrow::Borrow, clone::Clone, marker::Send, ops::DerefMut, sync::Arc, time::Duration};
 use tikv_raft::{
     prelude::{Entry, Message as TikvRaftMsg, *},
@@ -43,7 +41,7 @@ const DELAY: Duration = Duration::from_millis(0);
 
 #[derive(Debug)]
 pub enum RaftCompMsg {
-    Leader(bool, u64),
+    Leader(bool, u64, u64), // notify_client, pid, term
     Removed,
     ForwardReconfig(u64, ReconfigurationProposal),
     KillComponents(Ask<(), Done>),
@@ -248,19 +246,28 @@ where
     fn stop_components(&mut self) -> Handled {
         #[cfg(feature = "measure_io")]
         {
-            if let Some(c) = self.communicator.as_ref() {
+            if let Some(communicator) = self.communicator.as_ref() {
                 let mut file = self.experiment_params.get_io_meta_results_file();
+                let io_windows = communicator.on_definition(|c| c.get_io_windows());
+                let mut str = String::new();
+                let total = io_windows
+                    .iter()
+                    .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
+                        str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                        sum + *io_meta
+                    });
                 writeln!(
                     file,
-                    "\n---------- IO usage node {} in iteration: {} ----------",
-                    self.pid, self.iteration_id
+                    "---------- IO usage node {} in iteration: {} ----------\n
+                    Total Communicator IO: {:?}, cid: {:?}\n{}",
+                    self.pid,
+                    self.iteration_id,
+                    total,
+                    self.ctx.id().to_hyphenated_ref().to_string(),
+                    str
                 )
-                .expect("Failed to write IO file");
+                .expect("Failed to write IO results file");
                 file.flush().expect("Failed to flush IO file");
-
-                let m = Mutex::new(file);
-                let l = LogIOMetaData::with(Arc::new(m));
-                c.actor_ref().tell(l);
             }
         }
         self.stopped = true;
@@ -309,13 +316,13 @@ where
 
     fn receive_local(&mut self, msg: Self::Message) -> Handled {
         match msg {
-            RaftCompMsg::Leader(notify_client, pid) => {
+            RaftCompMsg::Leader(notify_client, pid, term) => {
                 debug!(self.ctx.log(), "Node {} became leader", pid);
                 if notify_client || (cfg!(feature = "simulate_partition") && pid == self.pid) {
                     self.cached_client
                         .as_ref()
                         .expect("No cached client!")
-                        .tell_serialised(AtomicBroadcastMsg::Leader(pid), self)
+                        .tell_serialised(AtomicBroadcastMsg::Leader(pid, term), self)
                         .expect("Should serialise FirstLeader");
                 }
                 self.current_leader = pid
@@ -713,7 +720,7 @@ where
                     false
                 };
                 self.supervisor
-                    .tell(RaftCompMsg::Leader(notify_client, leader));
+                    .tell(RaftCompMsg::Leader(notify_client, leader, self.raw_raft.raft.term));
             }
         }
         Handled::Ok
@@ -880,7 +887,7 @@ where
                                 current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-                            let rr = ReconfigurationResp::with(leader, current_configuration);
+                            let rr = ReconfigurationResp::with(leader, self.raw_raft.raft.term, current_configuration,);
                             self.communication_port
                                 .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
                         }
@@ -890,7 +897,7 @@ where
                     // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader {
                         let pr =
-                            ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id);
+                            ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id, self.raw_raft.raft.term);
                         self.communication_port
                             .trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
