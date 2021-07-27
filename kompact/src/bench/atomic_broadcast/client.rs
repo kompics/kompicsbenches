@@ -649,7 +649,7 @@ impl Actor for Client {
                             self.propose_normal(id);
                         }
                     }
-                    e => error!(self.ctx.log(), "Client received unexpected msg: {:?}", e),
+                    _ => {},
                 }
             },
             msg(stop): NetStopMsg [using StopMsgDeser] => {
