@@ -244,7 +244,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
   private val atomicBroadcastConcurrentProposals = List(500L, 5L.k, 50L.k);
 
   private val algorithms = List("paxos", "raft");
-  private val reconfig = List("single");
+  private val reconfig = List("single", "majority");
   private val reconfig_policy = List("replace-follower", "replace-leader");
 
   private val atomicBroadcastNormalTestSpace = ParameterSpacePB // test space without reconfig
@@ -307,7 +307,7 @@ object Benchmarks extends ParameterDescriptionImplicits {
     invoke = (stub, request: AtomicBroadcastRequest) => {
       stub.atomicBroadcast(request)
     },
-    space = atomicBroadcastNormalSpace
+    space = atomicBroadcastReconfigSpace
       .msg[AtomicBroadcastRequest] {
         case (a, nn, np, cp, r, rp) =>
           AtomicBroadcastRequest(
