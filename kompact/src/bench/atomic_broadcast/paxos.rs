@@ -21,7 +21,6 @@ use crate::{
 };
 use hashbrown::{HashMap, HashSet};
 use kompact::prelude::*;
-// use kompact::KompactLogger;
 use rand::Rng;
 use std::{fmt::Debug, ops::DerefMut, sync::Arc, time::Duration};
 
@@ -509,8 +508,9 @@ where
     }
 
     fn stop_components(&mut self) -> Handled {
-        #[cfg(feature = "measure_io")]
-        self.write_io();
+        #[cfg(feature = "measure_io")] {
+            self.write_io();
+        }
         self.stopped = true;
         let num_configs = self.paxos_replicas.len() as u32;
         let stopping_before_started = self.active_config.id < num_configs;

@@ -590,9 +590,11 @@ impl Actor for Client {
                         }
                     }
                     AtomicBroadcastMsg::Leader(pid, round) if self.state == ExperimentState::Running && round > self.leader_round => {
-                        self.current_leader = pid;
                         self.leader_round = round;
-                        self.leader_changes.push((self.clock.now(), self.current_leader));
+                        if self.current_leader != pid {
+                            self.current_leader = pid;
+                            self.leader_changes.push((self.clock.now(), self.current_leader));
+                        }
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
                         self.handle_reconfig_response(rr);
@@ -604,11 +606,13 @@ impl Actor for Client {
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
                             let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
                             self.cancel_timer(proposal_meta.timer);
-                            if self.current_config.contains(&pr.latest_leader) && self.current_leader != pr.latest_leader && self.leader_round < pr.leader_round{
+                            if self.current_config.contains(&pr.latest_leader) && self.leader_round < pr.leader_round{
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
-                                self.current_leader = pr.latest_leader;
                                 self.leader_round = pr.leader_round;
-                                self.leader_changes.push((self.clock.now(), pr.latest_leader));
+                                if self.current_leader != pr.latest_leader {
+                                    self.current_leader = pr.latest_leader;
+                                    self.leader_changes.push((self.clock.now(), self.current_leader));
+                                }
                             }
                             self.handle_normal_response(id, latency);
                             self.send_concurrent_proposals();
