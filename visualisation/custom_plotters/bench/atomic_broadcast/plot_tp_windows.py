@@ -149,7 +149,7 @@ if reconfig != "off":
 plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
-    target_dir = args.t + "/windowed/{}-{}/".format(num_nodes, num_cp)
+    target_dir = args.t + "/windowed/{}/".format(num_cp)
 else:
     target_dir = "./"
 if args.ci == False:
