@@ -508,7 +508,8 @@ where
     }
 
     fn stop_components(&mut self) -> Handled {
-        #[cfg(feature = "measure_io")] {
+        #[cfg(feature = "measure_io")]
+        {
             self.write_io();
         }
         self.stopped = true;
@@ -993,7 +994,10 @@ where
                             self.cached_client
                                 .as_ref()
                                 .expect("No cached client!")
-                                .tell_serialised(AtomicBroadcastMsg::Leader(pid, round as u64), self)
+                                .tell_serialised(
+                                    AtomicBroadcastMsg::Leader(pid, round as u64),
+                                    self,
+                                )
                                 .expect("Should serialise FirstLeader");
                         }
                         self.propose_hb_proposals();
@@ -1177,6 +1181,13 @@ where
                                 }
                                 for ble in &self.ble_comps {
                                     ble.on_definition(|ble| ble.recover_peers());
+                                }
+                                for paxos in &self.paxos_replicas {
+                                    paxos.on_definition(|p| {
+                                        for pid in 1..=self.nodes.len() {
+                                            p.paxos.connection_reestablished(pid as u64);
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -1457,8 +1468,11 @@ where
         if promise > self.leader_ballot {
             self.leader_ballot = promise;
             self.current_leader = self.paxos.get_current_leader();
-            self.supervisor
-                .tell(PaxosCompMsg::Leader(self.config_id, self.current_leader, promise.n));
+            self.supervisor.tell(PaxosCompMsg::Leader(
+                self.config_id,
+                self.current_leader,
+                promise.n,
+            ));
         }
         let decided_entries = self.paxos.get_decided_entries();
         #[cfg(feature = "periodic_replica_logging")]

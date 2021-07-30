@@ -751,7 +751,7 @@ pub mod raft {
 }
 
 pub mod paxos {
-    use crate::bench::atomic_broadcast::{ble::Ballot};
+    use crate::bench::atomic_broadcast::ble::Ballot;
     use std::fmt::Debug;
 
     use omnipaxos::storage::*;

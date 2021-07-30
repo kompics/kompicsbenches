@@ -122,6 +122,10 @@ pub struct Client {
     num_preloaded_proposals: u64,
     #[cfg(feature = "preloaded_log")]
     rem_preloaded_proposals: u64,
+    #[cfg(feature = "simulate_partition")]
+    periodic_partition_timer: Option<ScheduledTimer>,
+    #[cfg(feature = "simulate_partition")]
+    recover_periodic_partition: bool,
 }
 
 impl Client {
@@ -175,6 +179,10 @@ impl Client {
             num_preloaded_proposals: preloaded_log_size,
             #[cfg(feature = "preloaded_log")]
             rem_preloaded_proposals: preloaded_log_size,
+            #[cfg(feature = "simulate_partition")]
+            periodic_partition_timer: None,
+            #[cfg(feature = "simulate_partition")]
+            recover_periodic_partition: false,
         }
     }
 
@@ -325,7 +333,10 @@ impl Client {
                     self.current_leader,
                     self.current_config
                 );
-                if rr.latest_leader > 0 && self.current_leader != rr.latest_leader && rr.leader_round > self.leader_round {
+                if rr.latest_leader > 0
+                    && self.current_leader != rr.latest_leader
+                    && rr.leader_round > self.leader_round
+                {
                     self.current_leader = rr.latest_leader;
                     self.leader_round = rr.leader_round;
                     self.leader_changes
@@ -469,6 +480,7 @@ impl Client {
                 .expect("Should serialise");
         } else if self.nodes.len() == 3 {
             // Raft livelock scenario
+            /*
             let disconnected_follower = followers.first().unwrap();
             let ap = self.nodes.get(disconnected_follower).unwrap();
             ap.tell_serialised(
@@ -489,6 +501,23 @@ impl Client {
                 disconnected_follower,
                 self.responses.len()
             );
+            */
+            let disconnected_follower = *followers.first().unwrap();
+            let intermediate_duration = self.ctx.config()["partition_experiment"]
+                ["intermediate_duration"]
+                .as_duration()
+                .expect("No intermediate duration!");
+            let timer = self.schedule_periodic(
+                Duration::from_millis(0),
+                intermediate_duration,
+                move |c, _| {
+                    if c.periodic_partition_timer.is_some() {
+                        c.periodic_partition(disconnected_follower);
+                    }
+                    Handled::Ok
+                },
+            );
+            self.periodic_partition_timer = Some(timer);
         } else {
             unimplemented!()
         }
@@ -496,6 +525,9 @@ impl Client {
             .as_duration()
             .expect("No partition duration!");
         self.schedule_once(partition_duration, move |c, _| {
+            if let Some(timer) = c.periodic_partition_timer.take() {
+                c.cancel_timer(timer);
+            }
             c.recover_partition();
             Handled::Ok
         });
@@ -508,6 +540,37 @@ impl Client {
             ap.tell_serialised(PartitioningExpMsg::RecoverPeers, self)
                 .expect("Should serialise");
         }
+    }
+
+    #[cfg(feature = "simulate_partition")]
+    fn periodic_partition(&mut self, disconnected_follower: u64) {
+        if self.recover_periodic_partition {
+            self.recover_partition()
+        } else {
+            info!(self.ctx.log(), "Partitioning {}", disconnected_follower);
+            let rest: Vec<u64> = self
+                .nodes
+                .keys()
+                .filter(|pid| **pid != disconnected_follower)
+                .copied()
+                .collect();
+            for (pid, ap) in self.nodes.iter() {
+                if pid == &disconnected_follower {
+                    ap.tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(rest.clone(), None),
+                        self,
+                    )
+                    .expect("Should serialise!");
+                } else {
+                    ap.tell_serialised(
+                        PartitioningExpMsg::DisconnectPeers(vec![disconnected_follower], None),
+                        self,
+                    )
+                    .expect("Should serialise!");
+                }
+            }
+        }
+        self.recover_periodic_partition = !self.recover_periodic_partition;
     }
 }
 
@@ -530,7 +593,13 @@ impl Actor for Client {
                 #[cfg(feature = "periodic_client_logging")]
                 {
                     self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
-                        info!(c.ctx.log(), "Num responses: {}, leader: {}, ballot/term: {}", c.responses.len(), c.current_leader, c.leader_round);
+                        info!(
+                            c.ctx.log(),
+                            "Num responses: {}, leader: {}, ballot/term: {}",
+                            c.responses.len(),
+                            c.current_leader,
+                            c.leader_round
+                        );
                         Handled::Ok
                     });
                 }

@@ -406,9 +406,13 @@ where
                     msg(p): PartitioningExpMsg [using PartitioningExpMsgDeser] => {
                         match p {
                             PartitioningExpMsg::DisconnectPeers(peers, lagging_peer) => {
+                                let term = self.raft_replica.as_ref().unwrap().on_definition(|r| r.raw_raft.raft.term);
+                                // info!(self.ctx.log(), "Disconnecting from {:?}, term: {}", peers, term);
                                 self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.disconnect_peers(peers, lagging_peer));
                             }
                             PartitioningExpMsg::RecoverPeers => {
+                                let term = self.raft_replica.as_ref().unwrap().on_definition(|r| r.raw_raft.raft.term);
+                                // info!(self.ctx.log(), "Recovering connections. term: {}", term);
                                 self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.recover_peers());
                             }
                         }
@@ -719,8 +723,11 @@ where
                 } else {
                     false
                 };
-                self.supervisor
-                    .tell(RaftCompMsg::Leader(notify_client, leader, self.raw_raft.raft.term));
+                self.supervisor.tell(RaftCompMsg::Leader(
+                    notify_client,
+                    leader,
+                    self.raw_raft.raft.term,
+                ));
             }
         }
         Handled::Ok
@@ -887,7 +894,11 @@ where
                                 current_voters.iter().copied().collect::<Vec<u64>>();
                             let cs = ConfState::from(current_conf);
                             store.set_conf_state(cs, None);
-                            let rr = ReconfigurationResp::with(leader, self.raw_raft.raft.term, current_configuration,);
+                            let rr = ReconfigurationResp::with(
+                                leader,
+                                self.raw_raft.raft.term,
+                                current_configuration,
+                            );
                             self.communication_port
                                 .trigger(CommunicatorMsg::ReconfigurationResponse(rr));
                         }
@@ -896,8 +907,11 @@ where
                 } else {
                     // normal proposals
                     if self.raw_raft.raft.state == StateRole::Leader {
-                        let pr =
-                            ProposalResp::with(entry.get_data().to_vec(), self.raw_raft.raft.id, self.raw_raft.raft.term);
+                        let pr = ProposalResp::with(
+                            entry.get_data().to_vec(),
+                            self.raw_raft.raft.id,
+                            self.raw_raft.raft.term,
+                        );
                         self.communication_port
                             .trigger(CommunicatorMsg::ProposalResponse(pr));
                     }
