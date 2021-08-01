@@ -70,10 +70,10 @@ plt.rc('ytick', labelsize=SIZE)    # fontsize of the tick labels
 
 max_ts = 0
 
-directories = ["deadlock-1-min", "deadlock-2-min", "deadlock-4-min"]
+directories = ["partial-1-min", "partial-2-min", "partial-4-min"]
 
 for d in directories:
-	full_dir = "/mnt/d/kompicsbenches/google-cloud/deadlock/{}".format(d)
+	full_dir = "/mnt/d/kompicsbenches/google-cloud/2021-07-27-livelock/test/{}".format(d)
 	data_files = [f for f in os.listdir(full_dir) if f.endswith('.data')]
 	for filename in data_files :
 		f = open(full_dir + "/" + filename, 'r')
@@ -155,17 +155,12 @@ plt.gcf().autofmt_xdate()
 
 fig.set_size_inches(12, 6)
 
-#split = args.s.split("/")
-#exp_str = split[len(split)-3]
-#exp_str_split = exp_str.split("-")
-#num_nodes = exp_str_split[0]
-#num_cp = exp_str_split[1]
-exp_str = "deadlock"
-title = "Deadlock scenario"
+exp_str = "Livelock"
+title = "Livelock scenario"
 plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
-    target_dir = args.t + "/deadlock/{}-{}/".format(num_nodes, num_cp)
+    target_dir = args.t + "/deadlock/"
 else:
     target_dir = "./"
 if args.ci == False:

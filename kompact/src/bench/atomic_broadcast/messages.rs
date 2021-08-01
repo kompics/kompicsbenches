@@ -784,7 +784,7 @@ impl ProposalResp {
         ProposalResp {
             data,
             latest_leader,
-            leader_round
+            leader_round,
         }
     }
 }
@@ -812,7 +812,7 @@ pub enum AtomicBroadcastMsg {
     ReconfigurationProposal(ReconfigurationProposal),
     ProposalResp(ProposalResp),
     ReconfigurationResp(ReconfigurationResp),
-    Leader(u64, u64),   // pid, round
+    Leader(u64, u64), // pid, round
 }
 
 const PROPOSAL_ID: u8 = 1;
@@ -929,7 +929,7 @@ impl Deserialiser<AtomicBroadcastMsg> for AtomicBroadcastDeser {
                 let pr = ProposalResp {
                     data,
                     latest_leader,
-                    leader_round
+                    leader_round,
                 };
                 Ok(AtomicBroadcastMsg::ProposalResp(pr))
             }
