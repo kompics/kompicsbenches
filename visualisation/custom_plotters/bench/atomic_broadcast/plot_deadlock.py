@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
+import util
 import matplotlib.pyplot as plt
 import sys
 import argparse
@@ -12,15 +13,6 @@ from pathlib import Path
 from matplotlib.ticker import (MultipleLocator,
                                FormatStrFormatter,
                                AutoMinorLocator)
-
-colors = {
-  "Omni-Paxos 1 min": "dodgerblue",
-  "Omni-Paxos 2 min": "blue",
-  "Omni-Paxos 4 min": "midnightblue",
-  "Raft 1 min": "limegreen",
-  "Raft 2 min": "orange",
-  "Raft 4 min": "crimson",
-}
 
 def get_label_and_color(filename, dirname):
 	csv = filename.split(",")
@@ -38,17 +30,8 @@ def get_label_and_color(filename, dirname):
 
 	minutes = dir_split[1]
 	label = label + " {} min".format(minutes)
-	color = colors[label]
+	color = util.colors[label]
 	return (label, color)
-
-def format_time(seconds, _):
-    """Formats a timedelta duration to [N days] %M:%S format"""
-    secs_in_a_min = 60
-
-    minutes, seconds = divmod(seconds, secs_in_a_min)
-
-    time_fmt = "{:d}:{:02d}".format(minutes, seconds)
-    return time_fmt
 
 parser = argparse.ArgumentParser()
 
@@ -70,10 +53,10 @@ plt.rc('ytick', labelsize=SIZE)    # fontsize of the tick labels
 
 max_ts = 0
 
-directories = ["partial-1-min", "partial-2-min", "partial-4-min"]
+directories = ["deadlock-1-min", "deadlock-2-min", "deadlock-4-min"]
 
 for d in directories:
-	full_dir = "/mnt/d/kompicsbenches/google-cloud/2021-07-27-livelock/test/{}".format(d)
+	full_dir = "/mnt/d/kompicsbenches/google-cloud/deadlock/{}".format(d)
 	data_files = [f for f in os.listdir(full_dir) if f.endswith('.data')]
 	for filename in data_files :
 		f = open(full_dir + "/" + filename, 'r')
@@ -93,7 +76,8 @@ for d in directories:
 		all_ci95_lo = []
 		all_ci95_hi = []
 
-		all_tp_filtered = list(filter(lambda x: len(x) == 10, all_tp)) 
+		all_tp_filtered = list(filter(lambda x: len(x) == 10, all_tp))
+		#all_tp_filtered = all_tp
 		for (window_idx, all_tp_per_window) in enumerate(all_tp_filtered):
 			#if window_idx < 3:
 				#continue
@@ -148,15 +132,16 @@ plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
 plt.xticks(x_axis)
-ax.xaxis.set_major_formatter(format_time)
+ax.xaxis.set_major_formatter(util.format_time)
+ax.yaxis.set_major_formatter(util.format_k)
 
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
 
 fig.set_size_inches(12, 6)
 
-exp_str = "Livelock"
-title = "Livelock scenario"
+exp_str = "deadlock"
+title = "Deadlock scenario"
 plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:

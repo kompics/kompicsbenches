@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
+import util
 import matplotlib.pyplot as plt
 import sys
 import argparse
@@ -13,20 +14,13 @@ from matplotlib.ticker import (MultipleLocator,
                                FormatStrFormatter,
                                AutoMinorLocator)
 
-colors = {
-  "Omni-Paxos": "dodgerblue",
-  "Omni-Paxos replace follower": "dodgerblue",
-  "Omni-Paxos replace leader": "midnightblue",
-  "Raft": "orange",
-  "Raft replace follower": "orange",
-  "Raft replace leader": "crimson",
-}
-
 def get_label_and_color(filename):
 	csv = filename.split(",")
 	algorithm = csv[0]
 	if algorithm == "paxos":
 		algorithm = "Omni-Paxos"
+	elif algorithm == "raftpv":
+		algorithm = "Raft PV+CQ"
 	else:
 		algorithm = "Raft"
 	reconfig = csv[len(csv)-1].split(".")[0]
@@ -34,17 +28,8 @@ def get_label_and_color(filename):
 		label = algorithm
 	else:
 		label = "{} {}".format(algorithm, reconfig.replace("-", " "))
-	color = colors[label]
+	color = util.colors[label]
 	return (label, color)
-
-def format_time(seconds, _):
-    """Formats a timedelta duration to [N days] %M:%S format"""
-    secs_in_a_min = 60
-
-    minutes, seconds = divmod(seconds, secs_in_a_min)
-
-    time_fmt = "{:d}:{:02d}".format(minutes, seconds)
-    return time_fmt
 
 parser = argparse.ArgumentParser()
 
@@ -82,6 +67,8 @@ for filename in data_files :
 	all_max_tp = []
 
 	all_tp_filtered = list(filter(lambda x: len(x) == 10, all_tp)) 
+	#all_tp_filtered = all_tp
+	#all_tp_filtered = all_tp[0:18]
 	for (window_idx, all_tp_per_window) in enumerate(all_tp_filtered):
 		ts = (window_idx+1) * args.w
 		if ts > max_ts:
@@ -97,7 +84,7 @@ for filename in data_files :
 		all_max_tp.append(max_tp)
 
 		if args.ci:
-			if sum(all_tp_per_window) > 0:
+			if (sum(all_tp_per_window) > 0 and len(all_tp_per_window) > 1):
 				(ci95_lo, ci95_hi) = st.t.interval(alpha=0.95, df=len(all_tp_per_window)-1, loc=np.mean(np.array(all_tp_per_window)), scale=st.sem(np.array(all_tp_per_window))) 
 				if ci95_lo < 0:
 					ci95_lo = 0
@@ -128,10 +115,20 @@ for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
 plt.xticks(x_axis)
-ax.xaxis.set_major_formatter(format_time)
+ax.xaxis.set_major_formatter(util.format_time)
+ax.yaxis.set_major_formatter(util.format_k)
 
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
+#plt.grid(True, linestyle='dotted')
+#plt.gca().xaxis.grid(True)
+#plt.gca().yaxis.grid(False)
+
+#partition_lines = [20, 40, 60, 80]
+#recovery_lines = [30, 50, 70, 90]
+#ymin, ymax = ax.get_ylim() 
+#plt.vlines(x=partition_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='red', ls='dotted', label='partition')
+#plt.vlines(x=recovery_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='green', ls='dotted', label='recovery')
 
 fig.set_size_inches(12, 6)
 
@@ -144,6 +141,7 @@ if num_cp_int > 1000:
 	num_cp = "{}k".format(int(num_cp_int/1000)) 
 reconfig = exp_str_split[len(exp_str_split) - 1]
 title = "{} concurrent proposals".format(num_cp)
+#title = "Periodic full partition scenario"
 if reconfig != "off":
 	title += ", {} reconfiguration".format(reconfig)
 plt.title(title, fontsize=MEDIUM_SIZE)
