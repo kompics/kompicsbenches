@@ -19,8 +19,6 @@ def get_label_and_color(filename):
 	algorithm = csv[0]
 	if algorithm == "paxos":
 		algorithm = "Omni-Paxos"
-	elif algorithm == "raftpv":
-		algorithm = "Raft PV+CQ"
 	else:
 		algorithm = "Raft"
 	reconfig = csv[len(csv)-1].split(".")[0]
@@ -31,12 +29,21 @@ def get_label_and_color(filename):
 	color = util.colors[label]
 	return (label, color)
 
+def get_linestyle_and_marker(label):
+	split = label.split(" ", 1)
+	algo = split[0]
+	duration = split[1]
+	linestyle = util.linestyles[algo]
+	marker = util.markers[duration]
+	return (linestyle, marker)
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument('-s', required=True, help='Directory of raw results')
 parser.add_argument('-t', nargs='?', help='Output directory')
 parser.add_argument('-w', required=True, type=int, help='Window duration (s)')
 parser.add_argument('--no-ci', dest='ci', action='store_false')
+parser.add_argument('--hide-y', dest='hide_y', action='store_true')
 parser.set_defaults(feature=True)
 
 args = parser.parse_args()
@@ -96,7 +103,8 @@ for filename in data_files :
 				all_ci95_hi.append(all_tp_per_window[0])
 
 	(label, color) = get_label_and_color(filename)
-	ax.plot(all_ts, np.array(all_avg_tp), marker=".", color=color, label=label)
+	(linestyle, marker) = get_linestyle_and_marker(label)
+	ax.plot(all_ts, np.array(all_avg_tp), color=color, label=label, linestyle=linestyle, marker=marker),
 	#ax.plot(all_ts, np.array(all_ci95_lo))
 	#ax.plot(all_ts, np.array(all_ci95_hi))
 	if args.ci:
@@ -105,21 +113,34 @@ for filename in data_files :
 	#ax.plot(all_ts, all_max_tp, marker='o')
 
 MEDIUM_SIZE = 18
-ax.legend(loc = "lower right", fontsize=15)
+ax.legend(loc = "upper center", fontsize=13.3, ncol=2)
 x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
+y_axis = np.arange(0, 170000, 25000)
 
 for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
              ax.get_xticklabels() + ax.get_yticklabels()):
     item.set_fontsize(MEDIUM_SIZE)
 
-plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
 plt.xticks(x_axis)
+plt.yticks(y_axis)
+plt.ylim(top=165000)
+
 ax.xaxis.set_major_formatter(util.format_time)
 ax.yaxis.set_major_formatter(util.format_k)
 
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
+#plt.figure(figsize=(5,5)) 
+if args.hide_y == True:
+	ax.get_legend().remove()
+	#ax.yaxis.set_major_formatter(lambda a, b : "")
+	plt.gca().axes.yaxis.set_ticklabels([])
+else:
+	plt.ylabel("Throughput (ops/s)")
+
+
+
 #plt.grid(True, linestyle='dotted')
 #plt.gca().xaxis.grid(True)
 #plt.gca().yaxis.grid(False)
@@ -129,8 +150,7 @@ plt.gcf().autofmt_xdate()
 #ymin, ymax = ax.get_ylim() 
 #plt.vlines(x=partition_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='red', ls='dotted', label='partition')
 #plt.vlines(x=recovery_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='green', ls='dotted', label='recovery')
-
-fig.set_size_inches(12, 6)
+fig.set_size_inches(8, 6)
 
 split = args.s.split("/")
 exp_str = split[len(split)-3]
@@ -144,13 +164,13 @@ title = "{} concurrent proposals".format(num_cp)
 #title = "Periodic full partition scenario"
 if reconfig != "off":
 	title += ", {} reconfiguration".format(reconfig)
-plt.title(title, fontsize=MEDIUM_SIZE)
+#plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
-    target_dir = args.t + "/windowed/{}/".format(num_cp)
+    target_dir = args.t + "/windowed/"
 else:
     target_dir = "./"
 if args.ci == False:
 	exp_str = exp_str + "-no-ci"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600)
+plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600, bbox_inches='tight')

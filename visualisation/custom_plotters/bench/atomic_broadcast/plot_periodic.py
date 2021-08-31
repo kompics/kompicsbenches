@@ -15,8 +15,9 @@ from matplotlib.ticker import (MultipleLocator,
                                AutoMinorLocator)
 
 X_TICKS = 2
+CUT_OFF = 17
 
-def get_label_and_color(filename):
+def get_label_color_marker(filename):
 	csv = filename.split(",")
 	algorithm = csv[0]
 	if algorithm == "paxos":
@@ -31,7 +32,8 @@ def get_label_and_color(filename):
 	else:
 		label = "{} {}".format(algorithm, reconfig.replace("-", " "))
 	color = util.colors[label]
-	return (label, color)
+	marker = util.markers[label]
+	return (label, color, marker)
 
 parser = argparse.ArgumentParser()
 
@@ -69,7 +71,7 @@ for filename in data_files :
 	all_max_tp = []
 
 	#all_tp_filtered = all_tp
-	all_tp_filtered = all_tp[0:18]
+	all_tp_filtered = all_tp[0:CUT_OFF]
 	for (window_idx, all_tp_per_window) in enumerate(all_tp_filtered):
 		ts = (window_idx+1) * args.w
 		if ts > max_ts:
@@ -96,8 +98,8 @@ for filename in data_files :
 				all_ci95_lo.append(all_tp_per_window[0])
 				all_ci95_hi.append(all_tp_per_window[0])
 
-	(label, color) = get_label_and_color(filename)
-	ax.plot(all_ts, np.array(all_avg_tp), marker=".", color=color, label=label)
+	(label, color, marker) = get_label_color_marker(filename)
+	ax.plot(all_ts, np.array(all_avg_tp), color=color, label=label, marker=marker)
 	#ax.plot(all_ts, np.array(all_ci95_lo))
 	#ax.plot(all_ts, np.array(all_ci95_hi))
 	if args.ci:
@@ -121,17 +123,17 @@ ax.yaxis.set_major_formatter(util.format_k)
 
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
-#plt.grid(True, linestyle='dotted')
+#plt.grid(True, marker='dotted')
 #plt.gca().xaxis.grid(True)
 #plt.gca().yaxis.grid(False)
 
 partition_lines = [20, 40, 60, 80]
-recovery_lines = [30, 50, 70, 90]
+recovery_lines = [30, 50, 70]
 ymin, ymax = ax.get_ylim() 
-plt.vlines(x=partition_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='red', ls='dotted', label='partition')
-plt.vlines(x=recovery_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='green', ls='dotted', label='recovery')
+plt.vlines(x=partition_lines, ymin=ymin, ymax=ymax, lw=2, alpha=0.4, color='red', ls='dotted', label='partition')
+plt.vlines(x=recovery_lines, ymin=ymin, ymax=ymax, lw=2, alpha=0.4, color='green', ls='dotted', label='recovery')
 
-fig.set_size_inches(12, 6)
+fig.set_size_inches(10, 6)
 
 split = args.s.split("/")
 exp_str = split[len(split)-3]
@@ -142,7 +144,7 @@ if num_cp_int > 1000:
 	num_cp = "{}k".format(int(num_cp_int/1000)) 
 reconfig = exp_str_split[len(exp_str_split) - 1]
 title = "Periodic full partition scenario"
-plt.title(title, fontsize=MEDIUM_SIZE)
+#plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
     target_dir = args.t + "/periodic/{}/".format(num_cp)
@@ -151,4 +153,4 @@ else:
 if args.ci == False:
 	exp_str = exp_str + "-no-ci"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "periodic.pdf", dpi = 600)
+plt.savefig(target_dir + "periodic.pdf", dpi = 600, bbox_inches='tight')

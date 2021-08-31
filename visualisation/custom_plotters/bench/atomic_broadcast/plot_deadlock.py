@@ -33,6 +33,14 @@ def get_label_and_color(filename, dirname):
 	color = util.colors[label]
 	return (label, color)
 
+def get_linestyle_and_marker(label):
+	split = label.split(" ", 1)
+	algo = split[0]
+	duration = split[1]
+	linestyle = util.linestyles[algo]
+	marker = util.markers[duration]
+	return (linestyle, marker)
+
 parser = argparse.ArgumentParser()
 
 #parser.add_argument('-s', required=True, help='Directory of raw results')
@@ -101,11 +109,8 @@ for d in directories:
 					all_ci95_hi.append(all_tp_per_window[0])
 
 		(label, color) = get_label_and_color(filename, d)
-		if "Paxos" in label:
-			linestyle = 'dashed'
-		else:
-			linestyle = 'solid'
-		ax.plot(all_ts, np.array(all_avg_tp), marker=".", label=label, color=color, linestyle = linestyle)
+		(linestyle, marker) = get_linestyle_and_marker(label)
+		ax.plot(all_ts, np.array(all_avg_tp), marker=marker, label=label, color=color, linestyle = linestyle)
 		#ax.plot(all_ts, np.array(all_ci95_lo))
 		#ax.plot(all_ts, np.array(all_ci95_hi))
 		if args.ci:
@@ -113,11 +118,9 @@ for d in directories:
 		#ax.plot(all_ts, all_min_tp, marker='o')
 		#ax.plot(all_ts, all_max_tp, marker='o')
 
-x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
 #plt.axvline(x=20, label='Network Partition')
 MEDIUM_SIZE = 18
-ax.legend(loc = "lower right", fontsize=15)
-x_axis = np.arange(0, max_ts+4*args.w, 4*args.w)
+x_axis = np.arange(0, max_ts+args.w, 4*args.w)
 
 for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
              ax.get_xticklabels() + ax.get_yticklabels()):
@@ -127,7 +130,7 @@ handles, labels = plt.gca().get_legend_handles_labels()
 for h in handles:
 	print(h)
 order = [1,3,5,0,2,4]
-plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order])
+plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order], loc = "lower right", fontsize=15)
 
 plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
@@ -138,11 +141,11 @@ ax.yaxis.set_major_formatter(util.format_k)
 plt.ylim(bottom=0)
 plt.gcf().autofmt_xdate()
 
-fig.set_size_inches(12, 6)
+fig.set_size_inches(10, 6)
 
 exp_str = "deadlock"
 title = "Deadlock scenario"
-plt.title(title, fontsize=MEDIUM_SIZE)
+#plt.title(title, fontsize=MEDIUM_SIZE)
 
 if args.t is not None:
     target_dir = args.t + "/deadlock/"
@@ -151,4 +154,4 @@ else:
 if args.ci == False:
 	exp_str = exp_str + "-no-ci"
 Path(target_dir).mkdir(parents=True, exist_ok=True)
-plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600)
+plt.savefig(target_dir + "{}.pdf".format(exp_str), dpi = 600, bbox_inches='tight')

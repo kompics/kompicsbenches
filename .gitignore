@@ -104,3 +104,4 @@ out/
 .metals/
 *.code-workspace
 .vscode
+*.pdf

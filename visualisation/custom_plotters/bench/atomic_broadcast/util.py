@@ -20,6 +20,8 @@ colors = {
   "Omni-Paxos 1 min": "dodgerblue",
   "Omni-Paxos 2 min": "blue",
   "Omni-Paxos 4 min": "midnightblue",
+  "Omni-Paxos, n=3": "dodgerblue",
+  "Omni-Paxos, n=5": "midnightblue",
 
   "Raft": "orange",
   "Raft replace follower": "orange",
@@ -28,4 +30,28 @@ colors = {
   "Raft 1 min": "limegreen",
   "Raft 2 min": "orange",
   "Raft 4 min": "crimson",
+  "Raft, n=3": "orange",
+  "Raft, n=5": "crimson"
+}
+
+linestyles = {
+  "Omni-Paxos": "solid",
+  "Raft": "dashdot" ,
+}
+
+markers = {
+  # deadlock plots
+  "1 min": ".",
+  "2 min": "v",
+  "4 min": "s",
+  # reconfig plots
+  "replace follower": ".",
+  "replace leader": "v",
+  # periodic plots
+  "Omni-Paxos": ".",
+  "Raft": "v" ,
+  "Raft PV+CQ": "^",
+  # normal plots
+  " n=3": ".",
+  " n=5": "v"
 }
