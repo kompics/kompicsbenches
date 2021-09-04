@@ -1,5 +1,5 @@
 def format_k(y, _):
-	if y > 1000:
+	if y > 1000 or y < -1000:
 		return "{}k".format(int(y/1000))
 	else:
 		return int(y)
@@ -27,9 +27,9 @@ colors = {
   "Raft replace follower": "orange",
   "Raft replace leader": "crimson",
   "Raft PV+CQ": "crimson",
-  "Raft 1 min": "limegreen",
-  "Raft 2 min": "orange",
-  "Raft 4 min": "crimson",
+  "Raft PV+CQ 1 min": "limegreen",
+  "Raft PV+CQ 2 min": "orange",
+  "Raft PV+CQ 4 min": "crimson",
   "Raft, n=3": "orange",
   "Raft, n=5": "crimson"
 }
@@ -44,6 +44,9 @@ markers = {
   "1 min": ".",
   "2 min": "v",
   "4 min": "s",
+  "PV+CQ 1 min": ".",
+  "PV+CQ 2 min": "v",
+  "PV+CQ 4 min": "s",
   # reconfig plots
   "replace follower": ".",
   "replace leader": "v",

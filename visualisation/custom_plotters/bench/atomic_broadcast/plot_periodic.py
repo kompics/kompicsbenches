@@ -99,6 +99,7 @@ for filename in data_files :
 				all_ci95_hi.append(all_tp_per_window[0])
 
 	(label, color, marker) = get_label_color_marker(filename)
+	print(label + ": " + str(all_avg_tp))
 	ax.plot(all_ts, np.array(all_avg_tp), color=color, label=label, marker=marker)
 	#ax.plot(all_ts, np.array(all_ci95_lo))
 	#ax.plot(all_ts, np.array(all_ci95_hi))

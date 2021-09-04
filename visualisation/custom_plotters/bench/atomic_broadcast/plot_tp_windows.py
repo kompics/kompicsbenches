@@ -150,7 +150,7 @@ else:
 #ymin, ymax = ax.get_ylim() 
 #plt.vlines(x=partition_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='red', ls='dotted', label='partition')
 #plt.vlines(x=recovery_lines, ymin=ymin, ymax=ymax, lw=1, alpha=0.4, color='green', ls='dotted', label='recovery')
-fig.set_size_inches(8, 6)
+fig.set_size_inches(8, 4)
 
 split = args.s.split("/")
 exp_str = split[len(split)-3]

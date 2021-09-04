@@ -21,7 +21,7 @@ def get_label_and_color(filename, dirname):
 	if algorithm == "paxos":
 		algorithm = "Omni-Paxos"
 	else:
-		algorithm = "Raft"
+		algorithm = "Raft PV+CQ"
 	reconfig = csv[len(csv)-1].split(".")[0]
 	if reconfig == "none":
 		label = algorithm
@@ -132,7 +132,7 @@ for h in handles:
 order = [1,3,5,0,2,4]
 plt.legend([handles[idx] for idx in order],[labels[idx] for idx in order], loc = "lower right", fontsize=15)
 
-plt.ylabel("Throughput (ops/s)")
+#plt.ylabel("Throughput (ops/s)")
 plt.xlabel("Time")
 plt.xticks(x_axis)
 ax.xaxis.set_major_formatter(util.format_time)
