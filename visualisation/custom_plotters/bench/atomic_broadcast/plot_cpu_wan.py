@@ -56,7 +56,8 @@ cpu_omni_ssd = [485.255463, 524.488440, 676.358010]
 cpu_raft_ssd = [47122.720004, 33502.755383, 24274.097063]
 
 x_axis = [1, 2, 3]
-y_axis = np.arange(-40000, 165000, 40000)
+cpu_y_axis = np.arange(0, 165000, 40000)
+wan_y_axis = np.arange(-40000, 165000, 40000)
 num_cp = ["500", "5k", "50k"]
 
 wan_series = [
@@ -75,13 +76,19 @@ cpu_series = [
 
 all_series = [cpu_series, wan_series]
 
-fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True, sharey=True)
+fig, ax = plt.subplots(nrows=1, ncols=2, sharex=True)
 for (idx, series) in enumerate(all_series):
     plot_series(idx, series)
 
+
 if args.pos:
+    ax[1].sharey(ax[0])
     ax[1].set_ylim(bottom=0)
-    y_axis = np.arange(0, 165000, 40000)
+else:
+    ax[1].set_yticks(wan_y_axis)
+    ax[1].yaxis.set_major_formatter(util.format_k)
+
+ax[0].set_yticks(cpu_y_axis)
 ax[0].yaxis.set_major_formatter(util.format_k)
 ax[0].set_title("CPU", fontsize=SIZE)
 ax[1].set_title("WAN", fontsize=SIZE)
@@ -99,10 +106,10 @@ fig.legend(handles, labels, loc="upper center", fontsize=18, ncol=2)
 fig.subplots_adjust(top=0.67)
 
 plt.xticks(x_axis, num_cp)
-plt.yticks(y_axis)
+
 #ax.set_ylim(top=160000)
 #ax.yaxis.set_major_formatter(util.format_k)
-suffix = "ci"
-if args.ssd == True:
-    suffix = "ssd"
-plt.savefig("{}-{}.pdf".format(FILENAME, suffix), dpi = 600, bbox_inches='tight')
+suffix = ""
+if args.pos == True:
+    suffix = "-pos"
+plt.savefig("{}{}.pdf".format(FILENAME, suffix), dpi = 600, bbox_inches='tight')
