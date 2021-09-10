@@ -105,3 +105,5 @@ out/
 *.code-workspace
 .vscode
 *.pdf
+*.pyc
+*.png

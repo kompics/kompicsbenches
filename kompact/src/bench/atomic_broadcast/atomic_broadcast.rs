@@ -31,6 +31,8 @@ use tikv_raft::storage::MemStorage;
 use quanta::Instant;
 #[cfg(feature = "measure_io")]
 use std::fs::File;
+use std::time::SystemTime;
+use chrono::{DateTime, Utc};
 
 const TCP_NODELAY: bool = true;
 pub const CONFIG_PATH: &str = "./configs/atomic_broadcast.conf";
@@ -450,8 +452,8 @@ impl AtomicBroadcastMaster {
     fn persist_timestamp_results(
         &mut self,
         timestamps: Vec<Instant>,
-        leader_changes: Vec<(Instant, u64)>,
-        reconfig_ts: Option<(Instant, Instant)>,
+        leader_changes: Vec<(SystemTime, (u64, u64))>,
+        reconfig_ts: Option<(SystemTime, SystemTime)>,
     ) {
         let timestamps_dir = self.get_meta_results_dir(Some("timestamps"));
         create_dir_all(&timestamps_dir)
@@ -467,14 +469,14 @@ impl AtomicBroadcastMaster {
             .expect("Failed to open timestamps file");
 
         if let Some((reconfig_start, reconfig_end)) = reconfig_ts {
-            let start_ts = reconfig_start.as_u64();
-            let end_ts = reconfig_end.as_u64();
+            let start_ts = DateTime::<Utc>::from(reconfig_start);
+            let end_ts = DateTime::<Utc>::from(reconfig_end);
             writeln!(timestamps_file, "r,{},{} ", start_ts, end_ts)
                 .expect("Failed to write reconfig timestamps to timestamps file");
         }
-        for (leader_change_ts, pid) in leader_changes {
-            let ts = leader_change_ts.as_u64();
-            writeln!(timestamps_file, "l,{},{} ", pid, ts)
+        for (leader_change_ts, lc) in leader_changes {
+            let ts = DateTime::<Utc>::from(leader_change_ts);
+            writeln!(timestamps_file, "l,{},{:?} ", ts, lc)
                 .expect("Failed to write leader changes to timestamps file");
         }
         for ts in timestamps {

@@ -31,7 +31,9 @@ use crate::bench::atomic_broadcast::client::create_raw_proposal;
 #[cfg(feature = "measure_io")]
 use crate::bench::atomic_broadcast::{util::exp_params::*, util::io_metadata::IOMetaData};
 #[cfg(feature = "measure_io")]
-use quanta::{Clock, Instant};
+use std::time::SystemTime;
+#[cfg(feature = "measure_io")]
+use chrono::{DateTime, Utc};
 
 #[cfg(feature = "periodic_replica_logging")]
 use crate::bench::atomic_broadcast::util::exp_params::WINDOW_DURATION;
@@ -151,13 +153,11 @@ where
     first_config_id: ConfigId, // used to keep track of which idx in paxos_replicas corresponds to which config_id
     removed: bool,
     #[cfg(feature = "measure_io")]
-    clock: Clock,
-    #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
     io_timer: Option<ScheduledTimer>,
     #[cfg(feature = "measure_io")]
-    io_windows: Vec<(Instant, IOMetaData)>,
+    io_windows: Vec<(SystemTime, IOMetaData)>,
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -193,8 +193,6 @@ where
             experiment_params,
             first_config_id: 0,
             removed: false,
-            #[cfg(feature = "measure_io")]
-            clock: Clock::new(),
             #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
@@ -463,14 +461,14 @@ where
         )
         .expect("Failed to write IO file");
         if !self.io_windows.is_empty() || self.io_metadata != IOMetaData::default() {
-            self.io_windows.push((self.clock.now(), self.io_metadata));
+            self.io_windows.push((SystemTime::now(), self.io_metadata));
             self.io_metadata.reset();
             let mut str = String::new();
             let total = self
                 .io_windows
                 .iter()
                 .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                    str.push_str(&format!("{:?}, {:?}\n", DateTime::<Utc>::from(*ts), io_meta));
                     sum + (*io_meta)
                 });
             writeln!(file, "Total PaxosComp IO: {:?}\n{}", total, str)
@@ -482,7 +480,7 @@ where
             let total = io_windows
                 .iter()
                 .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                    str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                    str.push_str(&format!("{:?}, {:?}\n", DateTime::<Utc>::from(*ts), io_meta));
                     sum + *io_meta
                 });
             writeln!(
@@ -1213,7 +1211,7 @@ where
                                 #[cfg(feature = "measure_io")] {
                                     let timer = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
                                         if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
-                                            c.io_windows.push((c.clock.now(), c.io_metadata));
+                                            c.io_windows.push((SystemTime::now(), c.io_metadata));
                                             c.io_metadata.reset();
                                         }
                                         Handled::Ok

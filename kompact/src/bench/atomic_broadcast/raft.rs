@@ -35,6 +35,8 @@ use tikv_raft::{
     prelude::{Entry, Message as TikvRaftMsg, *},
     StateRole,
 };
+#[cfg(feature = "measure_io")]
+use chrono::{DateTime, Utc};
 
 const COMMUNICATOR: &str = "communicator";
 const DELAY: Duration = Duration::from_millis(0);
@@ -253,7 +255,7 @@ where
                 let total = io_windows
                     .iter()
                     .fold(IOMetaData::default(), |sum, (ts, io_meta)| {
-                        str.push_str(&format!("{}, {:?}\n", ts.as_u64(), io_meta));
+                        str.push_str(&format!("{:?}, {:?}\n", DateTime::<Utc>::from(*ts), io_meta));
                         sum + *io_meta
                     });
                 writeln!(
@@ -715,7 +717,7 @@ where
                 }
             }
             if leader != self.current_leader {
-                // info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
+                info!(self.ctx.log(), "New leader: {}, old: {}", leader, self.current_leader);
                 self.current_leader = leader;
                 let notify_client = if self.state == State::Election {
                     self.state = State::Running;

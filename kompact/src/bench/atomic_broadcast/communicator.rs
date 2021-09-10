@@ -19,7 +19,7 @@ use omnipaxos::messages::Message as RawPaxosMsg;
 #[cfg(feature = "measure_io")]
 use omnipaxos::messages::PaxosMsg;
 #[cfg(feature = "measure_io")]
-use quanta::{Clock, Instant};
+use std::time::SystemTime;
 use tikv_raft::prelude::Message as RawRaftMsg;
 
 #[derive(Clone, Debug)]
@@ -51,12 +51,10 @@ pub struct Communicator {
     atomic_broadcast_port: ProvidedPort<CommunicationPort>,
     pub(crate) peers: HashMap<u64, ActorPath>, // node id -> actorpath
     client: ActorPath,                         // cached client to send SequenceResp to
-    #[cfg(feature = "measure_io")]
-    clock: Clock,
-    #[cfg(feature = "measure_io")]
+   #[cfg(feature = "measure_io")]
     io_metadata: IOMetaData,
     #[cfg(feature = "measure_io")]
-    io_windows: Vec<(Instant, IOMetaData)>,
+    io_windows: Vec<(SystemTime, IOMetaData)>,
     #[cfg(feature = "simulate_partition")]
     disconnected_peers: Vec<u64>,
 }
@@ -68,8 +66,6 @@ impl Communicator {
             atomic_broadcast_port: ProvidedPort::uninitialised(),
             peers,
             client,
-            #[cfg(feature = "measure_io")]
-            clock: Clock::new(),
             #[cfg(feature = "measure_io")]
             io_metadata: IOMetaData::default(),
             #[cfg(feature = "measure_io")]
@@ -105,7 +101,7 @@ impl Communicator {
     }
 
     #[cfg(feature = "measure_io")]
-    pub fn get_io_windows(&mut self) -> Vec<(Instant, IOMetaData)> {
+    pub fn get_io_windows(&mut self) -> Vec<(SystemTime, IOMetaData)> {
         std::mem::take(&mut self.io_windows)
     }
 
@@ -159,7 +155,7 @@ impl ComponentLifecycle for Communicator {
         {
             let _ = self.schedule_periodic(WINDOW_DURATION, WINDOW_DURATION, move |c, _| {
                 if !c.io_windows.is_empty() || c.io_metadata != IOMetaData::default() {
-                    c.io_windows.push((c.clock.now(), c.io_metadata));
+                    c.io_windows.push((SystemTime::now(), c.io_metadata));
                     c.io_metadata.reset();
                 }
                 Handled::Ok

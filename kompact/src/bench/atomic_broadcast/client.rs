@@ -36,12 +36,12 @@ pub enum LocalClientMessage {
 
 #[derive(Debug)]
 struct ProposalMetaData {
-    start_time: Option<SystemTime>,
+    start_time: Option<Instant>,
     timer: ScheduledTimer,
 }
 
 impl ProposalMetaData {
-    fn with(start_time: Option<SystemTime>, timer: ScheduledTimer) -> ProposalMetaData {
+    fn with(start_time: Option<Instant>, timer: ScheduledTimer) -> ProposalMetaData {
         ProposalMetaData { start_time, timer }
     }
 
@@ -55,9 +55,9 @@ pub struct MetaResults {
     pub num_timed_out: u64,
     pub num_retried: u64,
     pub latencies: Vec<Duration>,
-    pub leader_changes: Vec<(Instant, u64)>,
+    pub leader_changes: Vec<(SystemTime, (u64, u64))>,
     pub windowed_results: Vec<usize>,
-    pub reconfig_ts: Option<(Instant, Instant)>,
+    pub reconfig_ts: Option<(SystemTime, SystemTime)>,
     pub timestamps: Vec<Instant>,
 }
 
@@ -66,9 +66,9 @@ impl MetaResults {
         num_timed_out: u64,
         num_retried: u64,
         latencies: Vec<Duration>,
-        leader_changes: Vec<(Instant, u64)>,
+        leader_changes: Vec<(SystemTime, (u64, u64))>,
         windowed_results: Vec<usize>,
-        reconfig_ts: Option<(Instant, Instant)>,
+        reconfig_ts: Option<(SystemTime, SystemTime)>,
         timestamps: Vec<Instant>,
     ) -> Self {
         MetaResults {
@@ -103,15 +103,14 @@ pub struct Client {
     current_config: Vec<u64>,
     num_timed_out: u64,
     num_retried: usize,
-    leader_changes: Vec<(Instant, u64)>,
+    leader_changes: Vec<(SystemTime, (u64, u64))>,
     stop_ask: Option<Ask<(), MetaResults>>,
     window_timer: Option<ScheduledTimer>,
     /// timestamp, number of proposals completed
     windows: Vec<usize>,
     clock: Clock,
-    start_ts: Instant,
-    reconfig_start_ts: Option<Instant>,
-    reconfig_end_ts: Option<Instant>,
+    reconfig_start_ts: Option<SystemTime>,
+    reconfig_end_ts: Option<SystemTime>,
     #[cfg(feature = "track_timeouts")]
     timeouts: Vec<u64>,
     #[cfg(feature = "track_timeouts")]
@@ -141,7 +140,6 @@ impl Client {
         finished_latch: Arc<CountdownEvent>,
     ) -> Client {
         let clock = Clock::new();
-        let start_ts = clock.now();
         Client {
             ctx: ComponentContext::uninitialised(),
             num_proposals,
@@ -166,7 +164,6 @@ impl Client {
             window_timer: None,
             windows: vec![],
             clock,
-            start_ts,
             reconfig_start_ts: None,
             reconfig_end_ts: None,
             #[cfg(feature = "track_timeouts")]
@@ -235,7 +232,7 @@ impl Client {
             self.num_concurrent_proposals == 1 || cfg!(feature = "track_latency");
         for id in from..=to {
             let current_time = match cache_start_time {
-                true => Some(SystemTime::now()),
+                true => Some(self.clock.now()),
                 _ => None,
             };
             self.propose_normal(id);
@@ -263,10 +260,10 @@ impl Client {
                 self.finished_latch
                     .decrement()
                     .expect("Failed to countdown finished latch");
-                let leader_changes_pid: Vec<&u64> =
-                    self.leader_changes.iter().map(|(_ts, pid)| pid).collect();
+                let leader_changes: Vec<_> =
+                    self.leader_changes.iter().map(|(_ts, lc)| lc).collect();
                 if self.num_timed_out > 0 || self.num_retried > 0 {
-                    info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes_pid, self.current_leader, self.start_ts.as_u64());
+                    info!(self.ctx.log(), "Got all responses with {} timeouts and {} retries. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.", self.num_timed_out, self.num_retried, self.leader_changes.len(), leader_changes, self.current_leader, self.leader_round);
                     #[cfg(feature = "track_timeouts")]
                     {
                         let min = self.timeouts.iter().min();
@@ -286,11 +283,10 @@ impl Client {
                 } else {
                     info!(
                         self.ctx.log(),
-                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}. start_ts: {}",
+                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}.",
                         self.leader_changes.len(),
-                        leader_changes_pid,
+                        leader_changes,
                         self.current_leader,
-                        self.start_ts.as_u64()
                     );
                 }
             } else {
@@ -305,7 +301,7 @@ impl Client {
                 .get(&self.current_leader)
                 .expect("No leader to propose reconfiguration to!");
             self.propose_reconfiguration(&leader);
-            self.reconfig_start_ts = Some(self.clock.now());
+            self.reconfig_start_ts = Some(SystemTime::now());
             let timer = self.schedule_once(self.timeout, move |c, _| c.reconfig_timeout());
             let proposal_meta = ProposalMetaData::with(None, timer);
             self.pending_proposals.insert(RECONFIG_ID, proposal_meta);
@@ -314,7 +310,7 @@ impl Client {
 
     fn handle_reconfig_response(&mut self, rr: ReconfigurationResp) {
         if let Some(proposal_meta) = self.pending_proposals.remove(&RECONFIG_ID) {
-            self.reconfig_end_ts = Some(self.clock.now());
+            self.reconfig_end_ts = Some(SystemTime::now());
             let new_config = rr.current_configuration;
             self.cancel_timer(proposal_meta.timer);
             if self.responses.len() as u64 == self.num_proposals {
@@ -322,7 +318,7 @@ impl Client {
                 self.finished_latch
                     .decrement()
                     .expect("Failed to countdown finished latch");
-                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader);
+                info!(self.ctx.log(), "Got reconfig at last. {} proposals timed out. Leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}", self.num_timed_out, self.leader_changes.len(), self.leader_changes, self.current_leader, self.leader_round);
             } else {
                 self.reconfig = None;
                 self.current_config = new_config;
@@ -340,7 +336,7 @@ impl Client {
                     self.current_leader = rr.latest_leader;
                     self.leader_round = rr.leader_round;
                     self.leader_changes
-                        .push((self.clock.now(), rr.latest_leader));
+                        .push((SystemTime::now(), (self.current_leader, self.leader_round)));
                 }
                 self.send_concurrent_proposals();
             }
@@ -584,11 +580,10 @@ impl Actor for Client {
             LocalClientMessage::Run => {
                 self.state = ExperimentState::Running;
                 assert_ne!(self.current_leader, 0);
-                let now = self.clock.now();
-                self.start_ts = now;
                 #[cfg(feature = "track_timestamps")]
                 {
-                    self.leader_changes.push((now, self.current_leader));
+                    self.leader_changes.push((SystemTime::now(), (self.current_leader, self.leader_round)));
+
                 }
                 #[cfg(feature = "periodic_client_logging")]
                 {
@@ -651,7 +646,7 @@ impl Actor for Client {
                             return Handled::Ok; // wait until all preloaded responses before decrementing leader latch
                         } else {
                             match self.leader_election_latch.decrement() {
-                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}. Current config: {:?}. Payload size: {:?}", pid, self.current_config, DATA_SIZE),
+                                Ok(_) => info!(self.ctx.log(), "Got first leader: {}, ballot/term: {}. Current config: {:?}. Payload size: {:?}", pid, self.leader_round, self.current_config, DATA_SIZE),
                                 Err(e) => if e != CountdownError::AlreadySet {
                                     panic!("Failed to decrement election latch: {:?}", e);
                                 }
@@ -662,7 +657,7 @@ impl Actor for Client {
                         self.leader_round = round;
                         if self.current_leader != pid {
                             self.current_leader = pid;
-                            self.leader_changes.push((self.clock.now(), self.current_leader));
+                            self.leader_changes.push((SystemTime::now(), (self.current_leader, self.leader_round)));
                         }
                     },
                     AtomicBroadcastMsg::ReconfigurationResp(rr) => {
@@ -673,14 +668,15 @@ impl Actor for Client {
                         let data = pr.data;
                         let id = data.as_slice().get_u64();
                         if let Some(proposal_meta) = self.pending_proposals.remove(&id) {
-                            let latency = proposal_meta.start_time.map(|start_time| start_time.elapsed().expect("Failed to get elapsed duration"));
+                            let now = self.clock.now();
+                            let latency = proposal_meta.start_time.map(|start_time| now.duration_since(start_time));
                             self.cancel_timer(proposal_meta.timer);
                             if self.current_config.contains(&pr.latest_leader) && self.leader_round < pr.leader_round{
                                 // info!(self.ctx.log(), "Got leader in normal response: {}. old: {}", pr.latest_leader, self.current_leader);
                                 self.leader_round = pr.leader_round;
                                 if self.current_leader != pr.latest_leader {
                                     self.current_leader = pr.latest_leader;
-                                    self.leader_changes.push((self.clock.now(), self.current_leader));
+                                    self.leader_changes.push((SystemTime::now(), (self.current_leader, self.leader_round)));
                                 }
                             }
                             self.handle_normal_response(id, latency);
