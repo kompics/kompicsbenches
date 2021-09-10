@@ -441,7 +441,7 @@ impl Client {
         if self.nodes.len() == 5 {
             // Raft deadlock scenario
             let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
-            info!(self.ctx.log(), "Creating partition. leader: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, lagging_follower, self.responses.len());
+            info!(self.ctx.log(), "Creating partition. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, self.leader_round, lagging_follower, self.responses.len());
             for pid in &followers {
                 let disconnect_peers: Vec<_> = if pid == &lagging_follower {
                     vec![self.current_leader]
@@ -514,6 +514,7 @@ impl Client {
                 },
             );
             self.periodic_partition_timer = Some(timer);
+            return; // end of periodic partition
         } else {
             unimplemented!()
         }
