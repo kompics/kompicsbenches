@@ -158,6 +158,8 @@ where
     io_timer: Option<ScheduledTimer>,
     #[cfg(feature = "measure_io")]
     io_windows: Vec<(SystemTime, IOMetaData)>,
+    #[cfg(feature = "simulate_partition")]
+    disconnected_peers: Vec<u64>
 }
 
 impl<S, P> PaxosComp<S, P>
@@ -199,6 +201,8 @@ where
             io_timer: None,
             #[cfg(feature = "measure_io")]
             io_windows: vec![],
+            #[cfg(feature = "simulate_partition")]
+            disconnected_peers: vec![]
         }
     }
 
@@ -1165,9 +1169,9 @@ where
                                 for ble in &self.ble_comps {
                                     ble.on_definition(|ble| ble.disconnect_peers(peers.clone(), lagging_peer.clone()));
                                 }
-                                let mut all_disconnected_peers = peers;
+                                self.disconnected_peers = peers;
                                 if let Some(lagging) = lagging_peer {
-                                    all_disconnected_peers.push(lagging);
+                                    self.disconnected_peers.push(lagging);
                                 }
                             }
                             PartitioningExpMsg::RecoverPeers => {
@@ -1179,11 +1183,12 @@ where
                                 }
                                 for paxos in &self.paxos_replicas {
                                     paxos.on_definition(|p| {
-                                        for pid in 1..=self.nodes.len() {
-                                            p.paxos.reconnected(pid as u64);
+                                        for pid in &self.disconnected_peers {
+                                            p.paxos.reconnected(*pid);
                                         }
                                     });
                                 }
+                                self.disconnected_peers.clear();
                             }
                         }
                     }
