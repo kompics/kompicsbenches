@@ -1169,9 +1169,6 @@ where
                                 if let Some(lagging) = lagging_peer {
                                     all_disconnected_peers.push(lagging);
                                 }
-                                for paxos in &self.paxos_replicas {
-                                    paxos.on_definition(|p| p.connection_lost(all_disconnected_peers.clone()));
-                                }
                             }
                             PartitioningExpMsg::RecoverPeers => {
                                 for communicator in &self.communicator_comps {
@@ -1183,7 +1180,7 @@ where
                                 for paxos in &self.paxos_replicas {
                                     paxos.on_definition(|p| {
                                         for pid in 1..=self.nodes.len() {
-                                            p.paxos.connection_reestablished(pid as u64);
+                                            p.paxos.reconnected(pid as u64);
                                         }
                                     });
                                 }
@@ -1509,13 +1506,6 @@ where
         let prio_start_round = Ballot::with(n, 0);
         self.paxos
             .propose_reconfiguration(reconfig, Some(prio_start_round))
-    }
-
-    #[cfg(feature = "simulate_partition")]
-    fn connection_lost(&mut self, peers: Vec<u64>) {
-        for pid in peers {
-            self.paxos.connection_lost(pid);
-        }
     }
 }
 
