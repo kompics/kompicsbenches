@@ -283,10 +283,11 @@ impl Client {
                 } else {
                     info!(
                         self.ctx.log(),
-                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}.",
+                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.",
                         self.leader_changes.len(),
                         leader_changes,
                         self.current_leader,
+                        self.leader_round
                     );
                 }
             } else {
