@@ -1175,18 +1175,18 @@ where
                                 }
                             }
                             PartitioningExpMsg::RecoverPeers => {
-                                for communicator in &self.communicator_comps {
-                                    communicator.on_definition(|c| c.recover_peers());
-                                }
-                                for ble in &self.ble_comps {
-                                    ble.on_definition(|ble| ble.recover_peers());
-                                }
                                 for paxos in &self.paxos_replicas {
                                     paxos.on_definition(|p| {
                                         for pid in &self.disconnected_peers {
                                             p.paxos.reconnected(*pid);
                                         }
                                     });
+                                }
+                                for communicator in &self.communicator_comps {
+                                    communicator.on_definition(|c| c.recover_peers());
+                                }
+                                for ble in &self.ble_comps {
+                                    ble.on_definition(|ble| ble.recover_peers());
                                 }
                                 self.disconnected_peers.clear();
                             }

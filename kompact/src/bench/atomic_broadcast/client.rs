@@ -256,6 +256,9 @@ impl Client {
                 if let Some(timer) = self.window_timer.take() {
                     self.cancel_timer(timer);
                 }
+                if let Some(timer) = self.periodic_partition_timer.take() {
+                    self.cancel_timer(timer);
+                }
                 self.state = ExperimentState::Finished;
                 self.finished_latch
                     .decrement()
