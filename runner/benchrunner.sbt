@@ -10,7 +10,7 @@ resolvers += Resolver.mavenLocal
 resolvers += Resolver.bintrayRepo("lkrollcom", "maven")
 
 libraryDependencies ++= Seq(
-	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.1-SNAPSHOT",
+	"se.kth.benchmarks" %% "benchmark-suite-shared" % "1.0.0-SNAPSHOT",
     "com.lkroll" %% "common-data-tools" % "1.+",
     "ch.qos.logback" % "logback-classic" % "1.2.3",
     "com.typesafe.scala-logging" %% "scala-logging" % "3.9.0",
