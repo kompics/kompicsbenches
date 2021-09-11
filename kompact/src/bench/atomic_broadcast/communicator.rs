@@ -238,6 +238,11 @@ impl Actor for Communicator {
         let NetMessage { data, .. } = m;
         match_deser! {data {
             msg(r): RawRaftMsg [using RawRaftSer] => {
+                #[cfg(feature = "simulate_partition")] {
+                    if self.disconnected_peers.contains(&r.from) {
+                        return Handled::Ok;
+                    }
+                }
                 #[cfg(feature = "measure_io")] {
                     let est_size = Self::estimate_raft_msg_size(&r);
                     self.io_metadata.update_received_with_size(est_size);
@@ -245,6 +250,11 @@ impl Actor for Communicator {
                 self.atomic_broadcast_port.trigger(AtomicBroadcastCompMsg::RawRaftMsg(r));
             },
             msg(p): RawPaxosMsg<Ballot> [using PaxosSer] => {
+                #[cfg(feature = "simulate_partition")] {
+                    if self.disconnected_peers.contains(&p.from) {
+                        return Handled::Ok;
+                    }
+                }
                 #[cfg(feature = "measure_io")] {
                     let est_size = Self::estimate_paxos_msg_size(&p);
                     self.io_metadata.update_received_with_size(est_size);

@@ -256,6 +256,9 @@ impl Client {
                 if let Some(timer) = self.window_timer.take() {
                     self.cancel_timer(timer);
                 }
+                if let Some(timer) = self.periodic_partition_timer.take() {
+                    self.cancel_timer(timer);
+                }
                 self.state = ExperimentState::Finished;
                 self.finished_latch
                     .decrement()
@@ -283,10 +286,11 @@ impl Client {
                 } else {
                     info!(
                         self.ctx.log(),
-                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}.",
+                        "Got all responses. Number of leader changes: {}, {:?}, Last leader was: {}, ballot/term: {}.",
                         self.leader_changes.len(),
                         leader_changes,
                         self.current_leader,
+                        self.leader_round
                     );
                 }
             } else {
