@@ -1541,7 +1541,7 @@ dependencies = [
 [[package]]
 name = "omnipaxos"
 version = "0.1.0"
-source = "git+https://github.com/haraldng/omnipaxos?rev=f7794ab#f7794ab06512f2c05816f41ac03eb3dd361020af"
+source = "git+https://github.com/haraldng/omnipaxos?branch=get-promise#314c862bd873b2a45b1b6b603f8c95687f940df2"
 
 [[package]]
 name = "once_cell"
