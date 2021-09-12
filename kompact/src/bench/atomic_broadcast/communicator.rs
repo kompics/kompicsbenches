@@ -127,12 +127,14 @@ impl Communicator {
     pub fn disconnect_peers(&mut self, peers: Vec<u64>, lagging_peer: Option<u64>) {
         if let Some(lp) = lagging_peer {
             // disconnect from lagging peer first
+            info!(self.ctx.log(), "Disconnecting lagging peer: {}", lp);
             self.disconnected_peers.push(lp);
             let a = peers.clone();
             let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"]
                 .as_duration()
                 .expect("No lagging duration!");
             self.schedule_once(lagging_delay, move |c, _| {
+                info!(c.ctx.log(), "Disconnecting peers: {:?}", a);
                 for pid in a {
                     c.disconnected_peers.push(pid);
                 }
@@ -145,6 +147,7 @@ impl Communicator {
 
     #[cfg(feature = "simulate_partition")]
     pub fn recover_peers(&mut self) {
+        info!(self.ctx.log(), "Recovering peers");
         self.disconnected_peers.clear();
     }
 }
