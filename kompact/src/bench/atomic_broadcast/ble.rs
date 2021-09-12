@@ -263,6 +263,10 @@ impl Actor for BallotLeaderComp {
     type Message = Stop;
 
     fn receive_local(&mut self, stop: Stop) -> Handled {
+        #[cfg(feature = "simulate_partition")]
+            {
+                self.disconnected_peers.clear();
+            }
         let pid = stop.0.request();
         self.stop_timer();
         for peer in &self.peers {
