@@ -537,7 +537,7 @@ impl Client {
 
     #[cfg(feature = "simulate_partition")]
     fn recover_partition(&mut self) {
-        info!(self.ctx.log(), "Recovering from network partition");
+        info!(self.ctx.log(), "Recovering from network partition. Leader: {}, ballot/term: {}", self.current_leader, self.leader_round);
         for (_pid, ap) in &self.nodes {
             ap.tell_serialised(PartitioningExpMsg::RecoverPeers, self)
                 .expect("Should serialise");
@@ -549,7 +549,7 @@ impl Client {
         if self.recover_periodic_partition {
             self.recover_partition()
         } else {
-            info!(self.ctx.log(), "Partitioning {}", disconnected_follower);
+            info!(self.ctx.log(), "Partitioning {}. Leader: {}, ballot/term: {}", disconnected_follower, self.current_leader, self.leader_round);
             let rest: Vec<u64> = self
                 .nodes
                 .keys()
