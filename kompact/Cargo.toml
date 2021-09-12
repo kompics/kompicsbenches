@@ -51,4 +51,4 @@ periodic_client_logging = []
 periodic_replica_logging = []
 simulate_partition = [] # simulate livelock and deadlock scenarios
 
-default = ["use_pid_map", "simulate_partition", "periodic_replica_logging", "periodic_client_logging"]
+default = ["use_pid_map", "simulate_partition"]
