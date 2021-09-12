@@ -443,7 +443,7 @@ impl Client {
             .copied()
             .collect();
         if self.nodes.len() == 5 {
-            // Raft deadlock scenario
+            // Deadlock scenario
             let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
             info!(self.ctx.log(), "Creating partition. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, self.leader_round, lagging_follower, self.responses.len());
             for pid in &followers {
