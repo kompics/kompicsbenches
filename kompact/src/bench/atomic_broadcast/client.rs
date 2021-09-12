@@ -479,7 +479,8 @@ impl Client {
                 )
                 .expect("Should serialise");
         } else if self.nodes.len() == 3 {
-            // Chained scenario
+            // Raft livelock scenario
+            /*
             let disconnected_follower = followers.first().unwrap();
             let ap = self.nodes.get(disconnected_follower).unwrap();
             ap.tell_serialised(
@@ -500,8 +501,7 @@ impl Client {
                 disconnected_follower,
                 self.responses.len()
             );
-            /*
-            // Periodic full scenario
+            */
             let disconnected_follower = *followers.first().unwrap();
             let intermediate_duration = self.ctx.config()["partition_experiment"]
                 ["intermediate_duration"]
@@ -519,7 +519,6 @@ impl Client {
             );
             self.periodic_partition_timer = Some(timer);
             return; // end of periodic partition
-             */
         } else {
             unimplemented!()
         }
