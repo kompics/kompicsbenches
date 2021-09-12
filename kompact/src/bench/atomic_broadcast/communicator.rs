@@ -128,19 +128,17 @@ impl Communicator {
         if let Some(lp) = lagging_peer {
             // disconnect from lagging peer first
             self.disconnected_peers.push(lp);
-            let a = peers.clone();
-            let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"]
-                .as_duration()
-                .expect("No lagging duration!");
-            self.schedule_once(lagging_delay, move |c, _| {
-                for pid in a {
-                    c.disconnected_peers.push(pid);
-                }
-                Handled::Ok
-            });
-        } else {
-            self.disconnected_peers = peers;
         }
+        let a = peers.clone();
+        let lagging_delay = self.ctx.config()["partition_experiment"]["lagging_delay"]
+            .as_duration()
+            .expect("No lagging duration!");
+        self.schedule_once(lagging_delay, move |c, _| {
+            for pid in a {
+                c.disconnected_peers.push(pid);
+            }
+            Handled::Ok
+        });
     }
 
     #[cfg(feature = "simulate_partition")]
@@ -211,6 +209,10 @@ impl Provide<CommunicationPort> for Communicator {
             }
             CommunicatorMsg::SendStop(my_pid, ack_client) => {
                 debug!(self.ctx.log(), "Sending stop to {:?}", self.peers.keys());
+                #[cfg(feature = "simulate_partition")]
+                    {
+                       self.disconnected_peers.clear();
+                    }
                 for ap in self.peers.values() {
                     ap.tell_serialised(NetStopMsg::Peer(my_pid), self)
                         .expect("Should serialise StopMsg")
