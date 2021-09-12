@@ -559,7 +559,7 @@ impl AtomicBroadcastMaster {
         for q in &quantiles {
             writeln!(
                 file,
-                "Value at quantile {}: {} micro s",
+                "Value at quantile {}: {} ms",
                 q,
                 hist.value_at_quantile(*q)
             )
@@ -568,7 +568,7 @@ impl AtomicBroadcastMaster {
         let max = hist.max();
         writeln!(
             file,
-            "Min: {} micro s, Max: {} micro s, Average: {} micro s",
+            "Min: {} ms, Max: {} ms, Average: {} ms",
             hist.min(),
             max,
             hist.mean()
