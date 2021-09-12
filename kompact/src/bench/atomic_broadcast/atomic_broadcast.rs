@@ -529,14 +529,28 @@ impl AtomicBroadcastMaster {
             .expect("Failed to open latency file");
 
         let histo = self.latency_hist.as_mut().unwrap();
+        let mut histo_run = Histogram::<u64>::new(4).expect("Failed to create histogram for this run");
         for l in latencies {
             let latency = l.as_millis() as u64;
             writeln!(latency_file, "{}", latency).expect("Failed to write raw latency");
             histo.record(latency).expect("Failed to record histogram");
+            histo_run.record(latency).expect("Failed to record histogram");
         }
         latency_file
             .flush()
             .expect("Failed to flush raw latency file");
+
+        let quantiles = [
+            0.001, 0.01, 0.005, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99, 0.999,
+        ];
+        println!("Run {}", self.iteration_id);
+        for q in &quantiles {
+            println!(
+                "Value at quantile {}: {} ms",
+                q,
+                histo_run.value_at_quantile(*q)
+            )
+        }
     }
 
     fn persist_latency_summary(&mut self) {
