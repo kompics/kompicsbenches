@@ -443,7 +443,7 @@ impl Client {
             .copied()
             .collect();
         if self.nodes.len() == 5 {
-            // Raft deadlock scenario
+            // Deadlock scenario
             let lagging_follower = *followers.first().unwrap(); // first follower to be partitioned from the leader
             info!(self.ctx.log(), "Creating partition. leader: {}, term: {}, lagging follower connected to majority: {}, num_responses: {}", self.current_leader, self.leader_round, lagging_follower, self.responses.len());
             for pid in &followers {
@@ -479,8 +479,7 @@ impl Client {
                 )
                 .expect("Should serialise");
         } else if self.nodes.len() == 3 {
-            // Raft livelock scenario
-            /*
+            // Chained scenario
             let disconnected_follower = followers.first().unwrap();
             let ap = self.nodes.get(disconnected_follower).unwrap();
             ap.tell_serialised(
@@ -501,7 +500,8 @@ impl Client {
                 disconnected_follower,
                 self.responses.len()
             );
-            */
+            /*
+            // Periodic full scenario
             let disconnected_follower = *followers.first().unwrap();
             let intermediate_duration = self.ctx.config()["partition_experiment"]
                 ["intermediate_duration"]
@@ -519,6 +519,7 @@ impl Client {
             );
             self.periodic_partition_timer = Some(timer);
             return; // end of periodic partition
+             */
         } else {
             unimplemented!()
         }
