@@ -241,9 +241,9 @@ object Benchmarks extends ParameterDescriptionImplicits {
 
   private val atomicBroadcastNodes = List(5);
   private val atomicBroadcastProposals = List(5L.mio);
-  private val atomicBroadcastConcurrentProposals = List(5L.k);
+  private val atomicBroadcastConcurrentProposals = List(500L);
 
-  private val algorithms = List("raft", "paxos");
+  private val algorithms = List("raft");
   private val reconfig = List("single", "majority");
   private val reconfig_policy = List("replace-follower", "replace-leader");
 
