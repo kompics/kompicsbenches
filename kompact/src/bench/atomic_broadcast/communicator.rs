@@ -134,7 +134,6 @@ impl Communicator {
             .as_duration()
             .expect("No lagging duration!");
         self.schedule_once(lagging_delay, move |c, _| {
-            info!(c.ctx.log(), "Disconnecting peers: {:?}", a);
             for pid in a {
                 c.disconnected_peers.push(pid);
             }

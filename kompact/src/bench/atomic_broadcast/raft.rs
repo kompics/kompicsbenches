@@ -408,12 +408,9 @@ where
                     msg(p): PartitioningExpMsg [using PartitioningExpMsgDeser] => {
                         match p {
                             PartitioningExpMsg::DisconnectPeers(peers, lagging_peer) => {
-                                info!(self.ctx.log(), "Disconnecting from {:?}, lagging: {:?}", peers, lagging_peer);
                                 self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.disconnect_peers(peers, lagging_peer));
                             }
                             PartitioningExpMsg::RecoverPeers => {
-                                // let term = self.raft_replica.as_ref().unwrap().on_definition(|r| r.raw_raft.raft.term);
-                                info!(self.ctx.log(), "Recovering connections");
                                 self.communicator.as_ref().expect("No Raft communicator").on_definition(|c| c.recover_peers());
                             }
                         }
