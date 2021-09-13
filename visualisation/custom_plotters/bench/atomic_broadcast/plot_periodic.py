@@ -109,7 +109,7 @@ for filename in data_files :
 	#ax.plot(all_ts, all_max_tp, marker='o')
 
 MEDIUM_SIZE = 18
-ax.legend(loc = "lower right", fontsize=15)
+ax.legend(loc = "lower left", fontsize=15)
 x_axis = np.arange(0, max_ts+X_TICKS*args.w, X_TICKS*args.w)
 
 for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +

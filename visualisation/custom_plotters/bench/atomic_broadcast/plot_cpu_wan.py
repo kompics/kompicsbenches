@@ -62,16 +62,22 @@ plot_series("wan", wan_files)
 
 #fig.set_size_inches(32, 3)
 fig.set_size_inches(16, 6)
+ax[0].set_ylim(bottom = 0)
 ax[0].set_yticks([0, 50000, 100000, 150000])
 ax[0].boxplot(cpu_series.values())
 #ax[0].set_xticklabels(cpu_series.keys())
 ax[0].yaxis.set_major_formatter(util.format_k)
-ax[0].set_ylabel("Throughput (ops/s)")
+#ax[0].set_ylabel("Throughput (ops/s)")
 
 ax[1].set_yticks([0, 50000, 100000, 150000])
 ax[1].boxplot(wan_series.values())
-#ax[1].set_xticklabels(wan_series.keys())
+
+x_ticks = list(wan_series.keys()) + list(wan_series.keys())
+ax[1].set_xticklabels(x_ticks)
 ax[1].yaxis.set_major_formatter(util.format_k)
+
+fig.text(0.04, 0.5, 'Throughput (ops/s)', va='center', rotation='vertical', fontsize=SIZE)
+
 if args.show_title:
     ax[0].set_title("CPU", fontsize=SIZE)
     ax[1].set_title("WAN", fontsize=SIZE)
