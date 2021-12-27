@@ -51,11 +51,12 @@ for (label, data, err) in all_series:
 ax.yaxis.set_major_formatter(util.format_k)
 ax.legend(loc = "lower right", fontsize=20, ncol=2)
 
-fig.set_size_inches(15, 3.5)
+fig.set_size_inches(15, 2.35)
 ax.set_ylabel('Throughput (ops/s)')
 ax.set_xlabel('Number of concurrent proposals')
 plt.xticks(x_axis, num_cp)
-plt.yticks([90000, 110000, 130000])
+plt.yticks(np.arange(0, 200000, step=40000))
+#plt.yticks([90000, 110000, 130000])
 #ax.yaxis.set_major_formatter(util.format_k)
 
 plt.savefig("{}.pdf".format(FILENAME), dpi = 600, bbox_inches='tight')
