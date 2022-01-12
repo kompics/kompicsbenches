@@ -43,7 +43,7 @@ def plot_series(exp, files):
 
 num_proposals = 5 * 1000000
 
-SIZE = 20
+SIZE = 22
 plt.rc('axes', labelsize=SIZE) 
 plt.rc('xtick', labelsize=SIZE)    # fontsize of the tick labels
 plt.rc('ytick', labelsize=SIZE)    # fontsize of the tick labels
@@ -61,7 +61,7 @@ plot_series("cpu", cpu_files)
 plot_series("wan", wan_files)
 
 #fig.set_size_inches(32, 3)
-fig.set_size_inches(16, 6)
+fig.set_size_inches(16, 5)
 ax[0].set_yticks([0, 50000, 100000, 150000])
 ax[0].boxplot(cpu_series.values())
 #ax[0].set_xticklabels(cpu_series.keys())
