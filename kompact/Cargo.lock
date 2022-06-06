@@ -1219,9 +1219,9 @@ source = "git+https://github.com/haraldng/leaderpaxos#974b7ff24519b062a17faee5eb
 
 [[package]]
 name = "libc"
-version = "0.2.77"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2f96b10ec2560088a8e76961b00d47107b3a625fecb76dedb29ee7ccbf98235"
+checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 
 [[package]]
 name = "lock_api"
@@ -1371,18 +1371,18 @@ version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07b88fb9795d4d36d62a012dfbf49a8f5cf12751f36d31a9dbe66d528e58979e"
 dependencies = [
- "socket2",
+ "socket2 0.3.15",
  "winapi 0.3.9",
 ]
 
 [[package]]
 name = "nb-connect"
-version = "1.0.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "701f47aeb98466d0a7fea67e2c2f667c33efa1f2e4fd7f76743aac1153196f72"
+checksum = "b1bb540dc6ef51cfe1916ec038ce7a620daf3a111e2502d745197cd53d6bca15"
 dependencies = [
  "libc",
- "winapi 0.3.9",
+ "socket2 0.4.4",
 ]
 
 [[package]]
@@ -2251,6 +2251,16 @@ dependencies = [
  "cfg-if 0.1.10",
  "libc",
  "redox_syscall",
+ "winapi 0.3.9",
+]
+
+[[package]]
+name = "socket2"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d72b759436ae32898a2af0a14218dbf55efde3feeb170eb623637db85ee1e0"
+dependencies = [
+ "libc",
  "winapi 0.3.9",
 ]
 
