@@ -134,7 +134,7 @@ dependencies = [
  "slog-scope",
  "slog-stdlog 3.0.5",
  "slog-term",
- "time",
+ "time 0.1.43",
  "tls-api",
 ]
 
@@ -208,7 +208,7 @@ dependencies = [
  "libc",
  "num-integer",
  "num-traits 0.2.8",
- "time",
+ "time 0.1.43",
 ]
 
 [[package]]
@@ -1397,7 +1397,7 @@ dependencies = [
  "riker",
  "riker-patterns",
  "synchronoise",
- "time",
+ "time 0.2.0",
  "tokio-core",
  "uuid 0.7.4",
 ]
@@ -1696,14 +1696,19 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.1.42"
+version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db8dcfca086c1143c9270ac42a2bbd8a7ee477b78ac8e45b19abfb0cbede4b6f"
+checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
 dependencies = [
  "libc",
- "redox_syscall",
  "winapi 0.3.8",
 ]
+
+[[package]]
+name = "time"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcc26de0a81a07c8352b548977862908fa9863e0e6e4f0eb36b2a9f4f8845585"
 
 [[package]]
 name = "tiny-keccak"
